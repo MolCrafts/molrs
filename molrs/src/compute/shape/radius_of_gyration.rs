@@ -66,7 +66,7 @@ impl RadiusOfGyration {
         }
 
         let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
-        let nc = clusters.num_clusters;
+        let nc = clusters.n_clusters;
 
         if com.centers_of_mass.len() != nc || com.cluster_masses.len() != nc {
             return Err(ComputeError::DimensionMismatch {
@@ -205,7 +205,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

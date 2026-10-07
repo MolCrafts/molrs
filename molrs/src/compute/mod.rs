@@ -291,7 +291,7 @@ mod require_tests {
     use molrs::op::F;
 
     /// Two hard-coded half-shell pairs (`i < j`), legal under
-    /// `SelfQuery { num_points: 4 }`.
+    /// `SelfQuery { n_points: 4 }`.
     fn two_pairs() -> [NeighborPair; 2] {
         [
             NeighborPair {
@@ -310,7 +310,7 @@ mod require_tests {
     }
 
     fn table(storage: NeighborsStorage) -> Neighbors {
-        Neighbors::from_pairs(two_pairs(), storage, QueryMode::SelfQuery { num_points: 4 })
+        Neighbors::from_pairs(two_pairs(), storage, QueryMode::SelfQuery { n_points: 4 })
     }
 
     /// Basics: on a `FULL` table the displacement column comes back as an

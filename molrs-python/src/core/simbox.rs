@@ -774,7 +774,7 @@ impl PyBox {
     /// ------
     /// ValueError
     ///     If ``xyz`` does not have 3 columns.
-    fn isin<'py>(
+    fn contains<'py>(
         &self,
         py: Python<'py>,
         xyz: PyReadonlyArray2<'_, f64>,
@@ -783,7 +783,7 @@ impl PyBox {
         if view.ncols() != 3 {
             return Err(PyValueError::new_err("expected shape (N,3)"));
         }
-        let inside = self.inner.isin(view);
+        let inside = self.inner.contains(view);
         Ok(inside.into_pyarray(py))
     }
 

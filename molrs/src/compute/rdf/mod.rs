@@ -499,7 +499,7 @@ mod tests {
         let nlist = {
             use molrs::core::NeighborQuery;
             let (xs, ys, zs) = get_positions_ref(&frame).unwrap();
-            NeighborQuery::free_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
+            NeighborQuery::unbounded_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
         };
         let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         let err = rdf.compute(&[&frame], &[nlist]).unwrap_err();
@@ -618,7 +618,7 @@ mod tests {
                 disp: [1.5, 0.0, 0.0],
             }],
             NeighborsStorage::DIST_SQ,
-            QueryMode::SelfQuery { num_points: 2 },
+            QueryMode::SelfQuery { n_points: 2 },
         );
         // The same two particles as a directed cross list of the set against
         // itself with the two zero-distance self-pairs removed: both orderings
@@ -640,8 +640,8 @@ mod tests {
             ],
             NeighborsStorage::DIST_SQ,
             QueryMode::CrossQuery {
-                num_query_points: 2,
-                num_points: 2,
+                n_query_points: 2,
+                n_points: 2,
             },
         );
 

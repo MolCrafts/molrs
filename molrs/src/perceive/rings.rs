@@ -53,12 +53,12 @@ impl RingInfo {
     }
 
     /// Number of rings containing this atom.
-    pub fn num_atom_rings(&self, id: NodeId) -> usize {
+    pub fn n_atom_rings(&self, id: NodeId) -> usize {
         self.atom_rings.get(&id).map_or(0, Vec::len)
     }
 
     /// Number of rings containing this bond.
-    pub fn num_bond_rings(&self, id: RelationId) -> usize {
+    pub fn n_bond_rings(&self, id: RelationId) -> usize {
         self.bond_rings.get(&id).map_or(0, Vec::len)
     }
 
@@ -82,7 +82,7 @@ impl RingInfo {
     }
 
     /// Total number of rings detected.
-    pub fn num_rings(&self) -> usize {
+    pub fn n_rings(&self) -> usize {
         self.rings.len()
     }
 
@@ -420,12 +420,12 @@ pub fn assign_rings(mol: &Atomistic) -> Atomistic {
     let atom_ids: Vec<NodeId> = out.atoms().map(|(id, _)| id).collect();
     for id in atom_ids {
         let _ = out.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)));
-        let _ = out.set_atom(id, N_RINGS, saturating_i32(info.num_atom_rings(id)));
+        let _ = out.set_atom(id, N_RINGS, saturating_i32(info.n_atom_rings(id)));
     }
     let bond_ids: Vec<RelationId> = out.bonds().map(|(id, _)| id).collect();
     for bid in bond_ids {
         let _ = out.set_bond_prop(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)));
-        let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.num_bond_rings(bid)));
+        let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.n_bond_rings(bid)));
     }
     out
 }
@@ -642,7 +642,7 @@ impl IndexRings {
 
     /// Number of rings containing this bond.
     #[cfg(test)]
-    fn num_bond_rings(&self, idx: usize) -> usize {
+    fn n_bond_rings(&self, idx: usize) -> usize {
         self.bond_rings.get(&idx).map_or(0, Vec::len)
     }
 
@@ -654,7 +654,7 @@ impl IndexRings {
 
     /// Total number of rings detected.
     #[cfg(test)]
-    fn num_rings(&self) -> usize {
+    fn n_rings(&self) -> usize {
         self.rings.len()
     }
 }
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn sssr_linear() {
         let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
-        assert_eq!(sssr(&topo).num_rings(), 0);
+        assert_eq!(sssr(&topo).n_rings(), 0);
     }
 
     #[test]
@@ -765,14 +765,14 @@ mod tests {
         // Hexagon: 0-1-2-3-4-5-0
         let topo = Topology::from_edges(6, &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]);
         let ri = sssr(&topo);
-        assert_eq!(ri.num_rings(), 1);
+        assert_eq!(ri.n_rings(), 1);
         assert_eq!(ri.ring_sizes(), vec![6]);
         for i in 0..6 {
             assert!(ri.is_atom_in_ring(i));
         }
         for i in 0..topo.n_bonds() {
             assert!(ri.is_bond_in_ring(i));
-            assert_eq!(ri.num_bond_rings(i), 1);
+            assert_eq!(ri.n_bond_rings(i), 1);
         }
         assert_eq!(
             ri.bond_ring_mask(topo.n_bonds()),
@@ -800,18 +800,18 @@ mod tests {
             ],
         );
         let ri = sssr(&topo);
-        assert_eq!(ri.num_rings(), 2);
+        assert_eq!(ri.n_rings(), 2);
         let mut sizes = ri.ring_sizes();
         sizes.sort();
         assert_eq!(sizes, vec![6, 6]);
         assert!(ri.bond_ring_mask(topo.n_bonds()).into_iter().all(|x| x));
-        assert_eq!(ri.num_bond_rings(2), 2);
+        assert_eq!(ri.n_bond_rings(2), 2);
     }
 
     #[test]
     fn sssr_empty() {
         let topo = Topology::new();
-        assert_eq!(sssr(&topo).num_rings(), 0);
+        assert_eq!(sssr(&topo).n_rings(), 0);
     }
 
     /// Bridgeless polycyclic graphs, each with its own independent cycle count.
@@ -947,7 +947,7 @@ mod tests {
             let topo = Topology::from_edges(n_atoms, &edges);
             let rank = edges.len() - n_atoms + topo.n_components();
             assert_eq!(
-                sssr(&topo).num_rings(),
+                sssr(&topo).n_rings(),
                 rank,
                 "{name}: ring count is not the cycle rank"
             );
@@ -985,7 +985,7 @@ mod tests {
     fn test_single_6ring() {
         let g = cycle(6);
         let ri = perceive_rings(&g);
-        assert_eq!(ri.num_rings(), 1);
+        assert_eq!(ri.n_rings(), 1);
         assert_eq!(ri.ring_sizes(), vec![6]);
     }
 
@@ -996,7 +996,7 @@ mod tests {
         for i in 0..5 {
             g.add_bond(ids[i], ids[i + 1]).expect("add chain bond");
         }
-        assert_eq!(perceive_rings(&g).num_rings(), 0);
+        assert_eq!(perceive_rings(&g).n_rings(), 0);
     }
 
     #[test]
@@ -1019,7 +1019,7 @@ mod tests {
 
     #[test]
     fn test_empty_mol() {
-        assert_eq!(perceive_rings(&Atomistic::new()).num_rings(), 0);
+        assert_eq!(perceive_rings(&Atomistic::new()).n_rings(), 0);
     }
 
     #[test]
@@ -1039,7 +1039,7 @@ mod tests {
         g.add_bond(ids[9], ids[2]).expect("bond");
 
         let ri = perceive_rings(&g);
-        assert_eq!(ri.num_rings(), 2);
+        assert_eq!(ri.n_rings(), 2);
         let mut sizes = ri.ring_sizes();
         sizes.sort_unstable();
         assert_eq!(sizes, vec![6, 6]);

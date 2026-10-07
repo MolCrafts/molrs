@@ -39,8 +39,8 @@ impl PyRingInfo {
     }
 
     /// Number of rings.
-    fn num_rings(&self) -> usize {
-        self.inner.num_rings()
+    fn n_rings(&self) -> usize {
+        self.inner.n_rings()
     }
 
     /// Atom count of every ring, ascending.
@@ -70,8 +70,8 @@ impl PyRingInfo {
     }
 
     /// Number of rings containing `atom`.
-    fn num_atom_rings(&self, atom: u64) -> usize {
-        self.inner.num_atom_rings(node_from_u64(atom))
+    fn n_atom_rings(&self, atom: u64) -> usize {
+        self.inner.n_atom_rings(node_from_u64(atom))
     }
 
     /// Size of the smallest ring containing `atom`, or ``None``.
@@ -83,7 +83,7 @@ impl PyRingInfo {
     fn __repr__(&self) -> String {
         format!(
             "RingInfo(num_rings={}, sizes={:?})",
-            self.inner.num_rings(),
+            self.inner.n_rings(),
             self.inner.ring_sizes()
         )
     }

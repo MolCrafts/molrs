@@ -551,7 +551,7 @@ fn pair_style_matches_lammps() {
                 }
             }),
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: n },
+            QueryMode::SelfQuery { n_points: n },
         );
         let mut ft = vec![0.0; x.len()];
         let mut et = 0.0;

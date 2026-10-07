@@ -60,7 +60,7 @@ impl CenterOfMass {
         }
 
         let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
-        let nc = clusters.num_clusters;
+        let nc = clusters.n_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
         let mut sum_m_delta = vec![[0.0 as F; 3]; nc];
@@ -189,7 +189,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

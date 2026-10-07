@@ -12,9 +12,9 @@
 //! live here rather than under `io` because they pull third-party runtime
 //! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
 
-mod message;
+mod control;
 
-pub use message::ControlCommand;
+pub use control::ControlCommand;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod publisher;
@@ -26,7 +26,7 @@ use crate::core::Frame;
 
 /// Encoding used for a streamed `Frame`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageFormat {
+pub enum FrameEncoding {
     /// MessagePack (compact binary; default).
     MessagePack,
     /// JSON (text; debugging / interop).
@@ -55,24 +55,24 @@ impl std::fmt::Display for StreamError {
 impl std::error::Error for StreamError {}
 
 /// Encode a [`Frame`] to bytes in `format`.
-pub fn frame_to_bytes(frame: &Frame, format: MessageFormat) -> Result<Vec<u8>, StreamError> {
+pub fn frame_to_bytes(frame: &Frame, format: FrameEncoding) -> Result<Vec<u8>, StreamError> {
     match format {
-        MessageFormat::MessagePack => {
+        FrameEncoding::MessagePack => {
             rmp_serde::to_vec_named(frame).map_err(|e| StreamError::Encode(e.to_string()))
         }
-        MessageFormat::Json => {
+        FrameEncoding::Json => {
             serde_json::to_vec(frame).map_err(|e| StreamError::Encode(e.to_string()))
         }
     }
 }
 
 /// Decode bytes in `format` back into a [`Frame`].
-pub fn bytes_to_frame(bytes: &[u8], format: MessageFormat) -> Result<Frame, StreamError> {
+pub fn bytes_to_frame(bytes: &[u8], format: FrameEncoding) -> Result<Frame, StreamError> {
     match format {
-        MessageFormat::MessagePack => {
+        FrameEncoding::MessagePack => {
             rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
         }
-        MessageFormat::Json => {
+        FrameEncoding::Json => {
             serde_json::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
         }
     }
@@ -190,16 +190,16 @@ mod tests {
     #[test]
     fn frame_messagepack_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, MessageFormat::MessagePack).expect("encode");
-        let back = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        let bytes = frame_to_bytes(&frame, FrameEncoding::MessagePack).expect("encode");
+        let back = bytes_to_frame(&bytes, FrameEncoding::MessagePack).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 
     #[test]
     fn frame_json_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, MessageFormat::Json).expect("encode");
-        let back = bytes_to_frame(&bytes, MessageFormat::Json).expect("decode");
+        let bytes = frame_to_bytes(&frame, FrameEncoding::Json).expect("encode");
+        let back = bytes_to_frame(&bytes, FrameEncoding::Json).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 }

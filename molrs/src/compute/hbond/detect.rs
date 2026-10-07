@@ -139,7 +139,7 @@ impl HBonds {
         let nlist = match frame.simbox_ref() {
             Some(sb) => NeighborQuery::from_columns(sb, &acc_x, &acc_y, &acc_z, cutoff)
                 .query_columns(&q_x, &q_y, &q_z),
-            None => NeighborQuery::free_columns(&acc_x, &acc_y, &acc_z, cutoff)
+            None => NeighborQuery::unbounded_columns(&acc_x, &acc_y, &acc_z, cutoff)
                 .query_columns(&q_x, &q_y, &q_z),
         };
 

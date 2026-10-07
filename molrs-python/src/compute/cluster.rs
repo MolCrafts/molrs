@@ -26,8 +26,8 @@ pub struct PyClusterResult {
 #[pymethods]
 impl PyClusterResult {
     #[getter]
-    fn num_clusters(&self) -> usize {
-        self.inner.num_clusters
+    fn n_clusters(&self) -> usize {
+        self.inner.n_clusters
     }
 
     #[getter]
@@ -51,7 +51,7 @@ impl PyClusterResult {
     fn __repr__(&self) -> String {
         format!(
             "ClusterResult(num_clusters={}, largest={})",
-            self.inner.num_clusters,
+            self.inner.n_clusters,
             self.inner.cluster_sizes.iter().max().unwrap_or(&0),
         )
     }

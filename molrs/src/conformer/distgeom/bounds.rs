@@ -489,7 +489,7 @@ fn is_carbonyl(p: &DgFeatures, at: usize) -> bool {
 
 /// Implicit-H count proxy for an atom (degree minus heavy-neighbour count is
 /// not available; with explicit Hs we count bonded H atoms).
-fn num_hs(p: &DgFeatures, at: usize) -> usize {
+fn n_hs(p: &DgFeatures, at: usize) -> usize {
     p.adj[at]
         .iter()
         .filter(|&&nb| p.atoms[nb].element.z() == 1)
@@ -515,7 +515,7 @@ fn check_amide_ester_14(
         && bond3_order >= 1.75
         && (a4 == 8 || a4 == 7)
         && (bond1_order - 1.0).abs() < 0.01
-        && (a2 == 8 || (a2 == 7 && num_hs(p, atm2) == 1))
+        && (a2 == 8 || (a2 == 7 && n_hs(p, atm2) == 1))
 }
 
 /// RDKit `_checkAmideEster15`: pattern where atm2 is O (or NH1), bnd1 single,
@@ -528,7 +528,7 @@ fn check_amide_ester_15(
     atm3: usize,
 ) -> bool {
     let a2 = p.atoms[atm2].element.z();
-    let o_or_nh1 = a2 == 8 || (a2 == 7 && num_hs(p, atm2) == 1);
+    let o_or_nh1 = a2 == 8 || (a2 == 7 && n_hs(p, atm2) == 1);
     o_or_nh1
         && (bond1_order - 1.0).abs() < 0.01
         && p.atoms[atm3].element.z() == 6
@@ -659,11 +659,11 @@ fn set_one_14(
                 let sec_amide_h = (p.atoms[aid1].element.z() == 1
                     && p.atoms[atm2].element.z() == 7
                     && p.atoms[atm2].degree == 3
-                    && num_hs(p, atm2) == 1)
+                    && n_hs(p, atm2) == 1)
                     || (p.atoms[aid4].element.z() == 1
                         && p.atoms[atm3].element.z() == 7
                         && p.atoms[atm3].degree == 3
-                        && num_hs(p, atm3) == 1);
+                        && n_hs(p, atm3) == 1);
                 if sec_amide_h {
                     dl = compute14_dist_trans(bl1, bl2, bl3, ba12, ba23);
                     ptype = Path14Type::Trans;
@@ -683,11 +683,11 @@ fn set_one_14(
                 let sec_amide_h = (p.atoms[aid1].element.z() == 1
                     && p.atoms[atm2].element.z() == 7
                     && p.atoms[atm2].degree == 3
-                    && num_hs(p, atm2) == 1)
+                    && n_hs(p, atm2) == 1)
                     || (p.atoms[aid4].element.z() == 1
                         && p.atoms[atm3].element.z() == 7
                         && p.atoms[atm3].degree == 3
-                        && num_hs(p, atm3) == 1);
+                        && n_hs(p, atm3) == 1);
                 if sec_amide_h {
                     dl = compute14_dist_cis(bl1, bl2, bl3, ba12, ba23);
                     ptype = Path14Type::Cis;
@@ -800,9 +800,9 @@ fn set_14_bounds(
                     || ring_bond_pairs.contains(&(bid2, bid1))
                     || ring_bond_pairs.contains(&(bid2, bid3))
                     || ring_bond_pairs.contains(&(bid3, bid2));
-                let middle_ring = num_bond_rings(p, bi, bid2) > 0;
-                let b1_ring = num_bond_rings(p, bi, bid1) > 0;
-                let b3_ring = num_bond_rings(p, bi, bid3) > 0;
+                let middle_ring = n_bond_rings(p, bi, bid2) > 0;
+                let b1_ring = n_bond_rings(p, bi, bid1) > 0;
+                let b3_ring = n_bond_rings(p, bi, bid3) > 0;
                 if in_ring {
                     // two in same ring: 0-180 unless sp2-sp2 → trans flat
                     set_two_in_same_ring_14(p, bi, comp, mmat, topo, bid1, bid2, bid3);
@@ -820,7 +820,7 @@ fn set_14_bounds(
     }
 }
 
-fn num_bond_rings(p: &DgFeatures, bi: &BondIndex, bid: usize) -> usize {
+fn n_bond_rings(p: &DgFeatures, bi: &BondIndex, bid: usize) -> usize {
     let b = &bi.bonds[bid];
     // count rings whose consecutive atoms include this bond
     p.ring_idx

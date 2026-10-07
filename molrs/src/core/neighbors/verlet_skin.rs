@@ -119,7 +119,7 @@ pub struct VerletSkin {
     simbox: SimBox,
     search: NeighborList,
     edges: Vec<SkinPair>,
-    num_edges: usize,
+    n_edges: usize,
     rebuild_count: usize,
     ago: usize,
     ndanger: usize,
@@ -224,7 +224,7 @@ impl VerletSkin {
             simbox,
             search,
             edges: Vec::new(),
-            num_edges: 0,
+            n_edges: 0,
             rebuild_count: 0,
             ago: 0,
             ndanger: 0,
@@ -233,9 +233,7 @@ impl VerletSkin {
             danger_ago: policy.every.max(policy.delay),
             x_hold: Array2::zeros((n_atoms, 3)),
             pairs_buf: Neighbors::empty(
-                QueryMode::SelfQuery {
-                    num_points: n_atoms,
-                },
+                QueryMode::SelfQuery { n_points: n_atoms },
                 NeighborsStorage::FULL,
             ),
             scratch_r2: Vec::new(),
@@ -272,8 +270,8 @@ impl VerletSkin {
     }
 
     /// Live edge count (`== edges().len()`).
-    pub fn num_edges(&self) -> usize {
-        self.num_edges
+    pub fn n_edges(&self) -> usize {
+        self.n_edges
     }
 
     /// Rebuilds since construction; the initial build is not one of them.
@@ -335,7 +333,7 @@ impl VerletSkin {
                 j: pair.j,
             });
         });
-        self.num_edges = self.edges.len();
+        self.n_edges = self.edges.len();
     }
 
     fn hold(&mut self, positions: ArrayView2<'_, F>) {
@@ -527,7 +525,7 @@ impl VerletSkin {
         // Serial, and deliberately: the rows come out in the order of the
         // edges, and a parallel append would let scheduling decide it.
         self.pairs_buf.set_mode(QueryMode::SelfQuery {
-            num_points: positions.nrows(),
+            n_points: positions.nrows(),
         });
         self.pairs_buf.clear();
         let cutoff2 = self.cutoff * self.cutoff;
@@ -680,7 +678,7 @@ mod tests {
     #[test]
     fn pair_inside_cutoff_is_half_shell() {
         let nl = skin_link(2.5, NeighborPolicy::default(), two_atoms(1.0).view(), 20.0);
-        assert_eq!(nl.num_edges(), 1);
+        assert_eq!(nl.n_edges(), 1);
         assert_eq!(nl.edges()[0].i, 0);
         assert_eq!(nl.edges()[0].j, 1);
     }
@@ -688,7 +686,7 @@ mod tests {
     #[test]
     fn pair_outside_cutoff_is_absent() {
         let nl = skin_link(1.0, NeighborPolicy::default(), two_atoms(1.5).view(), 20.0);
-        assert_eq!(nl.num_edges(), 0);
+        assert_eq!(nl.n_edges(), 0);
     }
 
     #[test]

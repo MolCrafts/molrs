@@ -131,7 +131,7 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
 - **`NeighborList`** — neighbor-search engine (`build` / `update` index,
   `neighbors` materializes); `NeighborList.bruteForce(cutoff)` selects the
   O(N²) reference backend
-- **`Neighbors`** — the materialized pair table (`numPairs`, `queryPointIndices()`,
+- **`Neighbors`** — the materialized pair table (`nPairs`, `queryPointIndices()`,
   `pointIndices()`, `distSq()`, `disp()`)
 - **`NeighborQuery`** — the cross search: `new NeighborQuery(refFrame, cutoff)`
   indexes a reference frame, `query(otherFrame)` returns the directed pairs

@@ -23,9 +23,9 @@ def _nlist(frame, pts, cutoff=1.2):
     return nq.query_self()
 
 
-def test_neighbor_query_free_boundary():
+def test_neighbor_query_unbounded():
     points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    query = molrs.core.NeighborQuery.free(points, 1.0)
+    query = molrs.core.NeighborQuery.unbounded(points, 1.0)
     result = query.query(np.array([[0.0, 0.0, 0.0]]))
 
     assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
@@ -38,7 +38,7 @@ def test_neighbor_query_rejects_non_positive_cutoff():
     with pytest.raises(ValueError, match="positive"):
         molrs.core.NeighborQuery(box, points, 0.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.core.NeighborQuery.free(points, 0.0)
+        molrs.core.NeighborQuery.unbounded(points, 0.0)
 
 
 class TestSteinhardt:

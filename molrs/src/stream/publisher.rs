@@ -22,15 +22,15 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::core::Frame;
-use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
+use crate::stream::{FrameEncoding, StreamError, frame_to_bytes};
 
-use super::message::ControlCommand;
+use super::control::ControlCommand;
 
 /// Configuration for a [`Publisher`].
 #[derive(Debug, Clone)]
 pub struct PublisherConfig {
     /// Wire encoding for outbound frames (default: MessagePack).
-    pub format: MessageFormat,
+    pub format: FrameEncoding,
     /// Capacity of the simulation→network frame buffer (default: 4).
     ///
     /// When full, [`Publisher::send`] drops the oldest buffered frame so the
@@ -60,7 +60,7 @@ pub struct PublisherConfig {
 impl Default for PublisherConfig {
     fn default() -> Self {
         Self {
-            format: MessageFormat::MessagePack,
+            format: FrameEncoding::MessagePack,
             buffer_size: 4,
             max_frame_rate: 0.0,
             token: None,
@@ -102,7 +102,7 @@ impl From<StreamError> for SendError {
 }
 
 struct Shared {
-    format: MessageFormat,
+    format: FrameEncoding,
     /// Simulation → clients (payload already encoded). A broadcast channel
     /// overwrites its oldest entry when full, which is the drop policy.
     frame_tx: Mutex<Option<broadcast::Sender<Bytes>>>,
@@ -422,7 +422,7 @@ async fn run_bound(
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
     client_count: Arc<AtomicUsize>,
-    format: MessageFormat,
+    format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -515,7 +515,7 @@ async fn run_dialed(
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
     client_count: Arc<AtomicUsize>,
-    format: MessageFormat,
+    format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -583,7 +583,7 @@ async fn handle_client(
     ws: WsStream,
     bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    format: MessageFormat,
+    format: FrameEncoding,
     token: Option<String>,
 ) {
     let (mut write, mut read) = ws.split();
@@ -605,7 +605,7 @@ async fn pump<S>(
     mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
     mut bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    format: MessageFormat,
+    format: FrameEncoding,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -615,8 +615,8 @@ async fn pump<S>(
                 match frame {
                     Ok(payload) => {
                         let msg = match format {
-                            MessageFormat::MessagePack => Message::Binary(payload),
-                            MessageFormat::Json => {
+                            FrameEncoding::MessagePack => Message::Binary(payload),
+                            FrameEncoding::Json => {
                                 match String::from_utf8(payload.to_vec()) {
                                     Ok(s) => Message::Text(s.into()),
                                     Err(_) => continue,
@@ -744,7 +744,7 @@ mod tests {
             Message::Text(t) => t.as_bytes().to_vec(),
             other => panic!("unexpected message: {other:?}"),
         };
-        let decoded = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        let decoded = bytes_to_frame(&bytes, FrameEncoding::MessagePack).expect("decode");
         assert!(decoded.contains_key("atoms"));
         let x = decoded["atoms"]
             .get("x")
@@ -783,7 +783,7 @@ mod tests {
         let server = Publisher::bind_with(
             "127.0.0.1:0",
             PublisherConfig {
-                format: MessageFormat::MessagePack,
+                format: FrameEncoding::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
                 token: None,
@@ -808,7 +808,7 @@ mod tests {
         let server = Publisher::bind_with(
             "127.0.0.1:0",
             PublisherConfig {
-                format: MessageFormat::MessagePack,
+                format: FrameEncoding::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
                 token: None,
@@ -828,7 +828,7 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
                 Ok(Some(Ok(Message::Binary(b)))) => {
-                    if let Ok(decoded) = bytes_to_frame(b.as_ref(), MessageFormat::MessagePack)
+                    if let Ok(decoded) = bytes_to_frame(b.as_ref(), FrameEncoding::MessagePack)
                         && let Some(x) = decoded
                             .get("atoms")
                             .and_then(|a| a.get("x").and_then(|c| c.as_float()))
@@ -876,7 +876,7 @@ mod tests {
         server.send(&sample_frame(7)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = bytes_to_frame(&msg.into_data(), FrameEncoding::MessagePack).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
     }
@@ -935,7 +935,7 @@ mod tests {
 
         server.send(&sample_frame(3)).expect("send");
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = bytes_to_frame(&msg.into_data(), FrameEncoding::MessagePack).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
     }
@@ -969,7 +969,7 @@ mod tests {
         publisher.send(&sample_frame(11)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = bytes_to_frame(&msg.into_data(), FrameEncoding::MessagePack).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 11.0).abs() < 1e-12);
 
@@ -1036,7 +1036,7 @@ mod tests {
             .expect("no frame after reconnect")
             .expect("frame")
             .expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = bytes_to_frame(&msg.into_data(), FrameEncoding::MessagePack).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 5.0).abs() < 1e-12);
 

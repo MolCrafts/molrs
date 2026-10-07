@@ -55,7 +55,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     dim: usize,
     rng: &mut R,
     rand_neg_eig: bool,
-    num_zero_fail: usize,
+    n_zero_fail: usize,
 ) -> Option<Vec<f64>> {
     // Squared distances and global mean of squared distances.
     let mut sq = vec![0.0; n * n];
@@ -119,7 +119,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     if found_neg && !rand_neg_eig {
         return None;
     }
-    if zero_eigs >= num_zero_fail && n > 3 {
+    if zero_eigs >= n_zero_fail && n > 3 {
         return None;
     }
 

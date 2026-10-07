@@ -1395,7 +1395,7 @@ mod tests {
                 },
             ],
             molrs::core::NeighborsStorage::FULL,
-            molrs::core::QueryMode::SelfQuery { num_points: 3 },
+            molrs::core::QueryMode::SelfQuery { n_points: 3 },
         );
         let mut pots = Potentials::new();
         pots.push(Member::plain(PairCounting));

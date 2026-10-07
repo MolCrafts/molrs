@@ -179,13 +179,13 @@ impl HBondNetwork {
         #[serde(rename_all = "camelCase")]
         struct Out {
             component_sizes: Vec<usize>,
-            num_components: usize,
+            n_components: usize,
         }
         let edges = usize_pairs(edges, "HBondNetwork edges")?;
         let r = molrs::compute::hbond_components(n_nodes, &edges);
         js_value(&Out {
             component_sizes: r.component_sizes,
-            num_components: r.num_components,
+            n_components: r.n_components,
         })
     }
 }

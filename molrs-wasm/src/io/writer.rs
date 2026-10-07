@@ -196,9 +196,9 @@ pub fn write_frame_bytes_export(frame: &Frame, format: &str) -> Result<Vec<u8>, 
             #[cfg(feature = "stream")]
             "msgpack" | "json" => {
                 let fmt = if format.eq_ignore_ascii_case("json") {
-                    molrs::stream::MessageFormat::Json
+                    molrs::stream::FrameEncoding::Json
                 } else {
-                    molrs::stream::MessageFormat::MessagePack
+                    molrs::stream::FrameEncoding::MessagePack
                 };
                 buf = molrs::stream::frame_to_bytes(rs_frame, fmt)
                     .map_err(|e| JsValue::from_str(&e.to_string()))?;

@@ -147,7 +147,7 @@ fn center_query(
 
     if opts.include_ring_membership {
         if rings.is_atom_in_ring(id) {
-            let n = rings.num_atom_rings(id) as u8;
+            let n = rings.n_atom_rings(id) as u8;
             prims.push(AtomQuery::Primitive(AtomPrimitive::RingMembership(Some(
                 n.max(1),
             ))));

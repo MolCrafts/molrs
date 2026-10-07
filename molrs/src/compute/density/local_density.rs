@@ -119,7 +119,7 @@ impl LocalDensity {
         let density: Vec<F> = num.iter().map(|&c| c * inv_vol).collect();
 
         Ok(LocalDensityResult {
-            num_neighbors: num,
+            n_neighbors: num,
             density,
         })
     }
@@ -156,8 +156,8 @@ impl Compute for LocalDensity {
 #[derive(Debug, Clone, Default)]
 pub struct LocalDensityResult {
     /// Fractional (or integer when `diameter = 0`) neighbor count per particle.
-    pub num_neighbors: Vec<F>,
-    /// Number density per particle: `num_neighbors / (4/3 π r_max³)`.
+    pub n_neighbors: Vec<F>,
+    /// Number density per particle: `n_neighbors / (4/3 π r_max³)`.
     pub density: Vec<F>,
 }
 
@@ -195,7 +195,7 @@ mod tests {
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
-        assert_eq!(r.num_neighbors[0], 0.0);
+        assert_eq!(r.n_neighbors[0], 0.0);
         assert_eq!(r.density[0], 0.0);
     }
 
@@ -208,8 +208,8 @@ mod tests {
             .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Each of the two particles has exactly 1 neighbor within 2.0.
-        assert!((r.num_neighbors[0] - 1.0).abs() < 1e-12);
-        assert!((r.num_neighbors[1] - 1.0).abs() < 1e-12);
+        assert!((r.n_neighbors[0] - 1.0).abs() < 1e-12);
+        assert!((r.n_neighbors[1] - 1.0).abs() < 1e-12);
         let v = FOUR_THIRDS_PI * 2.0_f64.powi(3);
         assert!((r.density[0] - 1.0 / v).abs() < 1e-12);
     }
@@ -228,9 +228,9 @@ mod tests {
             .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert!(
-            res.num_neighbors[0] < 1e-8,
+            res.n_neighbors[0] < 1e-8,
             "weight at edge should be ≈ 0, got {}",
-            res.num_neighbors[0]
+            res.n_neighbors[0]
         );
 
         // At r = r_max − diameter/2 → weight = 1 (fully inside).
@@ -242,7 +242,7 @@ mod tests {
             .with_diameter(diameter)
             .compute(&[&frame2], &[nl2])
             .unwrap()[0];
-        assert!((res2.num_neighbors[0] - 1.0).abs() < 1e-9);
+        assert!((res2.n_neighbors[0] - 1.0).abs() < 1e-9);
     }
 
     #[test]

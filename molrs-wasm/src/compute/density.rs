@@ -90,7 +90,7 @@ impl LocalDensity {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Out {
-            num_neighbors: Vec<F>,
+            n_neighbors: Vec<F>,
             density: Vec<F>,
         }
         frame.with_frame(|rs_frame| {
@@ -103,7 +103,7 @@ impl LocalDensity {
                 .pop()
                 .ok_or_else(|| JsValue::from_str("LocalDensity: empty result"))?;
             js_value(&Out {
-                num_neighbors: r.num_neighbors,
+                n_neighbors: r.n_neighbors,
                 density: r.density,
             })
         })

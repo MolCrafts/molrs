@@ -95,7 +95,7 @@ impl NeighborQuery {
     /// Panics if `cutoff <= 0` or `points` does not have 3 columns. An empty
     /// point set is not an error: it yields an empty index whose queries return
     /// no pairs.
-    pub fn free(points: FNx3View<'_>, cutoff: F) -> Self {
+    pub fn unbounded(points: FNx3View<'_>, cutoff: F) -> Self {
         let bx =
             SimBox::free(points, cutoff).expect("degenerate point cloud for free-boundary box");
         Self::new(&bx, points, cutoff)
@@ -140,8 +140,8 @@ impl NeighborQuery {
 
         let mut nlist = Neighbors::empty(
             QueryMode::CrossQuery {
-                num_query_points: n_query,
-                num_points: self.points.nrows(),
+                n_query_points: n_query,
+                n_points: self.points.nrows(),
             },
             NeighborsStorage::FULL,
         );
@@ -163,7 +163,7 @@ impl NeighborQuery {
     ///
     /// This is the standard half-shell neighbor list: each unordered pair is
     /// reported exactly once and no point pairs with itself. The returned table
-    /// is tagged `QueryMode::SelfQuery { num_points }` with the size of the
+    /// is tagged `QueryMode::SelfQuery { n_points }` with the size of the
     /// reference set, and carries both physical columns
     /// ([`NeighborsStorage::FULL`]).
     ///
@@ -178,7 +178,7 @@ impl NeighborQuery {
     pub fn query_self(&self) -> Neighbors {
         let mut out = Neighbors::empty(
             QueryMode::SelfQuery {
-                num_points: self.points.nrows(),
+                n_points: self.points.nrows(),
             },
             NeighborsStorage::FULL,
         );
@@ -241,13 +241,13 @@ impl NeighborQuery {
         }
     }
 
-    /// SoA sibling of [`free`](Self::free): build from free-boundary points
+    /// SoA sibling of [`unbounded`](Self::unbounded): build from free-boundary points
     /// held as column-major `x`/`y`/`z` slices.
     ///
-    /// Uses [`SimBox::free_columns`] to derive the same bounding box `free`
+    /// Uses [`SimBox::free_columns`] to derive the same bounding box `unbounded`
     /// would produce from the interleaved points, so the result is
     /// byte-identical.
-    pub fn free_columns(xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
+    pub fn unbounded_columns(xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
         let bx = SimBox::free_columns(xs, ys, zs, cutoff)
             .expect("degenerate point cloud for free-boundary box");
         Self::from_columns(&bx, xs, ys, zs, cutoff)
@@ -289,12 +289,12 @@ mod tests {
         let nq = NeighborQuery::new(&bx, pts.view(), 0.5);
         let nlist = nq.query_self();
 
-        assert_eq!(nlist.mode(), QueryMode::SelfQuery { num_points: 3 });
+        assert_eq!(nlist.mode(), QueryMode::SelfQuery { n_points: 3 });
         assert_eq!(nlist.n_pairs(), 1);
         assert_eq!(nlist.query_point_indices()[0], 0);
         assert_eq!(nlist.point_indices()[0], 1);
-        assert_eq!(nlist.num_points(), 3);
-        assert_eq!(nlist.num_query_points(), 3);
+        assert_eq!(nlist.n_points(), 3);
+        assert_eq!(nlist.n_query_points(), 3);
     }
 
     #[test]
@@ -309,12 +309,12 @@ mod tests {
         assert_eq!(
             nlist.mode(),
             QueryMode::CrossQuery {
-                num_query_points: 1,
-                num_points: 3,
+                n_query_points: 1,
+                n_points: 3,
             }
         );
-        assert_eq!(nlist.num_query_points(), 1);
-        assert_eq!(nlist.num_points(), 3);
+        assert_eq!(nlist.n_query_points(), 1);
+        assert_eq!(nlist.n_points(), 3);
         // query point at 0.5 is within 0.6 of ref points 0 (at 0.0) and 1 (at 1.0)
         assert_eq!(nlist.n_pairs(), 2);
     }
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn free_boundary_self_query() {
         let pts = array![[0.0 as F, 0.0, 0.0], [0.5, 0.0, 0.0], [10.0, 10.0, 10.0],];
-        let nq = NeighborQuery::free(pts.view(), 1.0);
+        let nq = NeighborQuery::unbounded(pts.view(), 1.0);
         let nlist = nq.query_self();
 
         // Only pts[0] and pts[1] are within cutoff=1.0
@@ -402,7 +402,7 @@ mod tests {
         let ref_pts = array![[0.0 as F, 0.0, 0.0], [1.0, 0.0, 0.0], [5.0, 5.0, 5.0],];
         let query_pts = array![[0.3 as F, 0.0, 0.0]];
 
-        let nq = NeighborQuery::free(ref_pts.view(), 0.5);
+        let nq = NeighborQuery::unbounded(ref_pts.view(), 0.5);
         let nlist = nq.query(query_pts.view());
 
         // query point at 0.3 is within 0.5 of ref[0] (dist=0.3) but not ref[1] (dist=0.7)
@@ -413,7 +413,7 @@ mod tests {
     fn free_boundary_no_wrap() {
         // Points far apart — should NOT be neighbors (no PBC wrapping)
         let pts = array![[0.0 as F, 0.0, 0.0], [5.0, 5.0, 5.0],];
-        let nq = NeighborQuery::free(pts.view(), 1.0);
+        let nq = NeighborQuery::unbounded(pts.view(), 1.0);
         let nlist = nq.query_self();
         assert_eq!(nlist.n_pairs(), 0);
     }
@@ -481,10 +481,10 @@ mod tests {
         assert_bitwise_equal(&nl_a, &nl_s);
 
         // Free / non-periodic fixture (query points overlap the reference set).
-        let nq_af = NeighborQuery::free(refp.view(), 2.0);
+        let nq_af = NeighborQuery::unbounded(refp.view(), 2.0);
         let nl_af = nq_af.query(qp.view());
 
-        let nq_sf = NeighborQuery::free_columns(&rx, &ry, &rz, 2.0);
+        let nq_sf = NeighborQuery::unbounded_columns(&rx, &ry, &rz, 2.0);
         let nl_sf = nq_sf.query_columns(&qx, &qy, &qz);
 
         assert!(nl_af.n_pairs() > 0, "fixture should produce pairs");

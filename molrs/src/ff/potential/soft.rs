@@ -140,7 +140,7 @@ impl SoftPotential {
         let cutoff = self.spec.rcut.max(self.spec.sigma) + SKIN;
         let table = match &self.simbox {
             Some(b) => NeighborQuery::new(b, view, cutoff).query_self(),
-            None => NeighborQuery::free(view, cutoff).query_self(),
+            None => NeighborQuery::unbounded(view, cutoff).query_self(),
         };
         let (qi, qj) = (table.query_point_indices(), table.point_indices());
         (0..table.n_pairs())

@@ -146,11 +146,11 @@ mod tests {
             disp: [1.0, 0.0, 0.0],
         });
         let mode = if pairs.iter().all(|&(i, j)| i < j) {
-            QueryMode::SelfQuery { num_points: 4 }
+            QueryMode::SelfQuery { n_points: 4 }
         } else {
             QueryMode::CrossQuery {
-                num_query_points: 4,
-                num_points: 4,
+                n_query_points: 4,
+                n_points: 4,
             }
         };
         Neighbors::from_pairs(rows, NeighborsStorage::FULL, mode)

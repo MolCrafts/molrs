@@ -248,9 +248,9 @@ fn tensor_list_into_pyarray<'py>(
 /// Gyration tensor per cluster.
 ///
 /// ``compute(frames, clusters, centers)``:
-/// - single frame → shape `(num_clusters, 3, 3)` **but wrapped as a list of length 1**
-///   when a list of frames is passed. For a single frame you get a `(num_clusters, 3, 3)` ndarray.
-/// - list of frames → ndarray of shape `(n_frames, num_clusters, 3, 3)` only if all frames
+/// - single frame → shape `(n_clusters, 3, 3)` **but wrapped as a list of length 1**
+///   when a list of frames is passed. For a single frame you get a `(n_clusters, 3, 3)` ndarray.
+/// - list of frames → ndarray of shape `(n_frames, n_clusters, 3, 3)` only if all frames
 ///   have identical cluster counts; otherwise a Python list of per-frame ndarrays.
 #[pyclass(module = "molrs.compute", name = "GyrationTensor")]
 pub struct PyGyrationTensor {
@@ -398,8 +398,8 @@ impl PyRadiusOfGyration {
 
     /// Compute Rg per cluster.
     ///
-    /// Returns a `(num_clusters,)` ndarray for a single frame, or a
-    /// `(n_frames, num_clusters)` ndarray for a batch (clusters per frame
+    /// Returns a `(n_clusters,)` ndarray for a single frame, or a
+    /// `(n_frames, n_clusters)` ndarray for a batch (clusters per frame
     /// must be identical; otherwise a Python list is returned).
     fn compute<'py>(
         &self,

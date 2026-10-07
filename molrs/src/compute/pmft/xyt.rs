@@ -159,8 +159,8 @@ impl PmftXyt {
             }
         }
 
-        let n_q = nlist.num_query_points() as F;
-        let n_p = nlist.num_points() as F;
+        let n_q = nlist.n_query_points() as F;
+        let n_p = nlist.n_points() as F;
         let n_pairs_total = if symmetric {
             n_p * (n_p - 1.0)
         } else {

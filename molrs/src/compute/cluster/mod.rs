@@ -52,7 +52,7 @@ impl Cluster {
         if n == 0 {
             return Ok(ClusterResult {
                 cluster_idx: Array1::zeros(0),
-                num_clusters: 0,
+                n_clusters: 0,
                 cluster_sizes: vec![],
                 cluster_keys: vec![],
             });
@@ -140,11 +140,11 @@ impl Cluster {
             cluster_sizes = new_sizes;
         }
 
-        let num_clusters = cluster_sizes.len();
+        let n_clusters = cluster_sizes.len();
 
         Ok(ClusterResult {
             cluster_idx: Array1::from_vec(cluster_idx),
-            num_clusters,
+            n_clusters,
             cluster_sizes,
             cluster_keys: vec![],
         })
@@ -171,7 +171,7 @@ impl Cluster {
         if n == 0 {
             return Ok(ClusterResult {
                 cluster_idx: Array1::zeros(0),
-                num_clusters: 0,
+                n_clusters: 0,
                 cluster_sizes: vec![],
                 cluster_keys: vec![],
             });
@@ -213,7 +213,7 @@ impl Cluster {
             }
             return Ok(ClusterResult {
                 cluster_idx: Array1::from_vec(cluster_idx),
-                num_clusters: new_sizes.len(),
+                n_clusters: new_sizes.len(),
                 cluster_sizes: new_sizes,
                 cluster_keys: new_keys,
             });
@@ -224,7 +224,7 @@ impl Cluster {
         }
         Ok(ClusterResult {
             cluster_idx: Array1::from_vec(cluster_idx),
-            num_clusters: sizes.len(),
+            n_clusters: sizes.len(),
             cluster_sizes: sizes,
             cluster_keys: order_keys.into_iter().map(|k| vec![k]).collect(),
         })
@@ -352,7 +352,7 @@ mod tests {
         let nbrs = build_neighbors(&frame, 2.0);
         let result = cluster_single(&frame, nbrs, 1);
 
-        assert_eq!(result.num_clusters, 2);
+        assert_eq!(result.n_clusters, 2);
         assert_eq!(result.cluster_idx[0], result.cluster_idx[1]);
         assert_eq!(result.cluster_idx[0], result.cluster_idx[2]);
         assert_eq!(result.cluster_idx[3], result.cluster_idx[4]);
@@ -367,7 +367,7 @@ mod tests {
         let nbrs = build_neighbors(&frame, 2.0);
         let result = cluster_single(&frame, nbrs, 2);
 
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_idx[2], -1);
         assert!(result.cluster_idx[0] >= 0);
     }
@@ -384,7 +384,7 @@ mod tests {
         let nbrs = build_neighbors(&frame, 2.0);
         let result = cluster_single(&frame, nbrs, 1);
 
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
 
@@ -399,7 +399,7 @@ mod tests {
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 2.01);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
 
@@ -409,7 +409,7 @@ mod tests {
         let frame = make_frame_with_positions(&positions, 20.0);
         let nbrs = build_neighbors(&frame, 0.5);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 3);
+        assert_eq!(result.n_clusters, 3);
         for &s in &result.cluster_sizes {
             assert_eq!(s, 1);
         }
@@ -423,7 +423,7 @@ mod tests {
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 0.5);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 3);
     }
 
@@ -432,7 +432,7 @@ mod tests {
         let frame = make_frame_with_positions(&[], 10.0);
         let nbrs = build_neighbors(&frame, 1.0);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 0);
+        assert_eq!(result.n_clusters, 0);
         assert!(result.cluster_idx.is_empty());
     }
 
@@ -442,7 +442,7 @@ mod tests {
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 1.0);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_idx[0], 0);
     }
 
@@ -457,7 +457,7 @@ mod tests {
         let frame = make_frame_with_positions(&positions, 10.0);
         let nbrs = build_neighbors(&frame, 1.5);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
         assert_eq!(result.cluster_sizes[0], 4);
     }
 
@@ -483,7 +483,7 @@ mod tests {
         );
         let nbrs = build_neighbors(&frame, 2.0);
         let result = cluster_single(&frame, nbrs, 1);
-        assert_eq!(result.num_clusters, 1);
+        assert_eq!(result.n_clusters, 1);
     }
 
     #[test]
@@ -494,8 +494,8 @@ mod tests {
         let n2 = build_neighbors(&f2, 1.0);
         let out = Cluster::new(1).compute(&[&f1, &f2], &[n1, n2]).unwrap();
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].num_clusters, 1);
-        assert_eq!(out[1].num_clusters, 2);
+        assert_eq!(out[0].n_clusters, 1);
+        assert_eq!(out[1].n_clusters, 2);
     }
 
     #[test]
@@ -524,14 +524,14 @@ mod tests {
         // Spatial clustering merges all six into one.
         let nbrs = build_neighbors(&frame, 2.0);
         let spatial = cluster_single(&frame, nbrs, 1);
-        assert_eq!(spatial.num_clusters, 1);
+        assert_eq!(spatial.n_clusters, 1);
 
         // Keyed clustering by mol-id splits into two clusters of three.
         let keys = [0u64, 0, 0, 1, 1, 1];
         let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
         assert_eq!(out.len(), 1);
         let r = &out[0];
-        assert_eq!(r.num_clusters, 2);
+        assert_eq!(r.n_clusters, 2);
         assert_eq!(r.cluster_sizes, vec![3, 3]);
         assert_eq!(r.cluster_idx[0], r.cluster_idx[1]);
         assert_eq!(r.cluster_idx[0], r.cluster_idx[2]);
@@ -548,7 +548,7 @@ mod tests {
         let keys = [7u64, 3, 7, 3];
         let out = Cluster::new(1).compute_keyed(&[&frame], &keys).unwrap();
         let r = &out[0];
-        assert_eq!(r.num_clusters, 2);
+        assert_eq!(r.n_clusters, 2);
         // key 7 seen first -> cluster 0, key 3 -> cluster 1
         assert_eq!(r.cluster_idx.to_vec(), vec![0, 1, 0, 1]);
         assert_eq!(r.cluster_keys, vec![vec![7u64], vec![3u64]]);
@@ -562,7 +562,7 @@ mod tests {
         let keys = [0u64, 0, 0, 1];
         let out = Cluster::new(2).compute_keyed(&[&frame], &keys).unwrap();
         let r = &out[0];
-        assert_eq!(r.num_clusters, 1);
+        assert_eq!(r.n_clusters, 1);
         assert_eq!(r.cluster_sizes, vec![3]);
         assert_eq!(r.cluster_idx[3], -1);
         assert_eq!(r.cluster_keys, vec![vec![0u64]]);

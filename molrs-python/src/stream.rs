@@ -27,16 +27,16 @@ use molrs::stream::ControlCommand;
 
 use crate::error::py_value_err;
 
-/// Resolve a wire-encoding name onto [`MessageFormat`].
+/// Resolve a wire-encoding name onto [`FrameEncoding`].
 ///
 /// The two spellings are the only ones the Rust side can produce, so an
 /// unknown name is an error rather than a silent fall back to MessagePack —
 /// a caller who writes `"messagepack"` must find out, not stream bytes the
 /// peer will read as JSON.
-pub(crate) fn message_format(name: &str) -> PyResult<molrs::stream::MessageFormat> {
+pub(crate) fn frame_encoding(name: &str) -> PyResult<molrs::stream::FrameEncoding> {
     match name {
-        "msgpack" => Ok(molrs::stream::MessageFormat::MessagePack),
-        "json" => Ok(molrs::stream::MessageFormat::Json),
+        "msgpack" => Ok(molrs::stream::FrameEncoding::MessagePack),
+        "json" => Ok(molrs::stream::FrameEncoding::Json),
         other => Err(PyValueError::new_err(format!(
             "unknown wire format {other:?}; expected 'msgpack' or 'json'"
         ))),
@@ -164,7 +164,7 @@ impl PyControlCommand {
     fn to_bytes<'py>(&self, py: Python<'py>, format: &str) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = self
             .inner
-            .to_bytes(message_format(format)?)
+            .to_bytes(frame_encoding(format)?)
             .map_err(py_value_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
@@ -174,7 +174,7 @@ impl PyControlCommand {
     #[pyo3(signature = (data, format = "json"))]
     fn from_bytes(data: &[u8], format: &str) -> PyResult<Self> {
         let inner =
-            ControlCommand::from_bytes(data, message_format(format)?).map_err(py_value_err)?;
+            ControlCommand::from_bytes(data, frame_encoding(format)?).map_err(py_value_err)?;
         Ok(Self { inner })
     }
 
@@ -205,7 +205,7 @@ mod server {
     use molrs::stream::{Publisher, PublisherConfig};
 
     use super::PyControlCommand;
-    use super::message_format;
+    use super::frame_encoding;
     use crate::core::frame::PyFrame;
     use crate::error::{io_error_to_pyerr, py_value_err};
 
@@ -270,7 +270,7 @@ mod server {
                 ));
             }
             let config = PublisherConfig {
-                format: message_format(format)?,
+                format: frame_encoding(format)?,
                 buffer_size,
                 max_frame_rate: 0.0,
                 token,

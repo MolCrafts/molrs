@@ -42,7 +42,7 @@ impl ClusterCenters {
         let ys = ys_p.slice();
         let zs = zs_p.slice();
         let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
-        let nc = clusters.num_clusters;
+        let nc = clusters.n_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
         let mut sum_delta = vec![[0.0 as F; 3]; nc];
@@ -197,7 +197,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }
@@ -218,7 +218,7 @@ mod tests {
         ];
         let frame = frame_with(&pos, 6.0, [false, false, false]);
         let cl = clusters_via_nlist(&frame, 0.5);
-        assert_eq!(cl.num_clusters, 2);
+        assert_eq!(cl.n_clusters, 2);
 
         let (ca, cb) = if cl.cluster_idx[0] == 0 {
             (0, 1)
@@ -238,7 +238,7 @@ mod tests {
         let pos = [[0.5, 5.0, 5.0], [9.5, 5.0, 5.0]];
         let frame = frame_with(&pos, 10.0, [true, true, true]);
         let cl = clusters_via_nlist(&frame, 2.0);
-        assert_eq!(cl.num_clusters, 1);
+        assert_eq!(cl.n_clusters, 1);
 
         let centers = centers_single(&frame, cl);
         let cx = centers.centers[0][0];

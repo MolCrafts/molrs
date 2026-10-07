@@ -340,7 +340,7 @@ mod tests {
         let nl = Neighbors::from_pairs(
             pairs,
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 14 },
+            QueryMode::SelfQuery { n_points: 14 },
         );
 
         // Premise of the derivation above, checked rather than assumed: the two

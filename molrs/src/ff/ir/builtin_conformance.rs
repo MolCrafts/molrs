@@ -114,7 +114,7 @@ fn table(x: &[F]) -> Neighbors {
             }
         }),
         NeighborsStorage::FULL,
-        QueryMode::SelfQuery { num_points: 4 },
+        QueryMode::SelfQuery { n_points: 4 },
     )
 }
 

@@ -190,8 +190,8 @@ class TestNeighborsColumns:
         nl.build(_unit_square(), cubic_box)
         neigh = nl.neighbors()
 
-        assert neigh.num_points == 4
-        assert neigh.num_query_points == 4
+        assert neigh.n_points == 4
+        assert neigh.n_query_points == 4
 
 
 # --------------------------------------------------------------------------
@@ -272,8 +272,8 @@ class TestNeighborQueryCross:
         query_points = np.array([[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float64)
         cross = molrs.core.NeighborQuery(cubic_box, points, 1.5).query(query_points)
 
-        assert cross.num_query_points == 2
-        assert cross.num_points == 3
+        assert cross.n_query_points == 2
+        assert cross.n_points == 3
 
     def test_query_self_returns_a_half_shell_table(self, cubic_box: molrs.core.Box) -> None:
         neigh = molrs.core.NeighborQuery(cubic_box, _unit_square(), 1.5).query_self()

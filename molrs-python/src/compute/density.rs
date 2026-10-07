@@ -37,7 +37,7 @@ impl PyLocalDensity {
         Ok(Self { inner })
     }
 
-    /// Returns `(num_neighbors, density)` ndarrays per frame.
+    /// Returns `(n_neighbors, density)` ndarrays per frame.
     fn compute<'py>(
         &self,
         py: Python<'py>,
@@ -55,7 +55,7 @@ impl PyLocalDensity {
             .into_iter()
             .map(|r| {
                 (
-                    Array1::from_vec(r.num_neighbors).into_pyarray(py),
+                    Array1::from_vec(r.n_neighbors).into_pyarray(py),
                     Array1::from_vec(r.density).into_pyarray(py),
                 )
             })

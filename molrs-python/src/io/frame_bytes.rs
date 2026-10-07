@@ -9,7 +9,7 @@ use pyo3::types::PyBytes;
 
 use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
-use crate::stream::message_format;
+use crate::stream::frame_encoding;
 
 /// Rebuild a :class:`Frame` from streaming wire bytes.
 ///
@@ -26,7 +26,7 @@ use crate::stream::message_format;
 #[pyfunction]
 #[pyo3(signature = (data, format = "msgpack"))]
 pub fn read_frame_bytes(data: &[u8], format: &str) -> PyResult<PyFrame> {
-    let fmt = message_format(format)?;
+    let fmt = frame_encoding(format)?;
     let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(py_value_err)?;
     PyFrame::from_core_frame(frame)
 }
@@ -40,7 +40,7 @@ pub fn write_frame_bytes<'py>(
     frame: &PyFrame,
     format: &str,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let fmt = message_format(format)?;
+    let fmt = frame_encoding(format)?;
     let bytes = frame
         .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
         .map_err(py_value_err)?;

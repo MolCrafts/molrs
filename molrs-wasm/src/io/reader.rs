@@ -646,8 +646,8 @@ impl AcReader {
 #[wasm_bindgen(js_name = readFrameBytes)]
 pub fn read_frame_bytes_export(data: &[u8], format: &str) -> Result<Frame, JsValue> {
     let fmt = match format.to_lowercase().as_str() {
-        "msgpack" => molrs::stream::MessageFormat::MessagePack,
-        "json" => molrs::stream::MessageFormat::Json,
+        "msgpack" => molrs::stream::FrameEncoding::MessagePack,
+        "json" => molrs::stream::FrameEncoding::Json,
         other => {
             return Err(JsValue::from_str(&format!(
                 "unsupported stream format: {other} (expected \"msgpack\" or \"json\")"

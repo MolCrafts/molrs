@@ -631,7 +631,7 @@ impl SimBox {
     }
 
     /// Check if points lie within [0,1) in fractional space.
-    pub fn isin(&self, xyz: FNx3View<'_>) -> Array1<bool> {
+    pub fn contains(&self, xyz: FNx3View<'_>) -> Array1<bool> {
         let n = xyz.nrows();
         let mut mask = Vec::with_capacity(n);
         for i in 0..n {
@@ -1028,7 +1028,7 @@ impl SimBox {
     ///
     /// Layout: rows = x/y/z, col 0 = min, col 1 = max — the AABB of the eight
     /// corners. For triclinic cells this is larger than the true cell volume;
-    /// use [`isin`](Self::isin) for membership. Geometric region types that
+    /// use [`contains`](Self::contains) for membership. Geometric region types that
     /// describe the same volume live in the regions (`crate::core::Region`)
     /// (`Cuboid` / `Parallelepiped`) — not on this type.
     pub fn bounds(&self) -> FNx3 {
@@ -1355,7 +1355,10 @@ mod tests {
                     );
                 }
                 // And it is still inside by the box's own predicate.
-                assert!(bx.isin(wrapped.view())[0], "box {bi} eps {eps:e} not isin");
+                assert!(
+                    bx.contains(wrapped.view())[0],
+                    "box {bi} eps {eps:e} not contained"
+                );
             }
         }
     }
@@ -1675,7 +1678,7 @@ mod tests {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [false, false, false])
             .expect("invalid box length");
         let pts = array![[0.5, 0.5, 0.5], [-0.1, 0.5, 0.5], [2.1, 0.5, 0.5]];
-        let mask = bx.isin(pts.view());
+        let mask = bx.contains(pts.view());
         assert!(mask[0]);
         assert!(!mask[1]);
         assert!(!mask[2]);
@@ -1686,7 +1689,7 @@ mod tests {
         let bx = SimBox::cube(2.0, array![0.0, 0.0, 0.0], [true, true, true])
             .expect("invalid box length");
         let pts = array![[0.1, 0.1, 0.1], [2.1, 0.0, 0.0], [-0.1, 0.0, 0.0]];
-        let mask = bx.isin(pts.view());
+        let mask = bx.contains(pts.view());
         assert!(mask[0]);
         assert!(!mask[1]);
         assert!(!mask[2]);

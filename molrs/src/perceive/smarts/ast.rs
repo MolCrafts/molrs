@@ -240,7 +240,7 @@ impl AtomPrimitive {
             AtomPrimitive::TotalConnections(n) => ctx.degree(id) == *n,
             AtomPrimitive::Degree(n) => ctx.degree(id) == *n,
             AtomPrimitive::RingMembership(None) => ctx.rings.is_atom_in_ring(id),
-            AtomPrimitive::RingMembership(Some(n)) => ctx.rings.num_atom_rings(id) as u32 == *n,
+            AtomPrimitive::RingMembership(Some(n)) => ctx.rings.n_atom_rings(id) as u32 == *n,
             AtomPrimitive::RingSize(None) => ctx.rings.is_atom_in_ring(id),
             // RDKit's `r<n>` matches when the atom's *smallest* ring has size
             // exactly `n` (not "is in any ring of size n"). E.g. a fused-ring

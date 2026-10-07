@@ -255,8 +255,8 @@ impl RdfResult {
     }
 
     /// Number of reference points used in the normalization.
-    #[wasm_bindgen(getter, js_name = numPoints)]
-    pub fn num_points(&self) -> usize {
+    #[wasm_bindgen(getter, js_name = nPoints)]
+    pub fn n_points(&self) -> usize {
         self.inner.n_points
     }
 

@@ -253,7 +253,7 @@ mod tests {
         let cluster = Cluster::new(1);
         let result = cluster.compute(&frame, &nbrs).unwrap();
 
-        assert_eq!(result.num_clusters(), 2);
+        assert_eq!(result.n_clusters(), 2);
         let idx = result.cluster_idx();
         assert_eq!(idx.len(), 4);
         assert_eq!(idx[0], idx[1]);
@@ -274,7 +274,7 @@ mod tests {
         let cluster = Cluster::new(2);
         let result = cluster.compute(&frame, &nbrs).unwrap();
 
-        assert_eq!(result.num_clusters(), 1);
+        assert_eq!(result.n_clusters(), 1);
         let idx = result.cluster_idx();
         assert_eq!(idx[2], -1); // filtered out
         assert!(idx[0] >= 0);

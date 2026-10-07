@@ -274,7 +274,7 @@ impl PyVelocityVerlet {
 
     /// Number of pair edges in the current list (``None`` without neighbors).
     #[getter]
-    fn num_edges(&self) -> Option<usize> {
+    fn n_edges(&self) -> Option<usize> {
         self.inner.forces().neighbor_stats().edges
     }
 
@@ -420,7 +420,7 @@ impl PyLangevin {
 
     /// Number of pair edges in the current list (``None`` without neighbors).
     #[getter]
-    fn num_edges(&self) -> Option<usize> {
+    fn n_edges(&self) -> Option<usize> {
         self.inner.forces().neighbor_stats().edges
     }
 

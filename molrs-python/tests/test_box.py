@@ -185,13 +185,13 @@ class TestBoxDisplacement:
 
 class TestBoxContainment:
     def test_isin_inside(self, cubic_box, sample_points):
-        inside = cubic_box.isin(sample_points)
+        inside = cubic_box.contains(sample_points)
         assert inside.shape == (5,)
         assert all(inside)
 
     def test_isin_outside(self, cubic_box):
         pts = np.array([[-1.0, 0.0, 0.0], [11.0, 0.0, 0.0]], dtype=np.float64)
-        inside = cubic_box.isin(pts)
+        inside = cubic_box.contains(pts)
         assert not inside[0]
         assert not inside[1]
 

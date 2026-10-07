@@ -324,7 +324,7 @@ mod tests {
     /// The pairs are the regular hexagon's own bonds, hard-coded rather than
     /// searched: centre 0 bonded to its six ring neighbours 1..=6 at unit
     /// distance and angles `2πk/6`. All satisfy `i < j`, so
-    /// `SelfQuery { num_points: 7 }` is a legal label.
+    /// `SelfQuery { n_points: 7 }` is a legal label.
     #[test]
     fn hexatic_indices_only_neighbors_is_bad_shape() {
         use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
@@ -344,7 +344,7 @@ mod tests {
         let nl = Neighbors::from_pairs(
             pairs,
             NeighborsStorage::INDICES_ONLY,
-            QueryMode::SelfQuery { num_points: 7 },
+            QueryMode::SelfQuery { n_points: 7 },
         );
         assert_eq!(
             nl.n_pairs(),
@@ -407,8 +407,8 @@ mod tests {
             pairs,
             NeighborsStorage::FULL,
             QueryMode::CrossQuery {
-                num_query_points: 7,
-                num_points: 7,
+                n_query_points: 7,
+                n_points: 7,
             },
         );
         assert_eq!(nl.n_pairs(), 12, "the guard must see a non-empty table");

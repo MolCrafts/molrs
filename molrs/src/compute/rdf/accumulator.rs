@@ -103,8 +103,8 @@ impl RdfAccumulator {
         if self.mode.is_none() {
             self.mode = Some(mode);
         }
-        self.n_points += nlist.num_points();
-        self.n_query_points += nlist.num_query_points();
+        self.n_points += nlist.n_points();
+        self.n_query_points += nlist.n_query_points();
         self.volume += vol;
         self.n_frames += 1;
         Ok(())

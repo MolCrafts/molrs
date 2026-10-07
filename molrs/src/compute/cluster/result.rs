@@ -12,7 +12,7 @@ pub struct ClusterResult {
     /// Particle -> cluster ID (0-indexed). `-1` for unassigned (filtered).
     pub cluster_idx: Array1<i64>,
     /// Number of clusters found.
-    pub num_clusters: usize,
+    pub n_clusters: usize,
     /// Size (particle count) of each cluster, indexed by cluster ID.
     pub cluster_sizes: Vec<usize>,
     /// The membership keys present in each cluster, indexed by cluster ID

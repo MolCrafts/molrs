@@ -136,7 +136,7 @@ def test_spatial_types_preserve_queries_and_region_behavior() -> None:
     restored_skin = roundtrip(skin)
     assert restored_skin.ago == 1
     assert restored_skin.rebuild_count == 0
-    assert restored_skin.num_edges == skin.num_edges
+    assert restored_skin.n_edges == skin.n_edges
 
     cube_mesh = _unit_cube_mesh()
     primitives = [

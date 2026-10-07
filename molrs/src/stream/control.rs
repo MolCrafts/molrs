@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::stream::{MessageFormat, StreamError};
+use crate::stream::{FrameEncoding, StreamError};
 
 /// A bidirectional control message from a visualization client to the server.
 ///
@@ -36,26 +36,26 @@ pub enum ControlCommand {
 impl ControlCommand {
     /// Encode this command in `format`.
     ///
-    /// Shares [`MessageFormat`] with [`crate::stream`] so a client speaks one
+    /// Shares [`FrameEncoding`] with [`crate::stream`] so a client speaks one
     /// encoding for both directions of the socket.
-    pub fn to_bytes(&self, format: MessageFormat) -> Result<Vec<u8>, StreamError> {
+    pub fn to_bytes(&self, format: FrameEncoding) -> Result<Vec<u8>, StreamError> {
         match format {
-            MessageFormat::Json => {
+            FrameEncoding::Json => {
                 serde_json::to_vec(self).map_err(|e| StreamError::Encode(e.to_string()))
             }
-            MessageFormat::MessagePack => {
+            FrameEncoding::MessagePack => {
                 rmp_serde::to_vec_named(self).map_err(|e| StreamError::Encode(e.to_string()))
             }
         }
     }
 
     /// Decode a command written in `format`.
-    pub fn from_bytes(bytes: &[u8], format: MessageFormat) -> Result<Self, StreamError> {
+    pub fn from_bytes(bytes: &[u8], format: FrameEncoding) -> Result<Self, StreamError> {
         match format {
-            MessageFormat::Json => {
+            FrameEncoding::Json => {
                 serde_json::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
             }
-            MessageFormat::MessagePack => {
+            FrameEncoding::MessagePack => {
                 rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
             }
         }
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn to_bytes_round_trips_every_variant_in_both_formats() {
-        for format in [MessageFormat::Json, MessageFormat::MessagePack] {
+        for format in [FrameEncoding::Json, FrameEncoding::MessagePack] {
             for cmd in all_variants() {
                 let bytes = cmd.to_bytes(format).expect("encode");
                 let back = ControlCommand::from_bytes(&bytes, format).expect("decode");
@@ -133,11 +133,11 @@ mod tests {
         // fails to parse.
         for cmd in all_variants() {
             assert_eq!(
-                cmd.to_bytes(MessageFormat::Json).unwrap(),
+                cmd.to_bytes(FrameEncoding::Json).unwrap(),
                 serde_json::to_vec(&cmd).unwrap()
             );
             assert_eq!(
-                cmd.to_bytes(MessageFormat::MessagePack).unwrap(),
+                cmd.to_bytes(FrameEncoding::MessagePack).unwrap(),
                 rmp_serde::to_vec_named(&cmd).unwrap()
             );
         }
@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn from_bytes_rejects_a_payload_in_the_other_format() {
-        let json = ControlCommand::Pause.to_bytes(MessageFormat::Json).unwrap();
-        assert!(ControlCommand::from_bytes(&json, MessageFormat::MessagePack).is_err());
+        let json = ControlCommand::Pause.to_bytes(FrameEncoding::Json).unwrap();
+        assert!(ControlCommand::from_bytes(&json, FrameEncoding::MessagePack).is_err());
     }
 
     #[test]

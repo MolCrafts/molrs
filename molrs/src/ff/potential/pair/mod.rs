@@ -281,9 +281,7 @@ pub(crate) mod testing {
         Neighbors::from_pairs(
             pairs,
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery {
-                num_points: n_points,
-            },
+            QueryMode::SelfQuery { n_points },
         )
     }
 

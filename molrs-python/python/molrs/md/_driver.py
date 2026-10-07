@@ -61,7 +61,7 @@ class MD:
     Precision is ``MD(dtype=np.float64)`` only; float32 / mixed belong in
     the Rust integrator.
 
-    After :meth:`run`, :attr:`num_edges` / :attr:`rebuild_count` /
+    After :meth:`run`, :attr:`n_edges` / :attr:`rebuild_count` /
     :attr:`ago` report the run's neighbour state (``None`` when the run had
     no neighbour list) and :attr:`thermo` holds the sampled observables.
     """
@@ -179,9 +179,9 @@ class MD:
     # -- run ----------------------------------------------------------------
 
     @property
-    def num_edges(self) -> int | None:
+    def n_edges(self) -> int | None:
         """Pair edges in the last run's list (``None`` without neighbors)."""
-        return None if self._integrator is None else self._integrator.num_edges
+        return None if self._integrator is None else self._integrator.n_edges
 
     @property
     def rebuild_count(self) -> int | None:

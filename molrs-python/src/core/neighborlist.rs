@@ -98,7 +98,7 @@ fn check_cutoff(cutoff: f64) -> PyResult<()> {
 /// num_points : int
 ///     Number of reference points.
 /// num_query_points : int
-///     Number of query points (equal to ``num_points`` for a self search).
+///     Number of query points (equal to ``n_points`` for a self search).
 /// is_self_query : bool
 ///     ``True`` when both index columns address the same point set.
 ///
@@ -120,11 +120,11 @@ impl PyNeighbors {
         clippy::too_many_arguments,
         reason = "Pair-table constructor arguments"
     )]
-    #[pyo3(signature = (is_self_query, num_points, num_query_points, idx_i, idx_j, dist_sq=None, disp=None))]
+    #[pyo3(signature = (is_self_query, n_points, n_query_points, idx_i, idx_j, dist_sq=None, disp=None))]
     fn new(
         is_self_query: bool,
-        num_points: usize,
-        num_query_points: usize,
+        n_points: usize,
+        n_query_points: usize,
         idx_i: Vec<u32>,
         idx_j: Vec<u32>,
         dist_sq: Option<Vec<f64>>,
@@ -144,11 +144,11 @@ impl PyNeighbors {
             disp: disp.is_some(),
         };
         let mode = if is_self_query {
-            QueryMode::SelfQuery { num_points }
+            QueryMode::SelfQuery { n_points }
         } else {
             QueryMode::CrossQuery {
-                num_query_points,
-                num_points,
+                n_query_points,
+                n_points,
             }
         };
         let pairs = (0..n).map(|row| NeighborPair {
@@ -168,8 +168,8 @@ impl PyNeighbors {
             slf.as_any(),
             (
                 matches!(inner.mode(), QueryMode::SelfQuery { .. }),
-                inner.num_points(),
-                inner.num_query_points(),
+                inner.n_points(),
+                inner.n_query_points(),
                 inner.query_point_indices().to_vec(),
                 inner.point_indices().to_vec(),
                 inner.dist_sq().map(|values| values.to_vec()),
@@ -257,14 +257,14 @@ impl PyNeighbors {
 
     /// Number of reference points the search indexed.
     #[getter]
-    fn num_points(&self) -> usize {
-        self.inner.num_points()
+    fn n_points(&self) -> usize {
+        self.inner.n_points()
     }
 
-    /// Number of query points; equal to ``num_points`` for a self search.
+    /// Number of query points; equal to ``n_points`` for a self search.
     #[getter]
-    fn num_query_points(&self) -> usize {
-        self.inner.num_query_points()
+    fn n_query_points(&self) -> usize {
+        self.inner.n_query_points()
     }
 
     /// Whether both index columns address the same point set (half-shell).
@@ -285,8 +285,8 @@ impl PyNeighbors {
              dist_sq={}, disp={})",
             self.inner.n_pairs(),
             mode,
-            self.inner.num_points(),
-            self.inner.num_query_points(),
+            self.inner.n_points(),
+            self.inner.n_query_points(),
             storage.dist_sq,
             storage.disp,
         )
@@ -590,11 +590,11 @@ impl PyNeighborQuery {
     ///     positive.
     #[staticmethod]
     #[pyo3(signature = (points, cutoff))]
-    fn free(points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
+    fn unbounded(points: PyReadonlyArray2<'_, f64>, cutoff: f64) -> PyResult<Self> {
         check_points(&points, "points")?;
         check_cutoff(cutoff)?;
         Ok(Self {
-            inner: RsNeighborQuery::free(points.as_array(), cutoff),
+            inner: RsNeighborQuery::unbounded(points.as_array(), cutoff),
         })
     }
 
@@ -760,8 +760,8 @@ impl PyVerletSkin {
     }
 
     #[getter]
-    fn num_edges(&self) -> PyResult<usize> {
-        Ok(self.get()?.num_edges())
+    fn n_edges(&self) -> PyResult<usize> {
+        Ok(self.get()?.n_edges())
     }
 
     #[getter]
@@ -801,7 +801,7 @@ impl PyVerletSkin {
                 "VerletSkin(cutoff={}, skin={}, edges={}, rebuilds={})",
                 s.cutoff(),
                 s.skin(),
-                s.num_edges(),
+                s.n_edges(),
                 s.rebuild_count()
             ),
             None => "VerletSkin(<moved>)".into(),

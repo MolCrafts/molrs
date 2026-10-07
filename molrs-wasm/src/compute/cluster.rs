@@ -113,9 +113,9 @@ pub struct ClusterResult {
 #[wasm_bindgen(js_class = ClusterResult)]
 impl ClusterResult {
     /// Number of valid clusters found (after min-size filtering).
-    #[wasm_bindgen(getter, js_name = numClusters)]
-    pub fn num_clusters(&self) -> usize {
-        self.inner.num_clusters
+    #[wasm_bindgen(getter, js_name = nClusters)]
+    pub fn n_clusters(&self) -> usize {
+        self.inner.n_clusters
     }
 
     /// Per-particle cluster ID assignment as `Int32Array`.
@@ -124,7 +124,7 @@ impl ClusterResult {
     /// Particles in clusters smaller than `minClusterSize` are
     /// assigned ID = -1 (filtered out).
     ///
-    /// Cluster IDs are zero-based and contiguous: `0, 1, ..., numClusters-1`.
+    /// Cluster IDs are zero-based and contiguous: `0, 1, ..., nClusters-1`.
     #[wasm_bindgen(js_name = clusterIdx)]
     pub fn cluster_idx(&self) -> Vec<i32> {
         self.inner.cluster_idx.iter().map(|&id| id as i32).collect()
@@ -133,7 +133,7 @@ impl ClusterResult {
     /// Size (particle count) of each valid cluster as `Uint32Array`.
     ///
     /// `clusterSizes()[c]` is the number of particles in cluster `c`.
-    /// Length equals `numClusters`.
+    /// Length equals `nClusters`.
     #[wasm_bindgen(js_name = clusterSizes)]
     pub fn cluster_sizes(&self) -> Vec<u32> {
         self.inner.cluster_sizes.iter().map(|&s| s as u32).collect()

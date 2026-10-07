@@ -1,8 +1,9 @@
-//! The two built-in [`GrowthStrategy`] implementations.
+//! The [`GrowthStrategy`] trait — how a self-avoiding walk places each
+//! monomer — and its two built-in implementations.
 //!
 //! Both are plain structs injected into
-//! [`SelfAvoidingWalk`](super::walk::SelfAvoidingWalk) — there are no factory
-//! functions. Overlap is judged by occupancy cells, never by distance:
+//! [`SelfAvoidingWalk`](super::self_avoiding_walk::SelfAvoidingWalk) — there
+//! are no factory functions. Overlap is judged by occupancy cells, never by distance:
 //! [`FccLattice`] steps onto a global FCC lattice and uses
 //! [`OccupancyMode::SameCell`] (distinct sites are already `>= bond_length`
 //! apart); [`OffLattice`] grows in continuous space and uses
@@ -12,10 +13,36 @@ use rand::RngExt;
 use rand::rngs::StdRng;
 
 use super::occupancy::OccupancyMode;
-use super::walk::GrowthStrategy;
 use crate::core::SimBox;
 use crate::op::F;
 use crate::op::unit_vector_from_uniform;
+
+/// A monomer-placement policy for the self-avoiding walk.
+///
+/// Implementors are plain structs injected into [`SelfAvoidingWalk`](super::self_avoiding_walk::SelfAvoidingWalk) as the
+/// generic `strategy` field — there are no factory functions. A strategy
+/// declares how occupancy is judged ([`occupancy_mode`](GrowthStrategy::occupancy_mode)),
+/// may round the box edge to its lattice
+/// ([`adjust_box_edge`](GrowthStrategy::adjust_box_edge)), and proposes raw
+/// candidate geometry; the driver applies boundaries and the occupancy test.
+pub trait GrowthStrategy {
+    /// The occupancy model used to reject overlapping placements.
+    fn occupancy_mode(&self, bond_length: F) -> OccupancyMode;
+
+    /// Optionally enlarge the cubic box edge (e.g. to a lattice-commensurate
+    /// multiple). Default: leave it unchanged.
+    fn adjust_box_edge(&self, edge: F, bond_length: F) -> F {
+        let _ = bond_length;
+        edge
+    }
+
+    /// Propose a position for the first monomer of a chain (already in-box).
+    fn propose_first(&self, simbox: &SimBox, bond_length: F, rng: &mut StdRng) -> [F; 3];
+
+    /// Propose a raw next position one `bond_length` from `tip` (the driver
+    /// applies boundary conditions and the occupancy test).
+    fn propose_step(&self, tip: [F; 3], bond_length: F, rng: &mut StdRng) -> [F; 3];
+}
 
 /// FCC-lattice growth: nearest-neighbour spacing equals `bond_length`, the box
 /// edge is rounded up to a whole number of conventional FCC cells, and overlap

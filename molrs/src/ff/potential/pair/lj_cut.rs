@@ -1109,7 +1109,7 @@ mod tests {
                 disp: [1.0, 0.0, 0.0],
             }],
             molrs::core::NeighborsStorage::FULL,
-            molrs::core::QueryMode::SelfQuery { num_points: 2 },
+            molrs::core::QueryMode::SelfQuery { n_points: 2 },
         );
         let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
         assert_eq!(e0, e1);
@@ -1154,7 +1154,7 @@ mod tests {
                     disp: [3.7, 0.0, 0.0],
                 }],
                 molrs::core::NeighborsStorage::FULL,
-                molrs::core::QueryMode::SelfQuery { num_points: 2 },
+                molrs::core::QueryMode::SelfQuery { n_points: 2 },
             );
             let Member::Pair(typed) = typed else {
                 panic!("a pair member")
@@ -1223,7 +1223,7 @@ mod tests {
         let neighbors = Neighbors::from_pairs(
             table,
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
 
         let (e_c, f_c) = compiled.calc_energy_forces(&coords);
@@ -1405,7 +1405,7 @@ mod tests {
                 disp: [R_AB, 0.0, 0.0],
             }],
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 2 },
+            QueryMode::SelfQuery { n_points: 2 },
         );
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
         kernel.calc_energy_forces_with_pairs(&coords, &neighbors).0

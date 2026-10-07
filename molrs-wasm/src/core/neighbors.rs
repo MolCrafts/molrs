@@ -282,9 +282,9 @@ fn storage_flag(storage: &JsValue, key: &str) -> Result<bool, JsValue> {
 ///
 /// | Property | Type | Description |
 /// |----------|------|-------------|
-/// | `numPairs` | `number` | Number of pairs — the row count every column shares |
-/// | `numPoints` | `number` | Number of reference points |
-/// | `numQueryPoints` | `number` | Number of query points (= `numPoints` for a self search) |
+/// | `nPairs` | `number` | Number of pairs — the row count every column shares |
+/// | `nPoints` | `number` | Number of reference points |
+/// | `nQueryPoints` | `number` | Number of query points (= `nPoints` for a self search) |
 /// | `isSelfQuery` | `boolean` | Whether both index columns address the same point set |
 ///
 /// # Optional columns
@@ -315,21 +315,21 @@ pub struct Neighbors {
 #[wasm_bindgen(js_class = Neighbors)]
 impl Neighbors {
     /// Number of neighbor pairs — the row count every column shares.
-    #[wasm_bindgen(getter, js_name = numPairs)]
-    pub fn num_pairs(&self) -> usize {
+    #[wasm_bindgen(getter, js_name = nPairs)]
+    pub fn n_pairs(&self) -> usize {
         self.inner.n_pairs()
     }
 
     /// Number of reference (target) points the search indexed.
-    #[wasm_bindgen(getter, js_name = numPoints)]
-    pub fn num_points(&self) -> usize {
-        self.inner.num_points()
+    #[wasm_bindgen(getter, js_name = nPoints)]
+    pub fn n_points(&self) -> usize {
+        self.inner.n_points()
     }
 
-    /// Number of query points; equal to `numPoints` for a self search.
-    #[wasm_bindgen(getter, js_name = numQueryPoints)]
-    pub fn num_query_points(&self) -> usize {
-        self.inner.num_query_points()
+    /// Number of query points; equal to `nPoints` for a self search.
+    #[wasm_bindgen(getter, js_name = nQueryPoints)]
+    pub fn n_query_points(&self) -> usize {
+        self.inner.n_query_points()
     }
 
     /// Whether both index columns address the same point set (half-shell,
@@ -372,7 +372,7 @@ impl Neighbors {
     }
 
     /// Minimum-image displacements `r_j - r_i` in Å, flattened as
-    /// `[dx0, dy0, dz0, dx1, …]` — three values per pair, `3 * numPairs` long.
+    /// `[dx0, dy0, dz0, dx1, …]` — three values per pair, `3 * nPairs` long.
     /// `undefined` when this table never stored the column.
     ///
     /// The vector is **not** normalized: its length is the pair distance, and
@@ -445,7 +445,7 @@ impl NeighborQuery {
             let pos = positions_from_frame(rs_frame)?;
             let inner = match rs_frame.simbox.as_ref() {
                 Some(sb) => RsNeighborQuery::new(sb, pos.view(), cutoff),
-                None => RsNeighborQuery::free(pos.view(), cutoff),
+                None => RsNeighborQuery::unbounded(pos.view(), cutoff),
             };
             Ok(NeighborQuery { inner })
         })
@@ -504,7 +504,7 @@ mod tests {
         let mut nl = NeighborList::new(2.0).unwrap();
         nl.build(&frame).unwrap();
         let pairs = nl.neighbors(None).unwrap();
-        assert_eq!(pairs.num_pairs(), 1);
+        assert_eq!(pairs.n_pairs(), 1);
         assert!(pairs.is_self_query());
     }
 
@@ -516,9 +516,9 @@ mod tests {
             .unwrap()
             .query(&other)
             .unwrap();
-        assert_eq!(cross.num_pairs(), 2);
-        assert_eq!(cross.num_query_points(), 3);
-        assert_eq!(cross.num_points(), 2);
+        assert_eq!(cross.n_pairs(), 2);
+        assert_eq!(cross.n_query_points(), 3);
+        assert_eq!(cross.n_points(), 2);
         assert!(!cross.is_self_query());
     }
 }

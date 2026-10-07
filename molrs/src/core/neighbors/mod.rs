@@ -183,7 +183,7 @@ pub enum QueryMode {
     /// so each unordered pair is present exactly once and no pair has `i == j`.
     SelfQuery {
         /// Size of the single point set both `i` and `j` index.
-        num_points: usize,
+        n_points: usize,
     },
     /// Cross-query: `i` indexes the query points, `j` indexes the reference
     /// points.
@@ -196,9 +196,9 @@ pub enum QueryMode {
     /// relabelled as a self-query.
     CrossQuery {
         /// Size of the query point set (`i` indices).
-        num_query_points: usize,
+        n_query_points: usize,
         /// Size of the reference point set (`j` indices).
-        num_points: usize,
+        n_points: usize,
     },
 }
 
@@ -418,9 +418,9 @@ pub struct NeighborList {
     /// [`build_columns`](Self::build_columns). `None` until then, which is what
     /// makes an `update` before a `build` a loud error instead of a guess.
     bx: Option<SimBox>,
-    /// Point count of the last build/update — the `num_points` a materialized
+    /// Point count of the last build/update — the `n_points` a materialized
     /// table is tagged with.
-    num_points: usize,
+    n_points: usize,
 }
 
 impl NeighborList {
@@ -470,7 +470,7 @@ impl NeighborList {
         Self {
             backend,
             bx: None,
-            num_points: 0,
+            n_points: 0,
         }
     }
 
@@ -524,7 +524,7 @@ impl NeighborList {
         assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
         self.backend.build_index(points, bx);
         self.bx = Some(bx.clone());
-        self.num_points = points.nrows();
+        self.n_points = points.nrows();
     }
 
     /// Index three coordinate columns in `bx` — the column sibling of
@@ -557,7 +557,7 @@ impl NeighborList {
         );
         self.backend.build_index_columns(xs, ys, zs, bx);
         self.bx = Some(bx.clone());
-        self.num_points = xs.len();
+        self.n_points = xs.len();
     }
 
     /// Re-index new coordinates (`N × 3`, Å) in the box captured by the last
@@ -591,7 +591,7 @@ impl NeighborList {
             .as_ref()
             .expect("NeighborList::update reuses the box of the previous build: call build(points, bx) first");
         self.backend.update_index(points, bx);
-        self.num_points = points.nrows();
+        self.n_points = points.nrows();
     }
 
     /// Stream every pair within the cutoff, in whatever order the backend
@@ -634,7 +634,7 @@ impl NeighborList {
     /// single-threaded — a visitor is `FnMut`, so `for_each_pair` cannot be
     /// parallelized behind the caller's back.
     ///
-    /// The table is tagged `SelfQuery { num_points }` with the point count of
+    /// The table is tagged `SelfQuery { n_points }` with the point count of
     /// the last index.
     ///
     /// A column `storage` leaves out is not written, and its accessor reports
@@ -646,7 +646,7 @@ impl NeighborList {
     pub fn neighbors(&self, storage: NeighborsStorage) -> Neighbors {
         let mut out = Neighbors::empty(
             QueryMode::SelfQuery {
-                num_points: self.num_points,
+                n_points: self.n_points,
             },
             storage,
         );
@@ -1089,23 +1089,21 @@ impl Neighbors {
 
     /// Number of reference points (the point set used to build the spatial index).
     #[inline]
-    pub fn num_points(&self) -> usize {
+    pub fn n_points(&self) -> usize {
         match self.mode {
-            QueryMode::SelfQuery { num_points } => num_points,
-            QueryMode::CrossQuery { num_points, .. } => num_points,
+            QueryMode::SelfQuery { n_points } => n_points,
+            QueryMode::CrossQuery { n_points, .. } => n_points,
         }
     }
 
     /// Number of query points.
-    /// - Self-query: same as `num_points`.
+    /// - Self-query: same as `n_points`.
     /// - Cross-query: the number of points passed to `query()`.
     #[inline]
-    pub fn num_query_points(&self) -> usize {
+    pub fn n_query_points(&self) -> usize {
         match self.mode {
-            QueryMode::SelfQuery { num_points } => num_points,
-            QueryMode::CrossQuery {
-                num_query_points, ..
-            } => num_query_points,
+            QueryMode::SelfQuery { n_points } => n_points,
+            QueryMode::CrossQuery { n_query_points, .. } => n_query_points,
         }
     }
 
@@ -1251,7 +1249,7 @@ mod from_pairs_tests {
     /// | 1 | 1 | 3 | 9.0       | (0.0,0.0,3.0) | 9.0     |
     ///
     /// Both satisfy the half-shell contract `i < j`, so they are legal under
-    /// `QueryMode::SelfQuery { num_points: 4 }`.
+    /// `QueryMode::SelfQuery { n_points: 4 }`.
     fn two_pairs() -> [NeighborPair; 2] {
         [
             NeighborPair {
@@ -1275,11 +1273,11 @@ mod from_pairs_tests {
         let nb = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
 
         assert_eq!(nb.n_pairs(), 2);
-        assert!(matches!(nb.mode(), QueryMode::SelfQuery { num_points: 4 }));
+        assert!(matches!(nb.mode(), QueryMode::SelfQuery { n_points: 4 }));
         assert_eq!(nb.query_point_indices(), &[0u32, 1u32][..]);
         assert_eq!(nb.point_indices(), &[1u32, 3u32][..]);
 
@@ -1309,7 +1307,7 @@ mod from_pairs_tests {
         let nb = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::INDICES_ONLY,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
 
         assert_eq!(nb.n_pairs(), 2);
@@ -1329,7 +1327,7 @@ mod from_pairs_tests {
         let nb = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::DIST_SQ,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
 
         let d2 = nb.dist_sq().expect("DIST_SQ must materialize dist_sq");
@@ -1347,7 +1345,7 @@ mod from_pairs_tests {
         let nb = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::DISP,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
 
         assert!(
@@ -1419,7 +1417,7 @@ mod from_pairs_tests {
         let full = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
         let lean = full.repack(NeighborsStorage::DIST_SQ);
 
@@ -1445,7 +1443,7 @@ mod from_pairs_tests {
         let lean = Neighbors::from_pairs(
             two_pairs(),
             NeighborsStorage::INDICES_ONLY,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
         let _upgraded = lean.repack(NeighborsStorage::FULL);
     }
@@ -1465,7 +1463,7 @@ mod from_pairs_tests {
         let _nb = Neighbors::from_pairs(
             bad,
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
     }
 }
@@ -1665,13 +1663,13 @@ mod engine_tests {
         let manual = Neighbors::from_pairs(
             streamed.iter().copied(),
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
         );
         let engine = nl.neighbors(NeighborsStorage::FULL);
 
         assert_eq!(
             engine.mode(),
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
             "engine table must be tagged as a self-query over all four points"
         );
         assert_eq!(engine.n_pairs(), manual.n_pairs(), "pair count");
@@ -1782,7 +1780,7 @@ mod engine_tests {
         // the SoA path must not lose the point count the table is tagged with.
         assert_eq!(
             soa.neighbors(NeighborsStorage::FULL).mode(),
-            QueryMode::SelfQuery { num_points: 4 },
+            QueryMode::SelfQuery { n_points: 4 },
             "a table built from columns must be tagged as a self-query over all \
              four points"
         );
@@ -1927,7 +1925,7 @@ mod engine_tests {
         assert_eq!(
             full.mode(),
             QueryMode::SelfQuery {
-                num_points: LATTICE_512_N
+                n_points: LATTICE_512_N
             },
             "a parallel materialization must still be tagged with the point count"
         );
@@ -2144,13 +2142,13 @@ mod engine_tests {
         assert_eq!(
             nb.mode(),
             QueryMode::CrossQuery {
-                num_query_points: 3,
-                num_points: 3,
+                n_query_points: 3,
+                n_points: 3,
             },
             "a cross-query must stay tagged as one"
         );
-        assert_eq!(nb.num_query_points(), 3);
-        assert_eq!(nb.num_points(), 3);
+        assert_eq!(nb.n_query_points(), 3);
+        assert_eq!(nb.n_points(), 3);
         assert_eq!(nb.n_pairs(), 3);
 
         let mut got: Vec<(u32, u32)> = (0..nb.n_pairs())

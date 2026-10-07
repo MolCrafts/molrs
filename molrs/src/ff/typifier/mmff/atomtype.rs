@@ -568,7 +568,7 @@ fn nitrogen_3nbr_deloc_type(
                     || (bo == BondOrder::Aromatic
                         && (topo.atno[nbr2] == 6
                             || (topo.atno[nbr2] == 7
-                                && topo.rings.num_atom_rings(topo.id(nbr2)) == 1)))
+                                && topo.rings.n_atom_rings(topo.id(nbr2)) == 1)))
                 {
                     element_double_bonded_to_c = topo.atno[nbr2];
                 }

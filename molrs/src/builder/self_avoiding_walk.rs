@@ -1,5 +1,6 @@
-//! Self-avoiding random walk (SARW) configuration, growth-strategy trait, and
-//! the multi-chain `generate` driver.
+//! Self-avoiding random walk (SARW) configuration and the multi-chain
+//! `generate` driver; the monomer-placement policy it is generic over is
+//! [`GrowthStrategy`](super::growth_strategy::GrowthStrategy).
 //!
 //! Self-avoidance is decided entirely by an [`OccupancyGrid`](super::occupancy)
 //! — cell occupancy, never pairwise distance. Boundaries are per-axis: a
@@ -14,7 +15,8 @@ use ndarray::Array1;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use super::occupancy::{OccupancyGrid, OccupancyMode};
+use super::growth_strategy::GrowthStrategy;
+use super::occupancy::OccupancyGrid;
 use crate::core::BoxError;
 use crate::core::SimBox;
 use crate::core::Trace;
@@ -85,33 +87,6 @@ pub(crate) fn apply_boundary(tip: [F; 3], mut cand: [F; 3], a: [F; 3], pbc: Pbc3
         }
     }
     cand
-}
-
-/// A monomer-placement policy for the self-avoiding walk.
-///
-/// Implementors are plain structs injected into [`SelfAvoidingWalk`] as the
-/// generic `strategy` field — there are no factory functions. A strategy
-/// declares how occupancy is judged ([`occupancy_mode`](GrowthStrategy::occupancy_mode)),
-/// may round the box edge to its lattice
-/// ([`adjust_box_edge`](GrowthStrategy::adjust_box_edge)), and proposes raw
-/// candidate geometry; the driver applies boundaries and the occupancy test.
-pub trait GrowthStrategy {
-    /// The occupancy model used to reject overlapping placements.
-    fn occupancy_mode(&self, bond_length: F) -> OccupancyMode;
-
-    /// Optionally enlarge the cubic box edge (e.g. to a lattice-commensurate
-    /// multiple). Default: leave it unchanged.
-    fn adjust_box_edge(&self, edge: F, bond_length: F) -> F {
-        let _ = bond_length;
-        edge
-    }
-
-    /// Propose a position for the first monomer of a chain (already in-box).
-    fn propose_first(&self, simbox: &SimBox, bond_length: F, rng: &mut StdRng) -> [F; 3];
-
-    /// Propose a raw next position one `bond_length` from `tip` (the driver
-    /// applies boundary conditions and the occupancy test).
-    fn propose_step(&self, tip: [F; 3], bond_length: F, rng: &mut StdRng) -> [F; 3];
 }
 
 /// Configuration for a periodic/reflective, fixed-bond-length self-avoiding

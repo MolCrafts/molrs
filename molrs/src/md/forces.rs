@@ -381,7 +381,7 @@ impl ForceProvider for MicPairs {
 
     fn neighbor_stats(&self) -> NeighborStats {
         NeighborStats {
-            edges: Some(self.skin.num_edges()),
+            edges: Some(self.skin.n_edges()),
             rebuilds: Some(self.skin.rebuild_count()),
             ago: Some(self.skin.ago()),
         }

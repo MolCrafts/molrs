@@ -95,7 +95,7 @@ impl ClusterProperties {
         }
 
         let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
-        let nc = clusters.num_clusters;
+        let nc = clusters.n_clusters;
         let masses_ref = self.masses.as_deref();
 
         // First pass: per-cluster reference atom + accumulated displacement sums.
@@ -265,7 +265,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

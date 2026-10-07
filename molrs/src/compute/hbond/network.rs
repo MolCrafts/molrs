@@ -15,7 +15,7 @@ pub struct HBondNetworkResult {
     /// Component sizes (node counts), sorted descending.
     pub component_sizes: Vec<usize>,
     /// Number of connected components (including isolated single nodes).
-    pub num_components: usize,
+    pub n_components: usize,
 }
 
 /// Assemble the H-bond network over `n_nodes` nodes and the given undirected
@@ -45,7 +45,7 @@ pub fn hbond_components(n_nodes: usize, edges: &[(usize, usize)]) -> HBondNetwor
     }
     sizes.sort_unstable_by(|a, b| b.cmp(a));
     HBondNetworkResult {
-        num_components: sizes.len(),
+        n_components: sizes.len(),
         component_sizes: sizes,
     }
 }

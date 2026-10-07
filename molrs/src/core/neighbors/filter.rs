@@ -292,8 +292,8 @@ mod tests {
             }),
             NeighborsStorage::FULL,
             QueryMode::CrossQuery {
-                num_query_points: n_points,
-                num_points: n_points,
+                n_query_points: n_points,
+                n_points,
             },
         )
     }
@@ -466,7 +466,7 @@ mod tests {
         let nl = Neighbors::from_pairs(
             std::iter::empty(),
             NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 0 },
+            QueryMode::SelfQuery { n_points: 0 },
         );
         let f = filter_sann(&nl);
         assert_eq!(f.n_pairs(), 0);

@@ -353,8 +353,8 @@ impl GhostSet {
     pub fn empty_table(&self) -> Neighbors {
         Neighbors::empty(
             QueryMode::CrossQuery {
-                num_query_points: self.n_owned,
-                num_points: self.n_owned + self.len(),
+                n_query_points: self.n_owned,
+                n_points: self.n_owned + self.len(),
             },
             NeighborsStorage::FULL,
         )
@@ -447,8 +447,8 @@ impl GhostSet {
         out: &mut Neighbors,
     ) {
         out.set_mode(QueryMode::CrossQuery {
-            num_query_points: self.n_owned,
-            num_points: self.n_owned + self.len(),
+            n_query_points: self.n_owned,
+            n_points: self.n_owned + self.len(),
         });
         out.clear();
         let cutoff2 = cutoff * cutoff;

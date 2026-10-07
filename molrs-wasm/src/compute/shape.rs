@@ -97,8 +97,8 @@ impl CenterOfMassResult {
     }
 
     /// Number of clusters.
-    #[wasm_bindgen(getter, js_name = numClusters)]
-    pub fn num_clusters(&self) -> usize {
+    #[wasm_bindgen(getter, js_name = nClusters)]
+    pub fn n_clusters(&self) -> usize {
         self.inner.centers_of_mass.len()
     }
 }
@@ -270,7 +270,7 @@ impl RadiusOfGyration {
         Self { masses }
     }
 
-    /// Compute radii of gyration. Returns a float typed array of length `numClusters`.
+    /// Compute radii of gyration. Returns a float typed array of length `nClusters`.
     ///
     /// Internally computes the cluster centers of mass so the single-frame
     /// wasm signature `(frame, cluster)` stays stable despite the new
