@@ -15,11 +15,13 @@
 //! `Args` struct and produces a binned free-energy surface
 //! `-ln g(...)` (see each `*Result`).
 
+mod orientation;
 mod r12;
 mod xy;
 mod xyt;
 mod xyz;
 
+pub use orientation::{orientation_quaternions, planar_orientation_angles};
 pub use r12::{PmftR12, PmftR12Args, PmftR12Result};
 pub use xy::{PmftXy, PmftXyArgs, PmftXyResult};
 pub use xyt::{PmftXyt, PmftXytArgs, PmftXytResult};

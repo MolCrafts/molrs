@@ -2,11 +2,10 @@
 
 #![allow(clippy::type_complexity)]
 
-use super::order::orientation_pairs;
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{Compute, PmftXy, PmftXyArgs};
-use molrs::core::{Frame as CoreFrame, FrameAccess};
+use molrs::compute::{Compute, PmftXy, PmftXyArgs, planar_orientation_angles};
+use molrs::core::Frame as CoreFrame;
 use molrs::op::F;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;
@@ -31,12 +30,12 @@ impl PyPmftXy {
         })
     }
 
-    /// Returns per-frame `(raw_counts, density, pmf)`. If the first frame carries
-    /// an `"orientations"` topology block (one `(head, tail)` atom pair per query
-    /// particle), every bond is rotated into that particle's local frame — the
-    /// per-particle 2-D angle is `atan2` of its `head − tail` axis, recomputed per
-    /// frame from that frame's positions. Without the block the analyzer works in
-    /// the lab frame.
+    /// Returns per-frame `(raw_counts, density, pmf)`. If the first frame states
+    /// per-particle orientations — the quaternion columns (`quatw`..`quatk`) on
+    /// `atoms`, or an `"orientations"` topology block of `(head, tail)` atom
+    /// pairs, one per query particle — every bond is rotated into that
+    /// particle's local frame (molrs `compute::planar_orientation_angles`,
+    /// per frame). Without one the analyzer works in the lab frame.
     fn compute<'py>(
         &self,
         py: Python<'py>,
@@ -56,27 +55,25 @@ impl PyPmftXy {
             .first()
             .copied()
             .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        // Per-frame per-particle orientation angles derived from the frame's
-        // `orientations` block, or `None` (lab frame) when the block is absent.
-        let orient_angles: Option<Vec<Vec<F>>> = if first.contains_block("orientations") {
-            let pairs = orientation_pairs(first)?;
-            let mut per_frame = Vec::with_capacity(refs.len());
-            for f in &refs {
-                let xyz = f.coords().map_err(py_value_err)?;
-                let n = xyz.nrows();
-                let mut angles = Vec::with_capacity(pairs.len());
-                for &(head, tail) in &pairs {
-                    if head >= n || tail >= n {
-                        return Err(PyValueError::new_err(
-                            "orientations atom index out of range",
-                        ));
-                    }
-                    angles.push(
-                        (xyz[[head, 1]] - xyz[[tail, 1]]).atan2(xyz[[head, 0]] - xyz[[tail, 0]]),
-                    );
-                }
-                per_frame.push(angles);
-            }
+        // Per-frame per-particle orientation angles (quaternion z-rotations or
+        // `orientations` head–tail axes), or `None` (lab frame) when the first
+        // frame states none.
+        let orient_angles: Option<Vec<Vec<F>>> = if planar_orientation_angles(first)
+            .map_err(py_value_err)?
+            .is_some()
+        {
+            let per_frame = refs
+                .iter()
+                .map(|f| {
+                    planar_orientation_angles(f)
+                        .map_err(py_value_err)?
+                        .ok_or_else(|| {
+                            PyValueError::new_err(
+                                "every frame must state the orientations the first one does",
+                            )
+                        })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
             Some(per_frame)
         } else {
             None

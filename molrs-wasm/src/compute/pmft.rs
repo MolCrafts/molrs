@@ -10,48 +10,20 @@ use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-/// Borrow an `F`-typed column of a block as a contiguous slice.
-fn f_col<'a>(atoms: &'a molrs::core::Block, col: &str) -> Option<&'a [F]> {
-    use molrs::core::BlockDtype;
-    <F as BlockDtype>::from_column(atoms.get(col)?)?.as_slice()
-}
-
-/// Per-atom unit quaternions `(w, i, j, k)`, normalized. `None` when the atoms
-/// block does not carry the canonical [`keys::QUAT`] columns.
-fn quaternions_from_frame(frame: &molrs::core::Frame) -> Option<Vec<[F; 4]>> {
-    let atoms = frame.get("atoms")?;
-    let [w, i, j, k] = keys::QUAT.map(|col| f_col(atoms, col));
-    let (w, i, j, k) = (w?, i?, j?, k?);
-    Some(
-        (0..w.len())
-            .map(|n| {
-                let q = [w[n], i[n], j[n], k[n]];
-                let norm = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
-                if norm > 0.0 {
-                    [q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm]
-                } else {
-                    [1.0, 0.0, 0.0, 0.0]
-                }
-            })
-            .collect(),
-    )
-}
-
-/// Per-atom 2-D orientation angle (radians), the z-rotation of the stored
-/// quaternion: `θ = 2·atan2(q_k, q_w)`.
-///
-/// There is deliberately no separate angle column — the quaternion already
-/// encodes the orientation, and a second column would be a second truth.
-fn angles_from_frame(frame: &molrs::core::Frame) -> Option<Vec<F>> {
-    quaternions_from_frame(frame)
-        .map(|quats| quats.iter().map(|q| 2.0 * q[3].atan2(q[0])).collect())
+/// The planar orientation angles `frame` states (molrs
+/// `compute::planar_orientation_angles`: quaternion z-rotations or
+/// `orientations` head–tail axes), as a JS error when the frame is malformed.
+fn angles_from_frame(frame: &molrs::core::Frame) -> Result<Option<Vec<F>>, JsValue> {
+    molrs::compute::planar_orientation_angles(frame)
+        .map_err(|e| JsValue::from_str(&format!("orientations: {e}")))
 }
 
 /// `angles_from_frame` for the analyses whose orientations are mandatory.
 fn require_angles(frame: &molrs::core::Frame, what: &str) -> Result<Vec<F>, JsValue> {
-    angles_from_frame(frame).ok_or_else(|| {
+    angles_from_frame(frame)?.ok_or_else(|| {
         JsValue::from_str(&format!(
-            "{what} needs per-atom orientations: add the {} columns to the atoms block",
+            "{what} needs per-atom orientations: add the {} columns to the atoms block, \
+             or an `orientations` block of (head, tail) atom pairs",
             keys::QUAT.join(", ")
         ))
     })
@@ -141,7 +113,7 @@ impl PmftXy {
     /// as unrotated, which is the isotropic reference the freud docs describe.
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
-            let orientations = angles_from_frame(rs_frame).map(|angles| vec![angles]);
+            let orientations = angles_from_frame(rs_frame)?.map(|angles| vec![angles]);
             let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
@@ -242,7 +214,8 @@ impl PmftXyz {
     /// query particle is treated as unrotated.
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
-            let orientations = quaternions_from_frame(rs_frame).map(|quats| vec![quats]);
+            let orientations =
+                molrs::compute::orientation_quaternions(rs_frame).map(|quats| vec![quats]);
             let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner

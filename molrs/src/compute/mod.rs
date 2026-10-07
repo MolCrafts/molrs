@@ -216,7 +216,8 @@ pub use order::{
 };
 pub use pmft::{
     PmftR12, PmftR12Args, PmftR12Result, PmftXy, PmftXyArgs, PmftXyResult, PmftXyt, PmftXytArgs,
-    PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult,
+    PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult, orientation_quaternions,
+    planar_orientation_angles,
 };
 pub use rdf::{Rdf, RdfAccumulator, RdfMode, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls

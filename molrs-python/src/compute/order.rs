@@ -25,7 +25,7 @@ use pyo3::types::{PyAny, PyDict, PyDictMethods};
 /// `"orientations"` topology block (same on-disk schema as `bonds`: the two
 /// endpoint columns `atomi`/`atomj`). Each row is one particle's axis; the
 /// director vector is the internal expansion `pos[head] − pos[tail]`.
-pub(crate) fn orientation_pairs(frame: &CoreFrame) -> PyResult<Vec<(usize, usize)>> {
+fn orientation_pairs(frame: &CoreFrame) -> PyResult<Vec<(usize, usize)>> {
     let groups = AtomGroups::from_frame(frame, "orientations", 2).map_err(py_value_err)?;
     Ok((0..groups.len())
         .map(|i| {
