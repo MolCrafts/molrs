@@ -24,7 +24,7 @@
 //! All lengths are in angstrom (A).
 
 use crate::core::block::Block;
-use crate::core::types::{JsFloatArray, NDArray};
+use crate::core::nd_array::{JsFloatArray, NDArray};
 use molrs::core::SimBox;
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
@@ -90,8 +90,8 @@ impl Box {
     ///
     /// ```js
     /// // Triclinic box
-    /// const h = hMatrix;
-    /// const origin = originVec;
+    /// const h = new Float64Array([10, 2, 0, 0, 10, 0, 0, 0, 10]);
+    /// const origin = new Float64Array([0, 0, 0]);
     /// const box = new Box(h, origin, true, true, true);
     /// ```
     #[wasm_bindgen(constructor)]
@@ -255,11 +255,10 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const cell = box.hMatrix().toCopy(); // Float64Array, length 9
+    /// const cell = box.h().toCopy(); // Float64Array, length 9
     /// // col0 = a-vector = cell[0..3]
     /// ```
-    #[wasm_bindgen(js_name = hMatrix)]
-    pub fn h_matrix(&self) -> NDArray {
+    pub fn h(&self) -> NDArray {
         let h = self.inner.h_view();
         // h_view is a 3×3 ndarray; emit it column-major to match the
         // marching-cubes consumer's expectation. Iterate (col, row) so
@@ -362,6 +361,7 @@ impl Box {
     /// const frac = box.toFrac(cart);
     /// console.log(frac.toCopy()); // [0.5, 0.5, 0.5] for a 10x10x10 box
     /// ```
+    #[wasm_bindgen(js_name = toFrac)]
     pub fn to_frac(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
         let shape = coords.shape();
         if shape.len() != 2 || shape[1] != 3 {
@@ -399,6 +399,7 @@ impl Box {
     /// const cart = box.toCart(frac);
     /// console.log(cart.toCopy()); // [5, 5, 5] for a 10x10x10 box
     /// ```
+    #[wasm_bindgen(js_name = toCart)]
     pub fn to_cart(&self, coords: &NDArray) -> Result<NDArray, JsValue> {
         let shape = coords.shape();
         if shape.len() != 2 || shape[1] != 3 {
@@ -683,11 +684,11 @@ impl Box {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const corners = box.getCorners();
+    /// const corners = box.corners();
     /// console.log(corners.len()); // 24 (8 corners x 3 coords)
     /// ```
-    pub fn get_corners(&self) -> NDArray {
-        let corners = self.inner.get_corners();
+    pub fn corners(&self) -> NDArray {
+        let corners = self.inner.corners();
         NDArray::from_array2(corners)
     }
 }
@@ -695,7 +696,7 @@ impl Box {
 #[cfg(test)]
 mod tests {
     use super::Box as WasmBox;
-    use crate::core::types::JsFloatArray;
+    use crate::core::nd_array::JsFloatArray;
     use crate::{Frame, NDArray};
     use molrs::op::F;
     #[allow(unused_imports)]
@@ -747,7 +748,7 @@ mod tests {
         let wrapped_js = wrapped.to_copy();
         assert_eq_array(&wrapped_js, &[0.5, 0.5, 0.5]);
 
-        let corners = sim_box.get_corners();
+        let corners = sim_box.corners();
         assert_eq!(corners.len(), 24);
 
         let cube = WasmBox::cube(10.0, &origin, true, true, true).expect("cube");

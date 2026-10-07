@@ -3,8 +3,8 @@
 
 use super::{Grid2Out, js_value, quats};
 use crate::core::frame::Frame;
+use crate::core::nd_array::JsFloatArray;
 use crate::core::neighbors::Neighbors;
-use crate::core::types::JsFloatArray;
 use molrs::compute::Compute;
 use molrs::op::F;
 use serde::Serialize;
@@ -99,32 +99,39 @@ impl LocalDescriptors {
     }
 }
 
-#[wasm_bindgen(js_name = AngularSeparation)]
-pub struct AngularSeparation {
-    equivalent_orientations: bool,
+/// Angle between every query orientation and every global orientation —
+/// molrs `compute::AngularSeparationGlobal`. Orientations are flat unit
+/// quaternions `[w, x, y, z, …]`; `equivalentOrientations` (default `true`)
+/// identifies `q` with `-q`.
+#[wasm_bindgen(js_name = AngularSeparationGlobal)]
+pub struct AngularSeparationGlobal {
+    inner: molrs::compute::AngularSeparationGlobal,
 }
 
-#[wasm_bindgen(js_class = AngularSeparation)]
-impl AngularSeparation {
+#[wasm_bindgen(js_class = AngularSeparationGlobal)]
+impl AngularSeparationGlobal {
     #[wasm_bindgen(constructor)]
     pub fn new(equivalent_orientations: Option<bool>) -> Self {
+        let inner = molrs::compute::AngularSeparationGlobal::new();
         Self {
-            equivalent_orientations: equivalent_orientations.unwrap_or(true),
+            inner: match equivalent_orientations {
+                Some(on) => inner.with_equivalent_orientations(on),
+                None => inner,
+            },
         }
     }
 
-    #[wasm_bindgen(js_name = computeGlobal)]
-    pub fn compute_global(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
-        let query = quats(query, "AngularSeparation query")?;
-        let global = quats(global, "AngularSeparation global")?;
+    /// `{ data, shape: [nQuery, nGlobal] }` of angles (radians).
+    pub fn compute(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
+        let query = quats(query, "AngularSeparationGlobal query")?;
+        let global = quats(global, "AngularSeparationGlobal global")?;
         let dummy = molrs::core::Frame::new();
-        let calc = molrs::compute::AngularSeparationGlobal::new()
-            .with_equivalent_orientations(self.equivalent_orientations);
         let args = molrs::compute::AngularSeparationGlobalArgs {
             query: &query,
             global: &global,
         };
-        let mut out = calc
+        let mut out = self
+            .inner
             .compute(&[&dummy], args)
             .map_err(|e| JsValue::from_str(&format!("AngularSeparationGlobal: {e}")))?;
         let r = out
@@ -136,29 +143,51 @@ impl AngularSeparation {
             shape,
         })
     }
+}
 
-    #[wasm_bindgen(js_name = computeNeighbor)]
-    pub fn compute_neighbor(
+/// Angle between each neighbour pair's orientations — molrs
+/// `compute::AngularSeparationNeighbor`. Orientations are flat unit
+/// quaternions; `equivalentOrientations` (default `true`) identifies `q`
+/// with `-q`.
+#[wasm_bindgen(js_name = AngularSeparationNeighbor)]
+pub struct AngularSeparationNeighbor {
+    inner: molrs::compute::AngularSeparationNeighbor,
+}
+
+#[wasm_bindgen(js_class = AngularSeparationNeighbor)]
+impl AngularSeparationNeighbor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(equivalent_orientations: Option<bool>) -> Self {
+        let inner = molrs::compute::AngularSeparationNeighbor::new();
+        Self {
+            inner: match equivalent_orientations {
+                Some(on) => inner.with_equivalent_orientations(on),
+                None => inner,
+            },
+        }
+    }
+
+    /// One angle (radians) per pair of `neighbors`, in pair order.
+    pub fn compute(
         &self,
         frame: &Frame,
         neighbors: &Neighbors,
         query: &[F],
         points: &[F],
     ) -> Result<JsFloatArray, JsValue> {
-        let query = quats(query, "AngularSeparation query")?;
-        let points = quats(points, "AngularSeparation points")?;
+        let query = quats(query, "AngularSeparationNeighbor query")?;
+        let points = quats(points, "AngularSeparationNeighbor points")?;
         frame.with_frame(|rs_frame| {
             let nlists = std::slice::from_ref(&neighbors.inner);
             let q = vec![query];
             let p = vec![points];
-            let calc = molrs::compute::AngularSeparationNeighbor::new()
-                .with_equivalent_orientations(self.equivalent_orientations);
             let args = molrs::compute::AngularSeparationNeighborArgs {
                 nlists,
                 query_orientations: &q,
                 point_orientations: &p,
             };
-            let mut out = calc
+            let mut out = self
+                .inner
                 .compute(&[rs_frame], args)
                 .map_err(|e| JsValue::from_str(&format!("AngularSeparationNeighbor: {e}")))?;
             let r = out

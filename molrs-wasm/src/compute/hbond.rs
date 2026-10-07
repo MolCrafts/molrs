@@ -109,83 +109,63 @@ impl HBonds {
     }
 }
 
-#[wasm_bindgen(js_name = HBondLifetime)]
-pub struct HBondLifetime {
+/// Continuous and intermittent hydrogen-bond lifetime correlations —
+/// molrs `compute::hbond_lifetimes` (an `HBondLifetimeResult`:
+/// `{ lagTimes, continuous, intermittent, tauContinuous, tauIntermittent }`).
+///
+/// `presence` is the flat `(nBonds, nFrames)` 0/1 matrix, one row per bond.
+#[wasm_bindgen(js_name = hbondLifetimes)]
+pub fn hbond_lifetimes(
+    presence: &[u8],
+    n_bonds: usize,
+    n_frames: usize,
     dt: F,
     max_lag: usize,
+) -> Result<JsValue, JsValue> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Out {
+        lag_times: Vec<F>,
+        continuous: Vec<F>,
+        intermittent: Vec<F>,
+        tau_continuous: F,
+        tau_intermittent: F,
+    }
+    if presence.len() != n_bonds * n_frames {
+        return Err(JsValue::from_str(
+            "hbondLifetimes: presence length is not nBonds * nFrames",
+        ));
+    }
+    let present: Vec<Vec<bool>> = presence
+        .chunks_exact(n_frames)
+        .map(|row| row.iter().map(|&v| v != 0).collect())
+        .collect();
+    let r = molrs::compute::hbond_lifetimes(&present, dt, max_lag)
+        .map_err(|e| JsValue::from_str(&format!("hbondLifetimes: {e}")))?;
+    js_value(&Out {
+        lag_times: r.lag_times.to_vec(),
+        continuous: r.continuous.to_vec(),
+        intermittent: r.intermittent.to_vec(),
+        tau_continuous: r.tau_continuous,
+        tau_intermittent: r.tau_intermittent,
+    })
 }
 
-#[wasm_bindgen(js_class = HBondLifetime)]
-impl HBondLifetime {
-    #[wasm_bindgen(constructor)]
-    pub fn new(dt: F, max_lag: usize) -> Self {
-        Self { dt, max_lag }
+/// Connected components of a hydrogen-bond network — molrs
+/// `compute::hbond_components` (an `HBondNetworkResult`:
+/// `{ componentSizes, nComponents }`). `edges` is flat `[a0, b0, a1, b1, …]`.
+#[wasm_bindgen(js_name = hbondComponents)]
+pub fn hbond_components(n_nodes: usize, edges: &[u32]) -> Result<JsValue, JsValue> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Out {
+        component_sizes: Vec<usize>,
+        n_components: usize,
     }
-
-    pub fn compute(
-        &self,
-        presence: &[u8],
-        n_bonds: usize,
-        n_frames: usize,
-    ) -> Result<JsValue, JsValue> {
-        let dt = self.dt;
-        let max_lag = self.max_lag;
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            lag_times: Vec<F>,
-            continuous: Vec<F>,
-            intermittent: Vec<F>,
-            tau_continuous: F,
-            tau_intermittent: F,
-        }
-        if presence.len() != n_bonds * n_frames {
-            return Err(JsValue::from_str("HBondLifetime: presence length mismatch"));
-        }
-        let present: Vec<Vec<bool>> = presence
-            .chunks_exact(n_frames)
-            .map(|row| row.iter().map(|&v| v != 0).collect())
-            .collect();
-        let r = molrs::compute::hbond_lifetimes(&present, dt, max_lag)
-            .map_err(|e| JsValue::from_str(&format!("HBondLifetime: {e}")))?;
-        js_value(&Out {
-            lag_times: r.lag_times.to_vec(),
-            continuous: r.continuous.to_vec(),
-            intermittent: r.intermittent.to_vec(),
-            tau_continuous: r.tau_continuous,
-            tau_intermittent: r.tau_intermittent,
-        })
-    }
-}
-
-#[wasm_bindgen(js_name = HBondNetwork)]
-pub struct HBondNetwork;
-
-impl Default for HBondNetwork {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[wasm_bindgen(js_class = HBondNetwork)]
-impl HBondNetwork {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn compute(&self, n_nodes: usize, edges: &[u32]) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            component_sizes: Vec<usize>,
-            n_components: usize,
-        }
-        let edges = usize_pairs(edges, "HBondNetwork edges")?;
-        let r = molrs::compute::hbond_components(n_nodes, &edges);
-        js_value(&Out {
-            component_sizes: r.component_sizes,
-            n_components: r.n_components,
-        })
-    }
+    let edges = usize_pairs(edges, "hbondComponents edges")?;
+    let r = molrs::compute::hbond_components(n_nodes, &edges);
+    js_value(&Out {
+        component_sizes: r.component_sizes,
+        n_components: r.n_components,
+    })
 }

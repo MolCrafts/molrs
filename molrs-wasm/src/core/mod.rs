@@ -10,7 +10,7 @@
 //! - `covalentRadius` -- per-element data (`molrs::core::Element`).
 //! - [`Box`] -- the periodic cell (Rust's `SimBox`).
 //! - the regions -- the geometric solids and their composition.
-//! - [`Mesh`] -- triangle surfaces.
+//! - [`TriMesh`] -- triangle surfaces.
 //! - [`NeighborList`] (self) / [`NeighborQuery`] (cross) -- neighbor search,
 //!   and the [`Neighbors`] pair table they produce.
 //!
@@ -37,26 +37,34 @@ pub(crate) mod block;
 pub(crate) mod element;
 pub(crate) mod frame;
 pub(crate) mod mesh;
+pub(crate) mod nd_array;
 pub(crate) mod neighbors;
 pub(crate) mod region;
 pub(crate) mod schema;
 pub(crate) mod simbox;
 pub(crate) mod topology;
-pub(crate) mod types;
 
 pub use block::Block;
 pub use element::covalent_radius;
 pub use frame::Frame;
-pub use mesh::Mesh;
+pub use mesh::TriMesh;
+pub use nd_array::NDArray;
 pub use neighbors::{NeighborList, NeighborQuery, Neighbors};
 pub use region::*;
 pub use schema::*;
 pub use simbox::Box;
 pub use topology::Topology;
-pub use types::NDArray;
 
 /// Convert an [`FfiError`] into a [`JsValue`] string for propagation
 /// to JavaScript as a thrown exception.
 pub(crate) fn js_err(err: FfiError) -> JsValue {
     JsValue::from_str(&err.to_string())
+}
+
+/// The N×3 positions of a core frame (`molrs::core::Frame::coords`), as a JS
+/// error when the frame has no `atoms` block with float `x` / `y` / `z`.
+pub(crate) fn frame_coords(frame: &molrs::core::Frame) -> Result<molrs::op::Fnx3, JsValue> {
+    frame
+        .coords()
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }

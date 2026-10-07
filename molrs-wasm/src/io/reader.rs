@@ -661,7 +661,7 @@ mod tests {
     #[cfg(feature = "stream")]
     #[wasm_bindgen_test]
     fn stream_bytes_round_trip_through_io() {
-        use crate::core::types::JsFloatArray;
+        use crate::core::nd_array::JsFloatArray;
         use crate::io::writer::{write_json_frame_str, write_msgpack_frame_bytes};
 
         let frame = Frame::new();

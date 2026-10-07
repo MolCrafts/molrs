@@ -1,8 +1,8 @@
 //! Radial distribution function g(r) — WASM face of `molrs::compute::Rdf`.
 
 use crate::core::frame::Frame;
-use crate::core::frame::positions_from_frame;
-use crate::core::types::JsFloatArray;
+use crate::core::frame_coords;
+use crate::core::nd_array::JsFloatArray;
 use molrs::compute::{Rdf as RsRdf, RdfResult as RsRdfResult};
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
@@ -24,11 +24,11 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const rdf = new RDF(100, 5.0);          // rMin defaults to 0
+/// const rdf = new Rdf(100, 5.0);          // rMin defaults to 0
 /// const result = rdf.compute(frame);      // streams its own neighbor search
 ///
 /// // Non-periodic frame: supply the normalization volume.
-/// const free = new RDF(100, 5.0, undefined, volumeA3).compute(frame);
+/// const free = new Rdf(100, 5.0, undefined, volumeA3).compute(frame);
 ///
 /// const r  = result.binCenters();
 /// const gr = result.rdf();
@@ -60,9 +60,9 @@ impl Rdf {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf  = new RDF(100, 5.0);                  // rMin = 0, box volume
-    /// const rdf2 = new RDF(100, 5.0, 0.5);             // exclude d < 0.5 A
-    /// const rdf3 = new RDF(100, 5.0, null, 1000.0);    // non-periodic frame
+    /// const rdf  = new Rdf(100, 5.0);                  // rMin = 0, box volume
+    /// const rdf2 = new Rdf(100, 5.0, 0.5);             // exclude d < 0.5 A
+    /// const rdf3 = new Rdf(100, 5.0, null, 1000.0);    // non-periodic frame
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -97,7 +97,7 @@ impl Rdf {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const rdf = new RDF(100, 5.0);       // r_max is required
+    /// const rdf = new Rdf(100, 5.0);       // r_max is required
     /// const result = rdf.compute(frame);
     /// ```
     pub fn compute(&self, frame: &Frame) -> Result<RdfResult, JsValue> {
@@ -107,7 +107,7 @@ impl Rdf {
             if rs_frame.simbox.is_none() {
                 let v = self.volume.ok_or_else(|| {
                     JsValue::from_str(
-                        "Rdf compute: frame has no box — pass volume to the RDF constructor",
+                        "Rdf compute: frame has no box — pass volume to the Rdf constructor",
                     )
                 })?;
                 return self.compute_with_synth_box(rs_frame, v);
@@ -135,14 +135,14 @@ impl Rdf {
         query_frame: &Frame,
     ) -> Result<RdfResult, JsValue> {
         ref_frame.with_frame(|rs_ref| {
-            let ref_pos = positions_from_frame(rs_ref)?;
+            let ref_pos = frame_coords(rs_ref)?;
             let owned_box;
             let bx = match rs_ref.simbox.as_ref() {
                 Some(sb) => sb,
                 None => {
                     let v = self.volume.ok_or_else(|| {
                         JsValue::from_str(
-                            "Rdf computeCross: frame has no box — pass volume to the RDF constructor",
+                            "Rdf computeCross: frame has no box — pass volume to the Rdf constructor",
                         )
                     })?;
                     let box_len = v.cbrt();
@@ -156,7 +156,7 @@ impl Rdf {
                 }
             };
             query_frame.with_frame(|rs_query| {
-                let query_pos = positions_from_frame(rs_query)?;
+                let query_pos = frame_coords(rs_query)?;
                 let mut result = self
                     .inner
                     .compute_cross(ref_pos.view(), query_pos.view(), bx)
@@ -177,7 +177,7 @@ impl Rdf {
         // Temporarily attach a cubic box for the streaming path, then restore.
         // Frame is behind shared store — we can't mutate easily. Interleave
         // positions and call compute_self with an owned box instead.
-        let pos = positions_from_frame(rs_frame)?;
+        let pos = frame_coords(rs_frame)?;
         let box_len = volume.cbrt();
         let bx = molrs::core::SimBox::cube(
             box_len,

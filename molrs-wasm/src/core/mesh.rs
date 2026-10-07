@@ -1,4 +1,4 @@
-//! WASM binding for the triangle mesh ([`Mesh`]).
+//! WASM binding for the triangle mesh, `molrs::core::TriMesh`.
 //!
 //! A surface, not a structure: shared vertices plus indexed faces, with no
 //! atoms and no simulation box. It is what [`readStlBytes`](crate::io::mesh) hands
@@ -10,7 +10,7 @@
 //! `Float32Array`: a mesh goes to a GPU vertex buffer, which is `f32`
 //! regardless, and the double it was read as buys nothing on the way there.
 
-use molrs::core::TriMesh;
+use molrs::core::TriMesh as RsTriMesh;
 use wasm_bindgen::prelude::*;
 
 /// Triangle surface: vertices, faces, and the questions worth asking about
@@ -27,12 +27,12 @@ use wasm_bindgen::prelude::*;
 /// mesh.free();
 /// ```
 #[wasm_bindgen]
-pub struct Mesh {
-    pub(crate) inner: TriMesh,
+pub struct TriMesh {
+    pub(crate) inner: RsTriMesh,
 }
 
 #[wasm_bindgen]
-impl Mesh {
+impl TriMesh {
     /// Number of vertices in the shared table.
     #[wasm_bindgen(js_name = nVertices)]
     pub fn n_vertices(&self) -> usize {

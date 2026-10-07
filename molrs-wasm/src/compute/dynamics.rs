@@ -1,4 +1,4 @@
-//! Van Hove correlation and pair persistence — WASM face of the
+//! Van Hove correlation and pair survival — WASM face of the
 //! `molrs::compute` dynamics family.
 
 use super::{SeriesOut, array2, js_value};
@@ -96,65 +96,38 @@ impl VanHove {
     }
 }
 
-#[wasm_bindgen(js_name = PairSurvival)]
-pub struct PairSurvival {
+/// Pair-survival time-correlation function — molrs
+/// `compute::pair_survival_tcf`, `{ lagTimes, values }`.
+///
+/// `coordsI` is flat `(nFrames, nI, 3)`, `coordsJ` flat `(nFrames, nJ, 3)`,
+/// `boxLengths` flat `(nFrames, 3)`. A pair is born inside `r0` and breaks
+/// past `r1`; `method` is `"continuous"`, `"intermittent"` or `"ssp"`.
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen(js_name = pairSurvivalTcf)]
+pub fn pair_survival_tcf(
+    coords_i: &[F],
+    n_frames: usize,
+    n_i: usize,
+    coords_j: &[F],
+    n_j: usize,
+    box_lengths: &[F],
     r0: F,
     r1: F,
-    method: String,
+    method: &str,
     dt: F,
     max_lag: usize,
     exclude_self: bool,
-}
-
-#[wasm_bindgen(js_class = PairSurvival)]
-impl PairSurvival {
-    #[wasm_bindgen(constructor)]
-    pub fn new(r0: F, r1: F, method: String, dt: F, max_lag: usize, exclude_self: bool) -> Self {
-        Self {
-            r0,
-            r1,
-            method,
-            dt,
-            max_lag,
-            exclude_self,
-        }
-    }
-
-    pub fn compute(
-        &self,
-        coords_i: &[F],
-        n_frames: usize,
-        n_i: usize,
-        coords_j: &[F],
-        n_j: usize,
-        box_lengths: &[F],
-    ) -> Result<JsValue, JsValue> {
-        let r0 = self.r0;
-        let r1 = self.r1;
-        let method = self.method.clone();
-        let dt = self.dt;
-        let max_lag = self.max_lag;
-        let exclude_self = self.exclude_self;
-        let ci = array3(coords_i, n_frames, n_i, 3, "PairSurvival coords_i")?;
-        let cj = array3(coords_j, n_frames, n_j, 3, "PairSurvival coords_j")?;
-        let bl = array2(box_lengths, n_frames, 3, "PairSurvival box_lengths")?;
-        let method = molrs::compute::SurvivalMethod::parse(&method)
-            .map_err(|e| JsValue::from_str(&format!("PairSurvival method: {e}")))?;
-        let r = molrs::compute::pair_survival_tcf(
-            &ci,
-            &cj,
-            &bl,
-            r0,
-            r1,
-            method,
-            dt,
-            max_lag,
-            exclude_self,
-        )
-        .map_err(|e| JsValue::from_str(&format!("PairSurvival: {e}")))?;
-        js_value(&SeriesOut {
-            lag_times: r.lag_times.to_vec(),
-            values: r.correlation.to_vec(),
-        })
-    }
+) -> Result<JsValue, JsValue> {
+    let ci = array3(coords_i, n_frames, n_i, 3, "pairSurvivalTcf coordsI")?;
+    let cj = array3(coords_j, n_frames, n_j, 3, "pairSurvivalTcf coordsJ")?;
+    let bl = array2(box_lengths, n_frames, 3, "pairSurvivalTcf boxLengths")?;
+    let method = molrs::compute::SurvivalMethod::parse(method)
+        .map_err(|e| JsValue::from_str(&format!("pairSurvivalTcf method: {e}")))?;
+    let r =
+        molrs::compute::pair_survival_tcf(&ci, &cj, &bl, r0, r1, method, dt, max_lag, exclude_self)
+            .map_err(|e| JsValue::from_str(&format!("pairSurvivalTcf: {e}")))?;
+    js_value(&SeriesOut {
+        lag_times: r.lag_times.to_vec(),
+        values: r.correlation.to_vec(),
+    })
 }

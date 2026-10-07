@@ -47,6 +47,7 @@ struct ParamSpec {
     /// `"ctor"` — a positional constructor argument, in declaration order,
     /// after any leading arguments the dispatch shape supplies itself. Every
     /// piece of configuration lives here: `compute` / `fit` take only data.
+    /// For a `function` entry these are the arguments after the data.
     /// `"call"` — the knob configures a *different* object the caller builds
     /// first (`NeighborList`'s cutoff, `Cluster`'s min size), never this one.
     slot: &'static str,
@@ -161,8 +162,9 @@ struct ComputeCatalogEntry {
     id: &'static str,
     category: &'static str,
     label: &'static str,
-    /// Class exported from this module. Always present — the catalog never
-    /// names a binding that does not exist.
+    /// Class or function exported from this module, named as its molrs
+    /// owner. Always present — the catalog never names a binding that does
+    /// not exist.
     wasm_export: &'static str,
     /// How to drive the binding. The caller dispatches on this, not on `id`.
     ///
@@ -176,6 +178,7 @@ struct ComputeCatalogEntry {
     /// | `frameRadii` | `compute(frame, radii, …)` — Voronoi family |
     /// | `accumulate` | `feed(frame)` per frame, then `compute()` / `results()` |
     /// | `series` | `compute(…)` / `fit(…)` over raw arrays; no `Frame` |
+    /// | `function` | `wasmExport(…data, …params)`: a free function over raw arrays (molrs's own shape for it), the `ctor` params after the data |
     input_kind: &'static str,
     /// Shape of the payload, for picking a renderer.
     result_kind: &'static str,
@@ -430,8 +433,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "dynamics.pair_survival",
             "transport",
             "Pair survival",
-            "PairSurvival",
-            "series",
+            "pairSurvivalTcf",
+            "function",
             "lineSeries",
             &["atomPairs"],
             vec![
@@ -534,7 +537,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "spectroscopy.dielectric_spectrum",
             "spectroscopy",
             "Dielectric spectrum",
-            "GreenKuboDielectricSpectrum",
+            "GreenKuboSpectrum",
             "series",
             "lineSeries",
             &["charge", "velocity"],
@@ -550,8 +553,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "dielectric.static_dielectric_constant",
             "spectroscopy",
             "Static dielectric constant",
-            "StaticDielectric",
-            "series",
+            "staticDielectricConstant",
+            "function",
             "scalar",
             &["dipole"],
             vec![
@@ -864,7 +867,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "environment.angular_separation",
             "environment",
             "Angular separation",
-            "AngularSeparation",
+            "AngularSeparationGlobal",
             "series",
             "lineSeries",
             &["orientation"],
@@ -925,15 +928,18 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- distribution ---------------------------------------------------
+        // One `DistributionFunction` per observable; the single-option
+        // `observable` select is the constructor's first argument.
         entry(
             "distribution.distance_distribution",
             "distribution",
             "Distance distribution",
-            "DistanceDistribution",
+            "DistributionFunction",
             "frameGroups",
             "lineSeries",
             &["atomPairs"],
             vec![
+                p_select("observable", "Observable", "distance", &["distance"]),
                 p_int("nBins", "Bins", 100, 1.0, 4096.0),
                 p_float("min", "Min", 0.0, Some("Å")),
                 p_float("max", "Max", 10.0, Some("Å")),
@@ -943,21 +949,27 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "distribution.angle_distribution",
             "distribution",
             "Angle distribution",
-            "AngleDistribution",
+            "DistributionFunction",
             "frameGroups",
             "lineSeries",
             &["atomTriples"],
-            vec![p_int("nBins", "Bins", 100, 1.0, 4096.0)],
+            vec![
+                p_select("observable", "Observable", "angle", &["angle"]),
+                p_int("nBins", "Bins", 100, 1.0, 4096.0),
+            ],
         ),
         entry(
             "distribution.dihedral_distribution",
             "distribution",
             "Dihedral distribution",
-            "DihedralDistribution",
+            "DistributionFunction",
             "frameGroups",
             "lineSeries",
             &["atomQuads"],
-            vec![p_int("nBins", "Bins", 100, 1.0, 4096.0)],
+            vec![
+                p_select("observable", "Observable", "dihedral", &["dihedral"]),
+                p_int("nBins", "Bins", 100, 1.0, 4096.0),
+            ],
         ),
         entry(
             "distribution.combined_distribution",
@@ -1067,8 +1079,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "hbond.lifetime",
             "hbond",
             "Lifetime",
-            "HBondLifetime",
-            "series",
+            "hbondLifetimes",
+            "function",
             "lineSeries",
             &["hbondPresence"],
             vec![
@@ -1080,8 +1092,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "hbond.network_components",
             "hbond",
             "Network components",
-            "HBondNetwork",
-            "series",
+            "hbondComponents",
+            "function",
             "table",
             &["hbondEdges"],
             vec![],
@@ -1164,7 +1176,14 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // the `rdf.*` / `voronoi.*` id prefixes are gone (`density.*`,
         // `locality.*`), and `dynamics.pair_persistence` is
         // `dynamics.pair_survival`.
-        version: 5,
+        // v6: per-analysis classes that molrs has as free functions are those
+        // functions (`input_kind: "function"`: `staticDielectricConstant`,
+        // `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`); the three
+        // distribution entries export `DistributionFunction`, its
+        // `observable` the first constructor param;
+        // `AngularSeparation` is `AngularSeparationGlobal`, and the
+        // dielectric spectra are `GreenKuboSpectrum` / `EinsteinHelfandSpectrum`.
+        version: 6,
         categories: &CATEGORIES,
         analyses,
     })

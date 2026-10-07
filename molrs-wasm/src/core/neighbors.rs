@@ -21,8 +21,9 @@ use molrs::core::{
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
-use crate::core::frame::{Frame, positions_from_frame};
-use crate::core::types::JsFloatArray;
+use crate::core::frame::Frame;
+use crate::core::frame_coords;
+use crate::core::nd_array::JsFloatArray;
 
 /// Neighbor search over one point set: index the coordinates, then read pairs.
 ///
@@ -117,7 +118,7 @@ impl NeighborList {
     pub fn build(&mut self, frame: &Frame) -> Result<(), JsValue> {
         let cutoff = self.inner.cutoff();
         frame.with_frame(|rs_frame| {
-            let pos = positions_from_frame(rs_frame)?;
+            let pos = frame_coords(rs_frame)?;
             let simbox;
             let bx_ref = match rs_frame.simbox.as_ref() {
                 Some(sb) => sb,
@@ -158,7 +159,7 @@ impl NeighborList {
             ));
         }
         frame.with_frame(|rs_frame| {
-            let pos = positions_from_frame(rs_frame)?;
+            let pos = frame_coords(rs_frame)?;
             self.inner.update(pos.view());
             Ok(())
         })
@@ -442,7 +443,7 @@ impl NeighborQuery {
     pub fn new(frame: &Frame, cutoff: F) -> Result<NeighborQuery, JsValue> {
         check_cutoff(cutoff)?;
         frame.with_frame(|rs_frame| {
-            let pos = positions_from_frame(rs_frame)?;
+            let pos = frame_coords(rs_frame)?;
             let inner = match rs_frame.simbox.as_ref() {
                 Some(sb) => RsNeighborQuery::new(sb, pos.view(), cutoff),
                 None => RsNeighborQuery::unbounded(pos.view(), cutoff),
@@ -469,7 +470,7 @@ impl NeighborQuery {
     /// Throws if `frame` carries no readable positions.
     pub fn query(&self, frame: &Frame) -> Result<Neighbors, JsValue> {
         frame.with_frame(|rs_frame| {
-            let pos = positions_from_frame(rs_frame)?;
+            let pos = frame_coords(rs_frame)?;
             Ok(Neighbors {
                 inner: self.inner.query(pos.view()),
             })
@@ -480,19 +481,14 @@ impl NeighborQuery {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::Block;
     use molrs::core::SimBox;
-    use ndarray::{Array1, array};
+    use ndarray::{Array2, array};
     use wasm_bindgen_test::*;
 
     fn frame_at(positions: &[[F; 3]]) -> Frame {
-        let column = |k: usize| Array1::from_iter(positions.iter().map(|p| p[k])).into_dyn();
-        let mut block = Block::new();
-        block.insert("x", column(0)).unwrap();
-        block.insert("y", column(1)).unwrap();
-        block.insert("z", column(2)).unwrap();
+        let coords = Array2::from_shape_fn((positions.len(), 3), |(i, k)| positions[i][k]);
         let mut rs_frame = molrs::core::Frame::new();
-        rs_frame.insert("atoms", block);
+        rs_frame.set_coords(coords.view()).unwrap();
         rs_frame.simbox =
             Some(SimBox::cube(20.0, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
         Frame::from_rs(rs_frame).unwrap()

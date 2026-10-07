@@ -78,3 +78,10 @@ def test_missing_file_is_file_not_found(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         molrs.io.read_lammps_log(str(tmp_path / "nope.log"))
+
+
+def test_is_lammps_log_keys_on_the_run_the_reader_parses():
+    assert molrs.io.lammps.is_lammps_log(_LOG)
+    banner_only = "LAMMPS (1 Jan 2026)\nERROR: Unknown command\n"
+    assert not molrs.io.lammps.is_lammps_log(banner_only)
+    assert len(molrs.io.read_lammps_log_str(banner_only).runs) == 0

@@ -9,7 +9,7 @@ use crate::path::path_str;
 use molrs::io::lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning,
+    LammpsTimingRow, LammpsWarning, is_lammps_log as is_lammps_log_rs,
 };
 use molrs::io::{
     read_lammps_log as read_lammps_log_rs, read_lammps_log_str as read_lammps_log_str_rs,
@@ -779,6 +779,26 @@ pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> PyLammpsLog {
     PyLammpsLog::new(read_lammps_log_str_rs(text, path, style))
 }
 
+/// Whether ``text`` holds a LAMMPS run (``molrs::io::lammps::is_lammps_log``).
+///
+/// True when a ``Per MPI rank memory allocation`` line is present — the line
+/// :func:`molrs.io.read_lammps_log_str` opens each run at. A banner alone (a
+/// run that died in setup) is not a log with anything to read. Cheap enough
+/// to run on a file's first bytes.
+///
+/// Parameters
+/// ----------
+/// text : str
+///     The log text, or its first bytes.
+///
+/// Returns
+/// -------
+/// bool
+#[pyfunction]
+pub fn is_lammps_log(text: &str) -> bool {
+    is_lammps_log_rs(text)
+}
+
 #[cfg(feature = "fs")]
 fn lammps_log_io_error(e: std::io::Error) -> PyErr {
     if e.kind() == std::io::ErrorKind::NotFound {
@@ -806,6 +826,7 @@ pub(crate) fn lammps_log_to_pydict<'py>(
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log_str, m)?)?;
+    crate::add_function(m, "molrs.io.lammps", wrap_pyfunction!(is_lammps_log, m)?)?;
     m.add_class::<PyLammpsLog>()?;
     m.add_class::<PyLammpsRun>()?;
     m.add_class::<PyLammpsThermo>()?;

@@ -12,7 +12,7 @@ npm install @molcrafts/molrs
 ```
 
 ```ts
-import { SmilesIr, generate3D, writeXyzStr } from "@molcrafts/molrs";
+import { SmilesIr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 ```
 
 Configure your bundler to load `.wasm` modules. A custom build with
@@ -24,15 +24,16 @@ that must be awaited before any other call.
 ```ts
 const ir = SmilesIr.parse("CCO");
 const frame2d = ir.toFrame();
-const frame3d = generate3D(frame2d, "fast", 42);
+const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 
 console.log(writeXyzStr(frame3d));
 ```
 
 The API shape mirrors Python, with JavaScript naming conventions:
-`SmilesIr::parse` becomes `SmilesIr.parse`, `to_frame` becomes `toFrame`, and
-`write_xyz_str` becomes `writeXyzStr` — every door names its format, as in Rust
-and Python. The
+`SmilesIr::parse` becomes `SmilesIr.parse`, `to_frame` becomes `toFrame`,
+`Conformer(...).generate` stays `Conformer.generate`, and `write_xyz_str`
+becomes `writeXyzStr` — every class and function is named after its molrs
+owner, and every door names its format, as in Rust and Python. The
 TypeScript declarations in the package (`molrs.d.ts`) are the source of truth
 for exported names.
 
@@ -40,7 +41,8 @@ for exported names.
 
 Frames contain blocks, and blocks contain typed columns. A column reads back
 as the typed array of its stored dtype — `Float64Array` for floats — and no
-method names a dtype:
+method names a dtype. `dtype(key)` reports molrs core's dtype name (`"float"`,
+`"int"`, `"uint"`, `"string"`, …), the one Python and the Frame schema use:
 
 ```ts
 const atoms = frame3d.get("atoms"); // throws if absent; check with frame3d.has("atoms")
@@ -58,7 +60,7 @@ columns but becomes invalid when the module's memory grows, so read it
 immediately or prefer `copy` until profiling says otherwise. `set(key, array)`
 writes a column and takes its dtype from the typed array's constructor
 (`Float32Array` and plain `number[]` are refused). The
-[package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#data-model)
+[package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#core-data-model-molrscore)
 has the full dtype table.
 
 ## 4. Read Record Files
@@ -67,19 +69,21 @@ The browser reads the same `*.mrec` [record files](../guides/records.md) that
 Python and Rust write. A packed `*.mrec.zip` arrives as bytes:
 
 ```ts
-import { MrecReader, readMrecFrameFromZip } from "@molcrafts/molrs";
+import { MrecReader, readMrecFrame } from "@molcrafts/molrs";
 
 const bytes = new Uint8Array(await (await fetch("run.mrec.zip")).arrayBuffer());
 const reader = MrecReader.fromZip(bytes);
 const first = reader.readFrame(0);
-console.log(reader.countFrames(), first?.get("atoms").nrows);
+console.log(reader.nFrames(), first?.get("atoms").nrows);
 
-const snapshot = readMrecFrameFromZip(
+const snapshot = readMrecFrame(
   new Uint8Array(await (await fetch("water.mrec.zip")).arrayBuffer()),
 );
 ```
 
-`MrecReader.fromStorage` reads chunks on demand through callbacks, so a
+`readMrecFrame` (and `sectionNames`) take the packed bytes or a
+`Map<path, Uint8Array>` of the record's files. `MrecReader.fromStorage` reads
+chunks on demand through callbacks, so a
 large trajectory never has to be downloaded whole.
 
 ## 5. Build from Source

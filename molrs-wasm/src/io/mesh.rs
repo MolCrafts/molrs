@@ -5,13 +5,13 @@
 //! | [`readStlBytes`](read_stl_bytes_export) | STL, ASCII or binary (auto-detected) |
 //!
 //! Unlike the readers in [`reader`](super::reader), these produce a
-//! [`Mesh`] rather than a `Frame`: an STL carries triangles, not atoms.
+//! [`TriMesh`] rather than a `Frame`: an STL carries triangles, not atoms.
 
-use crate::core::mesh::Mesh;
+use crate::core::mesh::TriMesh;
 use molrs::io::read_stl_bytes;
 use wasm_bindgen::prelude::*;
 
-/// Read an STL file's bytes into a [`Mesh`].
+/// Read an STL file's bytes into a [`TriMesh`].
 ///
 /// Both shapes of the format are accepted and told apart by length, not by
 /// the leading keyword — a binary STL's 80-byte header is free text and
@@ -36,9 +36,9 @@ use wasm_bindgen::prelude::*;
 /// console.log(`${mesh.nFaces()} triangles, watertight: ${mesh.isWatertight()}`);
 /// ```
 #[wasm_bindgen(js_name = readStlBytes)]
-pub fn read_stl_bytes_export(bytes: &[u8]) -> Result<Mesh, JsValue> {
+pub fn read_stl_bytes_export(bytes: &[u8]) -> Result<TriMesh, JsValue> {
     read_stl_bytes(bytes)
-        .map(|inner| Mesh { inner })
+        .map(|inner| TriMesh { inner })
         .map_err(|e| JsValue::from_str(&format!("STL reading error: {e}")))
 }
 

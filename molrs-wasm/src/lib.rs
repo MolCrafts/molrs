@@ -25,11 +25,11 @@
 //!
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
-//! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
+//! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, TriMesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `readSmilesStr` |
 //! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
-//! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
-//! | `conformer` | `conformer` | 3D conformer generation (`generate3D`) |
+//! | `compute`   | `compute` | Analysis: `Rdf`, `Msd`, `Cluster`, …, the free functions molrs has (`staticDielectricConstant`, …) and the compute catalog |
+//! | `conformer` | `conformer` | 3D conformer generation (`Conformer`) |
 //! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s) and the `Potentials` they compile |
 //! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |
 //! | `builder`   | `builder` | `CarbonTubeBuilder` |
@@ -39,10 +39,10 @@
 //! The npm package is a `bundler` build: importing it loads the module.
 //!
 //! ```js
-//! import { readSmilesStr, generate3D, writeXyzStr } from "@molcrafts/molrs";
+//! import { readSmilesStr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 //!
 //! const frame = readSmilesStr("CCO");
-//! const mol3d = generate3D(frame, "fast");
+//! const mol3d = new Conformer("fast").generate(frame);
 //! const xyz   = writeXyzStr(mol3d);
 //! console.log(xyz);
 //! ```
@@ -50,12 +50,6 @@
 use js_sys::WebAssembly::Memory;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
 
 /// WASM module entry point. Installs the panic hook so that Rust panics
 /// are forwarded to the browser console as readable stack traces.

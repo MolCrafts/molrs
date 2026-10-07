@@ -236,6 +236,17 @@ pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> LammpsLog {
     }
 }
 
+/// Whether `text` holds a LAMMPS run: a `Per MPI rank memory allocation
+/// (min/avg/max) = …` line, the line [`read_lammps_log_str`] opens each run
+/// at.
+///
+/// The banner alone is not enough — a log whose run died during setup has
+/// no run to read — so this asks for what the reader keys on. Cheap enough to
+/// run on a file's first bytes before deciding to read the whole thing.
+pub fn is_lammps_log(text: &str) -> bool {
+    text.lines().any(|line| match_memory(line.trim()).is_some())
+}
+
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -825,6 +836,24 @@ fn parse_int_from_float_str(value: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_log_is_recognised_by_its_run_and_not_by_its_banner() {
+        assert!(is_lammps_log(sample_full_log()));
+        // A run that died in setup printed the banner but never a run.
+        assert!(!is_lammps_log(
+            "LAMMPS (1 Jan 2026)\nERROR: Unknown command\n"
+        ));
+        assert!(!is_lammps_log(""));
+        // The reader agrees: what the sniffer refuses has no run.
+        let banner_only = "LAMMPS (1 Jan 2026)\nTotal wall time: 0:00:00\n";
+        assert!(!is_lammps_log(banner_only));
+        assert!(
+            read_lammps_log_str(banner_only, "", "default")
+                .runs
+                .is_empty()
+        );
+    }
 
     fn sample_full_log() -> &'static str {
         r#"LAMMPS (1 Jan 2026)

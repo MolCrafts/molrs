@@ -2,7 +2,7 @@
 //! `molrs::compute` fitting family.
 
 use super::{array1, js_value};
-use crate::core::types::JsFloatArray;
+use crate::core::nd_array::JsFloatArray;
 use molrs::compute::Fit;
 use molrs::op::F;
 use serde::Serialize;

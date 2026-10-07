@@ -173,7 +173,7 @@ pub fn write_json_frame_str(frame: &Frame) -> Result<String, JsValue> {
 mod tests {
     use super::*;
     use crate::core::frame::Frame;
-    use crate::core::types::JsFloatArray;
+    use crate::core::nd_array::JsFloatArray;
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]

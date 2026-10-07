@@ -9,10 +9,10 @@
 //! # Typical workflow (JavaScript)
 //!
 //! ```js
-//! import { readSmilesStr, generate3D } from "@molcrafts/molrs";
+//! import { readSmilesStr, Conformer } from "@molcrafts/molrs";
 //!
 //! const frame = readSmilesStr("c1ccccc1"); // benzene, 2D graph (no coords)
-//! const mol3d = generate3D(frame, "fast"); // embed 3D coords
+//! const mol3d = new Conformer("fast").generate(frame); // embed 3D coords
 //! ```
 //!
 //! # References
@@ -83,9 +83,9 @@ impl SmilesIr {
     ///
     /// The resulting frame contains:
     ///
-    /// - `"atoms"` block: `symbol` (string), and implicit hydrogens
+    /// - `"atoms"` block: `element` (string), and implicit hydrogens
     ///   are added. No 3D coordinates are present -- use
-    ///   [`generate3D`](crate::conformer::generate_3d_wasm) to embed coordinates.
+    ///   [`Conformer`](crate::conformer::Conformer) to embed coordinates.
     /// - `"bonds"` block: `atomi`, `atomj` (u64, zero-based atom indices),
     ///   `bond_type` (u64: 1 single, 2 double, 3 triple, 4 aromatic) and
     ///   `bond_number` (u64: the localized Lewis/Kekulé integer, 0 when the
@@ -137,7 +137,7 @@ impl SmilesIr {
 ///
 /// ```js
 /// const frame = readSmilesStr("CCO");
-/// const mol3d = generate3D(frame, "fast");
+/// const mol3d = new Conformer("fast").generate(frame);
 /// ```
 #[wasm_bindgen(js_name = readSmilesStr)]
 pub fn read_smiles_str(smiles: &str) -> Result<Frame, JsValue> {

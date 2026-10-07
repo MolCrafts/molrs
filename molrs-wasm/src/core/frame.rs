@@ -35,7 +35,6 @@ use wasm_bindgen::prelude::*;
 
 use molrs::core::Block as RsBlock;
 use molrs::core::MetaValue;
-use molrs::op::F;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
@@ -264,28 +263,6 @@ impl Frame {
             .map_err(js_err)
     }
 
-    /// Read a per-frame metadata value as a numeric scalar.
-    ///
-    /// Returns `Some(v)` if the meta key exists AND its string value parses
-    /// as an `f64`. Returns `None` if the key is missing or the value is
-    /// non-numeric (e.g., `config="trans"`).
-    ///
-    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
-    /// scalar dtype and preserves compatibility with numeric strings written
-    /// through [`setMeta`](Self::set_meta).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const energy = frame.getMetaScalar("energy");
-    /// if (energy !== undefined) {
-    ///   console.log("Energy:", energy);
-    /// }
-    /// ```
     /// Read a per-frame metadata value that is a string.
     ///
     /// The counterpart of [`setMeta`](Self::set_meta), and the accessor for
@@ -324,6 +301,28 @@ impl Frame {
             .ok()?
     }
 
+    /// Read a per-frame metadata value as a numeric scalar.
+    ///
+    /// Returns `Some(v)` if the meta key exists AND its string value parses
+    /// as an `f64`. Returns `None` if the key is missing or the value is
+    /// non-numeric (e.g., `config="trans"`).
+    ///
+    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
+    /// scalar dtype and preserves compatibility with numeric strings written
+    /// through [`setMeta`](Self::set_meta).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const energy = frame.getMetaScalar("energy");
+    /// if (energy !== undefined) {
+    ///   console.log("Energy:", energy);
+    /// }
+    /// ```
     #[wasm_bindgen(js_name = getMetaScalar)]
     pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
         self.inner
@@ -343,7 +342,7 @@ impl Frame {
             .ok()?
     }
 
-    /// Return the names of all metadata keys on this frame, in insertion order.
+    /// The metadata keys on this frame, in insertion order.
     ///
     /// Includes all keys regardless of whether their values are numeric
     /// or categorical. To filter to numeric keys, iterate and call
@@ -352,10 +351,10 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const names = frame.metaNames(); // e.g. ["energy", "config", "temp"]
+    /// const keys = frame.metaKeys(); // e.g. ["energy", "config", "temp"]
     /// ```
-    #[wasm_bindgen(js_name = metaNames)]
-    pub fn meta_names(&self) -> Vec<String> {
+    #[wasm_bindgen(js_name = metaKeys)]
+    pub fn meta_keys(&self) -> Vec<String> {
         self.inner
             .arena
             .borrow()
@@ -565,40 +564,6 @@ impl Frame {
     }
 }
 
-/// Extract an Nx3 position matrix from the `"atoms"` block of a core
-/// [`Frame`](molrs::core::Frame).
-///
-/// Reads the `x`, `y`, `z` columns (F, angstrom) and assembles
-/// them into a contiguous row-major matrix.
-pub(crate) fn positions_from_frame(
-    frame: &molrs::core::Frame,
-) -> Result<ndarray::Array2<F>, JsValue> {
-    let atoms = frame
-        .get("atoms")
-        .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
-    let get = |col: &str| -> Result<&[F], JsValue> {
-        use molrs::core::BlockDtype;
-        let c = atoms
-            .get(col)
-            .ok_or_else(|| JsValue::from_str(&format!("atoms block missing '{col}' column")))?;
-        let arr = <F as BlockDtype>::from_column(c)
-            .ok_or_else(|| JsValue::from_str(&format!("'{col}' column has wrong dtype")))?;
-        arr.as_slice()
-            .ok_or_else(|| JsValue::from_str(&format!("'{col}' column is not contiguous")))
-    };
-    let xs = get("x")?;
-    let ys = get("y")?;
-    let zs = get("z")?;
-    let n = xs.len();
-    let mut pos = ndarray::Array2::<F>::zeros((n, 3));
-    for i in 0..n {
-        pos[[i, 0]] = xs[i];
-        pos[[i, 1]] = ys[i];
-        pos[[i, 2]] = zs[i];
-    }
-    Ok(pos)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,10 +653,10 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn meta_names_follow_insertion_order() {
+    fn meta_keys_follow_insertion_order() {
         let frame = frame_with_meta();
         assert_eq!(
-            frame.meta_names(),
+            frame.meta_keys(),
             vec!["energy".to_string(), "config".to_string()]
         );
     }

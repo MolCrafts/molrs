@@ -321,8 +321,8 @@ impl RoaSpectrum {
     }
 }
 
-#[wasm_bindgen(js_name = EinsteinHelfandDielectricSpectrum)]
-pub struct EinsteinHelfandDielectricSpectrum {
+#[wasm_bindgen(js_name = EinsteinHelfandSpectrum)]
+pub struct EinsteinHelfandSpectrum {
     dt: F,
     volume: F,
     temperature: F,
@@ -330,8 +330,8 @@ pub struct EinsteinHelfandDielectricSpectrum {
     zero_lag_variance: F,
 }
 
-#[wasm_bindgen(js_class = EinsteinHelfandDielectricSpectrum)]
-impl EinsteinHelfandDielectricSpectrum {
+#[wasm_bindgen(js_class = EinsteinHelfandSpectrum)]
+impl EinsteinHelfandSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
         dt: F,
@@ -360,13 +360,13 @@ impl EinsteinHelfandDielectricSpectrum {
         };
         let r = calc
             .fit(&acf)
-            .map_err(|e| JsValue::from_str(&format!("EinsteinHelfandDielectricSpectrum: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("EinsteinHelfandSpectrum: {e}")))?;
         js_value(&dielectric_spectrum_out(r))
     }
 }
 
-#[wasm_bindgen(js_name = GreenKuboDielectricSpectrum)]
-pub struct GreenKuboDielectricSpectrum {
+#[wasm_bindgen(js_name = GreenKuboSpectrum)]
+pub struct GreenKuboSpectrum {
     dt: F,
     volume: F,
     temperature: F,
@@ -374,8 +374,8 @@ pub struct GreenKuboDielectricSpectrum {
     window_type: String,
 }
 
-#[wasm_bindgen(js_class = GreenKuboDielectricSpectrum)]
-impl GreenKuboDielectricSpectrum {
+#[wasm_bindgen(js_class = GreenKuboSpectrum)]
+impl GreenKuboSpectrum {
     #[wasm_bindgen(constructor)]
     pub fn new(
         dt: F,
@@ -404,7 +404,7 @@ impl GreenKuboDielectricSpectrum {
         };
         let r = calc
             .fit(&jacf)
-            .map_err(|e| JsValue::from_str(&format!("GreenKuboDielectricSpectrum: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("GreenKuboSpectrum: {e}")))?;
         js_value(&dielectric_spectrum_out(r))
     }
 }
