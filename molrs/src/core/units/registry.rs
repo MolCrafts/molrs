@@ -183,10 +183,17 @@ impl UnitRegistry {
     /// The factor that converts a value in `from` to `to`:
     /// `value_in_to = value_in_from × factor`.
     ///
-    /// The factor is `from`'s SI factor over `to`'s, except that when the
-    /// inverse ratio is a whole number (Å → nm is 1/10) it is that number's
-    /// reciprocal, so a power-of-ten conversion is the correctly rounded
-    /// `0.1`, not `1e-10 / 1e-9`.
+    /// The factor is `from`'s SI factor over `to`'s, except for two cases
+    /// where that quotient of rounded doubles is not the correctly rounded
+    /// answer:
+    ///
+    /// - a ratio within a few ulps of a power of ten is that power of ten,
+    ///   correctly rounded (`cm^3 → angstrom^3` is exactly `1e24`, not
+    ///   `1e24` plus an ulp; `m^3 → angstrom^3` is `1e30`). Every SI prefix
+    ///   and the ångström are exact powers of ten, so a product of them is
+    ///   one too, however many rounded multiplications built it;
+    /// - otherwise, when the inverse ratio is a whole number, the factor is
+    ///   that number's reciprocal.
     ///
     /// ```
     /// use molrs::core::UnitRegistry;
@@ -205,6 +212,9 @@ impl UnitRegistry {
         let from = self.parse(from)?;
         let to = self.parse(to)?;
         let direct = from.factor_to(&to)?;
+        if let Some(power) = nearest_power_of_ten(direct) {
+            return Ok(power);
+        }
         let inverse = to.factor_to(&from)?;
         Ok(if inverse >= 1.0 && inverse.fract() == 0.0 {
             1.0 / inverse
@@ -482,6 +492,21 @@ impl UnitRegistry {
     }
 }
 
+/// The power of ten `x` is within rounding error of, correctly rounded, or
+/// `None`. The tolerance (8 ulps, relative 1.8e-15) bounds the error of the
+/// handful of rounded products and quotients a factor of SI prefixes and
+/// powers is built from; no CODATA-valued unit lies that close to a power
+/// of ten.
+fn nearest_power_of_ten(x: F) -> Option<F> {
+    if !x.is_finite() || x <= 0.0 {
+        return None;
+    }
+    let exponent = x.log10().round() as i32;
+    // `1eN` parsed from decimal text is the correctly rounded double.
+    let power: F = format!("1e{exponent}").parse().ok()?;
+    ((x - power).abs() <= 8.0 * F::EPSILON * power).then_some(power)
+}
+
 /// Shorthand constructor for the preload tables.
 fn def(
     name: &str,
@@ -711,6 +736,42 @@ mod tests {
             dimension: Dimension::LENGTH,
             prefixable: false,
         }
+    }
+
+    #[test]
+    fn powers_of_ten_are_correctly_rounded() {
+        let reg = UnitRegistry::global();
+        let cases: &[(&str, &str, F)] = &[
+            ("angstrom", "nm", 0.1),
+            ("nm", "angstrom", 10.0),
+            ("cm^3", "angstrom^3", 1e24),
+            ("angstrom^3", "cm^3", 1e-24),
+            ("m^3", "angstrom^3", 1e30),
+            ("angstrom^3", "m^3", 1e-30),
+            ("nm^3", "angstrom^3", 1e3),
+            ("cm^2", "angstrom^2", 1e16),
+            ("m^2", "nm^2", 1e18),
+            ("mm^2", "cm^2", 0.01),
+            ("km/ms", "m/s", 1e6),
+            ("ns/um", "ps/nm", 1.0),
+            ("g/cm^3", "kg/m^3", 1e3),
+            ("kg/m^3", "g/cm^3", 1e-3),
+            ("fs", "ps", 1e-3),
+            ("mg*cm^-3", "ug*angstrom^-3", 1e-21),
+        ];
+        for &(from, to, want) in cases {
+            let got = reg.factor(from, to).unwrap();
+            assert_eq!(got, want, "{from} -> {to}: {got:e}");
+            assert_eq!(got, format!("{want:e}").parse::<F>().unwrap());
+        }
+    }
+
+    #[test]
+    fn non_powers_of_ten_are_not_snapped() {
+        let reg = UnitRegistry::global();
+        assert_eq!(reg.factor("kcal", "kJ").unwrap(), 4.184);
+        let bohr = reg.factor("bohr", "angstrom").unwrap();
+        assert!((bohr - 0.529177210903).abs() < 1e-15);
     }
 
     #[test]
