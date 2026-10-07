@@ -8,7 +8,10 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::core::constants::ANGSTROM_PER_BOHR;
+use crate::core::UnitFactor;
+
+/// bohr³ → Å³ (a cube file's voxel volume).
+static BOHR3_TO_ANGSTROM3: UnitFactor = UnitFactor::new("bohr^3", "angstrom^3");
 use crate::op::det3;
 use crate::op::vec3::sub;
 
@@ -83,7 +86,7 @@ impl DensityGrid {
         let origin = [o[0], o[1], o[2]];
 
         // Density: e/Bohr³ (cube native) → e/Å³.
-        let bohr3 = ANGSTROM_PER_BOHR * ANGSTROM_PER_BOHR * ANGSTROM_PER_BOHR;
+        let bohr3 = BOHR3_TO_ANGSTROM3.get();
         let is_ang = frame
             .meta
             .get("cube_units")

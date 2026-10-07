@@ -58,7 +58,11 @@ use molrs::core::TypeLabels;
 use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::{F, Idx};
 
+use crate::core::UnitFactor;
 use crate::ff::equivalence_check::{self, TERMS};
+
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 pub(crate) struct Case {
     name: &'static str,
@@ -425,7 +429,8 @@ fn every_term_is_openmm_s() {
 /// term.
 #[test]
 fn every_term_is_lammps_s() {
-    let ratio = crate::core::constants::OPENMM_COULOMB / 332.06371;
+    let ratio =
+        (crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()) / 332.06371;
     for c in &CASES {
         let (ff, frame) = system(c);
         let m = molrs_terms(&ff, &frame);

@@ -53,7 +53,7 @@ pub(super) fn instantiate(
                 kind,
                 source.span,
                 input,
-                Notation::CGsmiles,
+                Notation::CgSmiles,
             ));
         };
         let offset = nodes.len();

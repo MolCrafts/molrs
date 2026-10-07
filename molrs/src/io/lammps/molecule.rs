@@ -121,7 +121,7 @@ fn read_lammps_molecule_native(path: &Path) -> Result<Frame> {
     }
 
     let (atoms, id_to_idx) = parse_native_atoms(&sections)?;
-    if atoms.nrows().unwrap_or(0) > 0 {
+    if atoms.n_rows().unwrap_or(0) > 0 {
         frame.insert("atoms", atoms);
     }
     for (name, arity) in [
@@ -436,7 +436,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let n = atoms
-        .nrows()
+        .n_rows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     if n == 0 {
         return Err(invalid_data("Frame must contain atoms data"));
@@ -453,7 +453,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     writeln!(w, "{n} atoms")?;
     for name in ["bonds", "angles", "dihedrals", "impropers"] {
         if let Some(b) = frame.get(name)
-            && let Some(nb) = b.nrows()
+            && let Some(nb) = b.n_rows()
             && nb > 0
         {
             writeln!(w, "{nb} {name}")?;
@@ -548,7 +548,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         let Some(block) = frame.get(name) else {
             continue;
         };
-        let Some(nb) = block.nrows() else {
+        let Some(nb) = block.n_rows() else {
             continue;
         };
         if nb == 0 {
@@ -603,7 +603,7 @@ fn capitalize(s: &str) -> String {
 }
 
 fn atom_ids(atoms: &Block) -> Vec<Idx> {
-    let n = atoms.nrows().unwrap_or(0);
+    let n = atoms.n_rows().unwrap_or(0);
     if let Some(col) = atoms.get("id").and_then(|c| c.as_uint()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
@@ -614,7 +614,7 @@ fn atom_ids(atoms: &Block) -> Vec<Idx> {
 }
 
 fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
-    let n = block.nrows().ok_or_else(|| invalid_data("empty block"))?;
+    let n = block.n_rows().ok_or_else(|| invalid_data("empty block"))?;
     if let Some(col) = block.get("type_id").and_then(|c| c.as_int()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
@@ -838,7 +838,7 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let n = atoms
-        .nrows()
+        .n_rows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let ids = atom_ids(atoms);
     let type_labels: Vec<String> = if let Some(col) = atoms.get("type").and_then(|c| c.as_string())
@@ -929,7 +929,7 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         let Some(block) = frame.get(name) else {
             continue;
         };
-        let Some(nb) = block.nrows() else {
+        let Some(nb) = block.n_rows() else {
             continue;
         };
         if nb == 0 {
@@ -1020,9 +1020,9 @@ Angles
         std::fs::write(&path, WATER).unwrap();
         let frame = read_lammps_molecule(&path).unwrap();
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(3));
-        assert_eq!(frame.get("bonds").unwrap().nrows(), Some(2));
-        assert_eq!(frame.get("angles").unwrap().nrows(), Some(1));
+        assert_eq!(atoms.n_rows(), Some(3));
+        assert_eq!(frame.get("bonds").unwrap().n_rows(), Some(2));
+        assert_eq!(frame.get("angles").unwrap().n_rows(), Some(1));
         let charge = atoms
             .get("charge")
             .and_then(|c| c.as_float())
@@ -1043,7 +1043,7 @@ Angles
         write_lammps_molecule(&out, &frame).unwrap();
         let back = read_lammps_molecule(&out).unwrap();
         for (block, rows) in [("atoms", 3), ("bonds", 2), ("angles", 1)] {
-            assert_eq!(back.get(block).unwrap().nrows(), Some(rows), "{block}");
+            assert_eq!(back.get(block).unwrap().n_rows(), Some(rows), "{block}");
         }
         let charge = back
             .get("atoms")

@@ -32,7 +32,7 @@ impl SmilesIr {
 /// write.
 pub fn write_smiles_str(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<String, SmilesError> {
     let ir = ir_from_atomistic(mol, opts)?;
-    crate::line_notation::writer::write_smiles(&ir)
+    crate::line_notation::writer::smiles_text(&ir)
 }
 
 fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIr, SmilesError> {
@@ -591,7 +591,7 @@ mod tests {
         let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let ir = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
         assert_eq!(
-            crate::line_notation::writer::write_smiles(&ir).unwrap(),
+            crate::line_notation::writer::smiles_text(&ir).unwrap(),
             "CCO"
         );
     }

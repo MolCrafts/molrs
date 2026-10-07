@@ -32,7 +32,7 @@ def test_glycam_mixed_scee_keeps_its_per_pair_weights():
     assert coul[2] == pytest.approx(1.0)
 
     pairs = frame["pairs"]
-    assert pairs.nrows > 0
+    assert pairs.n_rows > 0
     assert np.asarray(pairs["is_14"]).all()
     np.testing.assert_allclose(np.asarray(pairs["coul_scale"]), 1.0 / 1.2)
     np.testing.assert_allclose(np.asarray(pairs["lj_scale"]), 1.0 / 2.0)
@@ -40,7 +40,7 @@ def test_glycam_mixed_scee_keeps_its_per_pair_weights():
     # The structure is the structure reader's; it alone has no `pairs`.
     structure = molrs.io.read_amber_prmtop(FIXTURES / "glycam.parm7")
     assert "pairs" not in structure
-    assert frame["atoms"].nrows == structure["atoms"].nrows
+    assert frame["atoms"].n_rows == structure["atoms"].n_rows
     assert list(frame["bonds"]["atomi"]) == list(structure["bonds"]["atomi"])
 
 
@@ -48,7 +48,7 @@ def test_a_uniform_prmtop_has_no_pairs_block():
     ff, frame = molrs.io.read_amber_prmtop_system(FIXTURES / "ff14sb.parm7")
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert "pairs" not in frame
-    assert frame["atoms"].nrows > 0
+    assert frame["atoms"].n_rows > 0
 
 
 def test_an_unreadable_prmtop_raises(tmp_path):

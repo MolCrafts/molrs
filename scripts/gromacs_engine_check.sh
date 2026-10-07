@@ -25,7 +25,7 @@
 # Needs a compute node (cargo builds), $GMX (default gmx_d: GROMACS in double
 # precision, e.g. `module load GROMACS/2025.3-gcc-2025b-eb`), $LMP (default lmp,
 # with MOLECULE and EXTRA-MOLECULE) and $PYTHON (default python3) with `pyedr` and molrs (LAMMPS's log is read
-# by molrs.io.read_lammps_log, kJ→kcal is molrs.core.constants.KJ_PER_KCAL).
+# by molrs.io.read_lammps_log, kJ→kcal is a factor of molrs's unit registry).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 GMX=${GMX:-gmx_d}
@@ -277,8 +277,7 @@ PYTHONPATH=scripts "$PYTHON" - "$work" <<'PY'
 import sys
 from pathlib import Path
 import pyedr
-from engine_check_tables import lammps_thermo
-from molrs.core.constants import KJ_PER_KCAL
+from engine_check_tables import lammps_thermo, unit_factor
 
 work = Path(sys.argv[1])
 GMX_TERMS = {
@@ -299,7 +298,7 @@ for sys_ in ("charmm", "amber", "opls", "amber_pairs"):
     for term, names in GMX_TERMS.items():
         vals = [float(edr[n][0]) for n in names if n in edr]
         if vals:
-            gmx[term] = sum(vals) / KJ_PER_KCAL
+            gmx[term] = sum(vals) / unit_factor("kcal", "kJ")
     lmp = {}
     if sys_ != "amber_pairs":
         d = work / f"lmp-{sys_}"

@@ -7,10 +7,8 @@ use std::path::PathBuf;
 use pyo3::prelude::*;
 
 use crate::core::frame::PyFrame;
-use crate::error::io_error_to_pyerr;
 use crate::ff::forcefield::PyForceField;
 use crate::path::path_str;
-use molrs::io::gromacs::GromacsTopForcefieldWriter;
 
 /// Write a ForceField as GROMACS force-field directives.
 ///
@@ -28,10 +26,7 @@ pub fn write_gromacs_top_forcefield_py(
     forcefield: &PyForceField,
     precision: usize,
 ) -> PyResult<()> {
-    use molrs::io::writer::ForceFieldWriter;
-    molrs::io::gromacs::GromacsTopForcefieldWriter::new()
-        .with_precision(precision)
-        .write(&forcefield.inner, path_str(&path)?)
+    molrs::io::write_gromacs_top_forcefield(&path, &forcefield.inner, precision)
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -165,32 +160,20 @@ pub fn write_lammps_forcefield_py(
     units: &str,
     cmap_file: Option<String>,
 ) -> PyResult<()> {
-    use molrs::core::TypeLabels;
-    use molrs::io::lammps::parse_lammps_units_style;
-    use molrs::io::{
-        lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter,
-        writer::ForceFieldWriter,
+    let units = molrs::io::lammps::parse_lammps_units_style(units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let options = molrs::io::lammps::LammpsForcefieldWriteOptions {
+        precision,
+        skip_pair_style,
+        skip_special_bonds,
+        skip_units,
+        units,
+        cmap_file,
     };
-    let units = parse_lammps_units_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
-        .with_frame(molrs::io::lammps::refuse_pair_overrides)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let labels = frame
-        .with_frame(TypeLabels::from_frame)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsForcefieldWriter::with_options(
-        &labels,
-        LammpsForcefieldWriteOptions {
-            precision,
-            skip_pair_style,
-            skip_special_bonds,
-            skip_units,
-            units,
-            cmap_file,
-        },
-    );
-    writer
-        .write(&forcefield.inner, path_str(&path)?)
+        .with_frame(|frame| {
+            molrs::io::write_lammps_forcefield(&path, &forcefield.inner, frame, options)
+        })?
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -222,32 +205,20 @@ pub fn write_lammps_forcefield_str_py(
     units: &str,
     cmap_file: Option<String>,
 ) -> PyResult<String> {
-    use molrs::core::TypeLabels;
-    use molrs::io::lammps::parse_lammps_units_style;
-    use molrs::io::{
-        lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter,
-        writer::ForceFieldWriter,
+    let units = molrs::io::lammps::parse_lammps_units_style(units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let options = molrs::io::lammps::LammpsForcefieldWriteOptions {
+        precision,
+        skip_pair_style,
+        skip_special_bonds,
+        skip_units,
+        units,
+        cmap_file,
     };
-    let units = parse_lammps_units_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
-        .with_frame(molrs::io::lammps::refuse_pair_overrides)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let labels = frame
-        .with_frame(TypeLabels::from_frame)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsForcefieldWriter::with_options(
-        &labels,
-        LammpsForcefieldWriteOptions {
-            precision,
-            skip_pair_style,
-            skip_special_bonds,
-            skip_units,
-            units,
-            cmap_file,
-        },
-    );
-    writer
-        .write_str(&forcefield.inner)
+        .with_frame(|frame| {
+            molrs::io::write_lammps_forcefield_str(&forcefield.inner, frame, options)
+        })?
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -276,26 +247,9 @@ pub fn write_lammps_data_coeffs_py(
     precision: usize,
     units: &str,
 ) -> PyResult<String> {
-    use molrs::core::TypeLabels;
-    use molrs::io::lammps::parse_lammps_units_style;
-    use molrs::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
-    let units = parse_lammps_units_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
+    let options = lammps_options(precision, units)?;
     frame
-        .with_frame(molrs::io::lammps::refuse_pair_overrides)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let labels = frame
-        .with_frame(TypeLabels::from_frame)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let writer = LammpsForcefieldWriter::with_options(
-        &labels,
-        LammpsForcefieldWriteOptions {
-            precision,
-            units,
-            ..LammpsForcefieldWriteOptions::default()
-        },
-    );
-    writer
-        .write_data_coeffs_str(&forcefield.inner)
+        .with_frame(|frame| molrs::io::write_lammps_data_coeffs(&forcefield.inner, frame, options))?
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -326,27 +280,16 @@ pub fn write_lammps_cmap_forcefield_py(
     precision: usize,
     units: &str,
 ) -> PyResult<()> {
-    use molrs::core::TypeLabels;
-    use molrs::io::lammps::parse_lammps_units_style;
-    use molrs::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
-    let units = parse_lammps_units_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let labels = frame
-        .with_frame(TypeLabels::from_frame)?
-        .map_err(pyo3::exceptions::PyValueError::new_err)?;
-    let options = LammpsForcefieldWriteOptions {
-        precision,
-        units,
-        ..LammpsForcefieldWriteOptions::default()
-    };
-    let text = LammpsForcefieldWriter::with_options(&labels, options)
-        .write_cmap_str(&forcefield.inner)
-        .map_err(crate::ff::ir::write_err)?;
-    std::fs::write(&path, text)
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))
+    let options = lammps_options(precision, units)?;
+    frame
+        .with_frame(|frame| {
+            molrs::io::write_lammps_cmap_forcefield(&path, &forcefield.inner, frame, options)
+        })?
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Write a force field and a typed frame as one GROMACS topology — the
-/// inverse of :func:`read_gromacs_system`.
+/// inverse of :func:`read_gromacs_top_system`.
 ///
 /// The force-field directives as :func:`write_gromacs_top_forcefield` writes them,
 /// then one ``[ moleculetype ]`` per molecule of ``frame`` (its ``atoms``
@@ -373,21 +316,18 @@ pub fn write_lammps_cmap_forcefield_py(
 /// OSError
 ///     The file cannot be written.
 #[pyfunction]
-#[pyo3(signature = (path, forcefield, frame, *, precision = 6))]
-pub fn write_gromacs_system(
+#[pyo3(name = "write_gromacs_top_system", signature = (path, forcefield, frame, *, precision = 6))]
+pub fn write_gromacs_top_system_py(
     path: PathBuf,
     forcefield: PyRef<'_, PyForceField>,
     frame: &PyFrame,
     precision: usize,
 ) -> PyResult<()> {
-    let text = frame
+    frame
         .with_frame(|f| {
-            GromacsTopForcefieldWriter::new()
-                .with_precision(precision)
-                .write_system_str(&forcefield.inner, f)
+            molrs::io::write_gromacs_top_system(&path, &forcefield.inner, f, precision)
         })?
-        .map_err(crate::ff::ir::write_err)?;
-    std::fs::write(path_str(&path)?, text).map_err(io_error_to_pyerr)
+        .map_err(crate::ff::ir::write_err)
 }
 
 /// Register the force-field writers.
@@ -416,13 +356,31 @@ pub fn write_molrs_xml_forcefield_py(path: PathBuf, forcefield: &PyForceField) -
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// The LAMMPS write options of `precision` decimals in `units`.
+fn lammps_options(
+    precision: usize,
+    units: &str,
+) -> PyResult<molrs::io::lammps::LammpsForcefieldWriteOptions> {
+    let units = molrs::io::lammps::parse_lammps_units_style(units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(molrs::io::lammps::LammpsForcefieldWriteOptions {
+        precision,
+        units,
+        ..Default::default()
+    })
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(
         m,
         "molrs.io",
         wrap_pyfunction!(write_gromacs_top_forcefield_py, m)?,
     )?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_gromacs_system, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(write_gromacs_top_system_py, m)?,
+    )?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_amber_frcmod_py, m)?)?;
     crate::add_function(
         m,

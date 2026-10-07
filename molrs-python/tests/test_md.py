@@ -36,7 +36,7 @@ class TestPotentialProtocol:
 
         for name in ("Potential", "Potentials", "PairLjCut"):
             assert not hasattr(md, name)
-            assert not hasattr(molrs._lib.md, name)
+            assert not hasattr(molrs._native.md, name)
 
 
 class TestMDDtype:

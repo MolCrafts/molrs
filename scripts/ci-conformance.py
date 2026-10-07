@@ -100,7 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="molrec's tests directory, which holds molrs_adapter.py",
     )
-    parser.add_argument("--out", type=Path, required=True, help="Snapshot JSON to write")
+    parser.add_argument(
+        "--out", type=Path, required=True, help="Snapshot JSON to write"
+    )
     parser.add_argument(
         "--track",
         action="store_true",

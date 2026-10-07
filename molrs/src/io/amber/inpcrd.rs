@@ -142,11 +142,11 @@ pub fn merge_inpcrd(frame: &mut Frame, coordinates: Frame) -> Result<()> {
             frame.insert("atoms", source);
         }
         Some(atoms) => {
-            if atoms.nrows() != source.nrows() {
+            if atoms.n_rows() != source.n_rows() {
                 return Err(invalid_data(format!(
                     "atoms block has {} rows, but the inpcrd has {} atoms",
-                    atoms.nrows().unwrap_or(0),
-                    source.nrows().unwrap_or(0)
+                    atoms.n_rows().unwrap_or(0),
+                    source.n_rows().unwrap_or(0)
                 )));
             }
             for key in ["x", "y", "z", "vel"] {
@@ -384,7 +384,7 @@ Simple 3-atom system
 ";
         let frame = frame_from(text);
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(3));
+        assert_eq!(atoms.n_rows(), Some(3));
         assert_eq!(
             frame.meta.get("title").and_then(|v| v.as_str()),
             Some("Simple 3-atom system")

@@ -92,7 +92,12 @@ mod tests {
         let mut dm = Array2::zeros((n, 3));
         for t in 0..n {
             let tf = t as f64 * dt;
-            dm[[t, 2]] = (2.0 * std::f64::consts::PI * 10.0 * 1e-3 * tf).sin();
+            dm[[t, 2]] = (2.0
+                * std::f64::consts::PI
+                * 10.0
+                * crate::core::UnitFactor::new("THz", "1/fs").get()
+                * tf)
+                .sin();
         }
         let flux_len = n - 2;
         let max_lag = res.min(flux_len - 1);

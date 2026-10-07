@@ -5,6 +5,6 @@ The doors are functions of :mod:`molrs.io`
 this module holds the format's lazy reader, :class:`XtcReader`.
 """
 
-from .._lib import XtcReader
+from .._native import XtcReader
 
 __all__ = ["XtcReader"]

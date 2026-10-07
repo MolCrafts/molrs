@@ -43,7 +43,7 @@ doc = [
 
 [tool.maturin]
 python-source = "python"
-module-name = "molrs._lib"
+module-name = "molrs._native"
 features = ["pyo3/extension-module"]
 exclude = [
   "python/molrs/*.so",

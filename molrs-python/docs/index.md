@@ -28,7 +28,7 @@ doc comments.
     frame = mol3d.to_frame()
 
     atoms = frame["atoms"]
-    print("atoms:", atoms.nrows)
+    print("atoms:", atoms.n_rows)
     print("columns:", atoms.keys())
     print("x:", atoms["x"][:3])
     ```

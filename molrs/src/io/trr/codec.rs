@@ -1,6 +1,5 @@
 //! GROMACS TRR binary trajectory reader and writer.
-
-use crate::core::constants::ANGSTROM_PER_NM;
+use crate::core::UnitFactor;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -16,6 +15,9 @@ use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
+
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 const TRR_MAGIC: i32 = 1993;
 const TRR_VERSION: &str = "GMX_trn_file";
@@ -228,7 +230,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
 
     let simbox = if hdr.box_size != 0 {
         let vals = read_reals(r, DIM * DIM, hdr.is_double)?;
-        Some(scale_simbox(build_simbox(&vals)?, ANGSTROM_PER_NM)?)
+        Some(scale_simbox(build_simbox(&vals)?, NM_TO_ANGSTROM.get())?)
     } else {
         None
     };
@@ -260,11 +262,19 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
         .map_err(invalid_data)?;
     atoms.insert("id", id_arr).map_err(invalid_data)?;
     if let Some(x) = &x {
-        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", ANGSTROM_PER_NM)?;
+        insert_rvec_cols(&mut atoms, x, natoms, "x", "y", "z", NM_TO_ANGSTROM.get())?;
     }
     if let Some(v) = &v {
         // nm/ps → Å/ps.
-        insert_rvec_cols(&mut atoms, v, natoms, "vx", "vy", "vz", ANGSTROM_PER_NM)?;
+        insert_rvec_cols(
+            &mut atoms,
+            v,
+            natoms,
+            "vx",
+            "vy",
+            "vz",
+            NM_TO_ANGSTROM.get(),
+        )?;
     }
     if let Some(f) = &f {
         // kJ/mol/nm → kJ/mol/Å: same energy, per Å instead of per nm.
@@ -275,7 +285,7 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
             "fx",
             "fy",
             "fz",
-            1.0 / ANGSTROM_PER_NM,
+            1.0 / NM_TO_ANGSTROM.get(),
         )?;
     }
 
@@ -514,7 +524,7 @@ fn scale_simbox(sb: SimBox, scale: F) -> Result<SimBox> {
 /// Write one frame in single-precision TRR format.
 fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     let natoms = frame
-        .visit_block("atoms", |a| a.nrows().unwrap_or(0))
+        .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("TRR write: frame has no atoms block"))?;
     if natoms == 0 {
         return Err(invalid_data("TRR write: atoms block is empty"));
@@ -583,7 +593,7 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
 
     if has_box {
         let sb = frame.simbox_ref().expect("box present");
-        let h = sb.h_view().to_owned() / ANGSTROM_PER_NM;
+        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM.get();
         // GROMACS row-stored: box[i][j] = component j of lattice vector i = H[j][i].
         for i in 0..DIM {
             for j in 0..DIM {
@@ -592,12 +602,12 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         }
     }
     // Å → nm on the way out, mirroring the reader.
-    write_rvecs(w, &xs, &ys, &zs, 1.0 / ANGSTROM_PER_NM)?;
+    write_rvecs(w, &xs, &ys, &zs, 1.0 / NM_TO_ANGSTROM.get())?;
     if let Some((vx, vy, vz)) = &vel {
-        write_rvecs(w, vx, vy, vz, 1.0 / ANGSTROM_PER_NM)?;
+        write_rvecs(w, vx, vy, vz, 1.0 / NM_TO_ANGSTROM.get())?;
     }
     if let Some((fx, fy, fz)) = &force {
-        write_rvecs(w, fx, fy, fz, ANGSTROM_PER_NM)?;
+        write_rvecs(w, fx, fy, fz, NM_TO_ANGSTROM.get())?;
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
-"""Freshness guard for ``python/molrs/_lib.pyi`` at class-name level.
+"""Freshness guard for ``python/molrs/_native.pyi`` at class-name level.
 
-``_lib.pyi`` has claimed this test since it was written; this is it. It
+``_native.pyi`` has claimed this test since it was written; this is it. It
 compares, in **both** directions, the top-level ``class`` names the stub
 declares against the public classes the native module actually exports, so a
 new pyclass that nobody declared — and a declaration whose class has been
@@ -10,7 +10,7 @@ Two facts decide how the comparison is set up:
 
 * **The gate is the native wheel.** ``tox -e py`` builds the default-feature
   wheel with maturin and force-installs it before running pytest
-  (``pyproject.toml:96-107``), so ``molrs._lib`` here is that wheel's
+  (``pyproject.toml:96-107``), so ``molrs._native`` here is that wheel's
   extension module and the class set is the default-feature surface.
 * **The stub is read from the source tree**, not from ``molrs.__file__``.
   The same tox block asserts the imported package resolves under
@@ -18,8 +18,8 @@ Two facts decide how the comparison is set up:
   to the imported package would check a *copy* rather than the file a
   contributor edits.
 
-The only exemption is structural, never a name allowlist: a ``_lib``
-attribute that is a **module** (``_lib.md``) may be declared in the stub as a
+The only exemption is structural, never a name allowlist: a ``_native``
+attribute that is a **module** (``_native.md``) may be declared in the stub as a
 class, because a stub has no other way to describe a submodule.
 """
 
@@ -29,9 +29,9 @@ import ast
 import inspect
 from pathlib import Path
 
-from molrs import _lib
+from molrs import _native
 
-STUB = Path(__file__).parents[1] / "python" / "molrs" / "_lib.pyi"
+STUB = Path(__file__).parents[1] / "python" / "molrs" / "_native.pyi"
 
 
 def test_stub_declares_exactly_the_classes_lib_exports() -> None:
@@ -40,10 +40,10 @@ def test_stub_declares_exactly_the_classes_lib_exports() -> None:
 
     exported: set[str] = set()
     submodules: set[str] = set()
-    for name in dir(_lib):
+    for name in dir(_native):
         if name.startswith("_"):
             continue
-        value = getattr(_lib, name)
+        value = getattr(_native, name)
         if isinstance(value, type):
             exported.add(name)
         elif inspect.ismodule(value):
@@ -53,7 +53,7 @@ def test_stub_declares_exactly_the_classes_lib_exports() -> None:
     lib_only = exported - declared
 
     assert not stub_only and not lib_only, (
-        f"{STUB} is out of date with molrs._lib:\n"
-        f"  declared in the stub but not exported by _lib: {sorted(stub_only)}\n"
-        f"  exported by _lib but not declared in the stub: {sorted(lib_only)}"
+        f"{STUB} is out of date with molrs._native:\n"
+        f"  declared in the stub but not exported by _native: {sorted(stub_only)}\n"
+        f"  exported by _native but not declared in the stub: {sorted(lib_only)}"
     )

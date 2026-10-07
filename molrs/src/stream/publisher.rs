@@ -102,7 +102,7 @@ struct Shared {
     /// overwrites its oldest entry when full, which is the drop policy.
     frame_tx: Mutex<Option<broadcast::Sender<Bytes>>>,
     cmd_rx: Mutex<mpsc::Receiver<ControlCommand>>,
-    client_count: Arc<AtomicUsize>,
+    n_clients: Arc<AtomicUsize>,
     local_addr: Option<SocketAddr>,
     shutting_down: AtomicBool,
     join: Mutex<Option<JoinHandle<()>>>,
@@ -180,8 +180,8 @@ impl Publisher {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<ControlCommand>(64);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        let client_count = Arc::new(AtomicUsize::new(0));
-        let client_count_thread = Arc::clone(&client_count);
+        let n_clients = Arc::new(AtomicUsize::new(0));
+        let client_count_thread = Arc::clone(&n_clients);
 
         let join = std::thread::Builder::new()
             .name("molrs-frame-publisher".into())
@@ -210,7 +210,7 @@ impl Publisher {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
-                client_count,
+                n_clients,
                 local_addr: None,
                 shutting_down: AtomicBool::new(false),
                 join: Mutex::new(Some(join)),
@@ -232,8 +232,8 @@ impl Publisher {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<io::Result<SocketAddr>>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        let client_count = Arc::new(AtomicUsize::new(0));
-        let client_count_thread = Arc::clone(&client_count);
+        let n_clients = Arc::new(AtomicUsize::new(0));
+        let client_count_thread = Arc::clone(&n_clients);
 
         let join = std::thread::Builder::new()
             .name("molrs-frame-publisher".into())
@@ -290,7 +290,7 @@ impl Publisher {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
-                client_count,
+                n_clients,
                 local_addr: Some(local_addr),
                 shutting_down: AtomicBool::new(false),
                 join: Mutex::new(Some(join)),
@@ -305,8 +305,8 @@ impl Publisher {
     }
 
     /// Number of currently connected WebSocket clients.
-    pub fn client_count(&self) -> usize {
-        self.shared.client_count.load(Ordering::Relaxed)
+    pub fn n_clients(&self) -> usize {
+        self.shared.n_clients.load(Ordering::Relaxed)
     }
 
     /// Encode `frame` and enqueue it for broadcast.
@@ -421,7 +421,7 @@ async fn run_bound(
     listener: TcpListener,
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    client_count: Arc<AtomicUsize>,
+    n_clients: Arc<AtomicUsize>,
     format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
@@ -434,14 +434,14 @@ async fn run_bound(
                 let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
                     continue;
                 };
-                client_count.fetch_add(1, Ordering::Relaxed);
+                n_clients.fetch_add(1, Ordering::Relaxed);
                 let bcast_rx = bcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
-                let client_count = Arc::clone(&client_count);
+                let n_clients = Arc::clone(&n_clients);
                 let token = token.clone();
                 tokio::spawn(async move {
                     handle_client(ws, bcast_rx, cmd_tx, format, token).await;
-                    client_count.fetch_sub(1, Ordering::Relaxed);
+                    n_clients.fetch_sub(1, Ordering::Relaxed);
                 });
             }
         }
@@ -514,7 +514,7 @@ async fn run_dialed(
     url: String,
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    client_count: Arc<AtomicUsize>,
+    n_clients: Arc<AtomicUsize>,
     format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
@@ -531,16 +531,16 @@ async fn run_dialed(
             {
                 let (mut write, mut read) = ws.split();
                 if present_token(&mut write, &mut read, token.as_deref()).await {
-                    client_count.fetch_add(1, Ordering::Relaxed);
+                    n_clients.fetch_add(1, Ordering::Relaxed);
                     let bcast_rx = bcast_tx.subscribe();
                     tokio::select! {
                         _ = &mut shutdown_rx => {
-                            client_count.fetch_sub(1, Ordering::Relaxed);
+                            n_clients.fetch_sub(1, Ordering::Relaxed);
                             break;
                         }
                         _ = pump(write, read, bcast_rx, cmd_tx.clone(), format) => {}
                     }
-                    client_count.fetch_sub(1, Ordering::Relaxed);
+                    n_clients.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -660,7 +660,7 @@ mod tests {
     use super::*;
     use crate::core::Block;
     use crate::op::{F, I};
-    use crate::stream::read_msgpack_frame_bytes;
+    use crate::stream::decode_msgpack_frame;
     use futures_util::{SinkExt, StreamExt};
     use ndarray::Array1;
     use tokio_tungstenite::connect_async;
@@ -699,14 +699,14 @@ mod tests {
 
     async fn wait_clients(server: &Publisher, n: usize) {
         for _ in 0..100 {
-            if server.client_count() == n {
+            if server.n_clients() == n {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!(
             "timed out waiting for {n} clients (have {})",
-            server.client_count()
+            server.n_clients()
         );
     }
 
@@ -717,7 +717,7 @@ mod tests {
 
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
-        assert_eq!(server.client_count(), 1);
+        assert_eq!(server.n_clients(), 1);
 
         ws.close(None).await.ok();
         server.shutdown();
@@ -744,7 +744,7 @@ mod tests {
             Message::Text(t) => t.as_bytes().to_vec(),
             other => panic!("unexpected message: {other:?}"),
         };
-        let decoded = read_msgpack_frame_bytes(&bytes).expect("decode");
+        let decoded = decode_msgpack_frame(&bytes).expect("decode");
         assert!(decoded.contains_key("atoms"));
         let x = decoded["atoms"]
             .get("x")
@@ -828,7 +828,7 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
                 Ok(Some(Ok(Message::Binary(b)))) => {
-                    if let Ok(decoded) = read_msgpack_frame_bytes(b.as_ref())
+                    if let Ok(decoded) = decode_msgpack_frame(b.as_ref())
                         && let Some(x) = decoded
                             .get("atoms")
                             .and_then(|a| a.get("x").and_then(|c| c.as_float()))
@@ -876,7 +876,7 @@ mod tests {
         server.send(&sample_frame(7)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
     }
@@ -935,7 +935,7 @@ mod tests {
 
         server.send(&sample_frame(3)).expect("send");
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
     }
@@ -961,7 +961,7 @@ mod tests {
         assert!(publisher.local_addr().is_none());
 
         for _ in 0..100 {
-            if publisher.client_count() == 1 {
+            if publisher.n_clients() == 1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -969,7 +969,7 @@ mod tests {
         publisher.send(&sample_frame(11)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 11.0).abs() < 1e-12);
 
@@ -980,7 +980,7 @@ mod tests {
     /// the long-lived end, so it keeps dialing until something answers.
     ///
     /// The assertion has to be that it eventually connects. Checking only that
-    /// `send` succeeds and `client_count` is 0 while nothing listens proves
+    /// `send` succeeds and `n_clients` is 0 while nothing listens proves
     /// nothing: that holds with the dial loop deleted entirely.
     #[tokio::test]
     async fn a_collector_that_starts_late_still_gets_the_stream() {
@@ -999,7 +999,7 @@ mod tests {
         // the test would then pass with the retry loop deleted.
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         assert_eq!(
-            publisher.client_count(),
+            publisher.n_clients(),
             0,
             "nothing is listening yet, so no dial should have succeeded"
         );
@@ -1024,7 +1024,7 @@ mod tests {
         let mut ws = tokio_tungstenite::accept_async(stream).await.expect("ws");
 
         for _ in 0..200 {
-            if publisher.client_count() == 1 {
+            if publisher.n_clients() == 1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1036,7 +1036,7 @@ mod tests {
             .expect("no frame after reconnect")
             .expect("frame")
             .expect("frame ok");
-        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 5.0).abs() < 1e-12);
 

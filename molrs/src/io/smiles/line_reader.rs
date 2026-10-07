@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn read_yields_a_validated_frame() {
         let frame = reader("CCO\n").read().unwrap().expect("one record");
-        assert_eq!(frame["atoms"].nrows(), Some(3));
+        assert_eq!(frame["atoms"].n_rows(), Some(3));
         // `read` returns through the schema check, so this frame conforms.
         crate::core::schema::Validator::canonical()
             .validate(&frame)
@@ -121,7 +121,7 @@ mod tests {
     fn read_as_frame_matches_read() {
         let a = reader("CCO\n").read().unwrap().unwrap();
         let b = reader("CCO\n").read_as::<Frame>().unwrap().unwrap();
-        assert_eq!(a["atoms"].nrows(), b["atoms"].nrows());
+        assert_eq!(a["atoms"].n_rows(), b["atoms"].n_rows());
     }
 
     #[test]

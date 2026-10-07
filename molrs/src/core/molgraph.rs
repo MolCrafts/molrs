@@ -139,7 +139,7 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
             PropValue::Int(_) => Ok(pv),
             PropValue::F64(_) | PropValue::Str(_) | PropValue::Bool(_) => refuse(),
         },
-        DType::UInt => match pv {
+        DType::Uint => match pv {
             PropValue::Int(v) if v < 0 => Err(MolRsError::validation(format!(
                 "'{key}' is declared unsigned by the Frame schema; got {v}"
             ))),
@@ -157,7 +157,7 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
         // A wide signed key (`formal_charge`) holds any integer the graph's
         // `Int` holds, and an integral float (SMILES stores charges as f64);
         // `to_frame` widens either to the declared `i64`.
-        DType::Int64 => match pv {
+        DType::I64 => match pv {
             PropValue::Int(_) => Ok(pv),
             PropValue::F64(v) if v.is_finite() && v.fract() == 0.0 => Ok(pv),
             PropValue::F64(v) => Err(MolRsError::validation(format!(
@@ -165,13 +165,9 @@ fn coerce_canonical(key: &str, pv: PropValue) -> Result<PropValue, MolRsError> {
             ))),
             PropValue::Str(_) | PropValue::Bool(_) => refuse(),
         },
-        DType::Int8
-        | DType::Int16
-        | DType::U8
-        | DType::UInt16
-        | DType::UInt32
-        | DType::Complex64
-        | DType::Complex128 => refuse(),
+        DType::I8 | DType::I16 | DType::U8 | DType::U16 | DType::U32 | DType::C64 | DType::C128 => {
+            refuse()
+        }
     }
 }
 
@@ -201,7 +197,7 @@ fn emit_column<K: Key>(
     use ndarray::Array1;
 
     let declared = crate::core::schema::column(key).map(|spec| spec.dtype);
-    if declared == Some(DType::Int64) {
+    if declared == Some(DType::I64) {
         // A wide signed key: the table holds it as `Int` or as an integral
         // `F64` (see `coerce_canonical`); the frame column is `i64`.
         let (wide, valid): (Vec<i64>, Vec<bool>) = if let Ok((data, valid)) = table.column_f64(key)
@@ -220,7 +216,7 @@ fn emit_column<K: Key>(
     let inserted = if let Ok((data, valid)) = table.column_f64(key) {
         block.insert_nullable(key, Array1::from_vec(data.to_vec()).into_dyn(), mask(valid))
     } else if let Ok((data, valid)) = table.column_i32(key) {
-        if crate::core::schema::column(key).is_some_and(|spec| spec.dtype == DType::UInt) {
+        if crate::core::schema::column(key).is_some_and(|spec| spec.dtype == DType::Uint) {
             let unsigned: Vec<Idx> = data
                 .iter()
                 .map(|&v| {
@@ -268,13 +264,13 @@ struct MaskedColumns<'a> {
 /// One block column borrowed at the element type [`MaskedColumns`] reads.
 ///
 /// Unsigned columns are kept apart from signed ones because the canonical
-/// `id` / `mol_id` / `type_id` fields are UInt in the Frame schema and the
+/// `id` / `mol_id` / `type_id` fields are `uint` in the Frame schema and the
 /// graph stores them signed: they need narrowing, not a cast.
 enum TypedColumn<'a> {
     Float(&'a ArrayD<F>),
     Int(&'a ArrayD<I>),
-    Int64(&'a ArrayD<i64>),
-    UInt(&'a ArrayD<Idx>),
+    I64(&'a ArrayD<i64>),
+    Uint(&'a ArrayD<Idx>),
     Str(&'a ArrayD<String>),
     Bool(&'a ArrayD<bool>),
 }
@@ -295,9 +291,9 @@ impl<'a> MaskedColumns<'a> {
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_int()) {
                 TypedColumn::Int(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_i64()) {
-                TypedColumn::Int64(arr)
+                TypedColumn::I64(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_uint()) {
-                TypedColumn::UInt(arr)
+                TypedColumn::Uint(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_string()) {
                 TypedColumn::Str(arr)
             } else if let Some(arr) = block.get(key).and_then(|c| c.as_bool()) {
@@ -327,8 +323,8 @@ impl<'a> MaskedColumns<'a> {
                 #[allow(clippy::unnecessary_cast)]
                 TypedColumn::Float(arr) => PropValue::F64(arr[[row]] as f64),
                 TypedColumn::Int(arr) => PropValue::Int(arr[[row]]),
-                TypedColumn::Int64(arr) => PropValue::Int(narrow_i64(key, arr[[row]])?),
-                TypedColumn::UInt(arr) => PropValue::Int(narrow_uint(key, arr[[row]])?),
+                TypedColumn::I64(arr) => PropValue::Int(narrow_i64(key, arr[[row]])?),
+                TypedColumn::Uint(arr) => PropValue::Int(narrow_uint(key, arr[[row]])?),
                 TypedColumn::Str(arr) => PropValue::Str(arr[[row]].clone()),
                 TypedColumn::Bool(arr) => PropValue::Bool(arr[[row]]),
             };
@@ -634,7 +630,7 @@ impl RelationKind {
 /// assert_eq!(g.n_nodes(), 2);
 /// assert_eq!(g.n_relations(bond), 1);
 ///
-/// molrs::op::translate(&mut g, [1.0, 0.0, 0.0]);
+/// g.translate([1.0, 0.0, 0.0]);
 /// assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
 /// ```
 #[derive(Debug, Clone)]
@@ -1621,7 +1617,7 @@ impl MolGraph {
     /// canonical type, or when a property contradicts a component `self`
     /// already holds under that key.
     fn read_node_rows(&mut self, atoms: &Block) -> Result<Vec<NodeId>, MolRsError> {
-        let nrows = atoms.nrows().unwrap_or(0);
+        let nrows = atoms.n_rows().unwrap_or(0);
         let columns = MaskedColumns::of(atoms, &[]);
         let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
         for row in 0..nrows {
@@ -1670,7 +1666,7 @@ impl MolGraph {
         // flag), each honouring its validity mask.
         let props = MaskedColumns::of(block, &endpoint_names);
 
-        for row in 0..block.nrows().unwrap_or(0) {
+        for row in 0..block.n_rows().unwrap_or(0) {
             let Some(nodes) = endpoints_at(&endpoint_cols, row, node_ids) else {
                 let stated: Vec<Idx> = endpoint_cols.iter().map(|col| col[[row]]).collect();
                 return Err(MolRsError::validation(format!(
@@ -1803,7 +1799,7 @@ mod tests {
         let mut g = MolGraph::new();
         let n = g.add_node();
         assert!(g.get_node(n).unwrap().is_empty());
-        crate::op::translate(&mut g, [1.0, 2.0, 3.0]);
+        g.translate([1.0, 2.0, 3.0]);
         assert!(g.get_node(n).unwrap().get_f64("x").is_none());
         g.set_node(n, "element", "C").unwrap();
         assert_eq!(g.get_node(n).unwrap().get_str("element"), Some("C"));
@@ -1940,13 +1936,13 @@ mod tests {
         let id = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::op::translate(&mut g, [10.0, 20.0, 30.0]);
+        g.translate([10.0, 20.0, 30.0]);
         let a = g.get_node(id).unwrap();
         assert!((a.get_f64("x").unwrap() - 11.0).abs() < 1e-12);
         let id2 = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::op::rotate(&mut g, [0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
+        g.rotate([0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
             .expect("the z axis is a direction");
         let b = g.get_node(id2).unwrap();
         assert!((b.get_f64("x").unwrap()).abs() < 1e-12);
@@ -1973,8 +1969,8 @@ mod tests {
         let frame = g.to_frame().expect("a schema-conforming graph converts");
         assert!(frame.contains_key("atoms"));
         assert!(frame.contains_key("bonds"));
-        assert_eq!(frame["atoms"].nrows(), Some(3));
-        assert_eq!(frame["bonds"].nrows(), Some(2));
+        assert_eq!(frame["atoms"].n_rows(), Some(3));
+        assert_eq!(frame["bonds"].n_rows(), Some(2));
 
         // read back into a graph with the same kind registered
         let mut g2 = MolGraph::new();
@@ -2240,7 +2236,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("'id'"), "the error names the key, got {msg}");
         assert!(
-            msg.contains(DType::UInt.name()) && msg.contains(DType::Float.name()),
+            msg.contains(DType::Uint.name()) && msg.contains(DType::Float.name()),
             "the error names both dtypes, got {msg}"
         );
     }

@@ -17,14 +17,14 @@ class TestTopLevelEagerReaders:
         frames = molrs.io.read_trr_trajectory(str(water_trr)).read_all()
         assert isinstance(frames, list) and len(frames) >= 1
         atoms = frames[0]["atoms"]
-        assert atoms.nrows > 0
+        assert atoms.n_rows > 0
         for axis in ("x", "y", "z"):
             assert np.all(np.isfinite(atoms[axis]))
 
     def test_read_xtc_returns_list_of_frames(self, water_xtc):
         frames = molrs.io.read_xtc_trajectory(str(water_xtc)).read_all()
         assert isinstance(frames, list) and len(frames) >= 1
-        assert frames[0]["atoms"].nrows > 0
+        assert frames[0]["atoms"].n_rows > 0
 
 
 class TestLazyFacadeReaders:

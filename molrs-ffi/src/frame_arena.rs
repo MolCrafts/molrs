@@ -446,7 +446,7 @@ mod tests {
         let len = arena.with_block(&handle, |b| b.len()).unwrap();
         assert_eq!(len, 1);
 
-        let nrows = arena.with_block(&handle, |b| b.nrows()).unwrap();
+        let nrows = arena.with_block(&handle, |b| b.n_rows()).unwrap();
         assert_eq!(nrows, Some(3));
     }
 
@@ -469,7 +469,7 @@ mod tests {
 
         assert!(handle.version > old_version);
 
-        let nrows = arena.with_block(&handle, |b| b.nrows()).unwrap();
+        let nrows = arena.with_block(&handle, |b| b.n_rows()).unwrap();
         assert_eq!(nrows, Some(2));
     }
 

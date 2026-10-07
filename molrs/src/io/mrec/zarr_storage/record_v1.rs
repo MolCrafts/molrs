@@ -422,7 +422,7 @@ impl V1Upgrade {
         table: &mut Block,
         centre_second: bool,
     ) -> Result<(), MolRsError> {
-        let rows: Vec<usize> = (0..table.nrows().unwrap_or(0)).collect();
+        let rows: Vec<usize> = (0..table.n_rows().unwrap_or(0)).collect();
         let columns: Vec<String> = table.keys().map(str::to_owned).collect();
         for column in &columns {
             match column_conv(category, style, column)? {
@@ -494,7 +494,7 @@ impl V1Upgrade {
         category: &str,
         block: &mut Block,
     ) -> Result<(), MolRsError> {
-        let nrows = block.nrows().unwrap_or(0);
+        let nrows = block.n_rows().unwrap_or(0);
         let cell = |block: &Block, key: &str, row: usize| -> Option<String> {
             let valid = block.validity(key).is_none_or(|mask| mask[row]);
             block
@@ -602,7 +602,7 @@ impl V1Upgrade {
             // A column subset without both endpoints has nothing to reorder.
             let endpoints = block.contains_key("atomi") && block.contains_key("atomj");
             if endpoints && !centre_second.is_empty() {
-                if block.get("atomi").map(Column::dtype) != Some(DType::UInt) {
+                if block.get("atomi").map(Column::dtype) != Some(DType::Uint) {
                     return Err(refuse(format!("{block_name}: atomi is no u64 column")));
                 }
                 swap_rows(block, "atomi", "atomj", &centre_second, Column::as_uint_mut)?;

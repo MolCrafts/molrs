@@ -243,10 +243,10 @@ mod tests {
             .with_periodic_xy(true)
             .build()
             .unwrap();
-        let n = frame.get("atoms").unwrap().nrows().unwrap();
+        let n = frame.get("atoms").unwrap().n_rows().unwrap();
         assert_eq!(n, 32);
         let bonds = frame.get("bonds").unwrap();
-        assert_eq!(bonds.nrows(), Some(3 * n / 2));
+        assert_eq!(bonds.n_rows(), Some(3 * n / 2));
 
         let mut degree = vec![0; n];
         for &i in bonds.get("atomi").and_then(|c| c.as_uint()).unwrap() {
@@ -271,8 +271,8 @@ mod tests {
             .build()
             .unwrap();
         assert!(
-            open.get("bonds").unwrap().nrows().unwrap()
-                < closed.get("bonds").unwrap().nrows().unwrap()
+            open.get("bonds").unwrap().n_rows().unwrap()
+                < closed.get("bonds").unwrap().n_rows().unwrap()
         );
     }
 }

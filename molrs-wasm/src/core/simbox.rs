@@ -781,7 +781,7 @@ mod tests {
         cube.wrap_to_block(&wrap_view, &mut out, "wrapped")
             .expect("wrapToBlock");
         let wrapped_out: JsFloatArray =
-            wasm_bindgen::JsValue::from(out.get("wrapped", None).expect("get")).unchecked_into();
+            wasm_bindgen::JsValue::from(out.copy("wrapped", None).expect("copy")).unchecked_into();
         assert_eq_array(&wrapped_out, &[2.5, 3.5, 4.5]);
     }
 }

@@ -182,17 +182,17 @@ impl PyColumnSpec {
         // cannot drift from what a column of this dtype hands numpy.
         let descr = match dtype {
             DType::Float => numpy::dtype::<F>(py),
-            DType::Int8 => numpy::dtype::<i8>(py),
-            DType::Int16 => numpy::dtype::<i16>(py),
+            DType::I8 => numpy::dtype::<i8>(py),
+            DType::I16 => numpy::dtype::<i16>(py),
             DType::Int => numpy::dtype::<I>(py),
-            DType::Int64 => numpy::dtype::<i64>(py),
+            DType::I64 => numpy::dtype::<i64>(py),
             DType::Bool => numpy::dtype::<bool>(py),
-            DType::UInt => numpy::dtype::<Idx>(py),
+            DType::Uint => numpy::dtype::<Idx>(py),
             DType::U8 => numpy::dtype::<u8>(py),
-            DType::UInt16 => numpy::dtype::<u16>(py),
-            DType::UInt32 => numpy::dtype::<u32>(py),
-            DType::Complex64 => numpy::dtype::<Complex<f32>>(py),
-            DType::Complex128 => numpy::dtype::<Complex<f64>>(py),
+            DType::U16 => numpy::dtype::<u16>(py),
+            DType::U32 => numpy::dtype::<u32>(py),
+            DType::C64 => numpy::dtype::<Complex<f32>>(py),
+            DType::C128 => numpy::dtype::<Complex<f64>>(py),
             DType::String => return Ok("str".to_owned()),
             other => {
                 return Err(PyValueError::new_err(format!(

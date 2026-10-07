@@ -100,7 +100,7 @@ mod record;
 pub mod validation;
 pub(crate) mod zarr_storage;
 
-pub use forcefield_section::{EndpointKey, ForceFieldSection, StyleEntry, style_block_name};
+pub use forcefield_section::{EndpointKey, ForceFieldSection, SectionStyle, style_block_name};
 pub use record::{MOLREC_VERSION, MolRec, Observables, RESERVED_META_KEYS};
 pub use zarr_storage::{
     Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,

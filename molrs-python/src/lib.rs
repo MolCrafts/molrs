@@ -1,6 +1,6 @@
 //! Python bindings for the molrs molecular simulation library.
 //!
-//! This crate builds the private native module `molrs._lib`; the Python
+//! This crate builds the private native module `molrs._native`; the Python
 //! package `molrs` (`python/molrs`) gives every symbol its one public path,
 //! the Python module named after the symbol's Rust owner:
 //!
@@ -20,8 +20,8 @@
 //! | [`stream`]              | `molrs::stream`     | `molrs.stream`       |
 //!
 //! Every subsystem binding registers its own classes and functions through
-//! its `register`. Most land flat on `_lib`; a namespace with vocabulary of
-//! its own is a `_lib` submodule ([`add_submodule`]: `op`, `md`, `ff.ir` as
+//! its `register`. Most land flat on `_native`; a namespace with vocabulary of
+//! its own is a `_native` submodule ([`add_submodule`]: `op`, `md`, `ff.ir` as
 //! `ir`, `io.mrec` as `mrec`, and core's `keys` / `schema` / `constants`).
 //!
 //! Every class and function names its public path as its `__module__`, so
@@ -111,10 +111,10 @@ pub(crate) fn add_submodule(
     parent.add(attr, module)
 }
 
-/// The native module, `molrs._lib`: every subsystem's bindings.
+/// The native module, `molrs._native`: every subsystem's bindings.
 #[pymodule]
-#[pyo3(name = "_lib")]
-fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_native")]
+fn molrs_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
     m.add_function(wrap_pyfunction!(pickle::_restore_pickled_state, m)?)?;

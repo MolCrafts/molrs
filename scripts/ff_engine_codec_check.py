@@ -17,14 +17,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from engine_check_tables import (
-    element_of_mass,
     lammps_thermo,
-    molecule_ids,
+    openmm_residue_topology,
     read_energy_tsv,
+    unit_factor,
 )
 
 
@@ -37,38 +36,12 @@ def lammps(sub: Path, k: int):
 def openmm(sub: Path, sysj):
     import openmm as mm
     import openmm.unit as u
-    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
     from openmm import app
 
-    root = ET.parse(sub / "ff.xml").getroot()
-    element = {}
-    for t in root.iter("Type"):
-        element[t.get("name")] = t.get("element") or element_of_mass(float(t.get("mass")))
-        t.set("element", element[t.get("name")])
-    types, bonds = sysj["types"], sysj["bonds"]
-    n = len(types)
-    mol = molecule_ids(n, bonds)
-    residues = ET.SubElement(root, "Residues")
-    top = app.Topology()
-    chain = top.addChain()
-    made = [None] * n
-    # Topology order: molecule by molecule (residue templates are whole
-    # molecules), so a position goes to the atom made from it.
-    order = []
-    for r in sorted(set(mol)):
-        tmpl = ET.SubElement(residues, "Residue", name=f"R{r}")
-        res = top.addResidue(f"R{r}", chain)
-        for a in (a for a in range(n) if mol[a] == r):
-            ET.SubElement(tmpl, "Atom", name=f"A{a}", type=types[a], charge="0")
-            made[a] = top.addAtom(f"A{a}", app.Element.getBySymbol(element[types[a]]), res)
-            order.append(a)
-        for i, j in bonds:
-            if mol[i] == r:
-                ET.SubElement(tmpl, "Bond", atomName1=f"A{i}", atomName2=f"A{j}")
-    for i, j in bonds:
-        top.addBond(made[i], made[j])
     path = sub / "ff+residues.xml"
-    ET.ElementTree(root).write(path)
+    top, order, _ = openmm_residue_topology(
+        sub / "ff.xml", path, sysj["types"], sysj["bonds"]
+    )
     system = app.ForceField(str(path)).createSystem(
         top, nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False
     )
@@ -86,16 +59,30 @@ def openmm(sub: Path, sysj):
             continue
         f.setForceGroup(i)
         groups[i] = term[name]
-    ctx = mm.Context(system, mm.VerletIntegrator(1.0), mm.Platform.getPlatformByName("Reference"))
+    ctx = mm.Context(
+        system, mm.VerletIntegrator(1.0), mm.Platform.getPlatformByName("Reference")
+    )
+    angstrom_per_nm, kj_per_kcal = (
+        unit_factor("nm", "angstrom"),
+        unit_factor("kcal", "kJ"),
+    )
     out = []
     for x in sysj["configs"]:
-        ctx.setPositions([mm.Vec3(x[3 * a], x[3 * a + 1], x[3 * a + 2]) / ANGSTROM_PER_NM for a in order])
+        ctx.setPositions(
+            [
+                mm.Vec3(x[3 * a], x[3 * a + 1], x[3 * a + 2]) / angstrom_per_nm
+                for a in order
+            ]
+        )
         terms = {}
         for g, name in groups.items():
             e = ctx.getState(getEnergy=True, groups={g}).getPotentialEnergy()
-            terms[name] = terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+            terms[name] = (
+                terms.get(name, 0.0)
+                + e.value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
+            )
         e = ctx.getState(getEnergy=True).getPotentialEnergy()
-        terms["total"] = e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+        terms["total"] = e.value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
         out.append(terms)
     return out
 
@@ -120,7 +107,9 @@ def collect(d: Path, pin: Path | None):
                 for t, v in terms.items():
                     engines[(case, k, engine, t)] = v
     worst = 0.0
-    lines = ["# case\tconfig\tengine\tterm\tvalue (scripts/ff_engine_codec_check.sh --pin)"]
+    lines = [
+        "# case\tconfig\tengine\tterm\tvalue (scripts/ff_engine_codec_check.sh --pin)"
+    ]
     # A term the engine prints and molrs has no style of is zero, or the
     # check fails here.
     extra = {k: v for k, v in engines.items() if k not in molrs and v != 0.0}
@@ -128,9 +117,15 @@ def collect(d: Path, pin: Path | None):
         raise SystemExit(f"engine terms molrs has no style for: {extra}")
     for key in sorted(molrs):
         m, e = molrs.get(key), engines.get(key)
-        rel = abs(e - m) / max(abs(m), 1.0) if m is not None and e is not None else float("nan")
+        rel = (
+            abs(e - m) / max(abs(m), 1.0)
+            if m is not None and e is not None
+            else float("nan")
+        )
         worst = max(worst, rel) if not math.isnan(rel) else worst
-        print(f"{key[0]:8s} {key[1]} {key[2]:7s} {key[3]:13s} engine {e!r:>24} molrs {m!r:>24} rel {rel:.1e}")
+        print(
+            f"{key[0]:8s} {key[1]} {key[2]:7s} {key[3]:13s} engine {e!r:>24} molrs {m!r:>24} rel {rel:.1e}"
+        )
         if e is not None:
             lines.append("\t".join([key[0], str(key[1]), key[2], key[3], repr(e)]))
     print(f"worst relative difference: {worst:.1e}")

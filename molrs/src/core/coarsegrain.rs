@@ -446,7 +446,7 @@ impl CoarseGrain {
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let atoms = frame
             .get("atoms")
-            .filter(|a| a.nrows().unwrap_or(0) > 0)
+            .filter(|a| a.n_rows().unwrap_or(0) > 0)
             .ok_or_else(|| {
                 MolRsError::validation("Frame has no 'atoms' rows to read beads from")
             })?;
@@ -898,7 +898,7 @@ mod tests {
             let mut sys = CoarseGrain::new();
             let id = sys.add_bead("W", 1.0, 2.0, 3.0);
             let fixed = sys.add_bead("W", 1.0, 1.0, 1.0);
-            crate::op::scale(sys.as_molgraph_mut(), factor, about);
+            sys.as_molgraph_mut().scale(factor, about);
             let moved = sys.get_bead(id).expect("live handle");
             for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
                 let got = moved.get_f64(key).expect("coordinate kept");
@@ -1259,7 +1259,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            crate::op::center(cg.as_molgraph(), &[light, heavy]),
+            cg.as_molgraph().center(&[light, heavy]),
             Ok([3.0, 0.0, 0.0])
         );
     }

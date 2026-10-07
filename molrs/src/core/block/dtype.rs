@@ -8,8 +8,13 @@ use crate::op::{F, I, Idx};
 
 /// Supported data types for Block columns.
 ///
+/// Each variant is named after its [`name`](Self::name) — `Float`, `Int`,
+/// `Uint`, `I8`, `I16`, `I64`, `U8`, `U16`, `U32`, `C64`, `C128`, `Bool`,
+/// `String` — the one dtype family of every binding (C
+/// `MOLRS_D_TYPE_<NAME>`, JS / Python the name strings).
+///
 /// Domain aliases [`F`] / [`I`] / [`Idx`] stay on [`DType::Float`] /
-/// [`DType::Int`] / [`DType::UInt`]. Floats are always the compute scalar [`F`]
+/// [`DType::Int`] / [`DType::Uint`]. Floats are always the compute scalar [`F`]
 /// (`f64`): there is no `f16`/`f32` variant, and a narrow float on disk is
 /// **refused**, not promoted. Every other variant is a storage width: a column
 /// that arrived as `i64` has to leave as that width, not as the compute scalar.
@@ -19,47 +24,47 @@ pub enum DType {
     /// Floating point using the compute scalar [`F`] (`f64`).
     Float,
     /// Signed 8-bit integer.
-    Int8,
+    I8,
     /// Signed 16-bit integer.
-    Int16,
+    I16,
     /// Signed integer using the domain scalar [`I`] (`i32`).
     Int,
     /// Signed 64-bit integer.
-    Int64,
+    I64,
     /// Boolean
     Bool,
     /// Unsigned integer using the identifier scalar [`Idx`] (`u64`).
-    UInt,
+    Uint,
     /// 8-bit unsigned integer
     U8,
     /// 16-bit unsigned integer.
-    UInt16,
+    U16,
     /// 32-bit unsigned integer.
-    UInt32,
+    U32,
     /// String
     String,
     /// Complex pair of `f32` (numpy `complex64`).
-    Complex64,
+    C64,
     /// Complex pair of `f64` (numpy `complex128`).
-    Complex128,
+    C128,
 }
 
 impl DType {
     /// Every variant, in declaration order.
     pub const ALL: [DType; 13] = [
         DType::Float,
-        DType::Int8,
-        DType::Int16,
+        DType::I8,
+        DType::I16,
         DType::Int,
-        DType::Int64,
+        DType::I64,
         DType::Bool,
-        DType::UInt,
+        DType::Uint,
         DType::U8,
-        DType::UInt16,
-        DType::UInt32,
+        DType::U16,
+        DType::U32,
         DType::String,
-        DType::Complex64,
-        DType::Complex128,
+        DType::C64,
+        DType::C128,
     ];
 
     /// The variant whose [`name`](Self::name) is `name`, or `None`.
@@ -71,18 +76,18 @@ impl DType {
     pub fn name(&self) -> &'static str {
         match self {
             DType::Float => "float",
-            DType::Int8 => "i8",
-            DType::Int16 => "i16",
+            DType::I8 => "i8",
+            DType::I16 => "i16",
             DType::Int => "int",
-            DType::Int64 => "i64",
+            DType::I64 => "i64",
             DType::Bool => "bool",
-            DType::UInt => "uint",
+            DType::Uint => "uint",
             DType::U8 => "u8",
-            DType::UInt16 => "u16",
-            DType::UInt32 => "u32",
+            DType::U16 => "u16",
+            DType::U32 => "u32",
             DType::String => "string",
-            DType::Complex64 => "c64",
-            DType::Complex128 => "c128",
+            DType::C64 => "c64",
+            DType::C128 => "c128",
         }
     }
 
@@ -99,18 +104,18 @@ impl DType {
     pub fn itemsize(&self) -> Option<usize> {
         match self {
             DType::Float => Some(8),
-            DType::Int8 => Some(1),
-            DType::Int16 => Some(2),
+            DType::I8 => Some(1),
+            DType::I16 => Some(2),
             DType::Int => Some(4),
-            DType::Int64 => Some(8),
+            DType::I64 => Some(8),
             DType::Bool => Some(1),
-            DType::UInt => Some(8),
+            DType::Uint => Some(8),
             DType::U8 => Some(1),
-            DType::UInt16 => Some(2),
-            DType::UInt32 => Some(4),
+            DType::U16 => Some(2),
+            DType::U32 => Some(4),
             DType::String => None,
-            DType::Complex64 => Some(8),
-            DType::Complex128 => Some(16),
+            DType::C64 => Some(8),
+            DType::C128 => Some(16),
         }
     }
 }
@@ -159,24 +164,18 @@ macro_rules! impl_block_dtype {
 }
 
 impl_block_dtype!(F, DType::Float, from_float, as_float, as_float_mut);
-impl_block_dtype!(i8, DType::Int8, from_i8, as_i8, as_i8_mut);
-impl_block_dtype!(i16, DType::Int16, from_i16, as_i16, as_i16_mut);
+impl_block_dtype!(i8, DType::I8, from_i8, as_i8, as_i8_mut);
+impl_block_dtype!(i16, DType::I16, from_i16, as_i16, as_i16_mut);
 impl_block_dtype!(I, DType::Int, from_int, as_int, as_int_mut);
-impl_block_dtype!(i64, DType::Int64, from_i64, as_i64, as_i64_mut);
+impl_block_dtype!(i64, DType::I64, from_i64, as_i64, as_i64_mut);
 impl_block_dtype!(bool, DType::Bool, from_bool, as_bool, as_bool_mut);
-impl_block_dtype!(Idx, DType::UInt, from_uint, as_uint, as_uint_mut);
+impl_block_dtype!(Idx, DType::Uint, from_uint, as_uint, as_uint_mut);
 impl_block_dtype!(u8, DType::U8, from_u8, as_u8, as_u8_mut);
-impl_block_dtype!(u16, DType::UInt16, from_u16, as_u16, as_u16_mut);
-impl_block_dtype!(u32, DType::UInt32, from_u32, as_u32, as_u32_mut);
+impl_block_dtype!(u16, DType::U16, from_u16, as_u16, as_u16_mut);
+impl_block_dtype!(u32, DType::U32, from_u32, as_u32, as_u32_mut);
 impl_block_dtype!(String, DType::String, from_string, as_string, as_string_mut);
-impl_block_dtype!(Complex<f32>, DType::Complex64, from_c64, as_c64, as_c64_mut);
-impl_block_dtype!(
-    Complex<f64>,
-    DType::Complex128,
-    from_c128,
-    as_c128,
-    as_c128_mut
-);
+impl_block_dtype!(Complex<f32>, DType::C64, from_c64, as_c64, as_c64_mut);
+impl_block_dtype!(Complex<f64>, DType::C128, from_c128, as_c128, as_c128_mut);
 
 #[cfg(test)]
 mod tests {
@@ -193,17 +192,17 @@ mod tests {
     /// [`Column::raw_bytes`]: super::column::Column::raw_bytes
     const FIXED_WIDTH: [(DType, usize); 12] = [
         (DType::Float, 8),
-        (DType::Int8, 1),
-        (DType::Int16, 2),
+        (DType::I8, 1),
+        (DType::I16, 2),
         (DType::Int, 4),
-        (DType::Int64, 8),
+        (DType::I64, 8),
         (DType::Bool, 1),
-        (DType::UInt, 8),
+        (DType::Uint, 8),
         (DType::U8, 1),
-        (DType::UInt16, 2),
-        (DType::UInt32, 4),
-        (DType::Complex64, 8),
-        (DType::Complex128, 16),
+        (DType::U16, 2),
+        (DType::U32, 4),
+        (DType::C64, 8),
+        (DType::C128, 16),
     ];
 
     #[test]
@@ -220,7 +219,7 @@ mod tests {
         }
         // The last declared variant closes the list, so a variant appended
         // to the enum without joining `ALL` fails here.
-        assert_eq!(DType::Complex128 as usize + 1, DType::ALL.len());
+        assert_eq!(DType::C128 as usize + 1, DType::ALL.len());
     }
 
     #[test]
@@ -248,17 +247,17 @@ mod tests {
             match dtype {
                 DType::String => false,
                 DType::Float
-                | DType::Int8
-                | DType::Int16
+                | DType::I8
+                | DType::I16
                 | DType::Int
-                | DType::Int64
+                | DType::I64
                 | DType::Bool
-                | DType::UInt
+                | DType::Uint
                 | DType::U8
-                | DType::UInt16
-                | DType::UInt32
-                | DType::Complex64
-                | DType::Complex128 => true,
+                | DType::U16
+                | DType::U32
+                | DType::C64
+                | DType::C128 => true,
             }
         }
 

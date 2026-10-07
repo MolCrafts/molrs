@@ -1820,7 +1820,7 @@ fn write_topology_section<W: Write>(
     type_ids: &[Idx],
 ) -> std::io::Result<()> {
     let n = frame
-        .visit_block(block, |b| b.nrows().unwrap_or(0))
+        .visit_block(block, |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     if n == 0 {
         return Ok(());
@@ -1909,7 +1909,7 @@ fn write_lammps_data_frame_with<W: Write>(
     writeln!(writer)?;
 
     let n_atoms = frame
-        .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+        .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     if n_atoms == 0 {
         return Err(invalid_data("Frame has no atoms to write"));
@@ -1950,7 +1950,7 @@ fn write_lammps_data_frame_with<W: Write>(
     if !frame_has_atom_field(frame, DataField::Mol) {
         for block in ["bonds", "angles", "dihedrals", "impropers", "cmaps"] {
             let n = frame
-                .visit_block(block, |b| b.nrows().unwrap_or(0))
+                .visit_block(block, |b| b.n_rows().unwrap_or(0))
                 .unwrap_or(0);
             if n > 0 {
                 return Err(invalid_data(format!(
@@ -1980,19 +1980,19 @@ fn write_lammps_data_frame_with<W: Write>(
     let row_masses = resolve_row_masses(frame, n_atoms);
 
     let n_bonds = frame
-        .visit_block("bonds", |b| b.nrows().unwrap_or(0))
+        .visit_block("bonds", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     let n_angles = frame
-        .visit_block("angles", |b| b.nrows().unwrap_or(0))
+        .visit_block("angles", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     let n_dihedrals = frame
-        .visit_block("dihedrals", |b| b.nrows().unwrap_or(0))
+        .visit_block("dihedrals", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     let n_impropers = frame
-        .visit_block("impropers", |b| b.nrows().unwrap_or(0))
+        .visit_block("impropers", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
     let n_crossterms = frame
-        .visit_block("cmaps", |b| b.nrows().unwrap_or(0))
+        .visit_block("cmaps", |b| b.n_rows().unwrap_or(0))
         .unwrap_or(0);
 
     let n_atom_types = atom_rt.n_types().max(1);
@@ -2325,7 +2325,7 @@ mod streaming_tests {
             assert_eq!(one, build_chunked(bytes, cs));
         }
         let frame = read_lammps_data_bytes(bytes).expect("parse");
-        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 }
 
@@ -2577,7 +2577,7 @@ mod atom_style_tests {
             "Angles\n\n1 1 1 2 3\n",
         );
         let frame = parse_text(text);
-        assert_eq!(frame.get("bonds").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("bonds").unwrap().n_rows().unwrap(), 2);
         assert_eq!(
             (
                 frame
@@ -2635,7 +2635,7 @@ mod atom_style_tests {
         assert!(out.contains("0 0 1") || out.contains(" 0 0 1\n"), "{out}");
 
         let frame2 = read_lammps_data_bytes(out.as_bytes()).expect("re-read");
-        assert_eq!(frame2.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame2.get("atoms").unwrap().n_rows().unwrap(), 2);
         assert!(
             (frame2
                 .column("atoms", keys::CHARGE)
@@ -2739,8 +2739,8 @@ mod atom_style_tests {
         assert!(out.contains("1 angles"), "{out}");
         assert!(out.contains("Atoms # molecular"), "{out}");
         let f2 = read_lammps_data_bytes(out.as_bytes()).unwrap();
-        assert_eq!(f2.get("bonds").unwrap().nrows().unwrap(), 2);
-        assert_eq!(f2.get("angles").unwrap().nrows().unwrap(), 1);
+        assert_eq!(f2.get("bonds").unwrap().n_rows().unwrap(), 2);
+        assert_eq!(f2.get("angles").unwrap().n_rows().unwrap(), 1);
     }
 
     /// A box-less frame is written inside the bounds of its coordinates,
@@ -3108,8 +3108,8 @@ mod atom_style_tests {
             .read()
             .expect("skipped section must not refuse the file")
             .expect("one frame");
-        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 3);
-        assert_eq!(frame.get("bonds").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 3);
+        assert_eq!(frame.get("bonds").unwrap().n_rows().unwrap(), 2);
     }
 
     #[test]
@@ -3260,7 +3260,7 @@ mod atom_style_tests {
         assert_eq!(col(keys::TYPE_ID), [2, 1]);
 
         let spelled = parse_text(&written.replace("2 crossterms", "2 cmap crossterms"));
-        assert_eq!(spelled["cmaps"].nrows(), Some(2));
+        assert_eq!(spelled["cmaps"].n_rows(), Some(2));
         let err = refusal(&written.replace("2 crossterms\n", ""));
         assert_invalid_data_naming(&err, "crossterms");
     }

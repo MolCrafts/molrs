@@ -229,7 +229,7 @@ pub trait LammpsCodec: EngineCodec {
     /// A further coefficient line `<keyword> values…` of a type: `Ok` when
     /// the IR holds it (all it adds is in `params`), an error naming what
     /// it cannot hold otherwise.
-    fn read_extra(
+    fn parse_extra(
         &self,
         spec: &StyleSpec,
         keyword: &str,
@@ -262,8 +262,8 @@ pub trait LammpsCodec: EngineCodec {
 
     /// The style-level parameters a `<category>_style` line's numbers
     /// state.
-    fn read_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
-        positional::read_style_args(spec, args)
+    fn parse_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
+        positional::parse_style_args(spec, args)
     }
 
     /// The mixing rule the LAMMPS style always uses, whatever `pair_modify`
@@ -511,11 +511,15 @@ pub mod positional {
     /// Exactly one number per parameter, in the spec's order.
     pub fn read(spec: &StyleSpec, values: &[&str]) -> Result<Params, String> {
         let names: Vec<&str> = spec.params.iter().map(|p| p.name.as_ref()).collect();
-        read_named(spec, &names, values)
+        parse_named(spec, &names, values)
     }
 
     /// Exactly `names.len()` numbers, stored under `names`.
-    pub fn read_named(spec: &StyleSpec, names: &[&str], values: &[&str]) -> Result<Params, String> {
+    pub fn parse_named(
+        spec: &StyleSpec,
+        names: &[&str],
+        values: &[&str],
+    ) -> Result<Params, String> {
         if values.len() != names.len() {
             return Err(format!(
                 "{} {} takes {} coefficients ({}), got {}{}",
@@ -615,7 +619,7 @@ pub mod positional {
     }
 
     /// The cutoff of a `pair_style <name> <cutoff>` line.
-    pub fn read_style_args(spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
+    pub fn parse_style_args(spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
         let names: &[&str] = if spec.style_param("cutoff").is_some() {
             &["cutoff"]
         } else {

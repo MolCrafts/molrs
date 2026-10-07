@@ -1,6 +1,5 @@
 //! GROMACS XTC binary trajectory reader and writer.
-
-use crate::core::constants::ANGSTROM_PER_NM;
+use crate::core::UnitFactor;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -16,6 +15,9 @@ use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
+
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 /// Classic XTC magic number.
 const XTC_MAGIC: i32 = 1995;
@@ -744,9 +746,9 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     let mut y = Vec::with_capacity(natoms);
     let mut z = Vec::with_capacity(natoms);
     for a in 0..natoms {
-        x.push(coords[a * DIM] as F * ANGSTROM_PER_NM);
-        y.push(coords[a * DIM + 1] as F * ANGSTROM_PER_NM);
-        z.push(coords[a * DIM + 2] as F * ANGSTROM_PER_NM);
+        x.push(coords[a * DIM] as F * NM_TO_ANGSTROM.get());
+        y.push(coords[a * DIM + 1] as F * NM_TO_ANGSTROM.get());
+        z.push(coords[a * DIM + 2] as F * NM_TO_ANGSTROM.get());
     }
     insert_float_col(&mut atoms, "x", x)?;
     insert_float_col(&mut atoms, "y", y)?;
@@ -757,8 +759,8 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
     frame.simbox = match build_simbox(&hdr.boxv) {
         Some(res) => {
             let sb = res?;
-            let h = sb.h_view().to_owned() * ANGSTROM_PER_NM;
-            let origin = sb.origin_view().to_owned() * ANGSTROM_PER_NM;
+            let h = sb.h_view().to_owned() * NM_TO_ANGSTROM.get();
+            let origin = sb.origin_view().to_owned() * NM_TO_ANGSTROM.get();
             Some(
                 SimBox::new(h, origin, sb.pbc())
                     .map_err(|e| invalid_data(format!("XTC box: {e:?}")))?,
@@ -968,7 +970,7 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
 
 fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<()> {
     let natoms = frame
-        .visit_block("atoms", |a| a.nrows().unwrap_or(0))
+        .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("XTC write: frame has no atoms block"))?;
     if natoms == 0 {
         return Err(invalid_data("XTC write: atoms block is empty"));
@@ -1004,7 +1006,7 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_f32(w, time)?;
     if let Some(sb) = frame.simbox_ref() {
         // Å → nm on the way out, mirroring the reader.
-        let h = sb.h_view().to_owned() / ANGSTROM_PER_NM;
+        let h = sb.h_view().to_owned() / NM_TO_ANGSTROM.get();
         for i in 0..DIM {
             for j in 0..DIM {
                 xdr::write_f32(w, h[(j, i)] as f32)?;
@@ -1019,18 +1021,18 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     xdr::write_i32(w, natoms as i32)?;
     if natoms <= 9 {
         for a in 0..natoms {
-            xdr::write_f32(w, (xs[a] / ANGSTROM_PER_NM) as f32)?;
-            xdr::write_f32(w, (ys[a] / ANGSTROM_PER_NM) as f32)?;
-            xdr::write_f32(w, (zs[a] / ANGSTROM_PER_NM) as f32)?;
+            xdr::write_f32(w, (xs[a] / NM_TO_ANGSTROM.get()) as f32)?;
+            xdr::write_f32(w, (ys[a] / NM_TO_ANGSTROM.get()) as f32)?;
+            xdr::write_f32(w, (zs[a] / NM_TO_ANGSTROM.get()) as f32)?;
         }
         return Ok(());
     }
 
     let mut coords = Vec::with_capacity(natoms * DIM);
     for a in 0..natoms {
-        coords.push(xs[a] / ANGSTROM_PER_NM);
-        coords.push(ys[a] / ANGSTROM_PER_NM);
-        coords.push(zs[a] / ANGSTROM_PER_NM);
+        coords.push(xs[a] / NM_TO_ANGSTROM.get());
+        coords.push(ys[a] / NM_TO_ANGSTROM.get());
+        coords.push(zs[a] / NM_TO_ANGSTROM.get());
     }
     let (minint, maxint, smallidx, buf) = compress_coords(&coords, natoms, precision)?;
     xdr::write_f32(w, precision)?;
@@ -1366,7 +1368,7 @@ mod tests {
                 let lo = entry.byte_offset as usize;
                 let hi = lo + entry.byte_len as usize;
                 let parsed = read_xtc_bytes(&bytes[lo..hi]).expect("parse xtc");
-                assert_eq!(parsed.get("atoms").unwrap().nrows().unwrap(), natoms);
+                assert_eq!(parsed.get("atoms").unwrap().n_rows().unwrap(), natoms);
                 let x = parsed
                     .get("atoms")
                     .unwrap()

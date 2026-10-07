@@ -102,7 +102,7 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// reproduces the historical behaviour exactly: both classes excluded.
 pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
-    let n_atoms = frame.get(ATOMS).and_then(|b| b.nrows()).unwrap_or(0);
+    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
     if n_atoms > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
         return Err(format!(
             "intramolecular_pairs: {n_atoms} atoms would enumerate {} pairs \
@@ -1643,7 +1643,7 @@ mod tests {
         // The real neighbour list: only (0,3), flagged is_14.
         let pairs = intramolecular_pairs(&frame, &SpecialBonds::default()).unwrap();
         assert_eq!(
-            pairs.nrows(),
+            pairs.n_rows(),
             Some(1),
             "expected exactly the (0,3) 1-4 pair"
         );

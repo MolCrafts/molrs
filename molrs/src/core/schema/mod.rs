@@ -6,7 +6,7 @@
 //! This is the axiom the whole design rests on, and it is true only because it
 //! is kept true: **if two things need different dtypes under one name, they are
 //! two quantities and get two keys.** `type` (String, a force-field label) and
-//! `type_id` (UInt, a LAMMPS ordinal) are not an exception to the one-dtype
+//! `type_id` (Uint, a LAMMPS ordinal) are not an exception to the one-dtype
 //! rule — splitting them is the operation that *makes* the rule hold.
 //!
 //! Every future "but this key needs two dtypes" has one correct answer: then it
@@ -61,7 +61,7 @@ use PresetDim::{Charge, Force, Length, Mass, Velocity};
 // Identifiers are unsigned and physical quantities are float. `Int` is here for
 // the one kind of value that is neither: a periodic image flag, which counts
 // cell crossings and must be able to count them backwards.
-use DType::{Float, Int, Int64, String as Str, UInt};
+use DType::{Float, I64, Int, String as Str, Uint};
 
 /// Version of the **vocabulary** — what block and column names mean, and what
 /// dtype each carries.
@@ -173,38 +173,38 @@ macro_rules! columns {
 
 columns! {
     ALTLOC: "altloc", Str, Scalar, NotAQuantity, "Alternate-location indicator of a crystallographic site (PDB altLoc, mmCIF label_alt_id); \"\" for none.";
-    ATOM_MAP: "atom_map", UInt, Scalar, NotAQuantity, "Atom-map number of a mapped SMILES; 0 for an unmapped atom.";
-    ATOMI: "atomi", UInt, Scalar, NotAQuantity, "First endpoint of a relation, 0-indexed into the target node block.";
-    ATOMIC_NUMBER: "atomic_number", UInt, Scalar, NotAQuantity, "Atomic number Z.";
-    ATOMJ: "atomj", UInt, Scalar, NotAQuantity, "Second endpoint of a relation, 0-indexed.";
-    ATOMK: "atomk", UInt, Scalar, NotAQuantity, "Third endpoint of a relation (angle terminus / dihedral), 0-indexed; the angle vertex is `atomj`.";
-    ATOML: "atoml", UInt, Scalar, NotAQuantity, "Fourth endpoint of a relation (dihedral / improper), 0-indexed.";
-    ATOMM: "atomm", UInt, Scalar, NotAQuantity, "Fifth endpoint of a relation (a CMAP's two consecutive dihedrals `atomi..atoml` and `atomj..atomm`), 0-indexed.";
+    ATOM_MAP: "atom_map", Uint, Scalar, NotAQuantity, "Atom-map number of a mapped SMILES; 0 for an unmapped atom.";
+    ATOMI: "atomi", Uint, Scalar, NotAQuantity, "First endpoint of a relation, 0-indexed into the target node block.";
+    ATOMIC_NUMBER: "atomic_number", Uint, Scalar, NotAQuantity, "Atomic number Z.";
+    ATOMJ: "atomj", Uint, Scalar, NotAQuantity, "Second endpoint of a relation, 0-indexed.";
+    ATOMK: "atomk", Uint, Scalar, NotAQuantity, "Third endpoint of a relation (angle terminus / dihedral), 0-indexed; the angle vertex is `atomj`.";
+    ATOML: "atoml", Uint, Scalar, NotAQuantity, "Fourth endpoint of a relation (dihedral / improper), 0-indexed.";
+    ATOMM: "atomm", Uint, Scalar, NotAQuantity, "Fifth endpoint of a relation (a CMAP's two consecutive dihedrals `atomi..atoml` and `atomj..atomm`), 0-indexed.";
     AXIS_X: "axis_x", Float, Scalar, Of(Length), "x-component of a coarse-grained site's axis: from the first member of its group to the site.";
     AXIS_Y: "axis_y", Float, Scalar, Of(Length), "y-component of a coarse-grained site's axis: from the first member of its group to the site.";
     AXIS_Z: "axis_z", Float, Scalar, Of(Length), "z-component of a coarse-grained site's axis: from the first member of its group to the site.";
     B_FACTOR: "b_factor", Float, Scalar, Product(Length, Length), "Isotropic crystallographic displacement parameter B (PDB tempFactor, mmCIF B_iso_or_equiv).";
     BEAD_TYPE: "bead_type", Str, Scalar, NotAQuantity, "Coarse-grained bead type label.";
-    BOND_NUMBER: "bond_number", UInt, Scalar, NotAQuantity, "Integer bond number of the localized Lewis/Kekule structure: 0 unknown, 1 single, 2 double, 3 triple, 4 quadruple. Never fractional - aromaticity is a bond type, not a number.";
-    BOND_TYPE: "bond_type", UInt, Scalar, NotAQuantity, "Chemical bond class: 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic. Orthogonal to `bond_number`: an aromatic bond is `bond_type = 4` carrying a `bond_number` of 1 or 2.";
+    BOND_NUMBER: "bond_number", Uint, Scalar, NotAQuantity, "Integer bond number of the localized Lewis/Kekule structure: 0 unknown, 1 single, 2 double, 3 triple, 4 quadruple. Never fractional - aromaticity is a bond type, not a number.";
+    BOND_TYPE: "bond_type", Uint, Scalar, NotAQuantity, "Chemical bond class: 0 unknown, 1 single, 2 double, 3 triple, 4 aromatic. Orthogonal to `bond_number`: an aromatic bond is `bond_type = 4` carrying a `bond_number` of 1 or 2.";
     CHAIN: "chain", Str, Scalar, NotAQuantity, "Chain label (PDB chain identifier, mmCIF label_asym_id). A label, not an identifier: every `*_id` key is a u64.";
     CHARGE: "charge", Float, Scalar, Of(Charge), "Partial charge.";
     ELEMENT: "element", Str, Scalar, NotAQuantity, "IUPAC element symbol (e.g. \"C\").";
     EXCLUDE_14: "exclude_14", DType::Bool, Scalar, NotAQuantity, "Whether this torsion's 1-4 non-bonded term is suppressed (AMBER negative 3rd pointer)";
-    FORMAL_CHARGE: "formal_charge", Int64, Scalar, NotAQuantity, "Integer formal charge, in units of the elementary charge.";
+    FORMAL_CHARGE: "formal_charge", I64, Scalar, NotAQuantity, "Integer formal charge, in units of the elementary charge.";
     FREE: "free", DType::Bool, Scalar, NotAQuantity, "Whether an atom may move when the coordinates are optimized: `false` pins the atom where it is. A frame without the column has every atom free.";
     FX: "fx", Float, Scalar, Of(Force), "x-component of the force on an atom.";
     FY: "fy", Float, Scalar, Of(Force), "y-component of the force on an atom.";
     FZ: "fz", Float, Scalar, Of(Force), "z-component of the force on an atom.";
-    IBEAD: "ibead", UInt, Scalar, NotAQuantity, "`members`: the bead's row in `atoms`, 0-indexed.";
+    IBEAD: "ibead", Uint, Scalar, NotAQuantity, "`members`: the bead's row in `atoms`, 0-indexed.";
     ICODE: "icode", Str, Scalar, NotAQuantity, "Residue insertion code (PDB iCode, mmCIF pdbx_PDB_ins_code); \"\" for none.";
-    ID: "id", UInt, Scalar, NotAQuantity, "Identifier carried by the source file. Never an index — endpoints are 0-based row indices and a reader that must map labels to rows does so locally.";
+    ID: "id", Uint, Scalar, NotAQuantity, "Identifier carried by the source file. Never an index — endpoints are 0-based row indices and a reader that must map labels to rows does so locally.";
     IS_14: "is_14", DType::Bool, Scalar, NotAQuantity, "Whether a non-bonded pair is a 1-4 (third-neighbour) pair.";
     IX: "ix", Int, Scalar, NotAQuantity, "Periodic image flag along the first lattice vector: how many cells this atom has crossed. The continuous position is `xyz + H·(ix, iy, iz)`; the stored coordinate itself stays wrapped. Signed, because an atom can cross back.";
     IY: "iy", Int, Scalar, NotAQuantity, "Periodic image flag along the second lattice vector. See `ix`.";
     IZ: "iz", Int, Scalar, NotAQuantity, "Periodic image flag along the third lattice vector. See `ix`.";
     MASS: "mass", Float, Scalar, Of(Mass), "Atomic mass.";
-    MOL_ID: "mol_id", UInt, Scalar, NotAQuantity, "Molecule identifier grouping atoms into molecules.";
+    MOL_ID: "mol_id", Uint, Scalar, NotAQuantity, "Molecule identifier grouping atoms into molecules.";
     MUX: "mux", Float, Scalar, Product(Charge, Length), "x-component of a per-atom electric dipole moment.";
     MUY: "muy", Float, Scalar, Product(Charge, Length), "y-component of a per-atom electric dipole moment.";
     MUZ: "muz", Float, Scalar, Product(Charge, Length), "z-component of a per-atom electric dipole moment.";
@@ -214,11 +214,11 @@ columns! {
     QUATJ: "quatj", Float, Scalar, Dimensionless, "Second imaginary component of a per-atom orientation quaternion.";
     QUATK: "quatk", Float, Scalar, Dimensionless, "Third imaginary component of a per-atom orientation quaternion.";
     QUATW: "quatw", Float, Scalar, Dimensionless, "Real part of a per-atom orientation quaternion.";
-    RES_ID: "res_id", UInt, Scalar, NotAQuantity, "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema.";
+    RES_ID: "res_id", Uint, Scalar, NotAQuantity, "Residue identifier. Unsigned like every other id in the vocabulary; a file with negative residue numbers is renumbered at the reader boundary, not accommodated by the schema.";
     RES_NAME: "res_name", Str, Scalar, NotAQuantity, "Residue name (e.g. \"ALA\").";
     STYLE: "style", Str, Scalar, NotAQuantity, "Force-field style of a relation row, picking among styles of one category that hold the row's `type` (hybrid styles).";
     TYPE: "type", Str, Scalar, NotAQuantity, "Force-field type label. Always a String: a label is what survives a round trip through a force field. Numeric ordinals live in `type_id`.";
-    TYPE_ID: "type_id", UInt, Scalar, NotAQuantity, "Numeric type ordinal as used by formats that number their types (LAMMPS). Format-local; the force field reads `type`.";
+    TYPE_ID: "type_id", Uint, Scalar, NotAQuantity, "Numeric type ordinal as used by formats that number their types (LAMMPS). Format-local; the force field reads `type`.";
     VX: "vx", Float, Scalar, Of(Velocity), "x-velocity. Unit follows the force field's `units` setting; molrs stores raw numbers.";
     VY: "vy", Float, Scalar, Of(Velocity), "y-velocity.";
     VZ: "vz", Float, Scalar, Of(Velocity), "z-velocity.";
@@ -722,7 +722,7 @@ mod tests {
     fn type_and_type_id_are_different_quantities() {
         // The axiom in this module's doc, as a test: one name, one dtype.
         assert_eq!(column("type").unwrap().dtype, DType::String);
-        assert_eq!(column("type_id").unwrap().dtype, DType::UInt);
+        assert_eq!(column("type_id").unwrap().dtype, DType::Uint);
     }
 
     #[test]
@@ -741,8 +741,8 @@ mod tests {
         for c in &ids {
             assert_eq!(
                 c.dtype,
-                DType::UInt,
-                "identifier '{}' is {} — every identifier is UInt",
+                DType::Uint,
+                "identifier '{}' is {} — every identifier is Uint",
                 c.key,
                 c.dtype
             );
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn cmaps_is_a_five_endpoint_relation_on_atomi_through_atomm() {
-        assert_eq!(column(consts::ATOMM).map(|c| c.dtype), Some(DType::UInt));
+        assert_eq!(column(consts::ATOMM).map(|c| c.dtype), Some(DType::Uint));
         let spec = block(block_names::CMAPS).expect("cmaps is canonical");
         assert_eq!(spec.row_kind, RowKind::Relation { arity: 5 });
         assert_eq!(spec.required, consts::ENDPOINTS.as_slice());
@@ -886,14 +886,14 @@ mod tests {
     fn the_new_topology_keys_and_blocks_are_canonical() {
         for (key, dtype) in [
             ("fx", DType::Float),
-            ("formal_charge", DType::Int64),
-            ("atom_map", DType::UInt),
+            ("formal_charge", DType::I64),
+            ("atom_map", DType::Uint),
             ("chain", DType::String),
             ("icode", DType::String),
             ("altloc", DType::String),
             ("occupancy", DType::Float),
             ("b_factor", DType::Float),
-            ("ibead", DType::UInt),
+            ("ibead", DType::Uint),
             ("style", DType::String),
         ] {
             assert_eq!(column(key).map(|c| c.dtype), Some(dtype), "{key}");

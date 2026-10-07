@@ -35,8 +35,8 @@ pub struct ExtractedAtomistic {
 ///
 /// Generic graph methods (`nodes`, `neighbors`, `add_relation`, …) remain
 /// available via `Deref`/`DerefMut`; the coordinate transforms are
-/// [`crate::op::translate`], [`crate::op::rotate`], [`crate::op::scale`] and
-/// [`crate::op::center`] on the graph.
+/// [`MolGraph::translate`], [`MolGraph::rotate`], [`MolGraph::scale`] and
+/// [`MolGraph::center`].
 ///
 /// Invariant: every atom carries the canonical [`keys::ELEMENT`] property.
 ///
@@ -1517,7 +1517,7 @@ mod tests {
             let mut sys = Atomistic::new();
             let id = sys.add_atom_xyz("C", 1.0, 2.0, 3.0);
             let fixed = sys.add_atom_xyz("C", 1.0, 1.0, 1.0);
-            crate::op::scale(sys.as_molgraph_mut(), factor, about);
+            sys.as_molgraph_mut().scale(factor, about);
             let moved = sys.get_atom(id).expect("live handle");
             for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
                 let got = moved.get_f64(key).expect("coordinate kept");
@@ -1549,14 +1549,11 @@ mod tests {
         mol.set_atom(light, crate::core::keys::MASS, 1.0).unwrap();
         mol.set_atom(heavy, crate::core::keys::MASS, 3.0).unwrap();
         let all: Vec<_> = mol.node_ids().collect();
-        assert_eq!(
-            crate::op::center(mol.as_molgraph(), &all),
-            Ok([3.0, 0.0, 0.0])
-        );
+        assert_eq!(mol.as_molgraph().center(&all), Ok([3.0, 0.0, 0.0]));
 
         assert_eq!(
-            crate::op::center(Atomistic::new().as_molgraph(), &[]),
-            Err(crate::op::CenterError::Empty)
+            Atomistic::new().as_molgraph().center(&[]),
+            Err(crate::core::CenterError::Empty)
         );
     }
 }

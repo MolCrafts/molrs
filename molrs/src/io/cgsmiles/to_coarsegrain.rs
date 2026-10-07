@@ -31,7 +31,7 @@ impl CgSmilesIr {
     ///
     /// **No geometry.** A line notation states topology, so no bead carries
     /// `x` / `y` / `z`, `mass` or `charge`, and the result has no bead
-    /// membership. [`center`](crate::op::center) therefore refuses it; a pattern
+    /// membership. [`MolGraph::center`](crate::core::MolGraph::center) therefore refuses it; a pattern
     /// graph exists to be matched, not centred.
     ///
     /// # What is dropped

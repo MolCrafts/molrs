@@ -217,7 +217,7 @@ pub mod ffi {
         fn frame_block_names(fref: &FrameRef) -> Vec<String>;
         fn frame_has_block(fref: &FrameRef, block: &str) -> bool;
         fn frame_block_columns(fref: &FrameRef, block: &str) -> Vec<String>;
-        fn frame_block_nrows(fref: &FrameRef, block: &str) -> i64;
+        fn frame_block_n_rows(fref: &FrameRef, block: &str) -> i64;
 
         // metadata: keys in insertion order, one value by key, insert/replace
         fn frame_meta_keys(fref: &FrameRef) -> Vec<String>;
@@ -281,7 +281,7 @@ pub mod ffi {
         // a molecule with no BCC correction row (boron), a missing atom type, a
         // missing bond order — not programmer bugs, so they cross as a catchable
         // `rust::Error` and leave the engine alive to handle them.
-        fn am1_bcc_assign_frame_from_base(
+        fn assign_am1_bcc_charges(
             fref: &mut FrameRef,
             am1_charges: &[f64],
             parameter_set: &str,

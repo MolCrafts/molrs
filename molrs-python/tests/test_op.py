@@ -13,7 +13,7 @@ from __future__ import annotations
 import molrs
 import numpy as np
 import pytest
-from molrs import _lib
+from molrs import _native
 
 # Position, numerical (tester contract: 1e-8).
 POS_TOL = 1e-8
@@ -24,7 +24,7 @@ TRIANGLE = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 class TestModule:
     def test_op_is_a_registered_submodule(self):
-        assert hasattr(_lib, "op")
+        assert hasattr(_native, "op")
         assert molrs.op.superpose is not None
 
     def test_default_gap_tol(self):

@@ -1,21 +1,28 @@
 //! OpenMM force-field XML writer.
 
-use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 mod custom;
 
+use crate::core::UnitFactor;
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
+use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::torsion::{
     Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
 };
 use crate::ff::ir::{Registry, RegistryRef};
-use crate::ff::potential::cmap::charmm::GRID;
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
+
+/// kcal → kJ (kcal/mol → kJ/mol).
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
+/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
+static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///
@@ -301,11 +308,8 @@ impl OpenmmXmlWriter {
                     for t in types {
                         let what = format!("bond harmonic {}", t.name);
                         // LAMMPS K (kcal/mol/Å²) → OpenMM ½k, k = 2K (kJ/mol/nm²).
-                        let k = 2.0
-                            * need(&t.params, "k", &what)?
-                            * KJ_PER_KCAL
-                            * (ANGSTROM_PER_NM * ANGSTROM_PER_NM);
-                        let r0 = need(&t.params, "r0", &what)? / ANGSTROM_PER_NM;
+                        let k = 2.0 * need(&t.params, "k", &what)? * KCAL_ANGSTROM2_TO_KJ_NM2.get();
+                        let r0 = need(&t.params, "r0", &what)? / NM_TO_ANGSTROM.get();
                         let body =
                             format!(" length=\"{}\" k=\"{}\"", self.fmt_f(r0), self.fmt_f(k));
                         let key = either_way(&[&t.itom, &t.jtom]);
@@ -322,7 +326,7 @@ impl OpenmmXmlWriter {
                     for t in types {
                         let what = format!("angle {} {}", style.name(), t.name);
                         let labels = [t.itom.as_str(), &t.jtom, &t.ktom];
-                        let k = 2.0 * need(&t.params, "k", &what)? * KJ_PER_KCAL;
+                        let k = 2.0 * need(&t.params, "k", &what)? * KCAL_TO_KJ.get();
                         let theta0 = need(&t.params, "theta0", &what)?.to_radians();
                         let body =
                             format!(" angle=\"{}\" k=\"{}\"", self.fmt_f(theta0), self.fmt_f(k));
@@ -353,10 +357,9 @@ impl OpenmmXmlWriter {
                                 .into());
                             }
                             // OpenMM adds a bond of force constant 2k: k = K_ub.
-                            let k_ub = need(&t.params, "k_ub", &what)?
-                                * KJ_PER_KCAL
-                                * (ANGSTROM_PER_NM * ANGSTROM_PER_NM);
-                            let d = need(&t.params, "r_ub", &what)? / ANGSTROM_PER_NM;
+                            let k_ub =
+                                need(&t.params, "k_ub", &what)? * KCAL_ANGSTROM2_TO_KJ_NM2.get();
+                            let d = need(&t.params, "r_ub", &what)? / NM_TO_ANGSTROM.get();
                             out.urey_bradley.push_str(&format!(
                                 "    <UreyBradley{} k=\"{}\" d=\"{}\"/>\n",
                                 ends.attrs(&labels),
@@ -407,7 +410,7 @@ impl OpenmmXmlWriter {
                                     )
                                     .into());
                                 }
-                                let k = need(&t.params, "k", &what)? * KJ_PER_KCAL;
+                                let k = need(&t.params, "k", &what)? * KCAL_TO_KJ.get();
                                 let chi0 = t.params.get("chi0").unwrap_or(0.0).to_radians();
                                 let body = format!(
                                     " k=\"{}\" theta0=\"{}\"",
@@ -428,8 +431,8 @@ impl OpenmmXmlWriter {
                 }
                 ("cmap", StyleDefs::Cmap(types)) => {
                     for t in types {
-                        let grid = t.params.get_array(GRID).ok_or_else(|| {
-                            format!("cmap charmm {}: missing its `{GRID}` array", t.name)
+                        let grid = t.params.get_array(CMAP_GRID).ok_or_else(|| {
+                            format!("cmap charmm {}: missing its `{CMAP_GRID}` array", t.name)
                         })?;
                         let shape = grid.shape();
                         let n = shape[0];
@@ -445,7 +448,7 @@ impl OpenmmXmlWriter {
                         for j in 0..n {
                             for i in 0..n {
                                 values[i + n * j] =
-                                    grid[[(i + n / 2) % n, (j + n / 2) % n]] * KJ_PER_KCAL;
+                                    grid[[(i + n / 2) % n, (j + n / 2) % n]] * KCAL_TO_KJ.get();
                             }
                         }
                         let labels = [t.itom.as_str(), &t.jtom, &t.ktom, &t.ltom, &t.mtom];
@@ -477,7 +480,7 @@ impl OpenmmXmlWriter {
             " periodicity{m}=\"{}\" phase{m}=\"{}\" k{m}=\"{}\"",
             n,
             self.fmt_f(phase_deg.to_radians()),
-            self.fmt_f(k * KJ_PER_KCAL)
+            self.fmt_f(k * KCAL_TO_KJ.get())
         )
     }
 
@@ -556,7 +559,7 @@ impl OpenmmXmlWriter {
             .map_err(|e| format!("{what}: no RBTorsionForce form: {e}"))?;
         let mut body = String::new();
         for (n, c) in rb.c.iter().enumerate() {
-            body.push_str(&format!(" c{n}=\"{}\"", self.fmt_f(c * KJ_PER_KCAL)));
+            body.push_str(&format!(" c{n}=\"{}\"", self.fmt_f(c * KCAL_TO_KJ.get())));
         }
         if out.admit("Proper", key, name, &body)? {
             out.rb.push_str(&format!("    <Proper{attrs}{body}/>\n"));
@@ -722,8 +725,8 @@ impl OpenmmXmlWriter {
 
         let lj_of = |p: &Params, what: &str| -> Result<(f64, f64), ForceFieldWriteError> {
             Ok((
-                need(p, "sigma", what)? / ANGSTROM_PER_NM,
-                need(p, "epsilon", what)? * KJ_PER_KCAL,
+                need(p, "sigma", what)? / NM_TO_ANGSTROM.get(),
+                need(p, "epsilon", what)? * KCAL_TO_KJ.get(),
             ))
         };
         // Every type the NonbondedForce needs a row for.
@@ -776,8 +779,10 @@ impl OpenmmXmlWriter {
                     self.fmt_f(epsilon)
                 );
                 if has_own_one_four(p) {
-                    let s14 = p.get("sigma14").unwrap_or(sigma * ANGSTROM_PER_NM) / ANGSTROM_PER_NM;
-                    let e14 = p.get("epsilon14").unwrap_or(epsilon / KJ_PER_KCAL) * KJ_PER_KCAL;
+                    let s14 = p.get("sigma14").unwrap_or(sigma * NM_TO_ANGSTROM.get())
+                        / NM_TO_ANGSTROM.get();
+                    let e14 =
+                        p.get("epsilon14").unwrap_or(epsilon / KCAL_TO_KJ.get()) * KCAL_TO_KJ.get();
                     row.push_str(&format!(
                         " sigma14=\"{}\" epsilon14=\"{}\"",
                         self.fmt_f(s14),

@@ -149,7 +149,7 @@ impl EndpointKey {
 /// One entry of the document's `styles` list, as stored (borrowed from the
 /// document).
 #[derive(Debug, Clone)]
-pub struct StyleEntry<'a> {
+pub struct SectionStyle<'a> {
     /// What the style's rows parameterize (`bond`, `pair`, …).
     pub category: &'a str,
     /// The functional form within the category (`harmonic`, `lj/cut`).
@@ -162,7 +162,7 @@ pub struct StyleEntry<'a> {
     pub endpoint_key: EndpointKey,
 }
 
-impl StyleEntry<'_> {
+impl SectionStyle<'_> {
     /// The block name of this style's table.
     pub fn block_name(&self) -> String {
         style_block_name(self.category, self.style)
@@ -240,14 +240,14 @@ impl ForceFieldSection {
     ///
     /// A [`MolRsError::Validation`] when `styles` is not a list of style
     /// entries ([`validate`](Self::validate) says what one is).
-    pub fn styles(&self) -> Result<Vec<StyleEntry<'_>>, MolRsError> {
+    pub fn styles(&self) -> Result<Vec<SectionStyle<'_>>, MolRsError> {
         let Some(styles) = self.document.get("styles") else {
             return Ok(Vec::new());
         };
         let styles = styles
             .as_array()
             .ok_or_else(|| invalid(format!("styles is a list, found {styles}")))?;
-        styles.iter().map(style_entry).collect()
+        styles.iter().map(section_style).collect()
     }
 
     /// The table of the `(category, style)` style, by its block name.
@@ -299,7 +299,7 @@ impl ForceFieldSection {
     }
 }
 
-fn style_entry(value: &JsonValue) -> Result<StyleEntry<'_>, MolRsError> {
+fn section_style(value: &JsonValue) -> Result<SectionStyle<'_>, MolRsError> {
     let entry = value
         .as_object()
         .ok_or_else(|| invalid(format!("a styles entry is an object, found {value}")))?;
@@ -374,7 +374,7 @@ fn style_entry(value: &JsonValue) -> Result<StyleEntry<'_>, MolRsError> {
             ))
         })?,
     };
-    Ok(StyleEntry {
+    Ok(SectionStyle {
         category,
         style,
         params,
@@ -480,7 +480,7 @@ fn check_special_bonds(special: &JsonValue) -> Result<(), MolRsError> {
 }
 
 fn check_style_table(
-    style: &StyleEntry<'_>,
+    style: &SectionStyle<'_>,
     block: &str,
     table: &Block,
     class_keyed: bool,
@@ -1343,7 +1343,7 @@ mod tests {
             back.document.keys().collect::<Vec<_>>(),
             vec!["name", "units"]
         );
-        assert_eq!(back.tables["pair_lj_cut"].nrows(), Some(3));
+        assert_eq!(back.tables["pair_lj_cut"].n_rows(), Some(3));
         assert!(serde_json::from_str::<ForceFieldSection>(r#"{"document": {}, "x": 1}"#).is_err());
     }
 

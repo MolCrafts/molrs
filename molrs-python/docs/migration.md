@@ -33,9 +33,10 @@ never published, so coming from 0.15.0 read
   now carries each style's arity).
 - **A pickle names a class by its public Python path**, and most of those
   moved (see [Python paths](#python-paths)): a 0.15 pickle holding, say, a
-  `molrs.Box` or a `molrs.Element` does not unpickle in 0.16. `Frame`,
-  `Block`, `Atomistic` and `CoarseGrain` pickled as `molrs._lib.*` and still
-  load.
+  `molrs.Box` or a `molrs.Element` does not unpickle in 0.16. Nor does a
+  pickle naming `molrs._lib.*` (a `Frame`, `Block`, `Atomistic` or
+  `CoarseGrain` pickled by 0.15 or an earlier 0.16 build): the native module
+  is `molrs._native` in 0.16.
 - **Force-field JSON is not converted.** `molrs_forcefield_from_json` reads a
   0.15 `molrs_ff_to_json` document as written, ½k harmonic `k`, radians,
   `D`, `a_thole` and `fourier` included: convert it as
@@ -90,13 +91,13 @@ an older molrs needs its values converted:
   `to_degrees`), converting only when the target `units` differs from the
   force field's. `lammps_coeff_values` takes params in the `units` it
   writes. `lammps_units`' `to_store_*` / `from_store_*` / `*_k_lammps`
-  helpers and the `½k` form maps are gone; `LammpsFfUnits::scale(from, to)`
+  helpers and the `½k` form maps are gone; `LammpsUnitConverter::scale(from, to)`
   returns the `UnitScale` that converts a parameter by its dimension
   (`UnitScale::apply`).
 - **Readers of other engines convert to the force-field IR.** GROMACS:
   `k = k_b/2`, `k = k_θ/2`, degrees kept. OpenMM XML: `k/2` for bonds and
   angles, radians → degrees. AMBER prmtop: `k = RK`, `k = TK`, radians →
-  degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OPLSAATypifier`)
+  degrees. The GAFF and OPLS-AA tables (`GaffTypifier`, `OplsAaTypifier`)
   and the GAFF estimator's empirical constants follow; the frcmod writer
   writes `RK = k`, the GROMACS and OpenMM writers convert back.
 - **`dihedral charmm` `w` is priced** (bug fix: it was read and ignored,
@@ -142,15 +143,15 @@ an older molrs needs its values converted:
     aliases are gone.
 - **Every missing or ill-typed parameter is a typed `IrError`.** A built-in
   constructor that lacks a parameter raises `MissingParam` (`style`, `type`,
-  `param`; Python `molrs.ff.ir.MissingParam`) where 0.15 raised a plain
+  `param`; Python `molrs.ff.ir.MissingParamError`) where 0.15 raised a plain
   `ValueError` with a message; a per-instance column a typifier did not bake
   (`kb` of `mmff_bond`, …) is `MissingParam` too. `BadValue` (`style`,
-  `type`, `param`, `reason`; Python `molrs.ff.ir.BadValue`) refuses a value
+  `type`, `param`, `reason`; Python `molrs.ff.ir.BadValueError`) refuses a value
   of the wrong kind (text for a number, an array of another rank), text
   outside its declared choices (`mixing = "lorentz"`) or a value outside its
   domain (a non-integer `n` of `lj/cut`, `inner >= cutoff` of a CHARMM
   switch). An unlike pair of `buck` / `morse` with no cross row is
-  `NoMixing`. Rust: `VdwStyleParams::from_style` returns
+  `NoMixing`. Rust: `PairMmffVdwStyleParams::from_style` returns
   `Result<Self, IrError>`.
 - **Python raises the typed refusal everywhere.** Every refusal of the
   force-field IR — from `def_style` / `def_type`, `PotentialCompiler.compile`
@@ -220,8 +221,8 @@ number exactly on read, or refuses the record by name.
   least 1, finite values in a non-null row); a `cmap` table's `grid` is
   further `f64[T, N, N]` (`N ≥ 2`). A non-float or empty-axis array column,
   a non-square grid, an array under an annotation or canonical key, and an
-  array style param are refused by `validate` / `to_section`.
-  `ForceField.from_section` reads a `cmap` style and every category beyond
+  array style param are refused by `validate` / `ForceFieldSection::from_forcefield`.
+  `ForceFieldSection.to_forcefield` reads a `cmap` style and every category beyond
   the seven (0.15 refused both); see
   [The force-field IR as a protocol](#the-force-field-ir-as-a-protocol).
 - **`pair14` is no category.** molrec retired it; `category_arity("pair14")`
@@ -246,7 +247,8 @@ the energy and forces 0.15.0 computed for it.
   refusal when it is one, and it converts from `String` / `&str` /
   `IrError`; a caller that propagated the `String` maps it
   (`.map_err(|e| e.to_string())`). `KernelConstructor` and every built-in
-  `*_ctor` return `Result<Member, CompileError>` (0.15: `String`); a custom
+  `*_constructor` (0.15: `*_ctor`) return `Result<ForceTerm, CompileError>`
+  (0.15: `Result<Member, String>`); a custom
   constructor that returns `Err(message.into())` or uses `?` on a `String`
   error still compiles.
 - **A force field with several styles of one bonded category compiles.**
@@ -390,7 +392,7 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   conflict. Code that copies a `Params` key by key through `iter()` and
   `iter_strings()` loses the arrays.
 - **Python.** A param value may be an array: `def_type(**params)`,
-  `def_style(params=…)` and `Type.__setitem__` take a numpy array or a
+  `def_style(params=…)` and `ForceFieldType.__setitem__` take a numpy array or a
   nested list / tuple of numbers and store float64, so a list value that
   raised `TypeError` in 0.15 is now stored. `params` and `t[key]` return
   arrays as float64 numpy arrays; pickles carry them.
@@ -400,7 +402,8 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   non-numeric one.
 - **Records.** An array parameter is a `f64[T, S…]` column (see
   [Records](#records-molrec_version-2)); it round-trips through
-  `to_section` / `from_section`, a `*.mrec` store and `molrs.io.mrec`.
+  `ForceFieldSection.from_forcefield` / `to_forcefield`, a `*.mrec` store and
+  `molrs.io.mrec`.
 
 ### 1-4 interactions
 
@@ -441,8 +444,9 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   member). `compile` drops the override rows from the `pairs` list the pair
   styles see; `compile_typed` reads those rows and weights them 0 in every
   pair member.
-- **Rust: `TypedMember` is `(Member, Option<PairWeights>)`** (was
-  `Option<BondDistanceWeights>`). Build the MD weights with
+- **Rust: `WeightedTerm` (0.15 `TypedMember`) is
+  `(ForceTerm, Option<PairWeights>)`** (0.15: `(Member,
+  Option<BondDistanceWeights>)`). Build the MD weights with
   `w.special_weights(&topo)`, which returns `ff::potential::SpecialWeights` (0.15:
   `topo.special_weights(&w)`, which still exists for a
   `BondDistanceWeights` but misses the pairs an override weights 0);
@@ -454,7 +458,7 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   contiguous, N ≥ 1) is a new style: kernel, LAMMPS reader
   (`dihedral_coeff t N A1 … AN`) and writer. A gap (`a1`, `a3` without
   `a2`) or a missing `a1` is refused at compile time and by the writer.
-- **Rust: `molrs::ff::forcefield::torsion` is new** — the exact maps
+- **Rust: `molrs::ff::ir::torsion` is new** — the exact maps
   between every torsion form and a Fourier series (`FourierSeries`,
   `TorsionRefusal`, one type per form with `from_params` / `to_params`,
   `torsion_series(category, style, style_params, row)` for any registered
@@ -529,7 +533,7 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   (0.15 dropped it both ways); a Mie `lj/cut` (`n`, `m` ≠ 12, 6) is
   refused by the writer (0.15 wrote a 12-6 line).
 - **The writer converts per dimension.** A field written in another unit
-  style has every parameter scaled by its `Dim` (`E*L^6`, `1/L`, …), not per
+  style has every parameter scaled by its `ParamDimension` (`E*L^6`, `1/L`, …), not per
   style arm; numbers agree with 0.15's to the last digit or two.
   `pair_coeff` lines name the lower type id first (LAMMPS sets nothing for
   `pair_coeff I J` with `I > J`). `lj/charmm/coul/charmm` is followed by
@@ -604,7 +608,8 @@ ff14SB and OPLS-AA molecules.
   refused C₅ ≠ 0 and ΣCₙ ≠ 0. The OPLS-AA typifier built from XML takes its
   dihedral candidates from every dihedral style.
 - **Coulomb uses OpenMM's constant.** An OpenMM-read `coul/cut` /
-  `coul/charmm` has `coulomb = 332.06371329919216` (OpenMM's `ONE_4PI_EPS0`),
+  `coul/charmm` has `coulomb = 332.06371329919216` (OpenMM's `ONE_4PI_EPS0`,
+  `OPENMM_ONE_4PI_EPS0` in kJ·nm·mol⁻¹·e⁻², in `real` units),
   not LAMMPS `real`'s 332.06371: Coulomb energies of an OpenMM-read field are
   9.9·10⁻⁹ larger than in 0.15.
 - **`NonbondedForce` states its mixing.** Without the foyer
@@ -699,12 +704,13 @@ OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   (0.15 stored it as a second type; the same orientation was already a
   `TypeConflict`).
 - **Coulomb uses GROMACS's constant.** A GROMACS-read `coul/cut` /
-  `coul/charmm` has `coulomb = GROMACS_COULOMB` = 332.06371329919205
-  (GROMACS's `ONE_4PI_EPS0`, CODATA 2018), not LAMMPS `real`'s: Coulomb
+  `coul/charmm` has `coulomb` = 332.06371329919205 kcal·Å·mol⁻¹·e⁻²,
+  `GROMACS_ONE_4PI_EPS0` (GROMACS's `ONE_4PI_EPS0`, 138.93545764438196
+  kJ·nm·mol⁻¹·e⁻², CODATA 2018) in `real` units, not LAMMPS `real`'s: Coulomb
   energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
   equal GROMACS's.
 - **Whole topologies read: `GromacsTopForcefieldReader::read_system` / Python
-  `molrs.io.read_gromacs_system`** read the molecule sections too, into the
+  `molrs.io.read_gromacs_top_system`** read the molecule sections too, into the
   force field and a typed frame (0-based indices): GROMACS's own type lookup,
   rows with their own parameters as types `<labels>@gmx_<n>`, `[ pairs ]`
   rows with parameters as per-pair overrides, the nrexcl pair list (every
@@ -748,7 +754,7 @@ field they return change where they did. AMBER stays read-only. See
   1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
   the one value), and the frame `AmberPrmtopForcefieldReader::read_system` / Python
   `molrs.io.read_amber_prmtop_system` returns (with the force
-  field, as `read_gromacs_system` does) gains a `pairs` block — only when
+  field, as `read_gromacs_top_system` does) gains a `pairs` block — only when
   some pair is weighted otherwise —
   listing those 1-4 pairs with `coul_scale` / `lj_scale` cells (the
   structure reader alone, `read_amber_prmtop`, has none). It is not a pair list: `intramolecular_pairs` builds the
@@ -784,10 +790,11 @@ Engine I/O follows the force-field IR's protocol; see
 - **`StyleSpec.lammps`** (`LammpsForm::{None, Positional, Custom}`). A style
   registered with `LammpsForm::positional()` (Python
   `register_style(..., lammps="positional")`, `"positional:<name>"` for
-  another LAMMPS name, `ir.StyleSpec.lammps`, or afterwards
+  another LAMMPS name, `ir.StyleDeclaration.lammps`, or afterwards
   `ir.register_engine_form("lammps", category, name, form)`) is read and
   written by the LAMMPS reader and writer with nothing else written:
-  `params` in order, each converted by its `Dim`. `StyleInfo.lammps` names a
+  `params` in order, each converted by its `ParamDimension`. Python
+  `StyleSpec.lammps` names a
   style's form.
 - **Every engine refusal is `NoEngineForm`.** The GROMACS and frcmod
   writers refuse a style that is not built in, and the LAMMPS and OpenMM
@@ -800,7 +807,7 @@ Engine I/O follows the force-field IR's protocol; see
   instead of `String`: it dereferences to its message (so
   `err.contains(…)` still reads it, and `String::from(err)` converts) and
   `err.ir()` is the `IrError::NoEngineForm` when an engine refused a style.
-  Python raises `molrs.ff.ir.NoEngineForm` (a `ValueError`) from every
+  Python raises `molrs.ff.ir.NoEngineFormError` (a `ValueError`) from every
   writer, as from `register_engine_form`.
 - **Readers and writers take a registry**: `LammpsForcefieldReader::with_registry`,
   `LammpsForcefieldWriter::with_registry`, `OpenmmXmlWriter::with_registry`
@@ -864,8 +871,9 @@ Engine I/O follows the force-field IR's protocol; see
 
 ### Typifier matches carry any relation kind
 
-- **Rust: a typifier `Match` carries any relation kind.** The fixed fields
-  `bonds`, `angles`, `dihedrals` and `impropers` are gone; `Match::links`
+- **Rust: a typifier's `TypeAssignment` (0.15 `Match`) carries any relation
+  kind.** The fixed fields `bonds`, `angles`, `dihedrals` and `impropers` are
+  gone; `TypeAssignment::links`
   (`IndexMap<String, Vec<Annotations>>`) maps a graph relation kind (the
   Frame block of its category: `"bonds"`, a custom `"urey_bradleys"`) to
   rows positional against that kind's own rows. Replace `m.bonds = rows` with
@@ -875,19 +883,20 @@ Engine I/O follows the force-field IR's protocol; see
   non-empty vector for a kind the graph lacks is an error naming it.
   `write_onto` defines the kinds in the graph's registration order, as
   before for the four built-ins.
-- **Rust: `Match::assign_terms(graph, kind, library, key)`** (new) types
+- **Rust: `TypeAssignment::assign_terms(graph, kind, library, key)`** (new) types
   every row of a relation kind against the library's type rows of its
   category by the atoms' types: slot by slot with wildcards, in the orders
   the category's `EndpointOrder` allows (reversible, ordered or unordered),
   fewest wildcards first, then table order (molrec's rule). It returns the
   positions nothing matched.
-- **Python: `Match(nodes, links=...)` takes a kind name as a key** as well
+- **Python: `TypeAssignment(nodes, links=...)` (0.15 `Match`) takes a kind
+  name as a key** as well
   as a relation class (`{Bond: rows, "urey_bradleys": rows}`); a relation
   class other than `Bond` / `Angle` / `Dihedral` / `Improper` / `Port`, or
   a key that is neither class nor `str`, still raises `TypeError`, and
   naming one kind twice (`{Bond: …, "bonds": …}`) `ValueError`.
-  `repr(Match)` lists the kinds: `Match(nodes=2, links={bonds=1}, styles=0,
-  pairs=0)`.
+  `repr(TypeAssignment)` lists the kinds: `TypeAssignment(nodes=2,
+  links={bonds=1}, styles=0, pairs=0)`.
 
 ### The force-field IR as a protocol
 
@@ -899,7 +908,7 @@ changes for code written against 0.15:
 
 - **Rust: `register_kernel` / `register_kernel_with` are removed**; register
   through the IR registry, `molrs::ff::ir::register_style(StyleSpec::new(category,
-  name).source(source), Some(Kernel::ctor(ctor)))` (0.15: `()`, overriding
+  name).source(source), Some(Kernel::constructor(ctor)))` (0.15: `()`, overriding
   whatever was there). A built-in is sealed (`IrError::Sealed`); registering
   the same constructor again is a no-op, another one under a taken name is
   `IrError::Conflict`. To change a built-in's behaviour, register a style of
@@ -927,9 +936,10 @@ changes for code written against 0.15:
     styles of it the force field already holds; anything else is still
     `DefError::UnknownCategory`. `ForceField::def_style_with_arity` defines
     a style of a category nothing declares, with the arity given (what
-    `from_section` does with a record's endpoint columns). New:
+    `ForceFieldSection::to_forcefield` does with a record's endpoint
+    columns). New:
     `Style::arity`, `StyleDefs::arity`, `ForceField::get_relationtypes`.
-  - **`ForceField::from_section` keeps a category beyond the seven** (it
+  - **`ForceFieldSection::to_forcefield` keeps a category beyond the seven** (it
     refused `virtual_site` and every unknown category): its arity is the
     registry's, or the count of its table's endpoint columns.
   - **Compiling.** A style of a category nothing declares is priced as a
@@ -948,10 +958,11 @@ changes for code written against 0.15:
 - **Custom styles persist.** A custom style or category is stored in a
   `*.mrec` record as its molrec style entry, and a process that registered
   nothing reads it back:
-  - `to_section` writes a registered custom style's `expression` when the
+  - `ForceFieldSection::from_forcefield` writes a registered custom style's
+    `expression` when the
     style has none of its own (a built-in is written with none; a style's
     own `expression` is written, and read back, byte for byte). Rust:
-    `ForceField::to_section_in(&Registry)`.
+    `ForceFieldSection::from_forcefield_in(&ff, &Registry)`.
   - A style nothing registers, with no expression, is read whole (its rows,
     its array params, its category); compiling it is refused by name:
     ``no kernel for <category> `<style>`: register it
@@ -967,12 +978,12 @@ changes for code written against 0.15:
 - **Form conversions** (new): `ForceField.canonical()`,
   `ForceField.to_form(category, style)` and `ForceField.fit_form(category,
   style, q, w=None, *, kt=None, offset=False)` (Rust: the same on
-  `ForceField`, `fit_form` taking a `molrs::ff::ir::Metric`), over the form
+  `ForceField`, `fit_form` taking a `molrs::ff::ir::FitMetric`), over the form
   families `torsion` (canonical `dihedral periodic`), `bond`, `angle`
   (canonical `harmonic`) and `lj` (canonical `pair lj/cut`); see
   [Converting between forms](guides/forcefield-ir.md#converting-between-forms).
   An out-of-image conversion is refused (`IrError::OutOfImage`, Python
-  `molrs.ff.ir.OutOfImage`, a `ValueError`).
+  `molrs.ff.ir.OutOfImageError`, a `ValueError`).
 
 ### Module ownership
 
@@ -1007,21 +1018,21 @@ The rule, applied crate-wide:
 |---|---|
 | `molrs::Frame`, `Block`, `FrameAccess`, `FrameView`, `ForceFieldSection`, `MetaMap`, `MetaValue`, `MolRec`, `Trajectory`, … (crate root, `molrs::core::…`, `molrs::store::frame::Frame`, `store::block::Block`, …) | `molrs::core::{Frame, Block, …}` |
 | `molrs::Atomistic`, `Element`, `MolGraph`, `NodeId`, `RelationId`, `Topology`, `CoarseGrain`, … (crate root, `molrs::system::{atomistic, molgraph, topology, coarsegrain, bond, bond_weights, extract, graph_hash, link, port}::…`) | `molrs::core::{Atomistic, Element, …}` (also `FromMolGraph`, `TopologyError`) |
-| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::core::{SimBox, Mic, BoxKind, BoxError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}`; `molrs::op::{translate, rotate, scale, center, CenterError}` |
+| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::core::{SimBox, Mic, BoxKind, BoxError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace, CenterError}`; the `MolGraph::{translate, rotate, scale, center}` methods |
 | `molrs::spatial::neighbors::{aabb, bruteforce, filter, grid}::…`, `spatial::region::{region, cylinder, ellipsoid, half_space, polyhedron, sphere_union}::…` | `molrs::core::…`, `molrs::core::…` |
 | `molrs::units::{dimension, error, preset, quantity, registry, unit}::…` (and the crate-root `Unit`, `UnitRegistry`, …) | `molrs::core::…` |
 | `molrs::math::virial::Virial` | `molrs::core::Virial` |
-| `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::{F, F3, FNx3, …}` (flat), the one owner of the scalar and array aliases |
+| `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::{F, F3, Fnx3, …}` (flat), the one owner of the scalar and array aliases |
 | `molrs::store::schema::consts::…` | `molrs::core::keys::…` |
 | `molrs::store::schema::{block, column, document, validator, violation}::…` | `molrs::core::schema::…` |
 | `molrs::GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler`, … | `molrs::builder::…` |
 | `molrs::compute::<family>::X`, `compute::<family>::<file>::X` (`compute::order::Nematic`, `compute::distribution::AtomGroups`, `compute::dynamics::persist::pair_survival_tcf`, `compute::dielectric::compute_dipole_moment`, …) | `molrs::compute::X` — now also the `*Args` aliases, `EinsteinDiffusionResult`, `InternalCoordinate` (was `AnyObservable`), `Observable` and the distribution observables, `VORONOI_BOUNDARY`, `steinhardt_qlm`; see [Wave S4](#wave-s4-analysis-perception-geometry-dynamics) for the renames |
-| `molrs::ff::potential::<family>::<file>::X` (`pair::lj_cut::LJCut`, `bond::harmonic::BondHarmonic`, `kspace::pme::PmePotential`, …) | `molrs::ff::potential::<family>::X` (also `pair::{VdwAtomParams, VdwStyleParams, lj_ab_to_sigma_epsilon}`, `angle::CharmmAngleParams`, `kspace::PmeParams`) |
-| `molrs::ff::potential::{compile, error, instances}::…` | `molrs::ff::potential::{PotentialCompiler, CompileError, Instances}` |
+| `molrs::ff::potential::<family>::<file>::X` (`pair::lj_cut::LJCut`, `bond::harmonic::BondHarmonic`, `kspace::pme::PmePotential`, …) | `molrs::ff::potential::<family>::X`, renamed in [Wave S3](#wave-s3-force-field) (`pair::PairLjCut`, …; also `pair::{PairMmffVdwAtomParams, PairMmffVdwStyleParams, lj_ab_to_sigma_epsilon}`, `angle::AngleCharmmParams`, `kspace::PairCoulLongPmeParams`) |
+| `molrs::ff::potential::{compile, error, instances}::…` | `molrs::ff::potential::{PotentialCompiler, CompileError, ExplicitTerms}` |
 | `molrs::ff::ir::{category, dim, engine, error, expression, form, registry, spec}::…`, `ff::ir::engine::positional` | `molrs::ff::ir::…`, `molrs::ff::ir::positional` |
 | `molrs::ff::params::{gaff, gaff2, gaff_equiv, gaff_empirical, bccparm, bccparm_abcg2, clpol, gasparm, oplsaa, oplsaa_typing}::…` | `molrs::ff::params::…` (`GAFF`, `OPLSAA_ATOMS`, …; a table's row arrays, `GAFF_BONDS`, …, are reached through its table) |
 | `molrs::ff::params::ATOMTYPE_AMBER`, … | `molrs::ff::params::atomtype_amber::ATOMTYPE_AMBER`, … (each beside its own `RULES` / `WILDATOMS`) |
-| `molrs::ff::typifier::{am1bcc, atd, element, estimate, gaff, opls, uff}::…` (`typifier::gaff::GaffParameterSet`, `typifier::opls::OplsTypingMeta`, `typifier::estimate::Provenance`, …) | `molrs::ff::typifier::…` (`cmap` and `mmff` stay namespaces) |
+| `molrs::ff::typifier::{am1bcc, atd, element, estimate, gaff, opls, uff}::…` (`typifier::gaff::GaffParameterSet`, `typifier::opls::OplsTypingMeta`, `typifier::estimate::Provenance`, …) | `molrs::ff::typifier::…` (`GaffParameterSet`, `OplsTypingMetadata`, `Provenance`, …; `cmap` and `mmff` stay namespaces) |
 | `molrs::ff::typifier::opls::Estimator` (a trait alias) | `ParameterInterpolator<Term = BondedTerm>` |
 | `molrs::io::format::{read_frame, write_frame, FrameFormat}` | removed: every door names its format (see [Wave S2](#wave-s2-io-per-format)) |
 | `molrs::io::smiles::{smiles, chem::ast, error}::…` | `molrs::io::smiles::…` (see [Wave S2](#wave-s2-io-per-format)) |
@@ -1070,7 +1081,7 @@ left column.
 | `molrs::store::typed_json` | crate-private (`typed_json::{encode_complex, decode_complex}` removed: unused) |
 | `molrs::store::keys`, `molrs::store::schema`, `molrs::units::constants` | `molrs::core::keys`, `molrs::core::schema`, `molrs::core::constants` |
 | `molrs::units::{lookup_preset, preset_names, register_preset, replace_preset}` | `molrs::core::{lookup_unit_preset, unit_preset_names, register_unit_preset, replace_unit_preset}` |
-| `molrs::spatial::{translate, rotate, scale, center, CenterError}`; `Atomistic::{translate, rotate, scale, center}`, `CoarseGrain::{translate, rotate, scale, center}` (Rust) | `molrs::op::{translate, rotate, scale, center, CenterError}` over `as_molgraph()` / `as_molgraph_mut()` (Python keeps the methods) |
+| `molrs::spatial::{translate, rotate, scale, center, CenterError}`; `Atomistic::{translate, rotate, scale, center}`, `CoarseGrain::{translate, rotate, scale, center}` (Rust) | `MolGraph::{translate, rotate, scale, center}` over `as_molgraph()` / `as_molgraph_mut()`, `molrs::core::CenterError` (Python keeps the methods) |
 | `molrs::system::BondType` | `molrs::core::BondOrder` (the chemical bond class; the `bond_type` key is unchanged) |
 | `molrs::compute::{BondOrder, BondOrderResult}`, Python `molrs.compute.BondOrder`, JS `BondOrder` | `molrs::compute::{BondOrientationalOrder, BondOrientationalOrderResult}`, `molrs.compute.BondOrientationalOrder`, JS `BondOrientationalOrder` |
 | `molrs::store::ColumnHolder`, `Column::from_<dtype>_holder` | `molrs::core::ColumnArray`, `Column::from_<dtype>_array` |
@@ -1080,14 +1091,13 @@ left column.
 | `molrs::compute::NodeId` and the unused graph variants of `ComputeError` | removed |
 | `molrs::store::{ForceFieldSection, StyleEntry, EndpointKey, style_block_name, MolRec, Observables, MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::io::mrec::…` (feature `zarr`, which now enables `ff`) |
 | `ForceField::to_section()`, `to_section_in(&registry)`, `ForceField::from_section(&section)`; Python `ForceField.to_section()` / `ForceField.from_section(s)` | `ForceFieldSection::from_forcefield(&ff)`, `from_forcefield_in(&ff, &registry)`, `section.to_forcefield()`; Python `molrs.io.mrec.ForceFieldSection.from_forcefield(ff)` / `section.to_forcefield()` |
-| `store::forcefield_section::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity, MIXING_RULES, ONE_FOUR_VALUES}` | `molrs::ff::ir::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity}`, `molrs::ff::forcefield::mixing::MIXING_RULES`, `molrs::ff::forcefield::one_four::ONE_FOUR_VALUES` |
+| `store::forcefield_section::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity, MIXING_RULES, ONE_FOUR_VALUES}` | `molrs::ff::ir::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity}`, `molrs::ff::forcefield::combining_rule::COMBINING_RULES`, `molrs::ff::forcefield::one_four::ONE_FOUR_VALUES` |
 | a section's `units.preset` of the LAMMPS styles only | the LAMMPS styles and `openmm` (`nm`, `kJ/mol`, `ps`) |
 | `molrs::system::port::PORTS`, `perceive::equivalence::EQUIV_CLASS`, `perceive::bond_type::BCC_BOND_TYPE`, `io::data::lammps_bond_react::REACT_ID`, `io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META}` | `molrs::core::keys::{PORTS, EQUIV_CLASS, BCC_BOND_TYPE, REACT_ID, LAMMPS_COEFFS_TEXT, LAMMPS_UNITS}`; also `FRAG_ID`, `VSITE`, `BEAD_ATOMS` (Python `molrs.core.keys.*`) |
 | `molrs::ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`, Python `molrs.ff.params.AMBER_SCEE` / `AMBER_SCNB` | `molrs::core::constants::{AMBER_SCEE, AMBER_SCNB}`, `molrs.core.constants.*` |
 | `ff::constants::{MDYNE_A_TO_KCAL, VACUUM_DIELECTRIC, DEG2RAD}` (crate-private) | `molrs::core::constants::{KCAL_MOL_PER_MDYNE_ANGSTROM, VACUUM_DIELECTRIC}`; `f64::to_radians` |
 | `molrs::ff::params::uff::G` (332.06) | `molrs::core::constants::UFF_COULOMB` |
-| the spectroscopy literals (`c`, fs → s, m → cm, `1.438777`) | `molrs::core::constants::{SPEED_OF_LIGHT, FEMTOSECOND_S, CENTIMETER_PER_METER, SECOND_RADIATION_CONSTANT}` (`c₂ = 1.438776877` cm·K, CODATA 2018) |
-| — | `molrs::core::constants::ANGSTROM3_PER_CM3` (1e24) |
+| the spectroscopy literals (`c`, fs → s, m → cm, `1.438777`) | `molrs::core::constants::{SPEED_OF_LIGHT, SECOND_RADIATION_CONSTANT}` (`c₂ = 1.438776877` cm·K, CODATA 2018); fs → s and m → cm through the unit registry (`molrs::core::UnitFactor::new("fs", "s")`) |
 | `molrs::VERSION` | `env!("CARGO_PKG_VERSION")`; Python `molrs.__version__` |
 | Python `molrs.store`, `molrs.spatial`, `molrs.system`, `molrs.units` | `molrs.core` |
 | Python `molrs.store.keys`, `molrs.store.schema` | `molrs.core.keys`, `molrs.core.schema` |
@@ -1097,8 +1107,9 @@ left column.
 
 A pickle names a class by its public path, so a `Box`, `Element`,
 `MolGraph`, … pickled under `molrs.spatial` / `molrs.system` /
-`molrs.store` does not unpickle; `Frame`, `Block`, `Atomistic` and
-`CoarseGrain` pickled as `molrs._lib.*` still load.
+`molrs.store` does not unpickle, and neither does a `Frame`, `Block`,
+`Atomistic` or `CoarseGrain` pickled as `molrs._lib.*` (0.15 and earlier
+0.16 builds): the native module is `molrs._native` in 0.16.
 
 #### Wave S2: io per format
 
@@ -1153,7 +1164,7 @@ column.
 | Earlier 0.16 builds (Rust / Python) | 0.16 (`molrs::io::` / `molrs.io.`) |
 |---|---|
 | `io::read_frame`, `io::write_frame`, `io::FrameFormat` / `molrs.io.read_frame`, `write_frame` | removed: the format's own door (`read_pdb`, `read_vasp_poscar`, …) |
-| `stream::{frame_to_bytes, bytes_to_frame}(…, MessageFormat)` / `molrs.io.read_frame_bytes(data, format=)`, `write_frame_bytes(frame, format=)` | `stream::{write_msgpack_frame_bytes, read_msgpack_frame_bytes, write_json_frame_str, read_json_frame_str}` / `molrs.io.` the same names |
+| `stream::{frame_to_bytes, bytes_to_frame}(…, MessageFormat)` / `molrs.io.read_frame_bytes(data, format=)`, `write_frame_bytes(frame, format=)` | `io::{write_msgpack_frame_bytes, read_msgpack_frame_bytes, write_json_frame_str, read_json_frame_str}` / `molrs.io.` the same names |
 | `data::pdb::{read_pdb_frame, read_pdb_traj, parse_frame_bytes}`, `write_pdb_frame(W)`, `write_pdb_traj(W)` | `read_pdb`, `read_pdb_trajectory`, `read_pdb_bytes`, `write_pdb(path)`, `write_pdb_trajectory(path)` (`PdbWriter` over a stream) |
 | `data::xyz::{read_xyz_frame, read_xyz_traj, parse_frame_bytes, write_xyz_frame(W), write_xyz_traj(W), read_xyz_frame_from_reader, parse_xyz_frame_str}` | `read_xyz`, `read_xyz_trajectory`, `read_xyz_bytes`, `write_xyz(path)`, `write_xyz_trajectory(path)`; the stream ones are `XyzReader` / `XyzWriter` |
 | `data::gro::read_gro` (every frame), `read_gro_frame(R)`, `write_gro_traj`, `write_gro_frame(W)` / Python `read_gro` (first frame) | `read_gro` (the first frame), `read_gro_trajectory` (every frame), `write_gro_trajectory`; `GroReader` / `GroWriter` |
@@ -1169,7 +1180,7 @@ column.
 | `forcefield::readers::lammps::read_lammps_cmap_str`, `forcefield::writers::lammps::lammps_cmap_str` | `read_lammps_cmap_str`, `write_lammps_cmap_str` |
 | Python `read_lammps_cmap(path)`, `write_lammps_cmap(path, forcefield, frame)` (a `ForceField`, unlike Rust's `read_lammps_cmap_str`, which returns the file's raw `LammpsCmapFile`) | `read_lammps_cmap_forcefield`, `write_lammps_cmap_forcefield` (`LammpsForcefieldReader::read_cmap_str` / `LammpsForcefieldWriter::write_cmap_str`); `read_lammps_cmap_str` / `write_lammps_cmap_str` stay the raw `fix cmap` grids |
 | `forcefield::readers::clpol::{read_alpha_ff, parse_alpha_ff}` | `read_clpol_alpha`, `read_clpol_alpha_str` |
-| `data::lammps_data::parse_frame_bytes`, `trajectory::lammps_dump::{read_lammps_dump, write_lammps_dump, open_lammps_dump, parse_frame_bytes}` | `read_lammps_data_bytes`, `read_lammps_trajectory`, `write_lammps_trajectory`, `LammpsDumpReader::open`, `read_lammps_dump_bytes` |
+| `data::lammps_data::parse_frame_bytes`, `trajectory::lammps_dump::{read_lammps_dump, write_lammps_dump, open_lammps_dump, parse_frame_bytes}` | `read_lammps_data_bytes`, `read_lammps_dump_trajectory`, `write_lammps_dump_trajectory`, `LammpsDumpReader::open`, `read_lammps_dump_bytes` |
 | `data::lammps_molecule::{read_lammps_molecule (by extension), write_lammps_molecule(…, format)}` / Python `write_lammps_molecule(path, frame, format=)` | `read_lammps_molecule` / `write_lammps_molecule` (native text), `read_lammps_molecule_json` / `write_lammps_molecule_json` |
 | `data::lammps_bond_react::write_bond_react_map` / `write_bond_react_map` | `write_lammps_bond_react_map` |
 | `log::{read_lammps_log(path), read_lammps_log_with_style(path, style)}` | `read_lammps_log(path, style)` |
@@ -1215,7 +1226,8 @@ CoarseGrain bond view is `molrs.core.CgBond`, and the JS class is `SmilesIr`;
 MMFF's van der Waals rows are `ff::params::mmff::{MmffVdw, MmffVdwStyle}`.
 `DType` and the WASM `NDArray` keep numpy's spelling (`numpy.dtypes.*DType`,
 `numpy.typing.NDArray`). The analysis names (`RDF`, `MSD`, `PMFTXY`, …) are
-not covered by this change.
+not covered by this change; [Wave S4](#wave-s4-analysis-perception-geometry-dynamics)
+cases them (`Rdf`, `Msd`, `PmftXy`, …).
 
 #### Engine constants are unit facts (`core::constants`)
 
@@ -1227,25 +1239,29 @@ Each engine's Coulomb constant and charge factor has one owner,
 | `molrs::ff::params::amber::AMBER_COULOMB` | `molrs::core::constants::AMBER_COULOMB` |
 | `molrs::io::data::prmtop::CHARGE_CONVERSION_FACTOR` | `molrs::core::constants::AMBER_CHARGE_FACTOR` |
 | `molrs::io::data::prmtop_tables::CHAMBER_COULOMB` | `molrs::core::constants::CHARMM_COULOMB` |
-| `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::core::constants::OPENMM_COULOMB` |
-| `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::core::constants::GROMACS_COULOMB` |
-| `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | `molrs::core::constants::ANGSTROM_PER_BOHR` |
+| `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::core::constants::OPENMM_ONE_4PI_EPS0` (OpenMM's own value, kJ·nm·mol⁻¹·e⁻²) |
+| `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::core::constants::GROMACS_ONE_4PI_EPS0` (GROMACS's own value, kJ·nm·mol⁻¹·e⁻²) |
+| `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | the unit registry: `molrs::core::UnitFactor::new("bohr", "angstrom")` |
 | `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `molrs::core::constants::BOLTZMANN_REAL` (1.98720425864083e-3): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
 
-New beside them: `KJ_PER_KCAL` and `ANGSTROM_PER_NM`, which replace the
-private copies in the GROMACS, OpenMM XML, `.gro`, `.trr` and `.xtc` code.
+The private kcal ↔ kJ and nm ↔ Å copies in the GROMACS, OpenMM XML, `.gro`,
+`.trr` and `.xtc` code are gone: unit conversions go through the unit
+registry (`molrs::core::UnitFactor::new("kcal", "kJ")`,
+`UnitRegistry::factor`; Python `molrs.core.UnitRegistry().factor("kcal",
+"kJ")`), not through constants. MMFF's 332.0716 is `MMFF_COULOMB`, and
+OPLS-AA's 1-4 weights are `OPLS_LJ_14` / `OPLS_COULOMB_14`.
 LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `AMBER_COULOMB` is
 `molrs.core.constants.AMBER_COULOMB` (it was `molrs.ff.AMBER_COULOMB`).
 
-The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
-(`ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`), and only the force-field
+The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are
+`core::constants::{AMBER_SCEE, AMBER_SCNB}`, and only the force-field
 reader assumes them. The prmtop structure reader holds no 1-4
 weight at all: the per-pair `"pairs"` block (`coul_scale` / `lj_scale` from
 `SCEE` / `SCNB`) is force-field meaning and comes from
 `io::amber::AmberPrmtopForcefieldReader::{read_system, read_system_str}`
 (Python `molrs.io.read_amber_prmtop_system`), which return
 `(ForceField, Frame)` like `GromacsTopForcefieldReader::read_system`
-(Python `read_gromacs_system`); `io::read_amber_prmtop` now
+(Python `read_gromacs_top_system`); `io::read_amber_prmtop` now
 never has a `"pairs"` block, and the refusal of a 1-4 row on a bonded /
 angle-end pair moved with it. A file without `SCEE_SCALE_FACTOR` /
 `SCNB_SCALE_FACTOR` (pre-Amber-11) still gets no `"pairs"` block;
@@ -1287,18 +1303,18 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
   - `BccModel`, `BccParameterSet`, `ChargeError`, `ChargeModel`,
     `MullikenModel` → `ff::charge::`.
   - `FragmentAtoms`, `FragmentScaling`, `ScaleLjError`, `compute_k_ij`,
-    `scale_lj` → `ff::scale_lj::`.
+    `scale_lj` → `ff::clpol_scaling::`.
   - `assign_cmaps` → `ff::typifier::cmap::assign_cmaps` (also no longer at
     `ff::typifier::`); `GaffParameterSet` → `ff::typifier::GaffParameterSet`.
 - **IR vocabulary is the IR's.** `ParamSource`, `RowSource`, `SpecialClass`
   and `KernelConstructor` are at `ff::ir::` only (were also
   `ff::potential::` and `ff::potential::registry::`; that module is private,
-  `KernelRegistry` stays at `ff::potential::KernelRegistry`). `ScalarForm`,
-  `CompoundForm` and `ParamCols` are at `ff::potential::generic::` only (were
-  also `ff::ir::`); `generic`'s `bonded` / `compound` / `form` / `pair`
-  modules are private. `ff::potential::{lookup_kernel, lookup_typed_kernel,
+  and `ff::ir::Registry` is the one registry). `ScalarForm`,
+  `CompoundForm` and `ParamColumns` are at `ff::potential::form_kernel::`
+  only (were also `ff::ir::`); `form_kernel`'s `bonded` / `compound` /
+  `form` / `pair` modules are private. `ff::potential::{lookup_kernel, lookup_typed_kernel,
   lookup_param_source, lookup_row_source}` are removed: ask the registry,
-  `ff::ir::with_global(|r| r.style(category, name))` /
+  `ff::ir::with_global_registry(|r| r.style(category, name))` /
   `r.param_source(..)` / `r.row_source(..)`.
 - **`molrs::md::SpecialWeights` → `molrs::ff::potential::SpecialWeights`**,
   and `PairWeights::special_weights(&topo)` returns it (was the per-atom
@@ -1307,8 +1323,8 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
   optimizer.** `molrs::optimize::{SoftSpec, SoftLbfgs}` and
   `optimize::soft` are removed. `SoftSpec` is
   `molrs::ff::potential::soft::SoftSpec`; minimize with
-  `Lbfgs::new(Arc::new(spec.potential(frame.simbox.as_ref())), settings
-  max_steps, max_step, memory)`. `SoftPotential` resolves its own pairs: its
+  `Lbfgs::new(Arc::new(spec.potential(frame.simbox.as_ref())),
+  LbfgsSettings { … })`. `SoftPotential` resolves its own pairs: its
   springs at the first configuration it sees (as `SoftLbfgs` did), its
   non-bonded pairs rebuilt whenever an atom has moved half a 1 Å skin
   (`SoftLbfgs` rebuilt them once per run), in any box (was cubic only).
@@ -1318,10 +1334,11 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
 - **`molrs::ff::mmff` is removed**: MMFF typing (aromaticity, atom types,
   charges, the parameter resolver) is private to `ff::typifier::mmff`, and
   `MmffVariant` / `MmffMolProperties` with it — pick a variant by picking
-  `MMFF94Typifier` or `MMFF94STypifier`. `ff::mmff::da::{DA_NEITHER,
+  `Mmff94Typifier` or `Mmff94sTypifier`. `ff::mmff::da::{DA_NEITHER,
   DA_DONOR, DA_ACCEPTOR}` → `ff::params::mmff::`.
   `ff::typifier::mmff::params::{MMFFAtomProp, MMFFParams}` →
-  `ff::typifier::mmff::{MMFFAtomProp, MMFFParams}`.
+  `ff::params::mmff::MmffProp` (the one row type) and
+  `ff::typifier::mmff::MmffAtomProperties`.
 - **One hybridization: `molrs::perceive::Hybridization`**, with
   `perceive::{perceive_hybridizations, perceive_conjugated_atoms}` — RDKit's
   `setHybridization` / `setConjugation`, checked against RDKit 2026.03 on 27
@@ -1343,16 +1360,18 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
   `io::{read_mmff_xml_params_str, read_openmm_xml_opls_typing_str}`
   (the latter refuses a dangling or cyclic `overrides`), and a caller's own
   XML builds a typifier from what they read:
-  `MMFF94Typifier::from_parts(read_mmff_xml_params_str(xml)?,
-  read_mmff_xml_forcefield_str(xml)?)` (`MMFF94STypifier` alike) and
-  `OPLSAATypifier::new(read_openmm_xml_opls_typing_str(xml)?,
+  `Mmff94Typifier::from_parts(read_mmff_xml_params_str(xml)?,
+  read_mmff_xml_forcefield_str(xml)?)` (`Mmff94sTypifier` alike) and
+  `OplsAaTypifier::new(read_openmm_xml_opls_typing_str(xml)?,
   read_openmm_xml_forcefield_str(xml)?)`. There is no
-  `from_xml_str` constructor. Python's `OPLSAATypifier(xml)` is unchanged.
+  `from_xml_str` constructor. Python's `OplsAaTypifier(xml)` takes the XML
+  as 0.15's `OPLSAATypifier(xml)` did.
 - **BCC tables are the charge model's.** `ff::typifier::{BccParameterSet,
   BCCCorrectionTable, BCCCorrector}` are removed: `BccParameterSet` is at
   `ff::charge::BccParameterSet` only, and the corrections are applied by
   `BccModel::correct` (the second door, `BCCCorrector::apply`, is gone with
-  `BCCCorrectionTable`). `ff::typifier::BCCAtomChargeTypifier` stays.
+  `BCCCorrectionTable`). `ff::typifier::BccAtomChargeTypifier` (0.15
+  `BCCAtomChargeTypifier`) stays.
   `BccModel::new` returns `BccModel` (was `Result`; it could not fail).
 - **`molrs::perceive::equivalence::average_charges` is removed**: the
   class-mean is a charge-model step, applied by `ChargeModel::assign` for a
@@ -1385,8 +1404,8 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
     `io::gromacs::GromacsTopForcefieldReader::read_system` /
     `io::gromacs::GromacsTopForcefieldWriter::write_system_str`
     (0-based indices). Python: `molrs.io.read_top` →
-    `molrs.io.read_gromacs_system`; `molrs.io.write_top` →
-    `molrs.io.write_gromacs_system`.
+    `molrs.io.read_gromacs_top_system`; `molrs.io.write_top` →
+    `molrs.io.write_gromacs_top_system`.
   - `molrs::io::data::frcmod::*` (`read_frcmod`, `parse_frcmod`,
     `format_frcmod`, `write_frcmod`, `FrcmodFile`) →
     `io::write_amber_frcmod`. Python: `molrs.io.read_frcmod`,
@@ -1411,7 +1430,7 @@ in [Wave S2](#wave-s2-io-per-format)). `ff` names
   CoarsenError}` (Python: `molrs.perceive.Coarsener` →
   `molrs.builder.Coarsener`).
 - One door, one owner (wave 2):
-  - `molrs::op::types::{F3x3, FN}` are gone: one alias per type, `FNx3`
+  - `molrs::op::types::{F3x3, FN}` are gone: one alias per type, `Fnx3`
     for any `Array2<F>` (a 3×3 box matrix included) and `F3` for any
     `Array1<F>` (molpack used neither).
   - `molrs::io::reader::open_file` (a "compatibility wrapper") is gone:
@@ -1470,7 +1489,7 @@ exactly its `__all__`: no `typing` or stdlib name imported for an annotation
 it any more.
 
 - A Rust namespace below a subsystem's facade is not a Python module of its
-  own: `ff::potential::pair::LJCut` is `molrs.ff.potential.LJCut`,
+  own: `ff::potential::pair::PairLjCut` is `molrs.ff.potential.PairLjCut`,
   `perceive::smarts::Reaction` is `molrs.perceive.Reaction`,
   the core's neighbour search and regions are `molrs.core`, and the
   `io::{data, trajectory, mesh, csv}` formats' functions are `molrs.io`.
@@ -1513,7 +1532,7 @@ it any more.
   constructor) and `Trajectory.count_frames()` (`len(traj)`).
 - `molrs.ff` holds only its submodules, one per `molrs::ff` submodule:
   `forcefield` (the `ForceField` data model and its handles; no file
-  format), `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj`.
+  format), `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling`.
 - `molrs.compute` is flat, as `molrs::compute` is; the domain subpackages
   (`molrs.compute.density`, …) are gone.
 - Removed, with no second spelling left behind: `molrs.io.raw` and
@@ -1530,7 +1549,7 @@ it any more.
   (`molrs.perceive.perceive_rings(mol).max_ring_system_size()`), and the
   `molrs.md` lazy loader.
 - The protocol and driver modules are private: `molrs.compute.Compute`,
-  `molrs.ff.potential.Potential` and `molrs.md.MD` are the only spellings.
+  `molrs.ff.potential.Potential` and `molrs.md.MdDriver` are the only spellings.
 
 **Core: the top level is subsystems only**
 
@@ -1621,16 +1640,16 @@ it any more.
 | `molrs.ff.DihedralStyle` | `molrs.ff.forcefield.DihedralStyle` |
 | `molrs.ff.DihedralType` | `molrs.ff.forcefield.DihedralType` |
 | `molrs.ff.ForceField` | `molrs.ff.forcefield.ForceField` |
-| `molrs.ff.FragmentScaling` | `molrs.ff.scale_lj.FragmentScaling` |
+| `molrs.ff.FragmentScaling` | `molrs.ff.clpol_scaling.FragmentScaling` |
 | `molrs.ff.GaffTypifier` | `molrs.ff.typifier.GaffTypifier` |
 | `molrs.ff.GasteigerModel` | `molrs.ff.charge.GasteigerModel` |
 | `molrs.ff.ImproperStyle` | `molrs.ff.forcefield.ImproperStyle` |
 | `molrs.ff.ImproperType` | `molrs.ff.forcefield.ImproperType` |
-| `molrs.ff.MMFF94STypifier` | `molrs.ff.typifier.MMFF94STypifier` |
-| `molrs.ff.MMFF94Typifier` | `molrs.ff.typifier.MMFF94Typifier` |
-| `molrs.ff.Match` | `molrs.ff.typifier.Match` |
+| `molrs.ff.MMFF94STypifier` | `molrs.ff.typifier.Mmff94sTypifier` |
+| `molrs.ff.MMFF94Typifier` | `molrs.ff.typifier.Mmff94Typifier` |
+| `molrs.ff.Match` | `molrs.ff.typifier.TypeAssignment` |
 | `molrs.ff.MullikenModel` | `molrs.ff.charge.MullikenModel` |
-| `molrs.ff.OPLSAATypifier` | `molrs.ff.typifier.OPLSAATypifier` |
+| `molrs.ff.OPLSAATypifier` | `molrs.ff.typifier.OplsAaTypifier` |
 | `molrs.ff.PairStyle` | `molrs.ff.forcefield.PairStyle` |
 | `molrs.ff.PairType` | `molrs.ff.forcefield.PairType` |
 | `molrs.ff.Potential` | `molrs.ff.potential.Potential` |
@@ -1639,17 +1658,17 @@ it any more.
 | `molrs.ff.RelationStyle` | `molrs.ff.forcefield.RelationStyle` |
 | `molrs.ff.RelationType` | `molrs.ff.forcefield.RelationType` |
 | `molrs.ff.Style` | `molrs.ff.forcefield.Style` |
-| `molrs.ff.Type` | `molrs.ff.forcefield.Type` |
+| `molrs.ff.Type` | `molrs.ff.forcefield.ForceFieldType` |
 | `molrs.ff.Typifier` | `molrs.ff.typifier.Typifier` |
 | `molrs.ff.assign_cmaps` | `molrs.ff.typifier.assign_cmaps` |
 | `molrs.ff.clpol_polarizability` | `molrs.ff.params.clpol_polarizability` |
-| `molrs.ff.compute_k_ij` | `molrs.ff.scale_lj.compute_k_ij` |
-| `molrs.ff.fragment_scaling_data` | `molrs.ff.scale_lj.fragment_scaling_data` |
+| `molrs.ff.compute_k_ij` | `molrs.ff.clpol_scaling.compute_k_ij` |
+| `molrs.ff.fragment_scaling_data` | `molrs.ff.params.clpol_fragment_scaling()` |
 | `molrs.ff.intramolecular_pairs` | `molrs.ff.potential.intramolecular_pairs` |
 | `molrs.ff.potential.protocol.Potential` | `molrs.ff.potential.Potential` |
 | `molrs.ff.read_amber_prmtop_ff` | `molrs.io.read_amber_prmtop_forcefield` |
 | `molrs.ff.read_forcefield_xml` | `molrs.io.read_openmm_xml_forcefield` (an OpenMM file) or `molrs.io.read_molrs_xml_forcefield` (molrs's own layout) |
-| `molrs.ff.read_gromacs_system` | `molrs.io.read_gromacs_system` |
+| `molrs.ff.read_gromacs_system` | `molrs.io.read_gromacs_top_system` |
 | `molrs.ff.read_gromacs_top_ff` | `molrs.io.read_gromacs_top_forcefield` |
 | `molrs.ff.read_lammps_cmap` | `molrs.io.read_lammps_cmap_forcefield` |
 | `molrs.ff.read_lammps_data_coeffs` | `molrs.io.read_lammps_data_coeffs` |
@@ -1657,14 +1676,14 @@ it any more.
 | `molrs.ff.read_opls_xml` | `molrs.io.read_openmm_xml_forcefield` |
 | `molrs.ff.write_amber_frcmod` | `molrs.io.write_amber_frcmod` |
 | `molrs.ff.write_forcefield_xml` | `molrs.io.write_openmm_xml_forcefield` |
-| `molrs.ff.write_gromacs_system` | `molrs.io.write_gromacs_system` |
+| `molrs.ff.write_gromacs_system` | `molrs.io.write_gromacs_top_system` |
 | `molrs.ff.write_gromacs_top_ff` | `molrs.io.write_gromacs_top_forcefield` |
 | `molrs.ff.write_lammps_cmap` | `molrs.io.write_lammps_cmap_forcefield` |
 | `molrs.ff.write_lammps_data_coeffs` | `molrs.io.write_lammps_data_coeffs` |
 | `molrs.ff.write_lammps_forcefield` | `molrs.io.write_lammps_forcefield` |
 | `molrs.ff.write_lammps_forcefield_str` | `molrs.io.write_lammps_forcefield_str` |
 | `molrs.ff.potential.protocol` | private; `Potential` is `molrs.ff.potential.Potential` |
-| `molrs._lib.TypedPotentials (only path)` | `molrs.ff.potential.TypedPotentials` |
+| `molrs._lib.TypedPotentials (only path)` | `molrs.ff.potential.WeightedTerms` |
 
 **I/O**
 
@@ -1675,7 +1694,7 @@ it any more.
 | `molrs.fields.PdbFieldFormatter` | removed (readers emit canonical names) |
 | `molrs.io.raw` | removed — every reader in `molrs.io` emits canonical names |
 | `molrs.io.raw.DCDTrajReader` | removed: `molrs.io.read_dcd_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
-| `molrs.io.raw.LAMMPSTrajReader` | removed: `molrs.io.read_lammps_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
+| `molrs.io.raw.LAMMPSTrajReader` | removed: `molrs.io.read_lammps_dump_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
 | `molrs.io.raw.TRRTrajReader` | removed: `molrs.io.read_trr_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
 | `molrs.io.raw.XTCTrajReader` | removed: `molrs.io.read_xtc_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
 | `molrs.io.raw.XYZTrajReader` | removed: `molrs.io.read_xyz_trajectory(path)` (a lazy `molrs.io.<fmt>.<Fmt>Reader`) |
@@ -1690,7 +1709,7 @@ it any more.
 | `molrs.io.raw.read_lammps_data` | `molrs.io.read_lammps_data` |
 | `molrs.io.raw.read_lammps_log` | `molrs.io.read_lammps_log` |
 | `molrs.io.raw.read_lammps_molecule` | `molrs.io.read_lammps_molecule` |
-| `molrs.io.raw.read_lammps_trajectory` | `molrs.io.read_lammps_trajectory(path).read_all()` |
+| `molrs.io.raw.read_lammps_trajectory` | `molrs.io.read_lammps_dump_trajectory(path).read_all()` |
 | `molrs.io.raw.read_mol2` | `molrs.io.read_mol2` |
 | `molrs.io.raw.read_pdb` | `molrs.io.read_pdb` |
 | `molrs.io.raw.read_pdb_trajectory` | `molrs.io.read_pdb_trajectory(path).read_all()` |
@@ -1706,7 +1725,7 @@ it any more.
 | `molrs.io.raw.write_lammps_data` | `molrs.io.write_lammps_data` |
 | `molrs.io.raw.write_lammps_dump_local` | `molrs.io.write_lammps_dump_local` |
 | `molrs.io.raw.write_lammps_molecule` | `molrs.io.write_lammps_molecule` |
-| `molrs.io.raw.write_lammps_trajectory` | `molrs.io.write_lammps_trajectory` |
+| `molrs.io.raw.write_lammps_trajectory` | `molrs.io.write_lammps_dump_trajectory` |
 | `molrs.io.raw.write_mol2` | `molrs.io.write_mol2` |
 | `molrs.io.raw.write_pdb` | `molrs.io.write_pdb` |
 | `molrs.io.raw.write_pdb_trajectory` | `molrs.io.write_pdb_trajectory` |
@@ -1778,8 +1797,8 @@ it any more.
 | `molrs.compute.hbond.HBondsResult` | `molrs.compute.HBondsResult` |
 | `molrs.compute.ml` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.ml.DescriptorRow` | `molrs.compute.DescriptorRow` |
-| `molrs.compute.ml.KMeans` | `molrs.compute.KMeans` |
-| `molrs.compute.ml.KMeansResult` | `molrs.compute.KMeansResult` |
+| `molrs.compute.ml.KMeans` | `molrs.compute.Kmeans` |
+| `molrs.compute.ml.KMeansResult` | `molrs.compute.KmeansResult` |
 | `molrs.compute.ml.Pca2` | `molrs.compute.Pca` |
 | `molrs.compute.ml.PcaResult` | `molrs.compute.PcaResult` |
 | `molrs.compute.msd` | `molrs.compute` (flat; the domain subpackages are gone) |
@@ -1807,10 +1826,10 @@ it any more.
 | `molrs.compute.spectroscopy.ResonanceRamanSpectrum` | `molrs.compute.ResonanceRamanSpectrum` |
 | `molrs.compute.spectroscopy.RoaSpectrum` | `molrs.compute.RoaSpectrum` |
 | `molrs.compute.spectroscopy.VcdSpectrum` | `molrs.compute.VcdSpectrum` |
-| `molrs.compute.spectroscopy.conductivity_sum_rule` | `molrs.compute.conductivity_sum_rule` |
-| `molrs.compute.spectroscopy.kramers_kronig` | `molrs.compute.kramers_kronig` |
+| `molrs.compute.spectroscopy.conductivity_sum_rule` | `molrs.compute.ConductivitySumRule` (`.check(...)`) |
+| `molrs.compute.spectroscopy.kramers_kronig` | `molrs.compute.KramersKronig` (`.check(...)`) |
 | `molrs.compute.spectroscopy.polarizability_finite_field` | `molrs.compute.polarizability_finite_field` |
-| `molrs.compute.spectroscopy.route_agreement` | `molrs.compute.route_agreement` |
+| `molrs.compute.spectroscopy.route_agreement` | `molrs.compute.RouteAgreement` (`.check(...)`) |
 | `molrs.compute.transport` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.transport.DebyeFit` | `molrs.compute.DebyeFit` |
 | `molrs.compute.transport.DebyeRelaxation` | `molrs.compute.DebyeRelaxation` |
@@ -1828,17 +1847,17 @@ it any more.
 | `molrs.compute.voronoi.RadicalVoronoi` | `molrs.compute.RadicalVoronoi` |
 | `molrs.compute.voronoi.VoronoiCells` | `molrs.compute.VoronoiCells` |
 | `molrs.compute.voronoi.VoronoiIntegration` | `molrs.compute.VoronoiIntegration` |
-| `molrs.compute.voronoi.voronoi_domains` | `molrs.compute.voronoi_domains` |
-| `molrs.compute.voronoi.voronoi_voids` | `molrs.compute.voronoi_voids` |
+| `molrs.compute.voronoi.voronoi_domains` | `molrs.compute.VoronoiDomainAnalysis` (`.analyze(...)`) |
+| `molrs.compute.voronoi.voronoi_voids` | `molrs.compute.VoronoiVoidAnalysis` (`.analyze(...)`) |
 | `molrs.compute.protocol` | private; `Compute` is `molrs.compute.Compute` |
 
 **Perception, builders, MD**
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs.md.driver.MD` | `molrs.md.MD` |
+| `molrs.md.driver.MD` | `molrs.md.MdDriver` |
 | `molrs.perceive.Coarsener` | `molrs.builder.Coarsener` |
-| `molrs.md.driver` | private (`molrs.md._driver`); `MD` is `molrs.md.MD` |
+| `molrs.md.driver` | private (`molrs.md._driver`); the driver is `molrs.md.MdDriver` |
 | `SmartsPattern.find_matches(mol, mapped=True)` | `[m.mapping for m in pattern.find_matches(mol)]` |
 | `SmartsMatch.as_list()` | `SmartsMatch.atoms` |
 | `SmartsMatch.as_dict()` | `SmartsMatch.mapping` |
@@ -1867,30 +1886,38 @@ The JS namespace stays flat. What changes for callers:
 | `new LinkedCell(cutoff).query(refFrame, otherFrame)` | `new NeighborQuery(refFrame, cutoff).query(otherFrame)` (both columns kept) |
 | `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `assignRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
 | `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::core::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
-| `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XYZStream` / `PDBStream` / `SDFStream` / `LAMMPSStream` / `LAMMPSTrajStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
-| `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DCDStream` / `TRRStream` / `XTCStream` |
-| `new TrajectoryReader(files)` / `TrajectoryReader.fromZip` / `.fromStore` (a `*.mrec` store) | `new MrecReader(files)` / `MrecReader.fromZip` / `.fromStore`: named as Rust's `molrs::io::mrec::MrecReader` |
+| `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XyzStream` / `PdbStream` / `SdfStream` / `LammpsDataStream` / `LammpsDumpStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
+| `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DcdStream` / `TrrStream` / `XtcStream` |
+| `new TrajectoryReader(files)` / `TrajectoryReader.fromZip` / `.fromStore` (a `*.mrec` store) | `new MrecReader(files)` / `MrecReader.fromZip` / `.fromStorage`: named as Rust's `molrs::io::mrec::MrecReader` |
 | `new LBFGS(pots)` (an internal O(N²) topology pair list, N ≤ 2000) | `new Lbfgs(pots, nl.neighbors())`: the table is required and comes from a `NeighborList` (or `NeighborList.bruteForce`); the force field's `special_bonds` decide whether 1-2 / 1-3 pairs are kept, as `intramolecular_pairs` does |
 
-**The analysis classes drop the `Wasm` prefix**, so every compute class is
-named like `RDF`, `MSD` and `Cluster` already were: `WasmVACF` → `VACF`,
-`WasmPca2` → `Pca2`, `WasmPMFTXY` → `PMFTXY`, and so on for all
-59: `AngleDistribution`, `AngularSeparation`, `BondOrder`, `CombinedDistribution`, `CorrelationFunction`, `Cubatic`, `CumulativeTrapezoid`, `DebyeFit`, `DebyeRelaxation`, `DiffractionPattern`, `DihedralDistribution`, `DistanceDistribution`, `EinsteinConductivity`, `EinsteinDiffusion`, `EinsteinHelfandDielectricSpectrum`, `GaussianDensity`, `GreenKuboConductivity`, `GreenKuboDielectricSpectrum`, `GreenKuboDiffusion`, `HBondLifetime`, `HBondNetwork`, `HBonds`, `Hexatic`, `IRFlux`, `IRSpectrum`, `KMeans`, `LinearFit`, `LocalDensity`, `LocalDescriptors`, `MatchEnv`, `Nematic`, `OnsagerCorrelation`, `PairPersistence`, `Pca2`, `PcaResult`, `Plateau`, `PMFTR12`, `PMFTXY`, `PMFTXYT`, `PMFTXYZ`, `PowerSpectrum`, `RadicalVoronoi`, `RamanSpectrum`, `RamanTensor`, `RoaCrossTensor`, `RoaSpectrum`, `RotationalAutocorrelation`, `SolidLiquid`, `SpatialDistribution`, `SphereVoxelization`, `StaticDielectric`, `StaticStructureFactorDebye`, `Steinhardt`, `VACF`, `VanHove`, `VcdCrossFlux`, `VcdSpectrum`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`. The compute catalog follows: each entry's `wasmExport`
-is the new name, and `molrsComputeCatalog().version` is 4.
+**The analysis exports drop the `Wasm` prefix** and take their molrs
+owner's name, cased as words ([Wave S4](#wave-s4-analysis-perception-geometry-dynamics),
+[Wave S5](#wave-s5-bindings)): `WasmVACF` → `Vacf`, `WasmPca2` → `Pca`,
+`WasmPMFTXY` → `PmftXy`, and 0.15's unprefixed `RDF` and `MSD` are `Rdf` and
+`Msd`. The analyses that are functions in Rust and Python are functions in
+JS (`hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`,
+`staticDielectricConstant`, `staticDielectricConstantComponents`, for the
+classes `HBondLifetime`, `HBondNetwork`, `PairPersistence` and
+`StaticDielectric`), the three `*Distribution` classes are one
+`DistributionFunction`, and `AngularSeparation` is
+`AngularSeparationGlobal` / `AngularSeparationNeighbor`. The 0.16 classes:
+`AngularSeparationGlobal`, `AngularSeparationNeighbor`, `BondOrientationalOrder`, `CombinedDistribution`, `CorrelationFunction`, `Cubatic`, `CumulativeTrapezoid`, `DebyeFit`, `DebyeRelaxation`, `DiffractionPattern`, `DistributionFunction`, `EinsteinConductivity`, `EinsteinDiffusion`, `EinsteinHelfandSpectrum`, `EnvironmentMatch`, `GaussianDensity`, `GreenKuboConductivity`, `GreenKuboDiffusion`, `GreenKuboSpectrum`, `HBonds`, `Hexatic`, `IrFlux`, `IrSpectrum`, `Kmeans`, `LinearFit`, `LocalDensity`, `LocalDescriptors`, `Nematic`, `OnsagerCorrelation`, `Pca`, `PcaResult`, `Plateau`, `PmftR12`, `PmftXy`, `PmftXyt`, `PmftXyz`, `PowerSpectrum`, `RadicalVoronoi`, `RamanSpectrum`, `RamanTensor`, `RoaCrossTensor`, `RoaSpectrum`, `RotationalAutocorrelation`, `SolidLiquid`, `SpatialDistribution`, `SphereVoxelization`, `StaticStructureFactorDebye`, `Steinhardt`, `Vacf`, `VanHove`, `VcdCrossFlux`, `VcdSpectrum`, `VoronoiDomainAnalysis`, `VoronoiVoidAnalysis`. The compute catalog follows: each entry's `wasmExport`
+is the new name, and `molrsComputeCatalog().version` is 6.
 
 No other export keeps the prefix either. The chunk-fed trajectory streams take
 the names of their reader family:
 
 | 0.15 | 0.16 |
 |---|---|
-| `WasmXyzStream` | `XYZStream` |
-| `WasmPdbStream` | `PDBStream` |
-| `WasmSdfStream` | `SDFStream` |
-| `WasmLammpsDataStream` | `LAMMPSStream` (as `LAMMPSReader`) |
-| `WasmLammpsDumpStream` | `LAMMPSTrajStream` (as `LAMMPSTrajReader`) |
-| `WasmDcdStream` | `DCDStream` |
-| `WasmXtcStream` | `XTCStream` |
-| `WasmTrrStream` | `TRRStream` |
+| `WasmXyzStream` | `XyzStream` |
+| `WasmPdbStream` | `PdbStream` |
+| `WasmSdfStream` | `SdfStream` |
+| `WasmLammpsDataStream` | `LammpsDataStream` |
+| `WasmLammpsDumpStream` | `LammpsDumpStream` |
+| `WasmDcdStream` | `DcdStream` |
+| `WasmXtcStream` | `XtcStream` |
+| `WasmTrrStream` | `TrrStream` |
 | `WasmArray` | `NDArray` (`Array` is a JS global) |
 
 molvis pins `@molcrafts/molrs` 0.15.0 and adopts all these names when it
@@ -2293,19 +2320,158 @@ Atomiverse (`compat/molrs-016`) moves with these names, and its
 **Scripts**: the engine checks share `scripts/engine_check_tables.py`
 (`read_energy_tsv`, `element_of_mass` over `molrs.core.Element`,
 `molecule_ids`, `lammps_thermo` over `molrs.io.read_lammps_log`), and take
-`4.184`, `332.06371` and the nm ↔ Å factor from `molrs.core.constants`
-(`KJ_PER_KCAL`, `COULOMB_REAL`, `ANGSTROM_PER_NM`).
+unit conversions (kcal ↔ kJ, nm ↔ Å) from molrs's unit registry
+(`UnitRegistry.factor`) and `COULOMB_REAL` (332.06371) from
+`molrs.core.constants`.
+
+#### Wave S6: residual names
+
+The last pass over the 0.16 names: what the earlier waves left. The rules
+are theirs — a door names its format, `read_` / `write_` is a file door at
+the top of `io`, counts are `n_*`, acronyms are cased as words, the cell is
+`Box` (Rust `SimBox`) — and one more: **every unit conversion goes through
+the unit registry.** No old name is kept as an alias. Builds of the 0.16
+line before this change spelled the names in the left column.
+
+**Units.** `core::constants` holds physical constants (CODATA 2018 /
+SI 2019) and the constants engines define as data; the unit-conversion
+factors are gone. A conversion names its two units and is resolved by the
+registry: Rust `static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal",
+"kJ")` (resolved once, `KCAL_TO_KJ.get()`), `UnitRegistry::factor(from,
+to)` or `Quantity::to`; Python `molrs.core.UnitRegistry().factor("kcal",
+"kJ")`. A power of ten is the correctly rounded factor (`factor("angstrom",
+"nm") == 0.1`). The registry's units are built from the constants, so each
+has one source: `bohr` is `BOHR_RADIUS`, `eV` and `e` are
+`ELEMENTARY_CHARGE`, `hartree` is `HARTREE_ENERGY`, `dalton` is
+`ATOMIC_MASS_CONSTANT`, `statC` and `debye` derive from `SPEED_OF_LIGHT`;
+the calorie (4.184 J) is the registry's own definition.
+`molrs::module_boundaries` (and `test_public_paths.py` for `scripts/`)
+fails on a conversion-factor constant or a hand-written factor.
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `constants::KJ_PER_KCAL` (4.184) | `UnitFactor::new("kcal", "kJ")` / Python `UnitRegistry().factor("kcal", "kJ")` |
+| `constants::ANGSTROM_PER_NM` (10) | `UnitFactor::new("nm", "angstrom")` |
+| `constants::ANGSTROM_PER_BOHR` (0.52917721067, CODATA 2014) | `UnitFactor::new("bohr", "angstrom")` = 0.529177210903 (CODATA 2018, `constants::BOHR_RADIUS`) |
+| `constants::ANGSTROM3_PER_CM3` | `UnitFactor::new("cm^3", "angstrom^3")` |
+| `constants::ANGSTROM_M`, `FEMTOSECOND_S`, `CENTIMETER_PER_METER` | `UnitFactor::new("angstrom", "m")`, `("fs", "s")`, `("m", "cm")` |
+| `constants::OPENMM_COULOMB`, `GROMACS_COULOMB` (kcal·Å·mol⁻¹·e⁻²) | `constants::OPENMM_ONE_4PI_EPS0`, `GROMACS_ONE_4PI_EPS0` (kJ·nm·mol⁻¹·e⁻², as the engines state them) × `UnitFactor::new("kJ*nm", "kcal*angstrom")` |
+| `ff::params::{OPLSAA_LJ_14, OPLSAA_COULOMB_14}` | `constants::{OPLS_LJ_14, OPLS_COULOMB_14}` (beside `AMBER_SCEE` / `AMBER_SCNB`) |
+| MMFF's `332.0716` literal (`MMFF_ELE_STYLE.coulomb`) | `constants::MMFF_COULOMB` |
+| — | `constants::{PLANCK, BOHR_RADIUS, HARTREE_ENERGY, ATOMIC_MASS_CONSTANT, COULOMB_CONSTANT}`; `constants::ALL`, the `(name, value)` table Python's `molrs.core.constants` is built from |
+
+Numbers that change: bohr ↔ Å moves from CODATA 2014 to 2018 (relative
+4.4·10⁻¹⁰; Gaussian cube files and Voronoi charge integration); the
+`debye` unit gains digits (1e-21/c instead of a 12-digit literal, relative
+5·10⁻¹³). `UnitPreset("micro")` and `UnitPreset("nano")` stated
+`boltzmann()` in J/K and `coulomb()` as 1; they now state them in their own
+units, as LAMMPS does (micro 1.380649·10⁻⁸, 8.9875518·10⁶; nano
+0.01380649, 230.70776).
+
+**Rust**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `stream::{read_msgpack_frame_bytes, write_msgpack_frame_bytes, read_json_frame_str, write_json_frame_str}` → `Result<_, StreamError>` | `io::` the same names → `std::io::Result` (`InvalidData` on a bad payload); feature `stream` |
+| — (Python only) | `io::{read_gromacs_top_forcefield, read_gromacs_top_system}(path, &GromacsTopReadOptions)`, `io::{write_gromacs_top_forcefield, write_gromacs_top_system}(path, …, precision)`, `io::read_amber_prmtop_system`, `io::{read_lammps_forcefield, read_lammps_forcefield_str}`, `io::{write_lammps_forcefield, write_lammps_forcefield_str, write_lammps_data_coeffs, write_lammps_cmap_forcefield}(…, frame, LammpsForcefieldWriteOptions)`, `io::{read_lammps_data_coeffs, read_lammps_cmap_forcefield}` |
+| `io::{read_lammps_trajectory, write_lammps_trajectory}` | `io::{read_lammps_dump_trajectory, write_lammps_dump_trajectory}` |
+| `io::mrec::validation::read_version` | `io::mrec::validation::molrec_version_of` |
+| `io::mrec::StyleEntry` | `io::mrec::SectionStyle` |
+| `io::lammps::read_lammps_log_str(text, path, style)` | `read_lammps_log_str(text, source_name, style)` |
+| `op::{translate, rotate, scale, center, CenterError}` | `MolGraph::{translate, rotate, scale, center}`, `core::CenterError`; `op` names no other molrs module |
+| `ff::ir::LammpsCodec::{read_extra, read_style_args}`, `positional::{read_named, read_style_args}` | `parse_extra`, `parse_style_args`, `positional::{parse_named, parse_style_args}` |
+| `Provenance::{write_onto, read_from}` | `Provenance::{apply_to, from_params}` |
+| `TypeAssignment::write_onto` | `TypeAssignment::apply_to` |
+| `MdState::write_to` | `MdState::apply_to` |
+| `ff::potential::cmap::charmm::GRID` | `ff::ir::CMAP_GRID` (the one key) |
+| `AtdParameterSet` (no names) | `AtdParameterSet::{ALL, name, from_name}` (antechamber `-at` flags); `AtdBondOrders::{ALL, name, from_name}`, `GaffParameterSet::{ALL, from_name}` |
+| `DType::{Int8, Int16, Int64, UInt, UInt16, UInt32, Complex64, Complex128}` (and the same `Column` / `ColumnView` variants) | `I8, I16, I64, Uint, U16, U32, C64, C128` — `DType::name()` (`float`, `int`, `uint`, `i8`, …, `c128`) in Rust's casing, as C's `MOLRS_D_TYPE_<NAME>` |
+| `Block::nrows`, `BlockView::nrows`, `Column::nrows`, `ColumnView::nrows`, `BlockAccess::nrows` | `n_rows` |
+| `conformer::ForceFieldKind::MMFF94` | `ForceFieldKind::Mmff94` |
+| `io::smiles::Notation::CGsmiles` | `Notation::CgSmiles` |
+| `perceive::TetrahedralStereo::{CW, CCW}` | `TetrahedralStereo::{Clockwise, CounterClockwise}` (the atom's `stereo` string stays `"CW"` / `"CCW"`) |
+| `ObservableRecord.data` | `ObservableRecord.values` |
+| `RoaCrossArgs`, `RoaCrossResult` | `RoaCrossTensorArgs`, `RoaCrossTensorResult` |
+| `VcdCrossArgs`, `VcdCrossResult` | `VcdCrossFluxArgs`, `VcdCrossFluxResult` |
+| `ResonanceRamanArgs` | `ResonanceRamanTensorArgs` |
+| `CorrelationArgs` | `CorrelationFunctionArgs` |
+| `core::BlockTypes` | `core::BlockTypeLabels` |
+| `VerletSkin::rebuild_count`, `FrameAccess::block_count`, `stream::Publisher::client_count` | `n_rebuilds`, `n_blocks`, `n_clients` |
+
+The compute module `clustering` (k-means only) is `kmeans`, beside
+`cluster` (freud's cluster analysis); the types keep their paths
+(`compute::Kmeans`, `KmeansResult`).
+
+**Python**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `molrs._lib` (the native module; `_lib.pyi`) | `molrs._native` (`_native.pyi`): a pickle naming `molrs._lib.*` does not unpickle |
+| `molrs.io.read_gromacs_system`, `write_gromacs_system` | `molrs.io.read_gromacs_top_system`, `write_gromacs_top_system` |
+| `molrs.io.read_lammps_trajectory`, `write_lammps_trajectory` | `molrs.io.read_lammps_dump_trajectory`, `write_lammps_dump_trajectory` |
+| `molrs.io.read_lammps_log_str(text, path=…)` | `read_lammps_log_str(text, source_name=…)` |
+| `Block.nrows`, `Block.resize(nrows)` | `Block.n_rows`, `Block.resize(n_rows)` |
+| `ScalarObservable(name, data, …)`, `.data`; `VectorObservable` alike | `ScalarObservable(name, values, …)`, `.values` |
+| `NeighborList(cutoff, points, simbox=…)`, `md` integrators' `simbox=` | `box=` |
+| `NeighborList.rebuild_count`, `md` driver / integrators' `rebuild_count` | `n_rebuilds` |
+| `molrs.stream.Publisher.client_count` | `n_clients` |
+| `molrs.core.constants.{KJ_PER_KCAL, ANGSTROM_PER_NM, …}` | `molrs.core.UnitRegistry().factor(from, to)` (see **Units** above) |
+
+`molrs.core.constants` is generated from Rust's `constants::ALL`, so a
+constant added in Rust appears with no binding edit. The Python force-field
+doors now call the Rust doors above. molpack's ABI handshake calls
+`molrs._ffi_abi_token()` on the top-level package and is unaffected.
+
+**WASM (JS)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `Block.nrows` | `Block.nRows` |
+| `Block.get(key, fallback)` beside `Block.copy(key)` | `Block.copy(key, fallback?)` |
+
+The crate's io sources mirror `molrs::io`, one module per format
+(`io/xyz.rs`, `io/pdb.rs`, …, `io/lammps.rs` with `io/lammps/log.rs`,
+`io/frame_encoding.rs`, `io/frame_index.rs`, `io/stl.rs`); `compute/ml.rs`
+is `compute/decomposition.rs` and `compute/kmeans.rs`. JS export names are
+unchanged.
+
+**C (`molrs.h`)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `molrs_schema_json` | `molrs_schema_document` (as JS `schemaDocument`) |
+| `molrs_block_nrows`, `molrs_block_ncols` | `molrs_block_n_rows`, `molrs_block_n_columns` |
+
+**C++ (`molrs-cxxapi`)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `am1_bcc_assign_frame_from_base` | `assign_am1_bcc_charges` |
+| `frame_block_nrows` | `frame_block_n_rows` |
+
+**molrs-ffi**: `BlockRef::nrows` → `BlockRef::n_rows`. Atomiverse
+(`compat/molrs-016`) moves with the C++ names.
+
+**Scripts**: `split_system`, the OpenMM residue-topology builder
+(`openmm_residue_topology`) and the LAMMPS dump force reader
+(`lammps_dump_forces`, over `molrs.io.read_lammps_dump_trajectory`) live
+once, in `scripts/engine_check_tables.py`; `molecule_ids` is
+`molrs.core.Topology.connected_components`; `gen_param_tables.py` takes
+element symbols and numbers from `molrs.core.Element`; every unit
+conversion is `engine_check_tables.unit_factor(from, to)` over the unit
+registry.
 
 ### Python: kernels live in `molrs.ff.potential`
 
-`LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`
-→ `molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
+`LJCut` moved from `molrs.md` to `molrs.ff.potential`, as `PairLjCut` (see
+[Wave S3](#wave-s3-force-field); molpy: `molpy.md.LJCut` →
+`molpy.potential.LJCut`), beside the `Potential` protocol, which `molrs.md`
 no longer re-exports either; nor does it re-export `Potentials`
 (`molrs.ff.potential.Potentials` / `molpy.Potentials`). The integrators still
 accept all of them.
 
-New in the same module: `kernel(category, style, atoms, *, charges=None,
-**params)`, the kernel of **any** style the force-field IR prices — a
+New in the same module: `compile_explicit_terms(category, style, atoms, *,
+charges=None, **params)`, the kernel of **any** style the force-field IR prices — a
 built-in, a style registered through `molrs.ff.ir` (expression or Python
 kernel), a style of a custom category, an unregistered style given its
 `expression=` — over explicit instances: `atoms` `(n, arity)`, each per-term
@@ -2313,26 +2479,26 @@ parameter a number or one value per term **as stored** (angle values in
 degrees, indexed families as `k1`, `k2`, …), style parameters (`cutoff`,
 `coulomb`, …) a number or a string, per-atom charges as `charges=`. It is
 built by the code `PotentialCompiler.compile` runs (Rust:
-`molrs::ff::potential::Instances`), returns a `Potentials`, and
+`molrs::ff::potential::ExplicitTerms`), returns a `Potentials`, and
 `Potentials.push` moves it into a larger collection. There is no class per
 built-in style: one builder covers every registered style, custom ones
 included.
 
 ```python
-from molrs.ff.potential import Potentials, kernel
+from molrs.ff.potential import Potentials, compile_explicit_terms
 
 pots = Potentials()
-pots.push(kernel("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
-pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
-pots.push(kernel("dihedral", "periodic", [[0, 1, 2, 3]],
-                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
-pots.push(kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
+pots.push(compile_explicit_terms("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
+pots.push(compile_explicit_terms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+pots.push(compile_explicit_terms("dihedral", "periodic", [[0, 1, 2, 3]],
+                                 k1=1.3, periodicity1=1, phase1=0.0, k2=0.4, periodicity2=2, phase2=180.0))
+pots.push(compile_explicit_terms("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0))
 energy, forces = pots.calc_energy_forces(pos)
 ```
 
 | 0.15 | 0.16 |
 |---|---|
-| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import LJCut, Potential` |
+| `from molrs.md import LJCut, Potential` | `from molrs.ff.potential import PairLjCut, Potential` |
 | `from molpy.md import LJCut` | `from molpy.potential import LJCut` |
 | `molrs.md.Potentials` | `molrs.ff.potential.Potentials` |
 
@@ -2391,7 +2557,8 @@ the bullet says so):
   `dihedral_style fourier`; a force field without pair types writes no
   `pair_coeff` lines instead of failing.
 - **Python native typifiers** can be subclassed, but a subclass that
-  defines `match` or `library` raises `TypeError` at class creation.
+  defines the typing hooks raises `TypeError` at class creation (0.15.1:
+  `match` or `library`; 0.16: `assign` or `source_forcefield`).
 
 ### Structure files and geometry
 
@@ -2406,7 +2573,7 @@ the bullet says so):
   column.** `name:R:3` becomes one `(N, 3)` column `name` (0.15:
   `name_1` … `name_3`), the shape the writer writes back as `name:R:3`.
   `molrs.io.read_xyz` is the compiled function; `molrs.fields.XyzFieldFormatter`
-  is removed. (Rust callers: `read_xyz_frame` no longer emits `species`.)
+  is removed. (Rust callers: `read_xyz` no longer emits `species`.)
 - **LAMMPS data files: every typed block carries a string `type`** — the
   file's `* Type Labels` label, or the numeric id spelled as a label when
   the file has none — beside `type_id`. A labelled file written back is
@@ -2442,8 +2609,8 @@ the bullet says so):
 - `Frame::concat` / `Frame.concat(frames)`: frames joined block by block,
   relation endpoints offset past the earlier parts (`replicate` for parts
   that differ).
-- `op::vec3::{angle, dihedral}` and `op::rigid::nerf` (NeRF placement from
-  internal coordinates).
+- `op::vec3::{angle, dihedral}` and `op::place_from_internal_coords` (NeRF
+  placement from internal coordinates).
 - LAMMPS data: `LammpsDataReader::with_atom_style` /
   `read_lammps_data(path, atom_style=None)` fixes the `Atoms` layout as
   LAMMPS's `atom_style` does; `TypeLabels::declare` /
@@ -2464,11 +2631,11 @@ the bullet says so):
   non-region return `NotImplemented`, so a selector's `__rand__` composes.
 - Units: the `openmm` preset (nm, kJ/mol, ps), `UnitPreset::new` /
   `UnitPreset.register(name, units, boltzmann=, coulomb=, overwrite=False)`,
-  `preset_names` / `UnitPreset.names()`, `replace_preset`, and the
+  `unit_preset_names` / `UnitPreset.names()`, `replace_unit_preset`, and the
   `boltzmann_constant` (`k_B`) unit.
-- `molrs.io.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
+- `molrs.io.write_gromacs_top_system(path, forcefield, frame, *, precision=6)`,
   the Python door of `GromacsTopForcefieldWriter::write_system_str` and the inverse
-  of `read_gromacs_system`.
+  of `read_gromacs_top_system`.
 - CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
   `io::read_clpol_alpha` (`io::clpol::ClpolAlphaRow`), and
   `molrs.ff.params.clpol_polarizability(path=None)`.

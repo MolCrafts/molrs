@@ -141,7 +141,7 @@ impl Frame {
     ///
     /// ```js
     /// const x = frame.get("atoms").get("x");
-    /// const nBonds = frame.has("bonds") ? frame.get("bonds").nrows : 0;
+    /// const nBonds = frame.has("bonds") ? frame.get("bonds").nRows : 0;
     /// ```
     #[wasm_bindgen(js_name = get)]
     pub fn get(&self, key: &str) -> Result<Block, JsValue> {
@@ -625,7 +625,7 @@ mod tests {
             .set("x", JsValue::from(x).unchecked_into(), None)
             .unwrap();
         // A second handle sees the write: `get` is not a copy.
-        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[wasm_bindgen_test]

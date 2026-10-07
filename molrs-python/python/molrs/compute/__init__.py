@@ -38,7 +38,7 @@ satisfies — a :func:`typing.runtime_checkable` protocol with one method,
 ``compute``.
 """
 
-from .._lib import (
+from .._native import (
     Acf,
     AcfResult,
     BondOrientationalOrder,

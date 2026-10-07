@@ -67,10 +67,10 @@ def test_the_parameter_set_is_required_and_checked() -> None:
 def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
     gaff, typed = _typed(parameter_set)
     frame = typed.to_frame()
-    assert frame["bonds"].nrows == 19
-    assert frame["angles"].nrows == 30
-    assert frame["dihedrals"].nrows == 38
-    assert frame["impropers"].nrows > 0
+    assert frame["bonds"].n_rows == 19
+    assert frame["angles"].n_rows == 30
+    assert frame["dihedrals"].n_rows == 38
+    assert frame["impropers"].n_rows > 0
     ff = gaff.forcefield()
     assert ff.name == parameter_set
     assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, pytest.approx(1 / 1.2)])
@@ -100,7 +100,7 @@ def test_ethylene_impropers_are_parmchk2s(parameter_set: str, k: float, analog: 
     ``10.5 Same as X -X -cc-X`` (GAFF2)."""
     gaff = molrs.ff.typifier.GaffTypifier(parameter_set=parameter_set)
     typed = gaff.typify(_ethylene())
-    assert typed.to_frame()["impropers"].nrows == 2
+    assert typed.to_frame()["impropers"].n_rows == 2
     (improper,) = gaff.forcefield().get_types("improper")
     assert improper.params["k"] == k
     assert improper.params["estimate_analog"] == analog

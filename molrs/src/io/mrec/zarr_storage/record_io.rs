@@ -419,7 +419,7 @@ fn write_observables(
         }
         write_json_group(store, &join_path(&meta_path, name), &attrs)?;
 
-        let ObservableValues::Column(column) = &obs.data;
+        let ObservableValues::Column(column) = &obs.values;
         write_column(store, &join_path(prefix, name), column, None)?;
     }
     Ok(())
@@ -554,7 +554,7 @@ pub fn read_mrec_frame_storage(
             return None;
         }
         if target_section == section {
-            return Some(frame.get(block).map(|b| b.nrows().unwrap_or(0)));
+            return Some(frame.get(block).map(|b| b.n_rows().unwrap_or(0)));
         }
         if !sections.iter().any(|name| name == target_section) {
             return None;
@@ -676,7 +676,7 @@ fn check_absolute_references(record: &MolRec) -> Result<(), MolRsError> {
             "system" => record.system.as_ref(),
             _ => None,
         }?;
-        Some(frame.get(block).map(|b| b.nrows().unwrap_or(0)))
+        Some(frame.get(block).map(|b| b.n_rows().unwrap_or(0)))
     };
     for (what, frame) in [("frame", &record.frame), ("system", &record.system)] {
         if let Some(frame) = frame {
@@ -720,7 +720,7 @@ where
 ///
 /// # Errors
 ///
-/// A `meta` [`validation::read_version`] refuses, a force-field group that fails
+/// A `meta` [`validation::molrec_version_of`] refuses, a force-field group that fails
 /// to decode, or version-1 units [`V1Upgrade::new`] refuses.
 pub(in crate::io::mrec::zarr_storage) fn read_upgrade<S>(
     store: &Arc<S>,
@@ -729,7 +729,7 @@ pub(in crate::io::mrec::zarr_storage) fn read_upgrade<S>(
 where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
 {
-    if validation::read_version(meta)? == crate::io::mrec::MOLREC_VERSION {
+    if validation::molrec_version_of(meta)? == crate::io::mrec::MOLREC_VERSION {
         return Ok(None);
     }
     let stored = read_stored_forcefield_if_present(store, &join_path("/", FORCEFIELD_GROUP))?;
@@ -837,7 +837,7 @@ fn read_observables(
                 .map(str::to_string),
             extra,
             // An observable's array is its whole column.
-            data: ObservableValues::Column(read_column(
+            values: ObservableValues::Column(read_column(
                 store,
                 path,
                 &ArraySubset::new_with_shape(Array::open(store.clone(), path)?.shape().to_vec()),
@@ -1295,7 +1295,10 @@ mod tests {
         let mut rec = MolRec::new();
         rec.frame = Some(frame_with_atoms(5));
         let loaded = write_then_read(&rec);
-        assert_eq!(loaded.frame.unwrap().get("atoms").unwrap().nrows(), Some(5));
+        assert_eq!(
+            loaded.frame.unwrap().get("atoms").unwrap().n_rows(),
+            Some(5)
+        );
     }
 
     #[test]
@@ -1420,13 +1423,16 @@ mod tests {
         );
 
         let record = read_mrec(&path).unwrap();
-        assert_eq!(record.frame.unwrap().get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(
+            record.frame.unwrap().get("atoms").unwrap().n_rows(),
+            Some(3)
+        );
         assert_eq!(
             read_mrec_frame(&path)
                 .unwrap()
                 .get("atoms")
                 .unwrap()
-                .nrows(),
+                .n_rows(),
             Some(3)
         );
         assert!(read_mrec_trajectory(&path).unwrap().is_empty());
@@ -1463,7 +1469,7 @@ mod tests {
                 .unwrap()
                 .get("atoms")
                 .unwrap()
-                .nrows(),
+                .n_rows(),
             Some(3)
         );
         assert_eq!(
@@ -1471,7 +1477,7 @@ mod tests {
                 .unwrap()
                 .get("atoms")
                 .unwrap()
-                .nrows(),
+                .n_rows(),
             Some(2)
         );
     }
@@ -1627,7 +1633,7 @@ mod tests {
         write_mrec_frame(&path, &frame, None, None).unwrap();
 
         let loaded = read_mrec_frame(&path).unwrap();
-        assert_eq!(loaded.get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(loaded.get("atoms").unwrap().n_rows(), Some(3));
         assert!(read_mrec_system(&path).is_err());
         assert!(section_names(&path).unwrap().contains(&"meta".to_string()));
         let record = read_mrec(&path).unwrap();
@@ -1641,7 +1647,7 @@ mod tests {
         write_mrec_system(&path, &frame_with_atoms(2), None).unwrap();
 
         let loaded = read_mrec_system(&path).unwrap();
-        assert_eq!(loaded.get("atoms").unwrap().nrows(), Some(2));
+        assert_eq!(loaded.get("atoms").unwrap().n_rows(), Some(2));
         assert!(read_mrec_frame(&path).is_err());
     }
 
@@ -1669,7 +1675,7 @@ mod tests {
                 .unwrap()
                 .get("atoms")
                 .unwrap()
-                .nrows(),
+                .n_rows(),
             Some(3)
         );
         assert_eq!(
@@ -1677,7 +1683,7 @@ mod tests {
                 .unwrap()
                 .get("atoms")
                 .unwrap()
-                .nrows(),
+                .n_rows(),
             Some(3)
         );
     }
@@ -2259,7 +2265,7 @@ mod tests {
     }
 
     fn same_block(a: &Block, b: &Block, what: &str) {
-        assert_eq!(a.nrows(), b.nrows(), "{what}: rows");
+        assert_eq!(a.n_rows(), b.n_rows(), "{what}: rows");
         let mut keys_a: Vec<&str> = a.keys().collect();
         let mut keys_b: Vec<&str> = b.keys().collect();
         keys_a.sort_unstable();

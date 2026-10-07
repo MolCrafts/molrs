@@ -239,7 +239,7 @@ impl EstimationInputs {
 /// # Provenance
 ///
 /// Every estimated term carries the four provenance keys of
-/// [`Provenance::write_onto`] (`estimated`, `estimate_penalty`, `estimate_method`,
+/// [`Provenance::apply_to`] (`estimated`, `estimate_penalty`, `estimate_method`,
 /// `estimate_analog`) so a consumer can audit and tier it. A term a wildcard row
 /// *covers* carries none of them — it is a parameter, not an estimate.
 ///
@@ -379,7 +379,7 @@ impl Parmchk2Estimator {
             Some(estimate) => Some(estimate.into_params()),
             None => {
                 let mut params = self.no_torsion();
-                Provenance::wildcard(self.no_torsion_penalty(), "").write_onto(&mut params);
+                Provenance::wildcard(self.no_torsion_penalty(), "").apply_to(&mut params);
                 Some(params)
             }
         }

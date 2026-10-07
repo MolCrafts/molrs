@@ -55,7 +55,7 @@ use crate::error::ffi_error_to_pyerr;
 /// from molrs.core import Block
 ///
 /// b = Block({"x": [1.0, 2.0, 3.0], "element": ["C", "H", "H"]})
-/// assert b.nrows == 3
+/// assert b.n_rows == 3
 /// assert "x" in b
 /// arr = b["x"]                 # zero-copy numpy view
 /// names = b["element"]         # numpy str array; a copy, shape preserved
@@ -98,7 +98,7 @@ impl PyBlock {
     ///
     /// Examples
     /// --------
-    /// >>> Block().nrows
+    /// >>> Block().n_rows
     /// 0
     /// >>> Block({"id": [1, 2]}).dtype("id")
     /// 'uint'
@@ -459,7 +459,7 @@ impl PyBlock {
         PyBlock::from_core_block(stacked)
     }
 
-    /// Positions as an ``(nrows, 3)`` float64 array, gathered from the
+    /// Positions as an ``(n_rows, 3)`` float64 array, gathered from the
     /// ``x`` / ``y`` / ``z`` columns (a copy).
     ///
     /// Assigning an ``(N, 3)`` array-like writes it back into ``x`` / ``y`` /
@@ -493,14 +493,14 @@ impl PyBlock {
     /// -------
     /// int
     #[getter]
-    fn nrows(&self) -> PyResult<usize> {
-        self.with_block(|b| b.nrows().unwrap_or(0))
+    fn n_rows(&self) -> PyResult<usize> {
+        self.with_block(|b| b.n_rows().unwrap_or(0))
     }
 
     /// Axis-0 length of an empty block, or reshape every column.
-    fn resize(&mut self, nrows: usize) -> PyResult<()> {
+    fn resize(&mut self, n_rows: usize) -> PyResult<()> {
         self.inner
-            .with_mut(|b| b.resize(nrows))
+            .with_mut(|b| b.resize(n_rows))
             .map_err(ffi_error_to_pyerr)?
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
@@ -514,7 +514,7 @@ impl PyBlock {
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
-    /// Reported shape: ``[nrows]`` for a table, the declared N-D shape for a
+    /// Reported shape: ``[n_rows]`` for a table, the declared N-D shape for a
     /// grid, ``[]`` for an empty block.
     #[getter]
     fn shape(&self) -> PyResult<Vec<usize>> {
@@ -559,9 +559,9 @@ impl PyBlock {
     ///   string has no zero-copy numpy view, and writing the array does not
     ///   change the column.
     /// * ``block["x", "y", "z"]`` / ``block[["x", "y", "z"]]`` — equal-shaped,
-    ///   equal-dtype columns side by side, one ``(nrows, k)`` array.
+    ///   equal-dtype columns side by side, one ``(n_rows, k)`` array.
     /// * ``block[mask]`` (1-D bool array, one entry per row) or
-    ///   ``block[indices]`` (1-D int array; ``-nrows <= i < 0`` wraps) — a new
+    ///   ``block[indices]`` (1-D int array; ``-n_rows <= i < 0`` wraps) — a new
     ///   ``Block`` of those rows, in order, validity masks included.
     /// * ``block[a:b:c]`` — a new ``Block`` of the sliced rows.
     ///
@@ -572,7 +572,7 @@ impl PyBlock {
     /// ValueError
     ///     Stacked columns differ in shape or dtype; a row index past the end.
     /// IndexError
-    ///     A mask of the wrong length, an index below ``-nrows``, or a
+    ///     A mask of the wrong length, an index below ``-n_rows``, or a
     ///     selector that is not 1-D.
     /// TypeError
     ///     Any other key, including a float row array.
@@ -584,7 +584,7 @@ impl PyBlock {
             return self.stacked_columns(py, key);
         }
         if let Ok(slice) = key.cast::<PySlice>() {
-            let n = isize::try_from(self.nrows()?)
+            let n = isize::try_from(self.n_rows()?)
                 .map_err(|_| PyValueError::new_err("row count overflows isize"))?;
             let span = slice.indices(n)?;
             let rows = (0..span.slicelength)
@@ -593,7 +593,7 @@ impl PyBlock {
             return Ok(Py::new(py, self.gather_rows(rows)?)?.into_any());
         }
         if key.is_instance(&py.import("numpy")?.getattr("ndarray")?)? {
-            let rows = Self::row_selection(key, self.nrows()?)?;
+            let rows = Self::row_selection(key, self.n_rows()?)?;
             return Ok(Py::new(py, self.gather_rows(rows)?)?.into_any());
         }
         Err(PyTypeError::new_err(format!(
@@ -857,7 +857,7 @@ impl PyBlock {
         state.set_item("validity", masks)?;
         state.set_item("precision", precisions)?;
         state.set_item("targets", this.targets()?)?;
-        state.set_item("nrows", this.with_block(|b| b.nrows())?)?;
+        state.set_item("n_rows", this.with_block(|b| b.n_rows())?)?;
         state.set_item(
             "shape",
             this.with_block(|b| b.structural_shape().map(<[usize]>::to_vec))?,
@@ -885,9 +885,9 @@ impl PyBlock {
             self.insert_any(&key, &array, mask)?;
         }
         if columns.is_empty()
-            && let Some(nrows) = field("nrows")?.extract::<Option<usize>>()?
+            && let Some(n_rows) = field("n_rows")?.extract::<Option<usize>>()?
         {
-            self.resize(nrows)?;
+            self.resize(n_rows)?;
         }
         if let Some(shape) = field("shape")?.extract::<Option<Vec<usize>>>()? {
             self.set_shape(shape)?;
@@ -921,7 +921,7 @@ impl PyBlock {
     fn __repr__(&self) -> PyResult<String> {
         self.with_block(|b| {
             let keys: Vec<&str> = b.keys().collect();
-            format!("Block(nrows={}, keys={:?})", b.nrows().unwrap_or(0), keys)
+            format!("Block(n_rows={}, keys={:?})", b.n_rows().unwrap_or(0), keys)
         })
     }
 }
@@ -977,15 +977,18 @@ impl PyBlock {
         Ok(array.into_bound(py).call_method0("copy")?.unbind())
     }
 
-    /// Normalise a row selector over `nrows` rows to row indices.
+    /// Normalise a row selector over `n_rows` rows to row indices.
     ///
     /// The selector goes through ``numpy.asarray``. A bool mask of length
-    /// `nrows` selects its ``True`` rows in order; integer indices in
-    /// ``-nrows..-1`` wrap to ``nrows + i`` and non-negative ones pass through
+    /// `n_rows` selects its ``True`` rows in order; integer indices in
+    /// ``-n_rows..-1`` wrap to ``n_rows + i`` and non-negative ones pass through
     /// (the upper bound is the gather's to check); an empty selector selects
     /// nothing whatever its dtype. Shared by ``Block[...]`` and
     /// ``Frame.subset``.
-    pub(crate) fn row_selection(selector: &Bound<'_, PyAny>, nrows: usize) -> PyResult<Vec<usize>> {
+    pub(crate) fn row_selection(
+        selector: &Bound<'_, PyAny>,
+        n_rows: usize,
+    ) -> PyResult<Vec<usize>> {
         let py = selector.py();
         let arr = py.import("numpy")?.call_method1("asarray", (selector,))?;
         let shape: Vec<usize> = arr.getattr("shape")?.extract()?;
@@ -997,9 +1000,9 @@ impl PyBlock {
         let dtype = arr.getattr("dtype")?;
         let kind: String = dtype.getattr("kind")?.extract()?;
         if kind == "b" {
-            if len != nrows {
+            if len != n_rows {
                 return Err(PyIndexError::new_err(format!(
-                    "boolean index did not match block: block has {nrows} rows \
+                    "boolean index did not match block: block has {n_rows} rows \
                      but mask has length {len}"
                 )));
             }
@@ -1019,13 +1022,13 @@ impl PyBlock {
                 dtype.str()?
             )));
         }
-        let n = i64::try_from(nrows).map_err(|_| PyValueError::new_err("row count overflows"))?;
+        let n = i64::try_from(n_rows).map_err(|_| PyValueError::new_err("row count overflows"))?;
         let indices: Vec<i64> = arr.call_method0("tolist")?.extract()?;
         indices
             .into_iter()
             .map(|i| match i {
                 i if i < -n => Err(PyIndexError::new_err(format!(
-                    "row index {i} is out of range for {nrows} rows"
+                    "row index {i} is out of range for {n_rows} rows"
                 ))),
                 i if i < 0 => Ok((i + n) as usize),
                 i => Ok(i as usize),
@@ -1084,16 +1087,16 @@ impl PyBlock {
                 Ok(match col {
                     Column::Float(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
                     Column::Int(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::Int8(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::Int16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::Int64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::I8(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::I16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::I64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
                     Column::Bool(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::UInt(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::Uint(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
                     Column::U8(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::UInt16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::UInt32(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::Complex64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
-                    Column::Complex128(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::U16(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::U32(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::C64(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
+                    Column::C128(a) => Read::View(typed_array_view(py, Arc::clone(a))?),
                     Column::String(a) => {
                         Read::String(a.iter().cloned().collect(), a.shape().to_vec())
                     }
@@ -1107,7 +1110,7 @@ impl PyBlock {
     }
 
     /// ``block["x", "y", "z"]``: equal-shaped, equal-dtype columns stacked
-    /// side by side into one ``(nrows, k)`` array.
+    /// side by side into one ``(n_rows, k)`` array.
     fn stacked_columns(&self, py: Python<'_>, key: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         let names = column_names(key)?;
         let arrays = names
@@ -1181,10 +1184,10 @@ impl PyBlock {
                 "Writing {k} columns {names:?} needs an (N, {k}) array; got shape {shape:?}"
             )));
         }
-        let (len, nrows) = self.with_block(|b| (b.len(), b.nrows().unwrap_or(0)))?;
-        if len > 0 && shape[0] != nrows {
+        let (len, n_rows) = self.with_block(|b| (b.len(), b.n_rows().unwrap_or(0)))?;
+        if len > 0 && shape[0] != n_rows {
             return Err(PyValueError::new_err(format!(
-                "Writing columns {names:?} needs {nrows} rows, the block's row \
+                "Writing columns {names:?} needs {n_rows} rows, the block's row \
                  count; got {}",
                 shape[0]
             )));
@@ -1318,7 +1321,7 @@ impl PyBlock {
     ) -> PyResult<()> {
         self.inner
             .with_mut(|b| {
-                let rows = col.nrows().unwrap_or(0);
+                let rows = col.n_rows().unwrap_or(0);
                 if let Some(mask) = &validity
                     && mask.len() != rows
                 {
@@ -1430,8 +1433,8 @@ fn adopt_schema_dtype<'py>(key: &str, array: &Bound<'py, PyAny>) -> PyResult<Bou
     let want = match spec.dtype {
         DType::Float => numpy::dtype::<F>(py),
         DType::Int => numpy::dtype::<I>(py),
-        DType::UInt => numpy::dtype::<Idx>(py),
-        DType::Int64 => numpy::dtype::<i64>(py),
+        DType::Uint => numpy::dtype::<Idx>(py),
+        DType::I64 => numpy::dtype::<i64>(py),
         _ => return Ok(array.clone()),
     };
     let have = array.getattr("dtype")?;
@@ -1532,7 +1535,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Keep a typed column buffer alive for a numpy view of any storage width.
-#[pyclass(module = "molrs._lib", unsendable, subclass)]
+#[pyclass(module = "molrs._native", unsendable, subclass)]
 struct ArrayOwner {
     _keep: Box<dyn std::any::Any + Send + Sync>,
 }

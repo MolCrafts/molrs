@@ -61,7 +61,7 @@ use molrs::core::PropValue;
 /// Pair the bonding descriptors of every level of `ir`, coarsest level first.
 ///
 /// `input` is the whole `CGsmiles` string, read only so that a refusal carries
-/// the text, a span into it and [`Notation::CGsmiles`]. `ir` is mutated in two
+/// the text, a span into it and [`Notation::CgSmiles`]. `ir` is mutated in two
 /// places and no others: [`pairs`](CgSmilesIr::pairs) gains one list per
 /// level, and a level gains the [`Derived`](EdgeOrigin::Derived) edges the
 /// level above induced in it.
@@ -152,7 +152,7 @@ fn resolve_level(
                     unmatchable,
                     written.span,
                     input,
-                    Notation::CGsmiles,
+                    Notation::CgSmiles,
                 ));
             };
             pairs.push(ResolvedPair {
@@ -193,7 +193,7 @@ fn derived_edges(
         else {
             let reason = format!("pair {pair} of level {level} is not a pair of child nodes");
             let kind = SmilesErrorKind::CgBuild(reason);
-            return Err(SmilesError::new(kind, span, input, Notation::CGsmiles));
+            return Err(SmilesError::new(kind, span, input, Notation::CgSmiles));
         };
         edges.push(CgEdge {
             i: *i,
@@ -250,7 +250,7 @@ fn last_level_ports(
                 SmilesErrorKind::CgBuild(reason),
                 span,
                 input,
-                Notation::CGsmiles,
+                Notation::CgSmiles,
             )
         };
         let Some(def) = defs.get(&node.name) else {
@@ -507,7 +507,7 @@ impl FragmentCache {
     /// returns for `body` — an unmatched ring closure inside it, say. The
     /// error is the converter's own, carrying a span into the whole
     /// `CGsmiles` string; callers holding that string re-stamp it into
-    /// [`Notation::CGsmiles`].
+    /// [`Notation::CgSmiles`].
     pub(super) fn get_or_build(
         &mut self,
         name: &str,
@@ -769,7 +769,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span, Span::new(14, 21));
     }
 
@@ -964,7 +964,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span, Span::new(5, 9));
     }
 
@@ -985,7 +985,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span, Span::new(5, 9));
     }
 
@@ -1004,7 +1004,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span, Span::new(5, 9));
     }
 
@@ -1082,7 +1082,7 @@ mod tests {
         );
         assert_eq!(err.span, Span::new(19, 20));
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
     }
 
     // -- R4.12: the entity of the last level is the atom --------------------

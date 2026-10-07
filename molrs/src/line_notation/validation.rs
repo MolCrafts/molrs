@@ -67,7 +67,7 @@ pub(crate) fn validate_ring_closures(mol: &SmilesIr, input: &str) -> Result<(), 
 /// `notation` is the notation the error is stamped with. It is a parameter
 /// because the check is shared and its callers are not: the SMILES-family
 /// parser passes its dialect's own notation ([`Dialect::notation`]), the
-/// `CGsmiles` parser passes [`Notation::CGsmiles`]. The notation is a fact
+/// `CGsmiles` parser passes [`Notation::CgSmiles`]. The notation is a fact
 /// owned by the entry point, and passing it in is how this check learns it
 /// without guessing.
 ///

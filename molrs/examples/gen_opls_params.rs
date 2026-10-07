@@ -19,7 +19,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use molrs::core::constants::COULOMB_REAL;
+use molrs::core::UnitFactor;
+use molrs::core::constants::{COULOMB_REAL, OPLS_COULOMB_14, OPLS_LJ_14};
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::forcefield::{Params, StyleDefs};
 use molrs::ff::ir::torsion::{MultiHarmonic, Opls};
@@ -64,6 +65,9 @@ const WALKED: [(&str, &str); 6] = [
 /// GROMACS prints RB coefficients with 5 decimals; a row whose ΣCₙ (its
 /// energy at φ = 180°, which the OPLS form fixes at 0) is further from 0 than
 /// six roundings has an offset the table's Fourier row cannot hold.
+/// kcal/mol → kJ/mol.
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+
 const RB_SUM_TOL_KJ: f64 = 1e-4;
 
 /// The table's own path, independent of where cargo was invoked.
@@ -306,8 +310,6 @@ struct DihedralRow {
 
 /// The rows the force field holds, in the table's shape.
 struct Table {
-    lj_14: f64,
-    coulomb_14: f64,
     atoms: Vec<AtomRow>,
     bonds: Vec<BondRow>,
     angles: Vec<AngleRow>,
@@ -341,15 +343,14 @@ impl Table {
         let sb = ff
             .declared_special_bonds()
             .ok_or("the force field declares no special bonds ([ defaults ])")?;
-        if sb.lj != [0.0, 0.0, 0.5] || sb.coul != [0.0, 0.0, 0.5] {
+        if sb.lj != [0.0, 0.0, OPLS_LJ_14] || sb.coul != [0.0, 0.0, OPLS_COULOMB_14] {
             return Err(format!(
-                "special bonds are {sb:?}; OPLS-AA is [0, 0, 0.5] for both LJ and Coulomb"
+                "special bonds are {sb:?}; OPLS-AA is [0, 0, {OPLS_LJ_14}] for LJ and \
+                 [0, 0, {OPLS_COULOMB_14}] for Coulomb (core::constants)"
             ));
         }
 
         let mut table = Self {
-            lj_14: sb.lj[2],
-            coulomb_14: sb.coul[2],
             atoms: Vec::new(),
             bonds: Vec::new(),
             angles: Vec::new(),
@@ -444,11 +445,11 @@ impl Table {
                         ];
                         let series = MultiHarmonic { a }.to_series();
                         let sum = series.energy(std::f64::consts::PI);
-                        if sum.abs() > RB_SUM_TOL_KJ / 4.184 {
+                        if sum.abs() * KCAL_TO_KJ.get() > RB_SUM_TOL_KJ {
                             return Err(format!(
                                 "{what}: sum of C = {} kJ/mol is a constant offset the OPLS \
                                  Fourier row cannot hold",
-                                sum * 4.184
+                                sum * KCAL_TO_KJ.get()
                             ));
                         }
                         // The sum is zero to the tolerance above, so the
@@ -619,12 +620,6 @@ pub const OPLSAA_NAME: &str = \"OPLS-AA\";
 /// The combining rule — geometric in σ and ε (`[ defaults ]` comb-rule 3).
 pub const OPLSAA_MIXING: &str = \"geometric\";
 
-/// The 1-4 Lennard-Jones scale weight (`[ defaults ]` fudgeLJ).
-pub const OPLSAA_LJ_14: f64 = {};
-
-/// The 1-4 Coulomb scale weight (`[ defaults ]` fudgeQQ).
-pub const OPLSAA_COULOMB_14: f64 = {};
-
 /// The {} `[ atomtypes ]` rows of `ffnonbonded.itp`, in file order.
 #[rustfmt::skip]
 pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[
@@ -646,8 +641,6 @@ pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[
             counts.dihedral_macros,
             dummies.len(),
             dummies.join(", "),
-            Lit(self.lj_14),
-            Lit(self.coulomb_14),
             self.atoms.len(),
         );
         for a in &self.atoms {

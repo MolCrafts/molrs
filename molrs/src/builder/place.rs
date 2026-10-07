@@ -3,9 +3,9 @@
 
 use std::fmt;
 
+use crate::core::CenterError;
 use crate::core::MolGraph;
 use crate::core::RelationId;
-use crate::op::CenterError;
 use crate::op::Vec3;
 use crate::op::vec3::sub;
 use crate::op::{Rigid, alignment_axis_angle, axis_angle, compose_rigid, transform_point};
@@ -59,7 +59,7 @@ pub trait Placer: Send + Sync {
 
 /// Puts each copy's centre of mass on its site.
 ///
-/// With the template's centre of mass `R_c` ([`center`](crate::op::center), Å), the
+/// With the template's centre of mass `R_c` ([`MolGraph::center`](crate::core::MolGraph::center), Å), the
 /// orienter's turn `T` (which fixes `R_c`) and the site position `p` (Å),
 /// the pose is `x ↦ T x + (p − R_c)`: turned, then moved so its centre of
 /// mass lands on `p`. This is the translation step of geometric backmapping
@@ -108,7 +108,8 @@ impl Placer for SitePlacer {
         if !p.iter().all(|c| c.is_finite()) {
             return Err(PlaceError::NonFinitePoint);
         }
-        let center = crate::op::center(template, &template.node_ids().collect::<Vec<_>>())
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
             .map_err(PlaceError::Template)?;
         let shift = Rigid {
             rotation: Rigid::IDENTITY.rotation,
@@ -269,10 +270,10 @@ mod tests {
     use super::{GrowthPlacer, ParentJoin, PlaceError, PlaceSite, Placer, SitePlacer};
     use crate::core::Atomistic;
     use crate::core::BondNumber;
+    use crate::core::CenterError;
     use crate::core::PortKind;
     use crate::core::RelationId;
     use crate::core::keys;
-    use crate::op::CenterError;
     use crate::op::{Rigid, rotation_about, transform_point};
 
     const TOL: f64 = 1e-12;

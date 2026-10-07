@@ -19,7 +19,7 @@ The generated `pkg/` directory is not committed.
 
 | Area | Exports |
 | --- | --- |
-| Core data model (`molrs::core`) | `Frame` (`getMeta` / `setMeta` / `metaKeys`), `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box` (`h`, `toFrac`, `toCart`, `corners`, …), `NDArray`, `Topology` (`fromFrame`), `TriMesh`, regions (`Sphere`, `Cuboid`, …, `Region`), `NeighborList` / `NeighborQuery` / `Neighbors`, `covalentRadius` |
+| Core data model (`molrs::core`) | `Frame` (`getMeta` / `setMeta` / `metaKeys`), `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nRows`), `Box` (`h`, `toFrac`, `toCart`, `corners`, …), `NDArray`, `Topology` (`fromFrame`), `TriMesh`, regions (`Sphere`, `Cuboid`, …, `Region`), `NeighborList` / `NeighborQuery` / `Neighbors`, `covalentRadius` |
 | SMILES and 3D | `SmilesIr.parse` (`toFrame`), `readSmilesStr` → `Frame`, `Conformer` (`generate`) |
 | File formats | whole-content readers of the formats with no stream: `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader`; one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr`, `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`; `readStlBytes` → `TriMesh`; `readLammpsLogStr` → `LammpsLog`, `isLammpsLog`; wire-encoded frames: `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` / `writeJsonFrameStr` |
 | Chunk-fed streams (the one reader of their format) | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream` (`FrameOffset`) |

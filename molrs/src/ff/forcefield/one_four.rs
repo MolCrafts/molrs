@@ -172,7 +172,7 @@ impl ForceField {
         let (lj14, coul14) = (sb.lj_14(), sb.coul_14());
 
         let block = frame.get(PAIRS).expect("inserted above");
-        let n = block.nrows().unwrap_or(0);
+        let n = block.n_rows().unwrap_or(0);
         if n == 0 {
             return Ok(0);
         }

@@ -23,31 +23,6 @@ use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
 
 use super::PyTypifier;
 
-/// The name of every set, paired with the set. The one place the mapping lives.
-const PARAMETER_SETS: &[(&str, GaffParameterSet)] = &[
-    ("gaff", GaffParameterSet::Gaff),
-    ("gaff2", GaffParameterSet::Gaff2),
-];
-
-/// The parameter set named `name`.
-///
-/// # Errors
-///
-/// `ValueError` — an unknown name; there is no default set.
-fn parameter_set_from_name(name: &str) -> PyResult<GaffParameterSet> {
-    PARAMETER_SETS
-        .iter()
-        .find(|(flag, _)| *flag == name)
-        .map(|(_, set)| *set)
-        .ok_or_else(|| {
-            let known: Vec<&str> = PARAMETER_SETS.iter().map(|(flag, _)| *flag).collect();
-            PyValueError::new_err(format!(
-                "unknown GAFF parameter set {name:?}; expected one of {}",
-                known.join(", ")
-            ))
-        })
-}
-
 /// GAFF / GAFF2 bonded-term typifier — ``molrs.ff.typifier.GaffTypifier``.
 ///
 /// Matches a molecule whose atoms already carry GAFF atom types (``keys.TYPE``,
@@ -103,7 +78,8 @@ impl PyGaffTypifier {
     #[new]
     #[pyo3(signature = (*, parameter_set))]
     fn new(parameter_set: &str) -> PyResult<(Self, PyTypifier)> {
-        let parameter_set = parameter_set_from_name(parameter_set)?;
+        let parameter_set =
+            GaffParameterSet::from_name(parameter_set).map_err(PyValueError::new_err)?;
         Ok((
             Self { parameter_set },
             PyTypifier::native(GaffTypifier::new(parameter_set)),

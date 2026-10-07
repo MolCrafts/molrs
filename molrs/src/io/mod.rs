@@ -27,6 +27,7 @@
 //! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations |
 //! | [`mrec`] | MolRec scientific records (`*.mrec`) |
 //! | CSV | functions only: `read_csv_block` … |
+//! | a frame in `stream`'s wire encodings (feature `stream`) | functions only: `read_msgpack_frame_bytes` …, `read_json_frame_str` … |
 //!
 //! [`reader`] and [`writer`] hold the contracts the classes implement
 //! ([`FrameReader`](reader::FrameReader), [`TrajectoryReader`](reader::TrajectoryReader),
@@ -53,6 +54,8 @@ pub mod clpol;
 mod csv;
 mod cube;
 pub mod dcd;
+#[cfg(feature = "stream")]
+mod frame_encoding;
 pub mod gro;
 #[cfg(feature = "ff")]
 pub mod gromacs;
@@ -91,7 +94,7 @@ pub use amber::prmtop::{read_amber_prmtop, read_amber_prmtop_str};
 #[cfg(feature = "ff")]
 pub use amber::{
     frcmod::{write_amber_frcmod, write_amber_frcmod_str},
-    prmtop_forcefield::read_amber_prmtop_forcefield,
+    prmtop_forcefield::{read_amber_prmtop_forcefield, read_amber_prmtop_system},
 };
 pub use cif::codec::{read_cif, read_cif_trajectory, write_cif};
 #[cfg(feature = "ff")]
@@ -99,12 +102,21 @@ pub use clpol::codec::{read_clpol_alpha, read_clpol_alpha_str};
 pub use csv::{read_csv_block, read_csv_block_str, write_csv_block, write_csv_block_str};
 pub use cube::{read_cube, read_cube_str, read_cube_trajectory, write_cube, write_cube_str};
 pub use dcd::codec::{read_dcd_bytes, read_dcd_trajectory, write_dcd_trajectory};
+#[cfg(feature = "stream")]
+pub use frame_encoding::{
+    read_json_frame_str, read_msgpack_frame_bytes, write_json_frame_str, write_msgpack_frame_bytes,
+};
 pub use gro::codec::{read_gro, read_gro_trajectory, write_gro, write_gro_trajectory};
+#[cfg(feature = "ff")]
+pub use gromacs::{
+    top_reader::{read_gromacs_top_forcefield, read_gromacs_top_system},
+    top_writer::{write_gromacs_top_forcefield, write_gromacs_top_system},
+};
 pub use lammps::bond_react::{write_lammps_bond_react_map, write_lammps_bond_react_system};
 pub use lammps::data::{read_lammps_data, read_lammps_data_bytes, write_lammps_data};
 pub use lammps::dump::{
-    read_lammps_dump_bytes, read_lammps_trajectory, write_lammps_dump_local,
-    write_lammps_trajectory,
+    read_lammps_dump_bytes, read_lammps_dump_trajectory, write_lammps_dump_local,
+    write_lammps_dump_trajectory,
 };
 pub use lammps::log::{read_lammps_log, read_lammps_log_str};
 pub use lammps::molecule::{
@@ -113,7 +125,14 @@ pub use lammps::molecule::{
 };
 #[cfg(feature = "ff")]
 pub use lammps::{
-    forcefield_reader::read_lammps_cmap_str, forcefield_writer::write_lammps_cmap_str,
+    forcefield_reader::{
+        read_lammps_cmap_forcefield, read_lammps_cmap_str, read_lammps_data_coeffs,
+        read_lammps_forcefield, read_lammps_forcefield_str,
+    },
+    forcefield_writer::{
+        write_lammps_cmap_forcefield, write_lammps_cmap_str, write_lammps_data_coeffs,
+        write_lammps_forcefield, write_lammps_forcefield_str,
+    },
 };
 #[cfg(feature = "ff")]
 pub use mmff_xml::{

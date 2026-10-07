@@ -11,5 +11,5 @@
 pub(crate) mod top_reader;
 pub(crate) mod top_writer;
 
-pub use top_reader::GromacsTopForcefieldReader;
+pub use top_reader::{GromacsTopForcefieldReader, GromacsTopReadOptions};
 pub use top_writer::GromacsTopForcefieldWriter;

@@ -196,10 +196,10 @@ impl PyTrajectory {
 #[pymethods]
 impl PyScalarObservable {
     #[new]
-    #[pyo3(signature = (name, data, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
     fn new(
         name: &str,
-        data: &Bound<'_, PyAny>,
+        values: &Bound<'_, PyAny>,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -210,7 +210,7 @@ impl PyScalarObservable {
     ) -> PyResult<Self> {
         Self::build(
             name,
-            data,
+            values,
             description,
             unit,
             axes,
@@ -227,8 +227,8 @@ impl PyScalarObservable {
     }
 
     #[getter]
-    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        observable_data_to_pyobject(py, &self.inner.data)
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        observable_values_to_pyobject(py, &self.inner.values)
     }
 
     /// The contract spelling of the observable's kind.
@@ -278,7 +278,7 @@ impl PyScalarObservable {
             slf.as_any(),
             (
                 this.name(),
-                this.data(slf.py())?,
+                this.values(slf.py())?,
                 this.description(),
                 this.unit(),
                 this.axes(),
@@ -294,10 +294,10 @@ impl PyScalarObservable {
 #[pymethods]
 impl PyVectorObservable {
     #[new]
-    #[pyo3(signature = (name, data, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
     fn new(
         name: &str,
-        data: &Bound<'_, PyAny>,
+        values: &Bound<'_, PyAny>,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -308,7 +308,7 @@ impl PyVectorObservable {
     ) -> PyResult<Self> {
         Self::build(
             name,
-            data,
+            values,
             description,
             unit,
             axes,
@@ -325,8 +325,8 @@ impl PyVectorObservable {
     }
 
     #[getter]
-    fn data<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        observable_data_to_pyobject(py, &self.inner.data)
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        observable_values_to_pyobject(py, &self.inner.values)
     }
 
     /// The contract spelling of the observable's kind.
@@ -376,7 +376,7 @@ impl PyVectorObservable {
             slf.as_any(),
             (
                 this.name(),
-                this.data(slf.py())?,
+                this.values(slf.py())?,
                 this.description(),
                 this.unit(),
                 this.axes(),
@@ -392,7 +392,7 @@ impl PyVectorObservable {
 impl PyScalarObservable {
     pub(crate) fn build(
         name: &str,
-        data: &Bound<'_, PyAny>,
+        values: &Bound<'_, PyAny>,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -401,7 +401,7 @@ impl PyScalarObservable {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        let mut inner = ObservableRecord::scalar(name, py_any_to_column(data)?);
+        let mut inner = ObservableRecord::scalar(name, py_any_to_column(values)?);
         apply_common_metadata(
             &mut inner,
             description,
@@ -419,7 +419,7 @@ impl PyScalarObservable {
 impl PyVectorObservable {
     pub(crate) fn build(
         name: &str,
-        data: &Bound<'_, PyAny>,
+        values: &Bound<'_, PyAny>,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -428,7 +428,7 @@ impl PyVectorObservable {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        let mut inner = ObservableRecord::vector(name, py_any_to_column(data)?);
+        let mut inner = ObservableRecord::vector(name, py_any_to_column(values)?);
         apply_common_metadata(
             &mut inner,
             description,
@@ -513,12 +513,12 @@ fn py_any_to_column(value: &Bound<'_, PyAny>) -> PyResult<Column> {
         return Ok(Column::from_string(ArrayD::from_elem(IxDyn(&[]), v)));
     }
     Err(PyTypeError::new_err(
-        "observable data must be a supported numpy array, scalar, or list[str]",
+        "observable values must be a supported numpy array, scalar, or list[str]",
     ))
 }
 
-fn observable_data_to_pyobject(py: Python<'_>, data: &ObservableValues) -> PyResult<Py<PyAny>> {
-    match data {
+fn observable_values_to_pyobject(py: Python<'_>, values: &ObservableValues) -> PyResult<Py<PyAny>> {
+    match values {
         ObservableValues::Column(column) => column_to_pyobject(py, column),
     }
 }
@@ -533,16 +533,16 @@ fn column_to_pyobject(py: Python<'_>, column: &Column) -> PyResult<Py<PyAny>> {
             .into_any()
             .unbind()),
         Column::Int(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Int8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Int16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Int64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::UInt(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::I8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::I16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::I64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::Uint(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::Bool(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::U8(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::UInt16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::UInt32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Complex64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
-        Column::Complex128(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::U16(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::U32(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::C64(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
+        Column::C128(array) => Ok(array.array().clone().into_pyarray(py).into_any().unbind()),
         Column::String(array) => {
             if array.ndim() == 0 {
                 let value = array.iter().next().cloned().unwrap_or_default();

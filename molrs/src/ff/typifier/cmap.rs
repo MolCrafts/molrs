@@ -107,7 +107,7 @@ fn match_chains(
     let Some(dihedrals) = frame.get(DIHEDRALS) else {
         return Ok(Vec::new());
     };
-    let n_dihedrals = dihedrals.nrows().unwrap_or(0);
+    let n_dihedrals = dihedrals.n_rows().unwrap_or(0);
     if n_dihedrals == 0 {
         return Ok(Vec::new());
     }
@@ -222,7 +222,7 @@ mod tests {
     fn rows(frame: &Frame) -> Vec<([u64; 5], String)> {
         let b = &frame[CMAPS];
         let types = b.get(TYPE).unwrap().as_string().unwrap();
-        (0..b.nrows().unwrap())
+        (0..b.n_rows().unwrap())
             .map(|r| {
                 let atoms = [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM]
                     .map(|k| b.get(k).unwrap().as_uint().unwrap()[[r]]);

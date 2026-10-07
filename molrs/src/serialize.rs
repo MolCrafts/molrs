@@ -89,17 +89,17 @@ fn dtype_from_tag(tag: &str) -> Option<DType> {
     Some(match tag {
         "float" | "f64" => DType::Float,
         "int" | "i32" => DType::Int,
-        "i8" => DType::Int8,
-        "i16" => DType::Int16,
-        "i64" => DType::Int64,
+        "i8" => DType::I8,
+        "i16" => DType::I16,
+        "i64" => DType::I64,
         "bool" => DType::Bool,
-        "uint" | "u64" => DType::UInt,
+        "uint" | "u64" => DType::Uint,
         "u8" => DType::U8,
-        "u16" => DType::UInt16,
-        "u32" => DType::UInt32,
+        "u16" => DType::U16,
+        "u32" => DType::U32,
         "string" => DType::String,
-        "c64" => DType::Complex64,
-        "c128" => DType::Complex128,
+        "c64" => DType::C64,
+        "c128" => DType::C128,
         _ => return None,
     })
 }
@@ -287,7 +287,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::Int8, ColData::Bytes(b)) => {
+        (DType::I8, ColData::Bytes(b)) => {
             if b.len() != n {
                 return Err(shape_err("i8"));
             }
@@ -296,19 +296,19 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::Int16, ColData::Bytes(b)) => {
+        (DType::I16, ColData::Bytes(b)) => {
             let v = le::<2, _>(&b, n, i16::from_le_bytes)?;
             Ok(Column::from_i16(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::Int64, ColData::Bytes(b)) => {
+        (DType::I64, ColData::Bytes(b)) => {
             let v = le::<8, _>(&b, n, i64::from_le_bytes)?;
             Ok(Column::from_i64(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::UInt, ColData::Bytes(b)) => {
+        (DType::Uint, ColData::Bytes(b)) => {
             let v = le::<8, _>(&b, n, u64::from_le_bytes)?;
             Ok(Column::from_uint(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
@@ -322,13 +322,13 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, b).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::UInt16, ColData::Bytes(b)) => {
+        (DType::U16, ColData::Bytes(b)) => {
             let v = le::<2, _>(&b, n, u16::from_le_bytes)?;
             Ok(Column::from_u16(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::UInt32, ColData::Bytes(b)) => {
+        (DType::U32, ColData::Bytes(b)) => {
             let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
             Ok(Column::from_u32(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
@@ -351,7 +351,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, s).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::Complex64, ColData::Bytes(b)) => {
+        (DType::C64, ColData::Bytes(b)) => {
             let v = le::<8, _>(&b, n, |bytes| {
                 num_complex::Complex::<f32>::new(
                     f32::from_le_bytes(bytes[..4].try_into().unwrap()),
@@ -362,7 +362,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColData) -> Result<Column, 
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
-        (DType::Complex128, ColData::Bytes(b)) => {
+        (DType::C128, ColData::Bytes(b)) => {
             let v = le::<16, _>(&b, n, |bytes| {
                 num_complex::Complex::<f64>::new(
                     f64::from_le_bytes(bytes[..8].try_into().unwrap()),
@@ -555,7 +555,7 @@ mod tests {
     fn a_block_round_trips_every_column_at_its_dtype() {
         let json = serde_json::to_string(&atoms()).unwrap();
         let back: Block = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.nrows(), Some(3));
+        assert_eq!(back.n_rows(), Some(3));
         assert_eq!(
             back.get("x")
                 .and_then(|c| c.as_float())
@@ -592,7 +592,7 @@ mod tests {
         // before 1.0.0.
         assert!(!json.contains("\"version\""));
         let back: Frame = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(back.get("atoms").unwrap().n_rows(), Some(3));
         assert_eq!(back.meta.get("timestep"), Some(&MetaValue::I64(42)));
         assert_eq!(
             back.meta.get("label"),

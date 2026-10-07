@@ -525,7 +525,7 @@ fn without_style_param(ff: &ForceField, key: &str) -> ForceField {
 /// The 1-based molecule of each atom: the bond graph's connected components,
 /// numbered in order of their first atom.
 fn molecules(frame: &Frame) -> Vec<molrs::op::Idx> {
-    let n = frame.get("atoms").unwrap().nrows().unwrap();
+    let n = frame.get("atoms").unwrap().n_rows().unwrap();
     let mut root: Vec<usize> = (0..n).collect();
     fn find(root: &mut [usize], a: usize) -> usize {
         let mut a = a;

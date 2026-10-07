@@ -2,7 +2,7 @@
 
 The base owns one output force field per instance. For a Python subclass,
 ``typify`` copies the graph, calls the subclass ``assign`` on the copy, and hands
-the returned ``TypeAssignment`` to the Rust ``TypeAssignment::write_onto``; for a native typifier
+the returned ``TypeAssignment`` to the Rust ``TypeAssignment::apply_to``; for a native typifier
 it runs ``Typing::typify``. The science of both paths (validation, stamping,
 definition order) is proven by the Rust unit tests in ``ff/typifier/mod.rs``;
 these tests only cover the binding seam: construction, the subclass path,

@@ -163,7 +163,7 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIr, SmilesError> {
 /// `$1` and `CC=[$][>]` annotates `$`; the rest of the run carries none. The
 /// leading form is strictly the less expressive of the two — it cannot spell
 /// `C[$]=CC` — which is why
-/// [`write_fragment_smiles`](crate::line_notation::writer::write_fragment_smiles) emits
+/// [`fragment_smiles_text`](crate::line_notation::writer::fragment_smiles_text) emits
 /// the trailing form only.
 ///
 /// # Errors

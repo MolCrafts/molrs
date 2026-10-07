@@ -196,9 +196,10 @@ pub fn read_lammps_log<P: AsRef<Path>>(path: P, style: &str) -> std::io::Result<
 
 /// Parse a LAMMPS log from an in-memory string.
 ///
-/// `path` is recorded on the result for callers that still want a path field
-/// (e.g. Python dataclasses); it is not opened.
-pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> LammpsLog {
+/// `source_name` names where the text came from (a file path, or
+/// `"<string>"`); it is recorded as the result's [`path`](LammpsLog::path) and
+/// never opened.
+pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> LammpsLog {
     let lines: Vec<&str> = text.lines().collect();
     let run_ranges = find_run_ranges(&lines);
     let mut header_end = run_ranges.first().map(|(s, _)| *s).unwrap_or(lines.len());
@@ -225,7 +226,7 @@ pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> LammpsLog {
     let warnings = collect_warnings(&lines, 0, None);
 
     LammpsLog {
-        path: path.to_string(),
+        path: source_name.to_string(),
         version,
         header,
         runs,

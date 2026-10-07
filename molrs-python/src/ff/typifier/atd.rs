@@ -11,7 +11,8 @@
 //! Python argument as the *flag* (`AtdTypifier(parameter_set="gaff")`). The two
 //! spellings differ for exactly the two GAFF columns, which is precisely where a
 //! wrong-set binding would hide — so the mapping is written down once, in
-//! [`parameter_set_from_name`], and read back out by the `parameter_set` getter.
+//! [`AtdParameterSet::name`] / [`AtdParameterSet::from_name`], and read back
+//! out by the `parameter_set` getter.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -19,83 +20,6 @@ use pyo3::prelude::*;
 use molrs::ff::typifier::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 
 use super::PyTypifier;
-
-/// The `-at` flag of every table, paired with the set that walks it.
-///
-/// The one place the flag ↔ table mapping lives. Iterated (rather than matched twice)
-/// so that the parser and the getter cannot drift apart, and so the error message
-/// lists exactly the names the parser accepts.
-const PARAMETER_SETS: &[(&str, AtdParameterSet)] = &[
-    ("bcc", AtdParameterSet::Bcc),
-    ("abcg2", AtdParameterSet::Abcg2),
-    ("gas", AtdParameterSet::Gas),
-    ("gaff", AtdParameterSet::Gff),
-    ("gaff2", AtdParameterSet::Gff2),
-    ("amber", AtdParameterSet::Amber),
-    ("sybyl", AtdParameterSet::Sybyl),
-];
-
-/// The parameter set named by an antechamber `-at` flag.
-///
-/// # Errors
-///
-/// `ValueError` — an unknown name. Never a fallback to a default table: an atom type
-/// from the wrong table is a plausible-looking answer, which is the failure mode this
-/// refusal exists to prevent.
-pub(crate) fn parameter_set_from_name(name: &str) -> PyResult<AtdParameterSet> {
-    PARAMETER_SETS
-        .iter()
-        .find(|(flag, _)| *flag == name)
-        .map(|(_, set)| *set)
-        .ok_or_else(|| {
-            let known: Vec<&str> = PARAMETER_SETS.iter().map(|(flag, _)| *flag).collect();
-            PyValueError::new_err(format!(
-                "unknown atom-type parameter set {name:?}; expected one of {}",
-                known.join(", ")
-            ))
-        })
-}
-
-/// The `bond_orders` names, paired with the source each one selects.
-const BOND_ORDERS: &[(&str, AtdBondOrders)] = &[
-    ("perceive", AtdBondOrders::Perceive),
-    ("input", AtdBondOrders::Input),
-];
-
-/// The bond-order source named `name`.
-///
-/// # Errors
-///
-/// `ValueError` — an unknown name.
-fn bond_orders_from_name(name: &str) -> PyResult<AtdBondOrders> {
-    BOND_ORDERS
-        .iter()
-        .find(|(known, _)| *known == name)
-        .map(|(_, orders)| *orders)
-        .ok_or_else(|| {
-            PyValueError::new_err(format!(
-                "unknown bond_orders {name:?}; expected \"perceive\" or \"input\""
-            ))
-        })
-}
-
-/// The name of a bond-order source — the inverse of [`bond_orders_from_name`].
-fn bond_orders_name(orders: AtdBondOrders) -> &'static str {
-    BOND_ORDERS
-        .iter()
-        .find(|(_, known)| *known == orders)
-        .map(|(name, _)| *name)
-        .unwrap_or("")
-}
-
-/// The `-at` flag of a parameter set — the inverse of [`parameter_set_from_name`].
-fn parameter_set_name(set: AtdParameterSet) -> &'static str {
-    PARAMETER_SETS
-        .iter()
-        .find(|(_, known)| *known == set)
-        .map(|(flag, _)| *flag)
-        .unwrap_or("")
-}
 
 /// Antechamber atom typifier — `molrs.ff.typifier.AtdTypifier`.
 ///
@@ -153,8 +77,9 @@ impl PyAtdTypifier {
     #[new]
     #[pyo3(signature = (*, parameter_set, bond_orders = "perceive"))]
     fn new(parameter_set: &str, bond_orders: &str) -> PyResult<(Self, PyTypifier)> {
-        let parameter_set = parameter_set_from_name(parameter_set)?;
-        let bond_orders = bond_orders_from_name(bond_orders)?;
+        let parameter_set =
+            AtdParameterSet::from_name(parameter_set).map_err(PyValueError::new_err)?;
+        let bond_orders = AtdBondOrders::from_name(bond_orders).map_err(PyValueError::new_err)?;
         Ok((
             Self {
                 parameter_set,
@@ -167,13 +92,13 @@ impl PyAtdTypifier {
     /// The antechamber ``-at`` flag of the table this typifier walks.
     #[getter]
     fn parameter_set(&self) -> &'static str {
-        parameter_set_name(self.parameter_set)
+        self.parameter_set.name()
     }
 
     /// Which bond orders the types follow: ``"perceive"`` or ``"input"``.
     #[getter]
     fn bond_orders(&self) -> &'static str {
-        bond_orders_name(self.bond_orders)
+        AtdBondOrders::name(self.bond_orders)
     }
 
     fn __repr__(&self) -> String {

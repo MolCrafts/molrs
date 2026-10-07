@@ -5,6 +5,7 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
+use std::f64::consts::TAU;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -12,7 +13,6 @@ use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
 
 const PI: F = std::f64::consts::PI;
-const TWO_PI: F = 2.0 * PI;
 
 /// Bond-order diagram calculator.
 ///
@@ -65,7 +65,7 @@ impl BondOrientationalOrder {
         // FrameAccess-valid; nlist already carries disp.
 
         let d_theta = PI / self.n_theta as F;
-        let d_phi = TWO_PI / self.n_phi as F;
+        let d_phi = TAU / self.n_phi as F;
 
         let theta_edges: Vec<F> = (0..=self.n_theta).map(|i| i as F * d_theta).collect();
         let phi_edges: Vec<F> = (0..=self.n_phi).map(|i| -PI + i as F * d_phi).collect();
@@ -118,7 +118,7 @@ fn push_angle(counts: &mut Array2<u64>, dx: F, dy: F, dz: F, r: F, n_theta: usiz
     let phi = dy.atan2(dx); // [-π, π]
     let it = ((theta / PI) * n_theta as F) as usize;
     let it = it.min(n_theta - 1);
-    let ip = (((phi + PI) / TWO_PI) * n_phi as F) as usize;
+    let ip = (((phi + PI) / TAU) * n_phi as F) as usize;
     let ip = ip.min(n_phi - 1);
     counts[[it, ip]] += 1;
 }

@@ -120,7 +120,7 @@ pub fn set_free_mask(frame: &mut Frame, free: &[bool]) -> Result<(), String> {
     let atoms = frame
         .get_mut(ATOMS)
         .ok_or_else(|| "Frame has no atoms block".to_string())?;
-    let n = atoms.nrows().unwrap_or(0);
+    let n = atoms.n_rows().unwrap_or(0);
     if free.len() != n {
         return Err(format!(
             "free mask length {} != atoms nrows {n}",

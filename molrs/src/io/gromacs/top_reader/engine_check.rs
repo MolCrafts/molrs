@@ -20,7 +20,7 @@
 //! Settings: a plain cut-off at 2.5 nm (no shift, no reaction field) in a
 //! 6 nm box — every intramolecular pair inside it, no image — so nonbonded
 //! energies are the plain sums. The reader states GROMACS's own Coulomb
-//! constant ([`crate::core::constants::GROMACS_COULOMB`], CODATA 2018), LAMMPS `real`'s
+//! constant ([`crate::core::constants::GROMACS_ONE_4PI_EPS0`], CODATA 2018), LAMMPS `real`'s
 //! 332.06371 × (1 + 9.9·10⁻⁹); LAMMPS prices at its own, so molrs's Coulomb
 //! terms are held to LAMMPS's times the constants' ratio (exact: the energy is
 //! linear in it).
@@ -64,7 +64,11 @@ const TERMS: [&str; 10] = [
 const CUTOFF: F = 25.0;
 const INNER: F = 24.0;
 
+use crate::core::UnitFactor;
 use crate::ff::equivalence_check::{PAIR14, one_four_as_dihedral_weights as lammps_form};
+
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 struct Fixture {
     name: &'static str,
@@ -278,7 +282,7 @@ fn energy(ff: &ForceField, frame: &Frame, coords: &[F]) -> F {
 /// `frame` with only the `pairs` rows `keep` selects.
 fn with_pairs(frame: &Frame, keep: impl Fn(usize) -> bool) -> Frame {
     let pairs = frame.get("pairs").unwrap();
-    let rows: Vec<usize> = (0..pairs.nrows().unwrap()).filter(|&r| keep(r)).collect();
+    let rows: Vec<usize> = (0..pairs.n_rows().unwrap()).filter(|&r| keep(r)).collect();
     let mut out = frame.clone();
     out.insert("pairs", pairs.select_rows(&rows).unwrap());
     out
@@ -456,7 +460,8 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
                 && let (Some(got), Some(want)) = (lammps_form_terms[k], lammps[k])
             {
                 // LAMMPS prices at its own Coulomb constant.
-                let ratio = COULOMB_REAL / crate::core::constants::GROMACS_COULOMB;
+                let ratio = COULOMB_REAL
+                    / (crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get());
                 let coul = |t: &[Option<F>; 10]| t[6].unwrap_or(0.0) + t[8].unwrap_or(0.0);
                 let got = match *term {
                     "coul14" | "coulsr" => got * ratio,

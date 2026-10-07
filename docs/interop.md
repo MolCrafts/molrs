@@ -58,7 +58,7 @@ println!("MMFF94 energy = {energy} kcal/mol");
 
 There is no MMFF/UFF shortcut, and that is the point: a force field read from a
 file is consumed by exactly these three lines. A typifier implements only
-`match`; `Typing` wraps it, and `Typing::typify` — labels and charges — is the
+`assign`; `Typing` wraps it, and `Typing::typify` — labels and charges — is the
 only writer of the output `Typing::forcefield()`, which holds exactly the
 definitions typing assigned. Compiling is
 `PotentialCompiler::new(ff).compile(&frame)`.
@@ -242,7 +242,7 @@ each item after the molrs owner it fronts:
 | `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
 | `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
 | `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `RdfAccumulator`, `MsdAccumulator`, `VacfAccumulator` | `compute::` the same names |
-| `am1_bcc_assign_frame_from_base` | `ff::charge::BccModel` with `BccParameterSet::from_name` |
+| `assign_am1_bcc_charges` | `ff::charge::BccModel` with `BccParameterSet::from_name` |
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
 ABI — they take Path A or Path B directly, and every one of them links molrs

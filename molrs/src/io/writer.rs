@@ -69,6 +69,15 @@ pub trait ForceFieldWriter {
     }
 }
 
+/// Write a force-field writer's `text` to `path`, an error naming the file.
+#[cfg(feature = "ff")]
+pub(crate) fn write_forcefield_text(
+    path: &std::path::Path,
+    text: &str,
+) -> std::result::Result<(), ForceFieldWriteError> {
+    std::fs::write(path, text).map_err(|e| format!("write {}: {e}", path.display()).into())
+}
+
 /// Why a writer wrote nothing.
 ///
 /// An engine that cannot hold a style refuses it with a typed

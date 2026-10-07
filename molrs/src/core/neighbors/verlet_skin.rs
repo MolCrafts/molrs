@@ -121,7 +121,7 @@ pub struct VerletSkin {
     search: NeighborList,
     edges: Vec<SkinPair>,
     n_edges: usize,
-    rebuild_count: usize,
+    n_rebuilds: usize,
     ago: usize,
     ndanger: usize,
     half_skin_sq: F,
@@ -145,7 +145,7 @@ pub struct VerletSkin {
 impl VerletSkin {
     /// Wrap `search` (must be built at `cutoff + policy.skin`) with Verlet policy.
     ///
-    /// The initial build is not counted in [`Self::rebuild_count`].
+    /// The initial build is not counted in [`Self::n_rebuilds`].
     pub fn new(
         mut search: NeighborList,
         cutoff: F,
@@ -226,7 +226,7 @@ impl VerletSkin {
             search,
             edges: Vec::new(),
             n_edges: 0,
-            rebuild_count: 0,
+            n_rebuilds: 0,
             ago: 0,
             ndanger: 0,
             half_skin_sq: (0.5 * policy.skin) * (0.5 * policy.skin),
@@ -276,8 +276,8 @@ impl VerletSkin {
     }
 
     /// Rebuilds since construction; the initial build is not one of them.
-    pub fn rebuild_count(&self) -> usize {
-        self.rebuild_count
+    pub fn n_rebuilds(&self) -> usize {
+        self.n_rebuilds
     }
 
     /// Steps since the last build (LAMMPS `ago`).
@@ -295,9 +295,9 @@ impl VerletSkin {
     /// Geometry, edges, and the held positions must first be reconstructed via
     /// [`new`](Self::new). This only restores progress through the rebuild
     /// policy so a resumed run makes the same next cadence decision.
-    pub fn restore_progress(&mut self, ago: usize, rebuild_count: usize, ndanger: usize) {
+    pub fn restore_progress(&mut self, ago: usize, n_rebuilds: usize, ndanger: usize) {
         self.ago = ago;
-        self.rebuild_count = rebuild_count;
+        self.n_rebuilds = n_rebuilds;
         self.ndanger = ndanger;
     }
 
@@ -365,7 +365,7 @@ impl VerletSkin {
     /// Recompute the neighbour list at `positions` (unconditional).
     pub fn rebuild(&mut self, positions: ArrayView2<'_, F>) -> Result<(), SkinError> {
         self.build_at(positions)?;
-        self.rebuild_count += 1;
+        self.n_rebuilds += 1;
         Ok(())
     }
 
@@ -705,7 +705,7 @@ mod tests {
         let pos1 = array![[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]];
         let rebuilt = nl.update(pos1.view()).unwrap();
         assert!(!rebuilt);
-        assert_eq!(nl.rebuild_count(), 0);
+        assert_eq!(nl.n_rebuilds(), 0);
     }
 
     #[test]
@@ -723,7 +723,7 @@ mod tests {
         let pos1 = array![[0.0, 0.0, 0.0], [1.6, 0.0, 0.0]];
         let rebuilt = nl.update(pos1.view()).unwrap();
         assert!(rebuilt);
-        assert_eq!(nl.rebuild_count(), 1);
+        assert_eq!(nl.n_rebuilds(), 1);
     }
 
     #[test]

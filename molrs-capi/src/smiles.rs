@@ -99,7 +99,7 @@ mod tests {
             .clone_frame(handle_to_frame_id(out))
             .unwrap();
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(3));
+        assert_eq!(atoms.n_rows(), Some(3));
         for key in ["element", "mass"] {
             assert!(atoms.contains_key(key), "atoms.{key}");
         }

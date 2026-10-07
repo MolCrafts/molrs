@@ -658,6 +658,59 @@ fn coulomb_constant(units: &str) -> f64 {
     }
 }
 
+/// The text of the file at `path`, or an error naming it.
+fn read_text(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
+}
+
+/// Read a LAMMPS force-field include (`*.ff`): the `*_style` / `*_coeff`
+/// lines [`write_lammps_forcefield`](crate::io::write_lammps_forcefield)
+/// writes, as [`LammpsForcefieldReader`] reads them.
+///
+/// # Errors
+///
+/// An unreadable file, and every error of [`read_lammps_forcefield_str`].
+pub fn read_lammps_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
+    read_lammps_forcefield_str(&read_text(path.as_ref())?)
+}
+
+/// [`read_lammps_forcefield`] on in-memory text.
+///
+/// # Errors
+///
+/// An unsupported style, a coefficient before its style declaration, a
+/// wrong-arity type label, or a non-numeric parameter (reading is total).
+pub fn read_lammps_forcefield_str(text: &str) -> Result<ForceField, String> {
+    LammpsForcefieldReader::new().read_str(text)
+}
+
+/// The force field a LAMMPS data file's `* Coeffs` sections define, from the
+/// frame [`read_lammps_data`](crate::io::read_lammps_data) returned
+/// ([`LammpsForcefieldReader::read_data_coeffs`]). `units` is the unit style
+/// of the coefficients: the one the file stated when `None`, else `real`.
+///
+/// # Errors
+///
+/// Every error of [`LammpsForcefieldReader::read_data_coeffs`].
+pub fn read_lammps_data_coeffs(
+    frame: &impl FrameAccess,
+    units: Option<&str>,
+) -> Result<ForceField, String> {
+    LammpsForcefieldReader::new().read_data_coeffs(frame, units)
+}
+
+/// Read a LAMMPS `fix cmap` file (CHARMM layout) as a force field of one
+/// `cmap charmm` style ([`LammpsForcefieldReader::read_cmap_str`]); its raw
+/// maps are [`read_lammps_cmap_str`]'s.
+///
+/// # Errors
+///
+/// An unreadable file, and every error of
+/// [`LammpsForcefieldReader::read_cmap_str`].
+pub fn read_lammps_cmap_forcefield(path: impl AsRef<Path>) -> Result<ForceField, String> {
+    LammpsForcefieldReader::new().read_cmap_str(&read_text(path.as_ref())?)
+}
+
 /// The data-file sections of the `class2` cross-term lines: heading,
 /// category, and the `*_coeff` keyword the section's rows are.
 pub(crate) const CROSS_TERM_SECTIONS: [(&str, &str, &str); 7] = [
@@ -949,7 +1002,7 @@ fn pair_sub(
 ) -> Result<PairSub, String> {
     let (spec, codec) = lammps_style(reg, "pair", name, where_)?;
     let params = codec
-        .read_style_args(spec, args)
+        .parse_style_args(spec, args)
         .map_err(|e| format!("{}: {e}", where_()))?;
     Ok(PairSub {
         lammps: name.to_owned(),
@@ -1343,7 +1396,7 @@ fn def_bonded_style(
 ) -> Result<(), String> {
     let (spec, codec) = lammps_style(reg, category, name, where_)?;
     let params = codec
-        .read_style_args(spec, args)
+        .parse_style_args(spec, args)
         .map_err(|e| format!("{}: {e}", where_()))?;
     ff.def_style(category, &spec.name, params)
         .map_err(|e| e.to_string())?;
@@ -1417,7 +1470,7 @@ fn add_bonded(
     {
         let mut params = Params::new();
         return codec
-            .read_extra(spec, keyword, &values[1..], &mut params)
+            .parse_extra(spec, keyword, &values[1..], &mut params)
             .map_err(at);
     }
     let params = codec.read(spec, values).map_err(at)?;

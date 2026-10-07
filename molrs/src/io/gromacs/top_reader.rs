@@ -35,7 +35,7 @@
 //!   - a self row of the Lennard-Jones pair style with `sigma` = V·10 (Å) and
 //!     `epsilon` = W/4.184 (kcal/mol) — V/W are σ/ε under comb-rules 2 and 3,
 //!     so `[ atomtypes ]` requires `[ defaults ]`;
-//!   - the Coulomb pair style, with `coulomb` = [`GROMACS_COULOMB`] (GROMACS's
+//!   - the Coulomb pair style, with `coulomb` = [`GROMACS_ONE_4PI_EPS0`](crate::core::constants::GROMACS_ONE_4PI_EPS0) in kcal·Å (GROMACS's
 //!     own constant) and `dielectric` = 1 (vacuum).
 //! - **`[ nonbond_params ]`** `i j func V W`, func 1: an explicit cross row of
 //!   the Lennard-Jones style between the atom types `i` and `j` (σ, ε as for
@@ -212,14 +212,24 @@ use std::path::{Path, PathBuf};
 use ndarray::ArrayD;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
-use crate::core::constants::{ANGSTROM_PER_NM, GROMACS_COULOMB, KJ_PER_KCAL};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::torsion::rb_polynomial;
-use crate::ff::potential::cmap::charmm::GRID;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::Frame;
 use molrs::core::TypeName;
+
+use crate::core::UnitFactor;
+
+/// kcal → kJ (kcal/mol → kJ/mol).
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
+/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
+static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -780,8 +790,8 @@ impl Row {
             atom.set_str("class", bond_type);
         }
         let lj = (
-            self.number(tail[4], "W (epsilon)")? / KJ_PER_KCAL,
-            self.number(tail[3], "V (sigma)")? * ANGSTROM_PER_NM,
+            self.number(tail[4], "W (epsilon)")? / KCAL_TO_KJ.get(),
+            self.number(tail[3], "V (sigma)")? * NM_TO_ANGSTROM.get(),
         );
         Ok(AtomRow {
             name,
@@ -805,8 +815,8 @@ impl Row {
             )));
         }
         let lj = (
-            self.number(w, "W (epsilon)")? / KJ_PER_KCAL,
-            self.number(v, "V (sigma)")? * ANGSTROM_PER_NM,
+            self.number(w, "W (epsilon)")? / KCAL_TO_KJ.get(),
+            self.number(v, "V (sigma)")? * NM_TO_ANGSTROM.get(),
         );
         let ends = if i <= j { (i, j) } else { (j, i) };
         Ok(((ends.0.to_owned(), ends.1.to_owned()), lj))
@@ -893,7 +903,10 @@ impl Row {
         }
         let values = cols[8..]
             .iter()
-            .map(|tok| self.number(tok, "a grid value").map(|v| v / KJ_PER_KCAL))
+            .map(|tok| {
+                self.number(tok, "a grid value")
+                    .map(|v| v / KCAL_TO_KJ.get())
+            })
             .collect::<Result<Vec<f64>, String>>()?;
         if values.len() != nx * ny {
             return Err(self.err(&format!(
@@ -925,7 +938,7 @@ impl Row {
         Ok((
             [i.to_owned(), j.to_owned()],
             funct,
-            self.number(b0, "b0")? * ANGSTROM_PER_NM,
+            self.number(b0, "b0")? * NM_TO_ANGSTROM.get(),
         ))
     }
 }
@@ -998,7 +1011,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             table,
         })
     };
-    let kb_scale = KJ_PER_KCAL * ANGSTROM_PER_NM * ANGSTROM_PER_NM;
+    let kb_scale = KCAL_ANGSTROM2_TO_KJ_NM2.get();
     match (kind, funct) {
         (Kind::Bond, 1) => {
             exactly(2)?;
@@ -1006,7 +1019,10 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "bond",
                 "harmonic",
                 // GROMACS ½k_b → LAMMPS K = k_b/2.
-                Params::from_pairs(&[("r0", v[0] * ANGSTROM_PER_NM), ("k", v[1] / kb_scale / 2.0)]),
+                Params::from_pairs(&[
+                    ("r0", v[0] * NM_TO_ANGSTROM.get()),
+                    ("k", v[1] / kb_scale / 2.0),
+                ]),
                 Table::Bond(1),
             )
         }
@@ -1016,9 +1032,9 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "bond",
                 "morse",
                 Params::from_pairs(&[
-                    ("d0", v[1] / KJ_PER_KCAL),
-                    ("alpha", v[2] / ANGSTROM_PER_NM),
-                    ("r0", v[0] * ANGSTROM_PER_NM),
+                    ("d0", v[1] / KCAL_TO_KJ.get()),
+                    ("alpha", v[2] / NM_TO_ANGSTROM.get()),
+                    ("r0", v[0] * NM_TO_ANGSTROM.get()),
                 ]),
                 Table::Bond(3),
             )
@@ -1029,7 +1045,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "angle",
                 "harmonic",
                 // GROMACS ½k_θ → LAMMPS K = k_θ/2; θ₀ stays in degrees.
-                Params::from_pairs(&[("theta0", v[0]), ("k", v[1] / KJ_PER_KCAL / 2.0)]),
+                Params::from_pairs(&[("theta0", v[0]), ("k", v[1] / KCAL_TO_KJ.get() / 2.0)]),
                 Table::Angle(1),
             )
         }
@@ -1040,10 +1056,10 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "charmm",
                 // Both GROMACS terms are ½k forms; LAMMPS's are not.
                 Params::from_pairs(&[
-                    ("k", v[1] / KJ_PER_KCAL / 2.0),
+                    ("k", v[1] / KCAL_TO_KJ.get() / 2.0),
                     ("theta0", v[0]),
                     ("k_ub", v[3] / kb_scale / 2.0),
-                    ("r_ub", v[2] * ANGSTROM_PER_NM),
+                    ("r_ub", v[2] * NM_TO_ANGSTROM.get()),
                 ]),
                 Table::Angle(5),
             )
@@ -1051,7 +1067,7 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
         (Kind::Dihedral, 1 | 9 | 4) => {
             exactly(3)?;
             let params = Params::from_pairs(&[
-                ("k", v[1] / KJ_PER_KCAL),
+                ("k", v[1] / KCAL_TO_KJ.get()),
                 ("periodicity", whole(v[2])?),
                 ("phase", v[0]),
             ]);
@@ -1079,13 +1095,13 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
             done(
                 "improper",
                 "harmonic",
-                Params::from_pairs(&[("k", v[1] / (2.0 * KJ_PER_KCAL)), ("chi0", chi0)]),
+                Params::from_pairs(&[("k", v[1] / (2.0 * KCAL_TO_KJ.get())), ("chi0", chi0)]),
                 Table::Idihs,
             )
         }
         (Kind::Dihedral, 3) => {
             exactly(6)?;
-            let (style, params) = rb_polynomial(std::array::from_fn(|n| v[n] / KJ_PER_KCAL));
+            let (style, params) = rb_polynomial(std::array::from_fn(|n| v[n] / KCAL_TO_KJ.get()));
             done("dihedral", style, params, Table::Rbdihs)
         }
         (Kind::Dihedral, 5) => {
@@ -1094,10 +1110,10 @@ pub(super) fn convert(kind: Kind, funct: u32, v: &[f64]) -> Result<Converted, St
                 "dihedral",
                 "opls",
                 Params::from_pairs(&[
-                    ("k1", v[0] / KJ_PER_KCAL),
-                    ("k2", v[1] / KJ_PER_KCAL),
-                    ("k3", v[2] / KJ_PER_KCAL),
-                    ("k4", v[3] / KJ_PER_KCAL),
+                    ("k1", v[0] / KCAL_TO_KJ.get()),
+                    ("k2", v[1] / KCAL_TO_KJ.get()),
+                    ("k3", v[2] / KCAL_TO_KJ.get()),
+                    ("k4", v[3] / KCAL_TO_KJ.get()),
                 ]),
                 Table::Fourdihs,
             )
@@ -1447,7 +1463,10 @@ fn define_lj(
             "pair",
             coul_name,
             Params::from_pairs(&[
-                ("coulomb", GROMACS_COULOMB),
+                (
+                    "coulomb",
+                    crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
+                ),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )
@@ -1472,7 +1491,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
         let (labels, funct, values) = row.bonded()?;
         let c = convert(kind, funct, &values).map_err(|e| row.err(&e))?;
         if c.table == Table::Pdihs {
-            let term = [values[1] / KJ_PER_KCAL, values[2], values[0]];
+            let term = [values[1] / KCAL_TO_KJ.get(), values[2], values[0]];
             if let Some(i) = last_pdihs
                 && funct == 9
                 && defs[i].funct == 9
@@ -1490,7 +1509,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
             category: c.category,
             style: c.style,
             terms: if c.table == Table::Pdihs {
-                vec![[values[1] / KJ_PER_KCAL, values[2], values[0]]]
+                vec![[values[1] / KCAL_TO_KJ.get(), values[2], values[0]]]
             } else {
                 Vec::new()
             },
@@ -1556,7 +1575,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let name = TypeName::join(&refs).map_err(|e| row.err(&e))?;
         let mut params = Params::new();
-        params.set_array(GRID, grid);
+        params.set_array(CMAP_GRID, grid);
         ff.def_style("cmap", "charmm", Params::new())
             .and_then(|s| s.def_type(name.as_str(), &refs, params))
             .map_err(|e| row.err(&e.to_string()))?;
@@ -1566,6 +1585,72 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
         });
     }
     Ok(lookup)
+}
+
+/// How [`read_gromacs_top_forcefield`] and [`read_gromacs_top_system`]
+/// read a topology: [`GromacsTopForcefieldReader`]'s settings as values.
+#[derive(Debug, Clone, Default)]
+pub struct GromacsTopReadOptions {
+    /// Follow `#include` ([`GromacsTopForcefieldReader::with_include`];
+    /// default `false`).
+    pub include: bool,
+    /// Directories an `#include` is resolved against after the including
+    /// file's ([`GromacsTopForcefieldReader::with_include_dir`]).
+    pub include_dirs: Vec<PathBuf>,
+    /// Sections read past instead of refused, bracket-less and
+    /// case-insensitive ([`GromacsTopForcefieldReader::with_skipped_directive`]).
+    pub skip_directives: Vec<String>,
+}
+
+impl GromacsTopForcefieldReader {
+    /// The reader `options` configure.
+    pub fn with_options(options: &GromacsTopReadOptions) -> Self {
+        let reader = options
+            .include_dirs
+            .iter()
+            .fold(Self::new().with_include(options.include), |reader, dir| {
+                reader.with_include_dir(dir)
+            });
+        options
+            .skip_directives
+            .iter()
+            .fold(reader, |reader, name| reader.with_skipped_directive(name))
+    }
+}
+
+/// Read the force-field directives of the GROMACS topology at `path`
+/// ([`GromacsTopForcefieldReader`]'s `read`).
+///
+/// # Errors
+///
+/// An unreadable file and every refusal of the module documentation.
+pub fn read_gromacs_top_forcefield(
+    path: impl AsRef<std::path::Path>,
+    options: &GromacsTopReadOptions,
+) -> Result<ForceField, String> {
+    let path = path_text(path.as_ref())?;
+    GromacsTopForcefieldReader::with_options(options).read(path)
+}
+
+/// Read the whole GROMACS topology at `path` — its directives and molecules
+/// — into a force field and a typed frame
+/// ([`GromacsTopForcefieldReader::read_system`]).
+///
+/// # Errors
+///
+/// An unreadable file and every refusal of the module documentation.
+pub fn read_gromacs_top_system(
+    path: impl AsRef<std::path::Path>,
+    options: &GromacsTopReadOptions,
+) -> Result<(ForceField, Frame), String> {
+    let path = path_text(path.as_ref())?;
+    GromacsTopForcefieldReader::with_options(options).read_system(path)
+}
+
+/// `path` as UTF-8, the form the reader resolves `#include` from.
+fn path_text(path: &std::path::Path) -> Result<&str, String> {
+    path.to_str()
+        .ok_or_else(|| format!("{}: not a UTF-8 path", path.display()))
 }
 
 #[cfg(test)]
@@ -1780,9 +1865,19 @@ mod tests {
     fn atomtypes_declare_coul_cut_with_its_constants() {
         let ff = read(&with_section("atomtypes", OPLS_135));
         let p = style(&ff, "pair", "coul/cut").params();
-        assert_eq!(p.get("coulomb"), Some(GROMACS_COULOMB));
+        assert_eq!(
+            p.get("coulomb"),
+            Some(crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+        );
         // GROMACS's ONE_4PI_EPS0 is LAMMPS real's to 9.9e-9.
-        assert!((GROMACS_COULOMB / COULOMB_REAL - 1.0 - 9.9e-9).abs() < 1e-10);
+        assert!(
+            (crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
+                / COULOMB_REAL
+                - 1.0
+                - 9.9e-9)
+                .abs()
+                < 1e-10
+        );
         assert_eq!(p.get("dielectric"), Some(VACUUM_DIELECTRIC));
     }
 

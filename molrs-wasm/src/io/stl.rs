@@ -1,11 +1,11 @@
-//! Surface-mesh readers for the WASM API.
+//! STL surface meshes for the WASM API — the face of `molrs::io::stl`.
 //!
 //! | Function | Format |
 //! |----------|--------|
 //! | [`readStlBytes`](read_stl_bytes_export) | STL, ASCII or binary (auto-detected) |
 //!
-//! Unlike the readers in [`reader`](super::reader), these produce a
-//! [`TriMesh`] rather than a `Frame`: an STL carries triangles, not atoms.
+//! Unlike every other format's reader, this produces a [`TriMesh`] rather
+//! than a `Frame`: an STL carries triangles, not atoms.
 
 use crate::core::mesh::TriMesh;
 use molrs::io::read_stl_bytes;

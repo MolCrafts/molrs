@@ -107,8 +107,8 @@ impl SmilesIr {
     /// ```js
     /// const frame = ir.toFrame();
     /// const bonds = frame.get("bonds");
-    /// const types = bonds.get("bond_type");
-    /// const numbers = bonds.get("bond_number");
+    /// const types = bonds.copy("bond_type");
+    /// const numbers = bonds.copy("bond_number");
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {

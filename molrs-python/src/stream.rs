@@ -5,7 +5,8 @@
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
-//! `molrs.io.read_frame_bytes` ([`crate::io`]).
+//! `molrs.io.read_msgpack_frame_bytes` (or `read_json_frame_str` from a JSON
+//! publisher; [`crate::io`]).
 //!
 //! Traffic in the other direction is [`PyControlCommand`]: a viewer asks the
 //! producer to pause, change rate, or restrict the atom subset. The producer
@@ -297,8 +298,8 @@ mod server {
 
         /// Number of viewers currently connected.
         #[getter]
-        fn client_count(&self) -> PyResult<usize> {
-            Ok(self.server()?.client_count())
+        fn n_clients(&self) -> PyResult<usize> {
+            Ok(self.server()?.n_clients())
         }
 
         /// Broadcast one frame. Returns immediately; never blocks on the network.
@@ -367,7 +368,7 @@ mod server {
                 Some(server) => format!(
                     "Publisher(address='{}', clients={})",
                     self.address,
-                    server.client_count()
+                    server.n_clients()
                 ),
                 None => format!("Publisher(address='{}', closed)", self.address),
             }

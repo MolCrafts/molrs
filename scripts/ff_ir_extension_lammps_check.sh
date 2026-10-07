@@ -28,7 +28,8 @@
 #   MOLRS_LMP_CLASS2  LAMMPS with CLASS2 (unset: the bond_angle cases are skipped)
 #   MOLRS_PYTHON      python with molrs installed (unset: the python cases are skipped)
 #   PYTHON            python with molrs installed, which reads LAMMPS's logs
-#                     (molrs.io.read_lammps_log; python3)
+#                     and dumps (molrs.io.read_lammps_log,
+#                     molrs.io.read_lammps_dump_trajectory; python3)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 LMP=${LMP:-lmp}
@@ -89,7 +90,7 @@ PYTHONPATH=scripts "$PYTHON" - "$dir" $pin <<'PY'
 import sys
 from pathlib import Path
 
-from engine_check_tables import lammps_thermo
+from engine_check_tables import lammps_dump_forces, lammps_thermo
 
 root = Path(sys.argv[1])
 pin = "--pin" in sys.argv
@@ -102,10 +103,7 @@ HEADER = "# case\tconfig\tpe | f atom\tLAMMPS's value(s) (scripts/ff_ir_extensio
 
 def lammps(case: Path, k: str) -> tuple[float, list[list[float]]]:
     pe = lammps_thermo(case / f"log.{k}")["PotEng"]
-    dump = (case / f"forces_{k}.dump").read_text().splitlines()
-    start = dump.index("ITEM: ATOMS id fx fy fz") + 1
-    forces = [[float(v) for v in row.split()[1:]] for row in dump[start:]]
-    return pe, forces
+    return pe, lammps_dump_forces(case / f"forces_{k}.dump")
 
 
 def molrs(case: Path) -> dict[str, tuple[float, list[list[float]]]]:

@@ -160,7 +160,7 @@ impl<'a> PotentialCompiler<'a> {
         }
         // Record the atom count so callers (e.g. the geometry optimizer's batch
         // path) can validate coordinate shapes against this topology.
-        pots.set_n_atoms(frame.get(ATOMS).and_then(|b| b.nrows()).unwrap_or(0));
+        pots.set_n_atoms(frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0));
         Ok(pots)
     }
 
@@ -346,7 +346,7 @@ impl<'a> PotentialCompiler<'a> {
         };
         let topo_block = gated.then_some(block);
         if let Some(block_name) = topo_block {
-            let rows = frame.get(block_name).and_then(|b| b.nrows()).unwrap_or(0);
+            let rows = frame.get(block_name).and_then(|b| b.n_rows()).unwrap_or(0);
             if rows == 0 {
                 return Ok(None);
             }
@@ -589,7 +589,7 @@ fn regular_pairs<'f>(
     let Some(block) = frame.get(PAIRS) else {
         return Ok(Cow::Borrowed(frame));
     };
-    let n = block.nrows().unwrap_or(0);
+    let n = block.n_rows().unwrap_or(0);
     let keep: Vec<usize> = (0..n)
         .filter(|r| override_rows.binary_search(r).is_err())
         .collect();

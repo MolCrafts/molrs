@@ -41,7 +41,7 @@ use crate::frame::{FrameRef, with_block_inserted_res};
 /// @param am1_charges   AM1 base charges from the engine, one per atom
 /// @param parameter_set `"bcc"` or `"abcg2"`
 /// @return the corrected charges, one per atom
-pub(crate) fn am1_bcc_assign_frame_from_base(
+pub(crate) fn assign_am1_bcc_charges(
     fref: &mut FrameRef,
     am1_charges: &[f64],
     parameter_set: &str,
@@ -57,7 +57,7 @@ pub(crate) fn am1_bcc_assign_frame_from_base(
 
             with_block_inserted_res(frame, "atoms", |blk| {
                 blk.insert(keys::CHARGE, Array1::from_vec(charges.clone()).into_dyn())
-                    .map_err(|e| format!("am1_bcc_assign_frame_from_base: insert charge: {e}"))
+                    .map_err(|e| format!("assign_am1_bcc_charges: insert charge: {e}"))
             })?;
             Ok(charges)
         })
@@ -89,7 +89,7 @@ mod tests {
         fref.0
             .with_mut(|frame| *frame = mol.to_frame().expect("methane converts"))
             .unwrap();
-        let charges = am1_bcc_assign_frame_from_base(
+        let charges = assign_am1_bcc_charges(
             &mut fref,
             &[-0.266000, 0.066000, 0.066000, 0.066000, 0.066000],
             "bcc",

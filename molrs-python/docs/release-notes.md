@@ -43,7 +43,8 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
 - Spec defaults are applied in one place, so an absent parameter prices the
   same in every kernel tier, and every missing or ill-typed parameter is a
   typed `IrError` (`MissingParam`, `BadValue`, `NoMixing`, …; Python
-  `molrs.ff.ir.*`, each a `ValueError`). Compile refusals are typed too
+  `molrs.ff.ir.MissingParamError`, `BadValueError`, `NoMixingError`, …, each
+  a `ValueError`). Compile refusals are typed too
   (`CompileError`).
 - `PotentialCompiler.compile` truncates every pair style at its `cutoff`, as
   `compile_typed` and LAMMPS do; `pair coul/long/pme` takes its cell from the
@@ -85,9 +86,10 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   atom order.
 - **GROMACS**: `[ pairtypes ]`, `[ cmaptypes ]`, `[ angletypes ]` funct 5,
   `[ dihedraltypes ]` funct 2, 3, 5 and 9, `#define` macros, `gen-pairs no`,
-  and whole topologies both ways: `read_gromacs_system` returns the force
-  field and a typed frame, `GromacsTopFfWriter::write_system_str` writes one
-  back. GROMACS's own Coulomb constant is kept.
+  and whole topologies both ways: `read_gromacs_top_system` returns the force
+  field and a typed frame, `write_gromacs_top_system`
+  (`GromacsTopForcefieldWriter::write_system_str`) writes one back.
+  GROMACS's own Coulomb constant (`GROMACS_ONE_4PI_EPS0`) is kept.
 - **AMBER prmtop**: chamber (CHARMM) prmtops with Urey–Bradley, CHARMM
   impropers, CMAP and their 1-4 table; ff19SB's CMAP; per-pair `SCEE` /
   `SCNB`; multi-term impropers.
@@ -143,10 +145,11 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
 ### What molpy and molpack used to do on top
 
 The structure-file and geometry helpers molpy and molpack kept as their own
-copies are molrs's now, so both re-export them by identity:
-`molrs.io.read_frame` / `write_frame` pick a format from the file name;
-`Frame.concat` joins frames with their topology offset; `op::vec3::{angle,
-dihedral}` and `op::rigid::nerf` are the internal-coordinate kernels; MOL2
+copies are molrs's now, so both re-export them by identity: every
+structure format has its own door (`molrs.io.read_<fmt>` /
+`write_<fmt>`); `Frame.concat` joins frames with their topology offset;
+`op::vec3::{angle, dihedral}` and `op::place_from_internal_coords` are the
+internal-coordinate kernels; MOL2
 and extended XYZ read straight into canonical columns; a LAMMPS data file
 reads with its type labels as `type` and an optional `atom_style`, writes
 extra type labels and the `fix drude` flags; `read_amber_inpcrd` fills an
@@ -179,15 +182,17 @@ Python alike. The Rust crate root holds subsystems only (`molrs::core`,
 on `molrs::core` / `molrs.core`, with three vocabularies as submodules —
 `core::keys` (every column, frame-meta and graph key, in one place),
 `core::schema` and `core::constants` (every physical and engine constant:
-CODATA values, each engine's Coulomb constant, AMBER's 1-4 divisors, UFF's
-Coulomb constant, unit factors). The cell is `SimBox` in Rust and `Box`
+CODATA values, each engine's Coulomb constant as the engine states it,
+AMBER's and OPLS-AA's 1-4 weights, UFF's and MMFF's Coulomb constants; unit
+conversions are the unit registry's, `UnitRegistry::factor`). The cell is `SimBox` in Rust and `Box`
 everywhere else; the graph is `MolGraph` everywhere; the chemical bond class
 is `BondOrder`, and freud's bond-orientational histogram is
 `BondOrientationalOrder`. Ring perception has one owner,
-`molrs::perceive::perceive_rings`; whole-graph moves are `molrs::op`'s
-(`translate`, `rotate`, `scale`, `center`); the
+`molrs::perceive::perceive_rings`; whole-graph moves are `MolGraph`
+methods (`translate`, `rotate`, `scale`, `center`); the
 record's `ForceFieldSection` and `MOLREC_VERSION` are `molrs::io::mrec`'s.
-`molrs.__version__` is the package version. `molrs.io.raw`,
+`molrs.__version__` is the package version, and the native extension is
+`molrs._native`. `molrs.io.raw`,
 `molrs.fields` and the alias functions are gone — every reader emits the
 canonical column names. A function's `__module__` names its public path as
 a class's does. The [migration guide](migration.md#python-paths) lists every
@@ -347,6 +352,36 @@ lists each one.
 
 See [Wave S5](migration.md#wave-s5-bindings) for every rename.
 
+### Units, and the last residual names
+
+- **One definition per unit.** Every unit conversion goes through the unit
+  registry — Rust `UnitFactor::new("kcal", "kJ")` (a `static`, resolved
+  once), `UnitRegistry::factor`, `Quantity::to`; Python
+  `molrs.core.UnitRegistry().factor("kcal", "kJ")` — and the registry's
+  units are built from the CODATA constants. `core::constants` keeps
+  physical and engine constants only: `KJ_PER_KCAL`, `ANGSTROM_PER_NM`,
+  `ANGSTROM_PER_BOHR`, `ANGSTROM3_PER_CM3` and the other factors are gone,
+  and OpenMM's and GROMACS's Coulomb constants are stated as the engines
+  state them (`OPENMM_ONE_4PI_EPS0`, `GROMACS_ONE_4PI_EPS0`, kJ·nm). Bohr is
+  CODATA 2018 everywhere (it was 2014 in `ANGSTROM_PER_BOHR`); the `micro`
+  and `nano` unit presets now state `k_B` and `k_e` in their own units.
+- **Doors that name their format.** `read_gromacs_top_system` /
+  `write_gromacs_top_system`, `read_lammps_dump_trajectory` /
+  `write_lammps_dump_trajectory`; the frame wire codecs
+  (`read_msgpack_frame_bytes`, `read_json_frame_str`, …) are `molrs::io`
+  doors, and every Python force-field door has its Rust twin in
+  `molrs::io`.
+- **The native module is `molrs._native`** (was `molrs._lib`).
+- **One spelling per name.** Counts are `n_*` in every binding
+  (`Block.n_rows`, JS `nRows`, C `molrs_block_n_rows` /
+  `molrs_block_n_columns`, C++ `frame_block_n_rows`, `n_rebuilds`,
+  `n_clients`); `DType` variants are the dtype names (`I8`, `U16`, `Uint`,
+  `C128`, …); Python takes `box=`; `MolGraph` owns its rigid-body moves
+  (`MolGraph::translate`, `rotate`, `scale`, `center`), so `op` is purely
+  numeric; C `molrs_schema_document`, C++ `assign_am1_bcc_charges`.
+
+See [Wave S6](migration.md#wave-s6-residual-names) for every rename.
+
 ### Packaging
 
 - FFI capsules move to the `0.16` ABI line (`molrs.FrameRef/0.16`, …):
@@ -381,14 +416,14 @@ refuse what they used to drop or mistranslate; the
   as an `<NBFixPair>` of a `<LennardJonesForce>` (0.15.0 wrote it as an
   `<Atom>` row).
 - A cross row is a `pair` table row with `itom != jtom` in a record's
-  `forcefield` section, so it round-trips through `ForceField.to_section` /
-  `from_section` and `*.mrec`.
+  `forcefield` section, so it round-trips through
+  `ForceFieldSection.from_forcefield` / `to_forcefield` and `*.mrec`.
 - A pair is found by its two atom types in either order, so a pair style
   holds one row per pair. `def_type` restating a pair already defined (`B-A`
   after `A-B`, or a second name on `A-B`) is a no-op when the parameters are
   equal and a `ValueError` when they differ; a stored `forcefield` section
   whose `pair` table restates a pair with other parameters is
-  refused by `ForceFieldSection.validate()`, `ForceField.from_section` and
+  refused by `ForceFieldSection.validate()`, `ForceFieldSection.to_forcefield` and
   every `*.mrec` reader (molrec forcefield, linking rule 3). `name` and the
   annotation columns (`desc`, `doi`, `smarts`, …) are not compared.
 - The AMBER prmtop reader states `mixing = arithmetic` on its `lj/cut` style
@@ -448,7 +483,9 @@ flat-ring torsions RDKit applies are now applied, and the second stage's
 torsion and planarity forces are analytic instead of finite differences.
 
 Records molrs 0.16 writes are version 2 and cannot be read by 0.15. A
-`ForceField` pickled by 0.15 does not unpickle in 0.16.
+`ForceField` pickled by 0.15 does not unpickle in 0.16, nor does any object
+pickled under `molrs._lib` (0.15 and earlier 0.16 builds) or under a
+Python path that moved.
 
 See the [migration guide](migration.md) for every breaking change.
 

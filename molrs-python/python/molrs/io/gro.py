@@ -6,6 +6,6 @@ The doors are functions of :mod:`molrs.io` (:func:`~molrs.io.read_gro`,
 reader, :class:`GroReader`.
 """
 
-from .._lib import GroReader
+from .._native import GroReader
 
 __all__ = ["GroReader"]

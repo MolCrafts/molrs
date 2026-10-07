@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from .._lib import (
+from .._native import (
     ForceField,
     NeighborList,
     PotentialCompiler,
@@ -20,7 +20,7 @@ from .._lib import (
     kinetic_energy,
     kinetic_temperature,
 )
-from .._lib import md as _md
+from .._native import md as _md
 
 _NEIGHBOR_DEFAULTS = {
     "cutoff": None,
@@ -61,7 +61,7 @@ class MdDriver:
     Precision is ``MdDriver(dtype=np.float64)`` only; float32 / mixed belong in
     the Rust integrator.
 
-    After :meth:`run`, :attr:`n_edges` / :attr:`rebuild_count` /
+    After :meth:`run`, :attr:`n_edges` / :attr:`n_rebuilds` /
     :attr:`ago` report the run's neighbour state (``None`` when the run had
     no neighbour list) and :attr:`thermo` holds the sampled observables.
     """
@@ -184,9 +184,9 @@ class MdDriver:
         return None if self._integrator is None else self._integrator.n_edges
 
     @property
-    def rebuild_count(self) -> int | None:
+    def n_rebuilds(self) -> int | None:
         """Neighbour rebuilds during the last run (``None`` without neighbors)."""
-        return None if self._integrator is None else self._integrator.rebuild_count
+        return None if self._integrator is None else self._integrator.n_rebuilds
 
     @property
     def ago(self) -> int | None:
@@ -324,7 +324,7 @@ class MdDriver:
             # The cell the positions are folded into each step. Without it
             # `MdState.images` stays zero and the wrapped coordinates lose the
             # history that makes them readable as a trajectory.
-            simbox=getattr(frame, "box", None),
+            box=getattr(frame, "box", None),
         )
 
     def run(

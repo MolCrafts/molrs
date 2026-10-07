@@ -20,7 +20,7 @@ use molrs::core::schema;
 /// # C signature
 ///
 /// ```c
-/// char* molrs_schema_json(void);
+/// char* molrs_schema_document(void);
 /// ```
 ///
 /// # Returns
@@ -35,7 +35,7 @@ use molrs::core::schema;
 ///
 /// The returned pointer must be freed exactly once with `molrs_free_string`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_schema_json() -> *mut c_char {
+pub unsafe extern "C" fn molrs_schema_document() -> *mut c_char {
     CString::new(schema::document().to_json())
         .expect("schema JSON contains no interior NUL")
         .into_raw()
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn json_is_valid_and_non_empty() {
-        let p = unsafe { molrs_schema_json() };
+        let p = unsafe { molrs_schema_document() };
         assert!(!p.is_null());
         let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_string();
         unsafe { crate::molrs_free_string(p) };

@@ -1242,14 +1242,14 @@ modified Bondi radii (mbondi2)
             Some("TFSI")
         );
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(16));
+        assert_eq!(atoms.n_rows(), Some(16));
         let bonds = frame.get("bonds").unwrap();
-        assert_eq!(bonds.nrows(), Some(14));
+        assert_eq!(bonds.n_rows(), Some(14));
         let angles = frame.get("angles").unwrap();
-        assert_eq!(angles.nrows(), Some(25));
+        assert_eq!(angles.n_rows(), Some(25));
         // 27 prmtop rows (meta, from POINTERS) are 24 torsions (rows).
         let dihedrals = frame.get("dihedrals").unwrap();
-        assert_eq!(dihedrals.nrows(), Some(24));
+        assert_eq!(dihedrals.n_rows(), Some(24));
     }
 
     /// An angle's `type` is the force-field reader's type name: its end atom
@@ -1658,7 +1658,7 @@ c3  c3  c3  c3
             .expect("prmtop must produce the exclusions block PME already reads");
         // NNB = 65 entries, two of which are the `0` placeholders of the two
         // atoms that exclude nothing (F3, index 14; Li, index 15).
-        assert_eq!(excl.nrows(), Some(63));
+        assert_eq!(excl.n_rows(), Some(63));
         let atomi = excl
             .get("atomi")
             .and_then(|c| c.as_uint())
@@ -1697,7 +1697,7 @@ c3  c3  c3  c3
         let excl = frame
             .get("exclusions")
             .expect("an all-placeholder list still yields a schema-typed empty block");
-        assert_eq!(excl.nrows(), Some(0));
+        assert_eq!(excl.n_rows(), Some(0));
         assert!(
             excl.get("atomi").and_then(|c| c.as_uint()).is_some(),
             "atomi column must exist"
@@ -1749,7 +1749,7 @@ c3  c3  c3  c3
         // star4: `0 3 -6 9 1` is the one proper; `0 3 -6 -9 2` and
         // `3 0 6 -9 2` are impropers, only the first with a negative 3rd pointer.
         let frame = frame_from(&star4());
-        assert_eq!(frame.get("dihedrals").unwrap().nrows(), Some(1));
+        assert_eq!(frame.get("dihedrals").unwrap().n_rows(), Some(1));
         let impropers = frame
             .get("impropers")
             .expect("a negative 4th pointer puts the row in impropers");
@@ -1855,7 +1855,7 @@ MOL
                 .unwrap_or_else(|| panic!("{k} column"))
         };
         let (i, j, k, l) = (col("atomi"), col("atomj"), col("atomk"), col("atoml"));
-        (0..block.nrows().unwrap_or(0))
+        (0..block.n_rows().unwrap_or(0))
             .map(|r| [i[[r]], j[[r]], k[[r]], l[[r]]])
             .collect()
     }
@@ -1891,7 +1891,7 @@ MOL
             "       0       3      -6       9       1       0       3      -6       9       2",
         ));
         let dihedrals = frame.get("dihedrals").unwrap();
-        assert_eq!(dihedrals.nrows(), Some(1));
+        assert_eq!(dihedrals.n_rows(), Some(1));
         assert!(
             dihedrals
                 .get("exclude_14")
@@ -1982,7 +1982,7 @@ MOL
         let text = String::from_utf8(buf).unwrap();
         assert!(text.contains("\n1 dihedrals\n"), "{text}");
         let back = read_lammps_data_bytes(text.as_bytes()).expect("read back");
-        assert_eq!(back.get("dihedrals").unwrap().nrows(), Some(1));
+        assert_eq!(back.get("dihedrals").unwrap().n_rows(), Some(1));
     }
 
     // -----------------------------------------------------------------

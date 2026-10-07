@@ -298,6 +298,13 @@ impl PyUnitRegistry {
         self.parse_inner(expression)
     }
 
+    /// The factor converting a value in ``from_unit`` to ``to_unit``
+    /// (``value_to = value_from * factor``); a power of ten is the correctly
+    /// rounded one (Å → nm is ``0.1``).
+    fn factor(&self, from_unit: &str, to_unit: &str) -> PyResult<f64> {
+        self.inner.factor(from_unit, to_unit).map_err(units_error)
+    }
+
     fn quantity(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
         self.inner
             .quantity(value, expression)
@@ -533,40 +540,10 @@ impl PyUnitPreset {
 }
 
 /// Register `molrs.core.constants`: every constant of
-/// `molrs::core::constants`, by its Rust name.
+/// `molrs::core::constants` ([`molrs::core::constants::ALL`]), by its Rust
+/// name.
 pub fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    use molrs::core::constants as c;
-    for (name, value) in [
-        ("AVOGADRO", c::AVOGADRO),
-        ("BOLTZMANN", c::BOLTZMANN),
-        ("GAS_CONSTANT", c::GAS_CONSTANT),
-        ("ELEMENTARY_CHARGE", c::ELEMENTARY_CHARGE),
-        ("COULOMB_REAL", c::COULOMB_REAL),
-        ("COULOMB_METAL", c::COULOMB_METAL),
-        ("AMBER_COULOMB", c::AMBER_COULOMB),
-        ("AMBER_CHARGE_FACTOR", c::AMBER_CHARGE_FACTOR),
-        ("CHARMM_COULOMB", c::CHARMM_COULOMB),
-        ("OPENMM_COULOMB", c::OPENMM_COULOMB),
-        ("GROMACS_COULOMB", c::GROMACS_COULOMB),
-        ("KJ_PER_KCAL", c::KJ_PER_KCAL),
-        ("ANGSTROM_PER_NM", c::ANGSTROM_PER_NM),
-        ("ANGSTROM_PER_BOHR", c::ANGSTROM_PER_BOHR),
-        ("BOLTZMANN_REAL", c::BOLTZMANN_REAL),
-        ("ANGSTROM_M", c::ANGSTROM_M),
-        ("FEMTOSECOND_S", c::FEMTOSECOND_S),
-        ("SPEED_OF_LIGHT", c::SPEED_OF_LIGHT),
-        ("SECOND_RADIATION_CONSTANT", c::SECOND_RADIATION_CONSTANT),
-        ("CENTIMETER_PER_METER", c::CENTIMETER_PER_METER),
-        ("ANGSTROM3_PER_CM3", c::ANGSTROM3_PER_CM3),
-        (
-            "KCAL_MOL_PER_MDYNE_ANGSTROM",
-            c::KCAL_MOL_PER_MDYNE_ANGSTROM,
-        ),
-        ("VACUUM_DIELECTRIC", c::VACUUM_DIELECTRIC),
-        ("UFF_COULOMB", c::UFF_COULOMB),
-        ("AMBER_SCEE", c::AMBER_SCEE),
-        ("AMBER_SCNB", c::AMBER_SCNB),
-    ] {
+    for &(name, value) in molrs::core::constants::ALL {
         m.add(name, value)?;
     }
     Ok(())

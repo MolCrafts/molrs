@@ -22,7 +22,7 @@ pub struct BlockView<'a> {
     targets: IndexMap<&'a str, &'a str>,
     /// Borrowed structural shape of the viewed block, if it declares one.
     shape: Option<&'a [usize]>,
-    nrows: Option<usize>,
+    n_rows: Option<usize>,
 }
 
 impl<'a> BlockView<'a> {
@@ -34,18 +34,18 @@ impl<'a> BlockView<'a> {
             precision: IndexMap::new(),
             targets: IndexMap::new(),
             shape: None,
-            nrows: None,
+            n_rows: None,
         }
     }
 
     /// Inserts a column view under the given key.
     ///
-    /// If the `BlockView` was empty, `nrows` is set from the column's axis-0
+    /// If the `BlockView` was empty, `n_rows` is set from the column's axis-0
     /// length. Subsequent insertions are not validated for consistency (caller
     /// is responsible).
     pub fn insert(&mut self, key: &'a str, col: ColumnView<'a>) {
-        if self.nrows.is_none() {
-            self.nrows = col.nrows();
+        if self.n_rows.is_none() {
+            self.n_rows = col.n_rows();
         }
         self.map.insert(key, col);
     }
@@ -64,8 +64,8 @@ impl<'a> BlockView<'a> {
 
     /// Returns the common axis-0 length, or `None` if empty.
     #[inline]
-    pub fn nrows(&self) -> Option<usize> {
-        self.nrows
+    pub fn n_rows(&self) -> Option<usize> {
+        self.n_rows
     }
 
     /// Returns `true` if the view contains the specified key.
@@ -151,7 +151,7 @@ impl<'a> From<&'a Block> for BlockView<'a> {
             precision: block.precisions().collect(),
             targets: block.targets().collect(),
             shape: block.structural_shape(),
-            nrows: block.nrows(),
+            n_rows: block.n_rows(),
         };
         for (key, col) in block.iter() {
             view.map.insert(key, ColumnView::from(col));
@@ -214,7 +214,7 @@ mod tests {
 
         let view = BlockView::from(&block);
         assert_eq!(view.len(), 2);
-        assert_eq!(view.nrows(), Some(3));
+        assert_eq!(view.n_rows(), Some(3));
         assert!(view.contains_key("x"));
         assert!(view.contains_key("id"));
         assert!(!view.is_empty());
@@ -257,7 +257,7 @@ mod tests {
         let view = BlockView::from(&block);
         let owned = view.to_owned();
 
-        assert_eq!(owned.nrows(), Some(3));
+        assert_eq!(owned.n_rows(), Some(3));
         assert_eq!(owned.len(), 2);
         assert_eq!(
             owned
@@ -297,7 +297,7 @@ mod tests {
         let view = BlockView::new();
         assert!(view.is_empty());
         assert_eq!(view.len(), 0);
-        assert_eq!(view.nrows(), None);
+        assert_eq!(view.n_rows(), None);
     }
 
     #[test]

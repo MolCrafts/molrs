@@ -64,7 +64,7 @@ pub(crate) fn is_element_symbol(symbol: &str) -> bool {
 /// `BigSMILES` bonding descriptors ([`BondingDescriptor`](ast::BondingDescriptor)),
 /// the bracketed joining-site markers `[$]`, `[<]`, `[>]` and `[!]`. It is
 /// selected by [`parser::parse_fragment_smiles`] and
-/// [`writer::write_fragment_smiles`] only — the plain-SMILES entry points stay
+/// [`writer::fragment_smiles_text`] only — the plain-SMILES entry points stay
 /// strict, so no `.smi` line can silently carry descriptors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Dialect {

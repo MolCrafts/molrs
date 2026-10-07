@@ -125,7 +125,7 @@ fn persisted_expression<'a>(style: &'a Style, registry: &'a Registry) -> Option<
     })
 }
 
-fn style_entry(style: &Style, registry: &Registry) -> Result<JsonValue, String> {
+fn section_style(style: &Style, registry: &Registry) -> Result<JsonValue, String> {
     let what = || format!("{}/{} style params", style.category(), style.name());
     let mut entry = JsonMap::new();
     entry.insert("category".into(), style.category().into());
@@ -282,7 +282,7 @@ fn param_column(
             None | Some(DType::Float) => Column::from_float(
                 ArrayD::from_shape_vec(shape, numbers).expect("one value per row"),
             ),
-            Some(DType::UInt) => {
+            Some(DType::Uint) => {
                 let mut values = Vec::with_capacity(numbers.len());
                 for (n, valid) in numbers.iter().zip(&validity) {
                     if *valid && !(n.fract() == 0.0 && *n >= 0.0 && *n < u64::MAX as f64) {
@@ -485,7 +485,7 @@ impl ForceFieldSection {
         let mut entries = Vec::with_capacity(ff.styles().len());
         let mut tables = IndexMap::with_capacity(ff.styles().len());
         for style in ff.styles() {
-            entries.push(style_entry(style, registry)?);
+            entries.push(section_style(style, registry)?);
             tables.insert(
                 style_block_name(style.category(), style.name()),
                 style_table(style)?,
@@ -757,7 +757,7 @@ mod tests {
         let section = ForceFieldSection::from_forcefield(&ff).unwrap();
         let atoms = section.table("atom", "full").unwrap();
         assert_eq!(atoms.dtype("class"), Some(DType::String));
-        assert_eq!(atoms.dtype("atomic_number"), Some(DType::UInt));
+        assert_eq!(atoms.dtype("atomic_number"), Some(DType::Uint));
         // `X` is the empty-string wildcard.
         let dihedrals = section.table("dihedral", "periodic").unwrap();
         let itom = dihedrals.get("itom").and_then(Column::as_string).unwrap();

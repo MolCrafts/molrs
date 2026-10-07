@@ -11,7 +11,7 @@ No file format is here. Every force-field file reader and writer —
 :mod:`molrs.io`, as every other file reader and writer is.
 """
 
-from .._lib import (
+from .._native import (
     AngleStyle,
     AngleType,
     AtomStyle,

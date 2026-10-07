@@ -57,7 +57,8 @@ def tleap(script, cwd):
     with open(os.path.join(cwd, "leap.in"), "w") as f:
         f.write(script + "\nquit\n")
     run("tleap -f leap.in > leap.log 2>&1", cwd)
-    log = open(os.path.join(cwd, "leap.log")).read()
+    with open(os.path.join(cwd, "leap.log")) as f:
+        log = f.read()
     m = re.search(r"Errors = (\d+)", log)
     if m is None or int(m.group(1)) != 0:
         sys.exit(f"tleap failed in {cwd}:\n{log}")
@@ -165,7 +166,8 @@ def gaff2_multi(parm, xyz, out):
 
 def rewrite_floats(path, flag, values):
     """Replace the data of ``%FLAG flag`` (``5E16.8``) in place."""
-    lines = open(path).read().split("\n")
+    with open(path) as f:
+        lines = f.read().split("\n")
     start = lines.index(f"%FLAG {flag}")
     if not lines[start + 1].startswith("%FORMAT(5E16.8)"):
         sys.exit(f"{flag}: unexpected format {lines[start + 1]}")
@@ -174,7 +176,8 @@ def rewrite_floats(path, flag, values):
         end += 1
     body = ["".join(f"{v:16.8E}" for v in values[i:i + 5]) for i in range(0, len(values), 5)]
     lines[start + 2:end] = body
-    open(path, "w").write("\n".join(lines))
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
 
 
 def glycam(out, work):
@@ -210,7 +213,9 @@ AGLC_RENAME = {"H6O": "HO6", "H4O": "HO4", "H3O": "HO3", "H2O": "HO2"}
 def rtf_block(path, resname):
     """The IMPR and CMAP atom-name tuples of residue ``resname``."""
     impr, cmap, inside = [], [], False
-    for line in open(path):
+    with open(path) as f:
+        text = f.read().splitlines()
+    for line in text:
         line = line.split("!")[0]
         words = line.split()
         if not words:
@@ -221,7 +226,7 @@ def rtf_block(path, resname):
             continue
         if not inside:
             continue
-        if key.startswith("IMPR") or key.startswith("IMPH"):
+        if key.startswith(("IMPR", "IMPH")):
             names = words[1:]
             impr.extend(tuple(names[i:i + 4]) for i in range(0, len(names), 4))
         elif key == "CMAP":

@@ -5,7 +5,7 @@ Rust `///` comments. Zensical pages may explain workflows and concepts, but
 reference pages should inject generated API docs or link to generated API docs
 instead of copying signatures by hand.
 
-For Python, keep `molrs-python/python/molrs/_lib.pyi` synchronized with the
+For Python, keep `molrs-python/python/molrs/_native.pyi` synchronized with the
 PyO3 module exports. `molrs-python/tests/test_stub_parity.py` is the freshness
 guard and runs in `tox -e py`: it fails when a compiled export is missing from
 the stub, and when a parameter name differs between the stub and the compiled

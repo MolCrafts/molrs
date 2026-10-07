@@ -17,7 +17,7 @@ Coarse-graining: :class:`Coarsener` maps disjoint node groups of a held
 at its group's centre of mass with an axis from the group's first member.
 """
 
-from ._lib import (
+from ._native import (
     Assembler,
     AxisOrienter,
     CarbonTubeBuilder,

@@ -3,10 +3,10 @@
 Weighted rigid superposition (Horn quaternion with a scale-free eigen-gap
 test) and weighted centroids. Points cross as ``(k, 3)`` float64 arrays and
 rotations as ``(3, 3)`` row-major matrices. All computation is in Rust; this
-module is a thin re-export of ``_lib.op``.
+module is a thin re-export of ``_native.op``.
 """
 
-from ._lib import op as _op
+from ._native import op as _op
 
 DEFAULT_GAP_TOL = _op.DEFAULT_GAP_TOL
 Superposition = _op.Superposition

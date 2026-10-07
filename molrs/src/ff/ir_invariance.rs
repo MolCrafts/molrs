@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 
 use ndarray::Array1;
 
+use crate::core::UnitFactor;
 use crate::ff::forcefield::ForceField;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
@@ -40,6 +41,9 @@ use crate::io::reader::ForceFieldReader;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};
+
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// Per `(category/style)`, the energy of that style alone on `frame`.
 fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
@@ -418,7 +422,8 @@ fn file_read_fields_price_as_in_0_15() {
     // (its ONE_4PI_EPS0, CODATA 2018); 0.15.1 stated LAMMPS real's. The
     // energy is 0.15.1's times their ratio, exactly.
     let coul = gmx_energies.remove("pair/coul/cut").unwrap();
-    let ratio = crate::core::constants::GROMACS_COULOMB / 332.06371;
+    let ratio =
+        (crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()) / 332.06371;
     let want = -10.706661989420029 * ratio;
     assert!(
         (coul - want).abs() <= 1e-12 * want.abs(),
@@ -445,7 +450,8 @@ fn file_read_fields_price_as_in_0_15() {
     // (ONE_4PI_EPS0 = 332.06371329919216 kcal·Å/(mol·e²)); 0.15.1 used LAMMPS
     // real's 332.06371. The energy is 0.15.1's times their ratio, exactly.
     let coul = omm_energies.remove("pair/coul/cut").unwrap();
-    let ratio = crate::core::constants::OPENMM_COULOMB / 332.06371;
+    let ratio =
+        (crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()) / 332.06371;
     let want = -10.706661989738114 * ratio;
     assert!(
         (coul - want).abs() <= 1e-12 * want.abs(),
@@ -571,7 +577,7 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
     let mut frame = typed.to_frame().unwrap();
     let mut atoms = frame.get("atoms").unwrap().clone();
     if atoms.get("charge").is_none() {
-        let n = atoms.nrows().unwrap();
+        let n = atoms.n_rows().unwrap();
         let q: Vec<f64> = (0..n).map(|i| 0.1 * ((i % 5) as f64 - 2.0)).collect();
         atoms.insert("charge", col_f(q)).unwrap();
         frame.insert("atoms", atoms);

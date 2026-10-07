@@ -4,10 +4,10 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::core::CenterError;
 use crate::core::MolGraph;
 use crate::core::PortKind;
 use crate::core::RelationId;
-use crate::op::CenterError;
 use crate::op::vec3::{add, normalize, scale, sub};
 use crate::op::{DEFAULT_GAP_TOL, superpose};
 use crate::op::{F, Mat3, Vec3};
@@ -143,7 +143,8 @@ impl TemplateGeometry {
                 .position()
                 .ok_or_else(|| OrientError::Template("a port atom has no x/y/z".to_owned()))
         };
-        let center = crate::op::center(template, &template.node_ids().collect::<Vec<_>>())
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
             .map_err(OrientError::Center)?;
         let mut ports = HashMap::new();
         let (mut left, mut right) = (Vec::new(), Vec::new());

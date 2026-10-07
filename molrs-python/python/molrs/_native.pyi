@@ -2,7 +2,7 @@
 
 Hand-maintained. Keep in sync with the PyO3 source in `molrs-python/src/**.rs`
 on every PR that touches `#[pyfunction]` or `#[pyclass]`. `tests/test_stub_parity.py`
-is the freshness guard: every compiled `_lib` export must be declared here, with
+is the freshness guard: every compiled `_native` export must be declared here, with
 the same parameter names as the compiled signature.
 """
 
@@ -59,7 +59,8 @@ def _ffi_abi_token() -> tuple[str, str, str, str, str]:
 class BlockDtypeError(TypeError):
     """Raised by ``Block.insert`` for a non-numpy-representable column.
 
-    The Rust Store holds only float / int / bool / str columns. Object-dtype,
+    A Block holds numeric (float, int, uint and their fixed widths, complex),
+    bool and str columns. Object-dtype,
     None-bearing, and ragged/mixed arrays are rejected fail-fast; the message
     names the column and the detected dtype. Subclasses ``TypeError``.
     """
@@ -181,7 +182,7 @@ class NeighborList:
         self,
         cutoff: float,
         points: ArrayF | None = None,
-        simbox: Box | None = None,
+        box: Box | None = None,
         brute_force: bool = False,
     ) -> None: ...
     @staticmethod
@@ -250,7 +251,7 @@ class VerletSkin:
         delay: int = 0,
         check: bool = True,
         ago: int = 0,
-        rebuild_count: int = 0,
+        n_rebuilds: int = 0,
         ndanger: int = 0,
     ) -> None: ...
     @property
@@ -260,7 +261,7 @@ class VerletSkin:
     @property
     def n_edges(self) -> int: ...
     @property
-    def rebuild_count(self) -> int: ...
+    def n_rebuilds(self) -> int: ...
     @property
     def ago(self) -> int: ...
     def update(self, positions: ArrayF) -> bool: ...
@@ -393,7 +394,7 @@ class Block:
         """
     @property
     def coords(self) -> ArrayF:
-        """``(nrows, 3)`` float64 copy of the ``x`` / ``y`` / ``z`` columns.
+        """``(n_rows, 3)`` float64 copy of the ``x`` / ``y`` / ``z`` columns.
         Raises ``KeyError`` if one is missing."""
     @coords.setter
     def coords(self, value: npt.ArrayLike) -> None:
@@ -447,12 +448,12 @@ class Block:
     def __len__(self) -> int: ...
     def __contains__(self, key: object) -> bool: ...
     @property
-    def nrows(self) -> int: ...
+    def n_rows(self) -> int: ...
     @property
     def shape(self) -> list[int]: ...
     @property
     def structural_shape(self) -> list[int] | None: ...
-    def resize(self, nrows: int) -> None: ...
+    def resize(self, n_rows: int) -> None: ...
     def set_shape(self, shape: Sequence[int]) -> None: ...
     def keys(self) -> list[str]: ...
     def remove(self, key: ColumnKey) -> None: ...
@@ -611,7 +612,7 @@ class Frame:
         """Deep copy: blocks (new buffers), box and typed meta."""
     def subset(self, rows: npt.ArrayLike, block: str = "atoms") -> Frame:
         """A new frame holding the selected rows of ``block``: a 1-D bool mask
-        (``True`` rows, in order) or 1-D int rows (``-nrows <= i`` wraps). Every
+        (``True`` rows, in order) or 1-D int rows (``-n_rows <= i`` wraps). Every
         relation block indexing ``block`` keeps only the rows whose endpoints
         are all selected, renumbered. Other blocks, the box and ``meta`` are
         copied; values keep their units (Å). This frame is never modified.
@@ -621,7 +622,7 @@ class Frame:
         KeyError
             no block ``block``.
         IndexError
-            a mask of the wrong length, an index below ``-nrows``,
+            a mask of the wrong length, an index below ``-n_rows``,
             a selector that is not 1-D.
         TypeError
             a selector that is neither bool nor integer.
@@ -721,7 +722,7 @@ class Publisher:
     @property
     def address(self) -> str: ...
     @property
-    def client_count(self) -> int: ...
+    def n_clients(self) -> int: ...
     def send(self, frame: Frame) -> None: ...
     def recv_command(self, timeout: float = 0.0) -> ControlCommand | None: ...
     def close(self) -> None: ...
@@ -1158,6 +1159,7 @@ class UnitRegistry:
         *,
         empty: bool = False,
     ) -> None: ...
+    def factor(self, from_unit: str, to_unit: str) -> float: ...
     def parse(self, expression: str) -> Unit: ...
     def quantity(self, value: float, expression: str) -> Quantity: ...
     def define(
@@ -2167,26 +2169,27 @@ class constants:
     BOLTZMANN: float
     GAS_CONSTANT: float
     ELEMENTARY_CHARGE: float
+    PLANCK: float
+    BOHR_RADIUS: float
+    HARTREE_ENERGY: float
+    ATOMIC_MASS_CONSTANT: float
+    COULOMB_CONSTANT: float
     COULOMB_REAL: float
     COULOMB_METAL: float
     AMBER_COULOMB: float
     AMBER_CHARGE_FACTOR: float
     CHARMM_COULOMB: float
-    OPENMM_COULOMB: float
-    GROMACS_COULOMB: float
-    KJ_PER_KCAL: float
-    ANGSTROM_PER_NM: float
-    ANGSTROM_PER_BOHR: float
+    OPENMM_ONE_4PI_EPS0: float
+    GROMACS_ONE_4PI_EPS0: float
     BOLTZMANN_REAL: float
-    ANGSTROM_M: float
-    FEMTOSECOND_S: float
     SPEED_OF_LIGHT: float
     SECOND_RADIATION_CONSTANT: float
-    CENTIMETER_PER_METER: float
-    ANGSTROM3_PER_CM3: float
     KCAL_MOL_PER_MDYNE_ANGSTROM: float
     VACUUM_DIELECTRIC: float
     UFF_COULOMB: float
+    MMFF_COULOMB: float
+    OPLS_LJ_14: float
+    OPLS_COULOMB_14: float
     AMBER_SCEE: float
     AMBER_SCNB: float
 
@@ -2727,7 +2730,7 @@ class LammpsDumpReader:
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-def read_lammps_trajectory(paths: PathInput | Sequence[PathInput]) -> LammpsDumpReader:
+def read_lammps_dump_trajectory(paths: PathInput | Sequence[PathInput]) -> LammpsDumpReader:
     """Open one LAMMPS dump trajectory, or several whose frames are concatenated."""
 
 class DcdReader:
@@ -2850,7 +2853,7 @@ def write_lammps_data(
     """Write a LAMMPS data file. ``type_labels`` declares extra labels per
     block (``{"atoms": [...], ...}``) even when no row uses them; a Drude
     system gets a ``fix drude`` flags header comment."""
-def write_lammps_trajectory(
+def write_lammps_dump_trajectory(
     path: PathInput, frames: Sequence[Frame], columns: Sequence[str] | None = None
 ) -> None: ...
 def write_lammps_dump_local(path: PathInput, frames: Sequence[Frame]) -> None: ...
@@ -3854,12 +3857,12 @@ def write_molrs_xml_forcefield(path: PathInput, forcefield: ForceField) -> None:
 def read_openmm_xml_forcefield(path: PathInput) -> ForceField:
     """Read an OpenMM force-field XML file into the force-field IR."""
 def read_lammps_forcefield(path: PathInput) -> ForceField: ...
-def write_gromacs_system(
+def write_gromacs_top_system(
     path: PathInput, forcefield: ForceField, frame: Frame, *, precision: int = 6
 ) -> None:
     """Write ``forcefield`` and the typed ``frame`` as one GROMACS topology
     (directives, one ``[ moleculetype ]`` per molecule, ``[ system ]``,
-    ``[ molecules ]``): the inverse of :func:`read_gromacs_system`. Raises
+    ``[ molecules ]``): the inverse of :func:`read_gromacs_top_system`. Raises
     ``ValueError`` for what GROMACS cannot express."""
 
 def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, float]]:
@@ -3952,7 +3955,7 @@ class ScalarObservable:
     def __init__(
         self,
         name: str,
-        data: _ObservableScalarData,
+        values: _ObservableScalarData,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,
@@ -3964,7 +3967,7 @@ class ScalarObservable:
     @property
     def name(self) -> str: ...
     @property
-    def data(self) -> npt.NDArray | list[str] | str: ...
+    def values(self) -> npt.NDArray | list[str] | str: ...
     @property
     def kind(self) -> str: ...
     @property
@@ -3986,7 +3989,7 @@ class VectorObservable:
     def __init__(
         self,
         name: str,
-        data: _ObservableScalarData,
+        values: _ObservableScalarData,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,
@@ -3998,7 +4001,7 @@ class VectorObservable:
     @property
     def name(self) -> str: ...
     @property
-    def data(self) -> npt.NDArray | list[str] | str: ...
+    def values(self) -> npt.NDArray | list[str] | str: ...
     @property
     def kind(self) -> str: ...
     @property
@@ -4017,7 +4020,7 @@ class VectorObservable:
     def target(self) -> str | None: ...
 
 class mrec:
-    """The ``_lib.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: the
+    """The ``_native.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: the
     record store's reader, writer, schema and force-field section. The
     whole-record doors are flat (``read_mrec`` / ``write_mrec`` and
     partners), as :mod:`molrs.io`'s."""
@@ -4859,7 +4862,7 @@ class PairLjCut:
 # ---------------------------------------------------------------------------
 
 class md:
-    """The ``_lib.md`` submodule (``molrs.md``): NVE/Langevin integrators.
+    """The ``_native.md`` submodule (``molrs.md``): NVE/Langevin integrators.
     MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
     collection, or any object with ``calc_energy_forces``.
 
@@ -4922,7 +4925,7 @@ class md:
             potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
-            simbox: Box | None = None,
+            box: Box | None = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...
@@ -4931,7 +4934,7 @@ class md:
         @property
         def n_edges(self) -> int | None: ...
         @property
-        def rebuild_count(self) -> int | None: ...
+        def n_rebuilds(self) -> int | None: ...
         @property
         def ago(self) -> int | None: ...
         def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
@@ -4955,7 +4958,7 @@ class md:
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,
-            simbox: Box | None = None,
+            box: Box | None = None,
         ) -> None: ...
         @property
         def dt(self) -> float: ...
@@ -4974,7 +4977,7 @@ class md:
         @property
         def n_edges(self) -> int | None: ...
         @property
-        def rebuild_count(self) -> int | None: ...
+        def n_rebuilds(self) -> int | None: ...
         @property
         def ago(self) -> int | None: ...
         def initial(self, pos: ArrayF, vel: ArrayF) -> md.MdState: ...
@@ -5002,7 +5005,7 @@ class md:
         def velocities(self, pos: ArrayF, mass: float | ArrayF) -> ArrayF: ...
 
 class ir:
-    """The ``_lib.ir`` submodule: the force-field IR registry
+    """The ``_native.ir`` submodule: the force-field IR registry
     (``molrs::ff::ir``), surfaced as :mod:`molrs.ff.ir`.
 
     Register a category or a style — by an expression, a vectorised Python
@@ -5210,7 +5213,7 @@ def xcorr_fft(a: ArrayF, b: ArrayF, max_lag: int) -> ArrayF:
 # ---------------------------------------------------------------------------
 # Exports declared from the compiled module's own signatures.
 #
-# These are real `_lib` exports whose declarations were missing here. The
+# These are real `_native` exports whose declarations were missing here. The
 # signatures below are the PyO3 `text_signature`s verbatim; annotations are
 # only added where the parameter name fixes the type beyond doubt.
 # ---------------------------------------------------------------------------
@@ -5429,7 +5432,7 @@ def decompose_current(
     """Split a per-particle current into the masked part and the rest."""
 
 def read_lammps_log_str(
-    text: str, path: str = "<string>", style: str = "default"
+    text: str, source_name: str = "<string>", style: str = "default"
 ) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
 
@@ -5462,11 +5465,11 @@ def read_gromacs_top_forcefield(
     ``[ angletypes ]`` (funct 5: ``angle charmm``), ``[ dihedraltypes ]``
     (funct 1, 2, 3, 4, 5, 9) and ``[ cmaptypes ]``. What the IR cannot hold
     and every molecule section raise ``ValueError`` naming them; a whole
-    topology is :func:`read_gromacs_system`. Each name in ``skip_directives``
+    topology is :func:`read_gromacs_top_system`. Each name in ``skip_directives``
     is read past instead of refused.
     """
 
-def read_gromacs_system(
+def read_gromacs_top_system(
     path: PathInput,
     *,
     include_dirs: Sequence[PathInput] = (),

@@ -7,7 +7,6 @@
 
 mod analysis_contract;
 mod cluster;
-mod clustering;
 mod decomposition;
 mod density;
 mod dielectric;
@@ -18,6 +17,7 @@ mod environment;
 mod fitting;
 mod hbond;
 mod kinetic;
+mod kmeans;
 mod msd;
 mod order;
 mod pmft;
@@ -75,7 +75,7 @@ pub(crate) fn collect_neighbors(arg: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::c
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     analysis_contract::register(m)?;
     cluster::register(m)?;
-    clustering::register(m)?;
+    kmeans::register(m)?;
     decomposition::register(m)?;
     density::register(m)?;
     dielectric::register(m)?;

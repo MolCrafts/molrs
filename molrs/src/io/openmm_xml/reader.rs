@@ -5,14 +5,24 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ndarray::ArrayD;
 use roxmltree::Node;
 
+use crate::core::UnitFactor;
 use crate::core::constants::VACUUM_DIELECTRIC;
-use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL, OPENMM_COULOMB};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::torsion::rb_polynomial;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
+
+/// kcal → kJ (kcal/mol → kJ/mol).
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
+/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a bond or Urey–Bradley force constant;
+/// read files divide by it).
+static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// The energy expressions of a `<CustomTorsionForce>` read as `improper
 /// harmonic`, whitespace removed: OpenMM's CHARMM ports, and molrs's writer
@@ -83,7 +93,7 @@ pub fn read_openmm_xml_forcefield_str(text: &str) -> Result<ForceField, String> 
 /// | `<LennardJonesForce><NBFixPair sigma epsilon>` | `pair lj/charmm` cross row | as above; OpenMM prices a 1-4 NBFIX pair with the NBFIX row too, which is LAMMPS's cross row without `epsilon14` / `sigma14` |
 ///
 /// Every Coulomb style takes OpenMM's constant, `ONE_4PI_EPS0` =
-/// 138.93545764438198 kJ·nm/(mol·e²) = [`OPENMM_COULOMB`] kcal·Å/(mol·e²)
+/// 138.93545764438198 kJ·nm/(mol·e²) = [`OPENMM_ONE_4PI_EPS0`](crate::core::constants::OPENMM_ONE_4PI_EPS0) in kcal·Å/(mol·e²)
 /// (LAMMPS `real`'s `qqr2e` is 332.06371, 9.9·10⁻⁹ below it). OpenMM's cutoffs
 /// and switching are `createSystem` arguments, not file values, so no style
 /// here has a `cutoff` (and `lj/charmm` / `coul/charmm` no `inner`): the
@@ -371,7 +381,10 @@ fn build_nonbonded(
             "pair",
             name,
             Params::from_pairs(&[
-                ("coulomb", OPENMM_COULOMB),
+                (
+                    "coulomb",
+                    crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
+                ),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )
@@ -413,7 +426,7 @@ fn build_nonbonded(
             "<NonbondedForce> type \"{ty}\" has epsilon = {} kJ/mol beside a \
              <LennardJonesForce>: OpenMM prices both Lennard-Jones forces, which no \
              single pair style is",
-            eps * KJ_PER_KCAL
+            eps * KCAL_TO_KJ.get()
         ));
     }
     if let Some(rule) = combining_rule
@@ -590,9 +603,9 @@ fn parse_bonds(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
     for b in sec.children().filter(Node::is_element) {
         require_tag(&b, "Bond")?;
         let ends = endpoints::<2>(&b)?;
-        let r0 = require_f64(&b, "length")? * ANGSTROM_PER_NM;
+        let r0 = require_f64(&b, "length")? * NM_TO_ANGSTROM.get();
         // OpenMM ½k in kJ/mol/nm² → LAMMPS K = k/2 in kcal/mol/Å².
-        let k = require_f64(&b, "k")? / (KJ_PER_KCAL * 100.0) / 2.0;
+        let k = require_f64(&b, "k")? / KCAL_ANGSTROM2_TO_KJ_NM2.get() / 2.0;
         style
             .def_type(
                 TypeName::join(&ends)?.as_str(),
@@ -611,7 +624,7 @@ fn parse_angles(raw: &mut Raw, sec: &Node) -> Result<(), String> {
         raw.angles.push(AngleRow {
             ends,
             // OpenMM ½k in kJ/mol/rad² → LAMMPS K = k/2 in kcal/mol/rad².
-            k: require_f64(&a, "k")? / KJ_PER_KCAL / 2.0,
+            k: require_f64(&a, "k")? / KCAL_TO_KJ.get() / 2.0,
             theta0: require_f64(&a, "angle")?.to_degrees(),
         });
     }
@@ -634,8 +647,8 @@ fn parse_urey_bradley(raw: &mut Raw, sec: &Node) -> Result<(), String> {
         }
         raw.urey_bradley.push(UreyBradleyRow {
             ends: ends.map(str::to_owned),
-            k_ub: require_f64(&u, "k")? / (KJ_PER_KCAL * 100.0),
-            r_ub: require_f64(&u, "d")? * ANGSTROM_PER_NM,
+            k_ub: require_f64(&u, "k")? / KCAL_ANGSTROM2_TO_KJ_NM2.get(),
+            r_ub: require_f64(&u, "d")? * NM_TO_ANGSTROM.get(),
         });
     }
     Ok(())
@@ -735,7 +748,7 @@ fn parse_rb_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         require_tag(&d, "Proper")?;
         let mut c = [0.0; 6];
         for (n, slot) in c.iter_mut().enumerate() {
-            *slot = require_f64(&d, &format!("c{n}"))? / KJ_PER_KCAL;
+            *slot = require_f64(&d, &format!("c{n}"))? / KCAL_TO_KJ.get();
         }
         let (style, params) = rb_polynomial(c);
         ff.def_style("dihedral", style, Params::new())
@@ -796,7 +809,7 @@ fn parse_periodic_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String
             }
             (true, true) => {
                 let c = |i: usize| -> Result<f64, String> {
-                    Ok(opt_f64(&d, &format!("c{i}"))?.unwrap_or(0.0) / KJ_PER_KCAL)
+                    Ok(opt_f64(&d, &format!("c{i}"))?.unwrap_or(0.0) / KCAL_TO_KJ.get())
                 };
                 let (f1, f2, f3, f4) = (c(0)?, c(1)?, c(2)?, c(3)?);
                 (
@@ -904,7 +917,7 @@ fn parse_custom_torsions(ff: &mut ForceField, sec: &Node) -> Result<(), String> 
         }
         let classes = improper_order(endpoints::<4>(&d)?, ordering, "CustomTorsionForce")?;
         let label = classes.join("-");
-        let k = require_f64(&d, "k")? / KJ_PER_KCAL;
+        let k = require_f64(&d, "k")? / KCAL_TO_KJ.get();
         let theta0 = require_f64(&d, "theta0")?;
         // OpenMM's θ is the signed dihedral; LAMMPS's χ is |φ|. Their
         // energies agree for every geometry only at θ0 = 0 (θ² = |θ|²).
@@ -970,7 +983,7 @@ fn parse_cmap(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
         for j in 0..n {
             for i in 0..n {
                 let (p, q) = ((i + n / 2) % n, (j + n / 2) % n);
-                grid[p * n + q] = values[i + n * j] / KJ_PER_KCAL;
+                grid[p * n + q] = values[i + n * j] / KCAL_TO_KJ.get();
             }
         }
         maps.push(ArrayD::from_shape_vec(vec![n, n], grid).map_err(|e| e.to_string())?);
@@ -995,7 +1008,7 @@ fn parse_cmap(ff: &mut ForceField, sec: &Node) -> Result<(), String> {
                 )
             })?;
         let mut params = Params::new();
-        params.set_array(crate::ff::potential::cmap::charmm::GRID, grid.clone());
+        params.set_array(crate::ff::ir::CMAP_GRID, grid.clone());
         ff.def_style("cmap", "charmm", Params::new())
             .map_err(|e| e.to_string())?
             .def_type(TypeName::join(&ends)?.as_str(), &ends, params)
@@ -1026,8 +1039,8 @@ fn parse_nonbonded(raw: &mut Raw, sec: &Node) -> Result<(), String> {
             key: AtomKey::of(&a)?,
             // TIP3P et al. omit charge here — do not invent 0.0.
             charge: opt_f64(&a, "charge")?,
-            sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
-            epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
+            sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM.get(),
+            epsilon: require_f64(&a, "epsilon")? / KCAL_TO_KJ.get(),
         });
     }
     Ok(())
@@ -1045,10 +1058,10 @@ fn parse_lennard_jones(raw: &mut Raw, sec: &Node) -> Result<(), String> {
         match a.tag_name().name() {
             "Atom" => raw.lj_atoms.push(LjRow {
                 key: AtomKey::of(&a)?,
-                sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
-                epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
-                sigma14: opt_f64(&a, "sigma14")?.map(|s| s * ANGSTROM_PER_NM),
-                epsilon14: opt_f64(&a, "epsilon14")?.map(|e| e / KJ_PER_KCAL),
+                sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM.get(),
+                epsilon: require_f64(&a, "epsilon")? / KCAL_TO_KJ.get(),
+                sigma14: opt_f64(&a, "sigma14")?.map(|s| s * NM_TO_ANGSTROM.get()),
+                epsilon14: opt_f64(&a, "epsilon14")?.map(|e| e / KCAL_TO_KJ.get()),
             }),
             "NBFixPair" => {
                 let key = |n: usize| -> Result<AtomKey, String> {
@@ -1063,8 +1076,8 @@ fn parse_lennard_jones(raw: &mut Raw, sec: &Node) -> Result<(), String> {
                 };
                 raw.nbfix.push(NbfixRow {
                     keys: [key(1)?, key(2)?],
-                    sigma: require_f64(&a, "sigma")? * ANGSTROM_PER_NM,
-                    epsilon: require_f64(&a, "epsilon")? / KJ_PER_KCAL,
+                    sigma: require_f64(&a, "sigma")? * NM_TO_ANGSTROM.get(),
+                    epsilon: require_f64(&a, "epsilon")? / KCAL_TO_KJ.get(),
                 });
             }
             "UseAttributeFromResidue" => {}
@@ -1120,7 +1133,7 @@ fn periodic_terms(node: &Node) -> Result<Vec<(f64, f64, f64)>, String> {
         match (n, k, phase) {
             (None, None, None) => break,
             (Some(n), Some(k), Some(phase)) => {
-                terms.push((k / KJ_PER_KCAL, n, phase.to_degrees()));
+                terms.push((k / KCAL_TO_KJ.get(), n, phase.to_degrees()));
             }
             _ => {
                 return Err(format!(
@@ -1290,7 +1303,7 @@ mod tests {
                 .enumerate()
                 .map(|(n, cn)| cn * psi.cos().powi(n as i32))
                 .sum();
-            let got = series.energy(phi) * KJ_PER_KCAL;
+            let got = series.energy(phi) * KCAL_TO_KJ.get();
             assert!((got - openmm).abs() < 1e-12, "φ = {phi}: {got} vs {openmm}");
         }
     }
@@ -1336,8 +1349,16 @@ mod tests {
 
         // coul/cut with OpenMM's own Coulomb constant.
         let coul = ff.get_style("pair", "coul/cut").unwrap();
-        assert_eq!(coul.params().get("coulomb"), Some(OPENMM_COULOMB));
-        assert!((OPENMM_COULOMB - 332.06371329919216).abs() < 1e-12);
+        assert_eq!(
+            coul.params().get("coulomb"),
+            Some(crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+        );
+        assert!(
+            (crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
+                - 332.06371329919216)
+                .abs()
+                < 1e-12
+        );
 
         // The 1-4 scales live on the ForceField's special_bonds (1-2/1-3
         // excluded) — the single source the pair kernels consume.
@@ -1692,7 +1713,10 @@ mod tests {
         assert!(fix.get("epsilon14").is_none() && fix.get("sigma14").is_none());
 
         let coul = ff.get_style("pair", "coul/charmm").expect("coul/charmm");
-        assert_eq!(coul.params().get("coulomb"), Some(OPENMM_COULOMB));
+        assert_eq!(
+            coul.params().get("coulomb"),
+            Some(crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+        );
         assert_eq!(ff.special_bonds().lj, [0.0, 0.0, 1.0]);
         assert_eq!(ff.special_bonds().coul, [0.0, 0.0, 1.0]);
         let atom = ff.get_style("atom", "full").unwrap();

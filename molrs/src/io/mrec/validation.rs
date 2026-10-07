@@ -31,13 +31,13 @@ pub fn validate_path(path: &std::path::Path) -> Result<(), MolRsError> {
 /// Validate the `meta` version key against the mrec contract.
 ///
 /// `molrec_version` is **optional on read**: an absent key is a store written
-/// before version 1, which opens ([`read_version`] says how it is read). A
+/// before version 1, which opens ([`molrec_version_of`] says how it is read). A
 /// present key must be an integer in `1..=`[`MOLREC_VERSION`]; anything else
 /// (`0`, a newer version, a string, `null`, a float) is refused. Identity of a
 /// record is the `*.mrec/` path suffix plus a Zarr root, not this key; the key
 /// says which contract wrote it.
 pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsError> {
-    read_version(attrs).map(|_| ())
+    molrec_version_of(attrs).map(|_| ())
 }
 
 /// The contract version a store's sections are read under: its validated
@@ -48,7 +48,7 @@ pub fn validate_meta(attrs: &JsonMap<String, JsonValue>) -> Result<(), MolRsErro
 /// # Errors
 ///
 /// A [`MolRsError::Zarr`] for a key [`validate_meta`] refuses.
-pub fn read_version(attrs: &JsonMap<String, JsonValue>) -> Result<u64, MolRsError> {
+pub fn molrec_version_of(attrs: &JsonMap<String, JsonValue>) -> Result<u64, MolRsError> {
     let Some(value) = attrs.get("molrec_version") else {
         return Ok(1);
     };
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn every_supported_molrec_version_passes() {
         for version in 1..=MOLREC_VERSION {
-            assert_eq!(read_version(&meta(version)).unwrap(), version);
+            assert_eq!(molrec_version_of(&meta(version)).unwrap(), version);
         }
     }
 
@@ -115,8 +115,8 @@ mod tests {
     fn missing_molrec_version_is_accepted_and_read_as_version_one() {
         let attrs = json!({ "producer": "test" }).as_object().cloned().unwrap();
         validate_meta(&attrs).unwrap();
-        assert_eq!(read_version(&attrs).unwrap(), 1);
-        assert_eq!(read_version(&JsonMap::new()).unwrap(), 1);
+        assert_eq!(molrec_version_of(&attrs).unwrap(), 1);
+        assert_eq!(molrec_version_of(&JsonMap::new()).unwrap(), 1);
     }
 
     /// The retired `format_name`/`record_schema_version` keys are neither

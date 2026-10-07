@@ -120,10 +120,11 @@ mod tests {
     /// (removed) Einstein–Helfand conductivity free fn so the tests fold in the exact
     /// same constant the legacy free function used.
     fn einstein_helfand_prefactor() -> f64 {
-        use molrs::core::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
-        (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (6.0 * ANGSTROM_M.powi(3) * K_B_SI)
+        use molrs::core::UnitFactor;
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = UnitFactor::new("angstrom", "m").get();
+        let femtosecond_s = UnitFactor::new("fs", "s").get();
+        (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s) / (6.0 * angstrom_m.powi(3) * K_B_SI)
     }
 
     /// Empty frame slice for the series-based raw computes.
@@ -264,9 +265,10 @@ mod tests {
         // σ over many realisations. Seed is fixed → deterministic across CI.
         use crate::compute::Fit;
         use crate::compute::LinearFit;
-        use molrs::core::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
+        use molrs::core::UnitFactor;
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = UnitFactor::new("angstrom", "m").get();
+        let femtosecond_s = UnitFactor::new("fs", "s").get();
 
         let n_realisations = 48usize;
         let n_ions = 50usize;
@@ -278,7 +280,7 @@ mod tests {
         let step = 0.5_f64; // Å, uniform per-axis displacement amplitude
         // Nernst–Einstein prefactor (no Einstein 1/6 here: D folds it in).
         let ne_prefactor =
-            (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (ANGSTROM_M.powi(3) * K_B_SI);
+            (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s) / (angstrom_m.powi(3) * K_B_SI);
         let eh_prefactor = einstein_helfand_prefactor();
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(20260601);

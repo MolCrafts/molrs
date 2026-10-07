@@ -170,7 +170,7 @@ impl OptimizationReport {
 }
 
 fn apply_fixed_mask(frame: &mut RsFrame, fixed: &Uint32Array) -> Result<(), String> {
-    let n = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
+    let n = frame.get("atoms").and_then(|b| b.n_rows()).unwrap_or(0);
     if n == 0 || fixed.length() == 0 {
         return Ok(());
     }

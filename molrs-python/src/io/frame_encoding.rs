@@ -20,7 +20,7 @@ use crate::error::py_value_err;
 ///     A payload written by :func:`write_msgpack_frame_bytes` or a publisher.
 #[pyfunction]
 pub fn read_msgpack_frame_bytes(data: &[u8]) -> PyResult<PyFrame> {
-    let frame = molrs::stream::read_msgpack_frame_bytes(data).map_err(py_value_err)?;
+    let frame = molrs::io::read_msgpack_frame_bytes(data).map_err(py_value_err)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -32,7 +32,7 @@ pub fn write_msgpack_frame_bytes<'py>(
     frame: &PyFrame,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let bytes = frame
-        .with_frame(molrs::stream::write_msgpack_frame_bytes)?
+        .with_frame(molrs::io::write_msgpack_frame_bytes)?
         .map_err(py_value_err)?;
     Ok(PyBytes::new(py, &bytes))
 }
@@ -46,7 +46,7 @@ pub fn write_msgpack_frame_bytes<'py>(
 ///     A document written by :func:`write_json_frame_str` or a JSON publisher.
 #[pyfunction]
 pub fn read_json_frame_str(text: &str) -> PyResult<PyFrame> {
-    let frame = molrs::stream::read_json_frame_str(text).map_err(py_value_err)?;
+    let frame = molrs::io::read_json_frame_str(text).map_err(py_value_err)?;
     PyFrame::from_core_frame(frame)
 }
 
@@ -55,7 +55,7 @@ pub fn read_json_frame_str(text: &str) -> PyResult<PyFrame> {
 #[pyfunction]
 pub fn write_json_frame_str(frame: &PyFrame) -> PyResult<String> {
     frame
-        .with_frame(molrs::stream::write_json_frame_str)?
+        .with_frame(molrs::io::write_json_frame_str)?
         .map_err(py_value_err)
 }
 

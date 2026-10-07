@@ -8,6 +8,6 @@ dipole and polarizability. The table molrs ships is
 when no ``fragment_table`` is given.
 """
 
-from .._lib import FragmentScaling, compute_k_ij, scale_lj
+from .._native import FragmentScaling, compute_k_ij, scale_lj
 
 __all__ = ["FragmentScaling", "compute_k_ij", "scale_lj"]

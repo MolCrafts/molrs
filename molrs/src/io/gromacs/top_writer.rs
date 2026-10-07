@@ -3,17 +3,27 @@
 use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::core::UnitFactor;
 use crate::core::constants::VACUUM_DIELECTRIC;
-use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
+use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::torsion::nharmonic_coefficients;
-use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
+
+/// kcal → kJ (kcal/mol → kJ/mol).
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
+/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
+static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+#[cfg(test)]
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -311,8 +321,8 @@ impl GromacsTopForcefieldWriter {
             self.fmt_f(mass),
             self.fmt_f(charge),
             p.get_str("ptype").unwrap_or("A").to_owned(),
-            self.fmt_f(sigma / ANGSTROM_PER_NM),
-            self.fmt_f(epsilon * KJ_PER_KCAL),
+            self.fmt_f(sigma / NM_TO_ANGSTROM.get()),
+            self.fmt_f(epsilon * KCAL_TO_KJ.get()),
         ]);
         Ok(format!("  {}\n", cols.join("  ")))
     }
@@ -341,8 +351,8 @@ impl GromacsTopForcefieldWriter {
         let line = |a: &str, b: &str, (eps, sigma): (f64, f64)| {
             format!(
                 "  {a}  {b}  1  {}  {}\n",
-                self.fmt_f(sigma / ANGSTROM_PER_NM),
-                self.fmt_f(eps * KJ_PER_KCAL)
+                self.fmt_f(sigma / NM_TO_ANGSTROM.get()),
+                self.fmt_f(eps * KCAL_TO_KJ.get())
             )
         };
         let mut nonbond = String::new();
@@ -485,14 +495,14 @@ impl GromacsTopForcefieldWriter {
                 integer,
             }])
         };
-        let kb = KJ_PER_KCAL * ANGSTROM_PER_NM * ANGSTROM_PER_NM;
+        let kb = KCAL_ANGSTROM2_TO_KJ_NM2.get();
         match (style.category(), style.name()) {
             ("bond", "harmonic") => {
                 allowed(&["r0", "k"])?;
                 // LAMMPS K → GROMACS ½k_b: k_b = 2K.
                 one(
                     1,
-                    vec![need("r0")? / ANGSTROM_PER_NM, 2.0 * need("k")? * kb],
+                    vec![need("r0")? / NM_TO_ANGSTROM.get(), 2.0 * need("k")? * kb],
                     None,
                 )
             }
@@ -501,9 +511,9 @@ impl GromacsTopForcefieldWriter {
                 one(
                     3,
                     vec![
-                        need("r0")? / ANGSTROM_PER_NM,
-                        need("d0")? * KJ_PER_KCAL,
-                        need("alpha")? * ANGSTROM_PER_NM,
+                        need("r0")? / NM_TO_ANGSTROM.get(),
+                        need("d0")? * KCAL_TO_KJ.get(),
+                        need("alpha")? * NM_TO_ANGSTROM.get(),
                     ],
                     None,
                 )
@@ -513,7 +523,7 @@ impl GromacsTopForcefieldWriter {
                 // LAMMPS K → GROMACS ½k_θ: k_θ = 2K.
                 one(
                     1,
-                    vec![need("theta0")?, 2.0 * need("k")? * KJ_PER_KCAL],
+                    vec![need("theta0")?, 2.0 * need("k")? * KCAL_TO_KJ.get()],
                     None,
                 )
             }
@@ -523,8 +533,8 @@ impl GromacsTopForcefieldWriter {
                     5,
                     vec![
                         need("theta0")?,
-                        2.0 * need("k")? * KJ_PER_KCAL,
-                        need("r_ub")? / ANGSTROM_PER_NM,
+                        2.0 * need("k")? * KCAL_TO_KJ.get(),
+                        need("r_ub")? / NM_TO_ANGSTROM.get(),
                         2.0 * need("k_ub")? * kb,
                     ],
                     None,
@@ -538,7 +548,7 @@ impl GromacsTopForcefieldWriter {
                         funct,
                         vec![
                             p.get("phase").unwrap_or(0.0),
-                            need("k")? * KJ_PER_KCAL,
+                            need("k")? * KCAL_TO_KJ.get(),
                             whole("periodicity")?,
                         ],
                         Some(2),
@@ -557,7 +567,7 @@ impl GromacsTopForcefieldWriter {
                         funct: 9,
                         values: vec![
                             p.get(&format!("phase{m}")).unwrap_or(0.0),
-                            need(&format!("k{m}"))? * KJ_PER_KCAL,
+                            need(&format!("k{m}"))? * KCAL_TO_KJ.get(),
                             whole(&format!("periodicity{m}"))?,
                         ],
                         integer: Some(2),
@@ -590,7 +600,7 @@ impl GromacsTopForcefieldWriter {
                     9,
                     vec![
                         p.get("phase").unwrap_or(0.0),
-                        need("k")? * KJ_PER_KCAL,
+                        need("k")? * KCAL_TO_KJ.get(),
                         whole("periodicity")?,
                     ],
                     Some(2),
@@ -603,7 +613,7 @@ impl GromacsTopForcefieldWriter {
                     funct,
                     vec![
                         sign_phase("sign")?,
-                        need("k")? * KJ_PER_KCAL,
+                        need("k")? * KCAL_TO_KJ.get(),
                         whole("periodicity")?,
                     ],
                     Some(2),
@@ -620,7 +630,7 @@ impl GromacsTopForcefieldWriter {
                             funct: 9,
                             values: vec![
                                 p.get(&format!("phi{n}")).unwrap_or(0.0) + 180.0,
-                                k * KJ_PER_KCAL,
+                                k * KCAL_TO_KJ.get(),
                                 n as f64,
                             ],
                             integer: Some(2),
@@ -650,14 +660,14 @@ impl GromacsTopForcefieldWriter {
                 }
                 let mut c = [0.0; 6];
                 for (n, &x) in a.iter().enumerate() {
-                    c[n] = if n % 2 == 0 { x } else { -x } * KJ_PER_KCAL;
+                    c[n] = if n % 2 == 0 { x } else { -x } * KCAL_TO_KJ.get();
                 }
                 one(3, c.to_vec(), None)
             }
             ("dihedral", "opls") => {
                 allowed(&["k1", "k2", "k3", "k4"])?;
                 // An absent k_n is a zero term, as the kernel reads it.
-                let f = |key: &str| p.get(key).unwrap_or(0.0) * KJ_PER_KCAL;
+                let f = |key: &str| p.get(key).unwrap_or(0.0) * KCAL_TO_KJ.get();
                 one(5, vec![f("k1"), f("k2"), f("k3"), f("k4")], None)
             }
             ("improper", "harmonic") => {
@@ -670,7 +680,7 @@ impl GromacsTopForcefieldWriter {
                     )
                     .into());
                 }
-                one(2, vec![chi0, 2.0 * need("k")? * KJ_PER_KCAL], None)
+                one(2, vec![chi0, 2.0 * need("k")? * KCAL_TO_KJ.get()], None)
             }
             (category, style) => Err(Engine::Gromacs.refuse_style(category, style).into()),
         }
@@ -897,7 +907,7 @@ impl GromacsTopForcefieldWriter {
                     .into());
                 }
                 let grid = params
-                    .get_array(GRID)
+                    .get_array(CMAP_GRID)
                     .ok_or_else(|| format!("cmap/charmm type '{name}' has no grid"))?;
                 let n = match grid.shape() {
                     [a, b] if a == b => *a,
@@ -909,8 +919,10 @@ impl GromacsTopForcefieldWriter {
                     }
                 };
                 rows.push_str(&format!("{} 1 {n} {n}\\\n", cols.join(" ")));
-                let values: Vec<String> =
-                    grid.iter().map(|v| self.fmt_f(v * KJ_PER_KCAL)).collect();
+                let values: Vec<String> = grid
+                    .iter()
+                    .map(|v| self.fmt_f(v * KCAL_TO_KJ.get()))
+                    .collect();
                 let chunks: Vec<String> = values.chunks(10).map(|c| c.join(" ")).collect();
                 rows.push_str(&chunks.join("\\\n"));
                 rows.push_str("\n\n");
@@ -931,7 +943,7 @@ impl GromacsTopForcefieldWriter {
     ) -> Result<String, ForceFieldWriteError> {
         let mut out = self.directives(ff, true)?;
         let atoms = frame.get("atoms").ok_or("frame has no atoms block")?;
-        let n = atoms.nrows().unwrap_or(0);
+        let n = atoms.n_rows().unwrap_or(0);
         if n > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
             return Err(format!(
                 "{n} atoms: the topology states the frame's pairs molecule by molecule, \
@@ -1220,8 +1232,8 @@ impl GromacsTopForcefieldWriter {
                     )
                     .into());
                 };
-                let (v, w) = (full(sigma / ANGSTROM_PER_NM), |e: f64| {
-                    full(e * KJ_PER_KCAL)
+                let (v, w) = (full(sigma / NM_TO_ANGSTROM.get()), |e: f64| {
+                    full(e * KCAL_TO_KJ.get())
                 });
                 if qq.is_none()
                     && lj_w.is_none_or(|x| x == 1.0)
@@ -1271,7 +1283,7 @@ impl GromacsTopForcefieldWriter {
                     .push_str(&format!(
                         "  {}  1  {}\n",
                         local(m, &[i, j]),
-                        full(r0[[k]] / ANGSTROM_PER_NM)
+                        full(r0[[k]] / NM_TO_ANGSTROM.get())
                     ));
             }
         }
@@ -1327,10 +1339,48 @@ impl GromacsTopForcefieldWriter {
     }
 }
 
+/// Write `ff` as GROMACS topology directives (`[ defaults ]`,
+/// `[ atomtypes ]`, `[ *types ]`) with `precision` decimals; the inverse of
+/// [`read_gromacs_top_forcefield`](crate::io::read_gromacs_top_forcefield).
+///
+/// # Errors
+///
+/// Every error of [`ForceFieldWriter::write_str`] on
+/// [`GromacsTopForcefieldWriter`], and an unwritable file.
+pub fn write_gromacs_top_forcefield(
+    path: impl AsRef<std::path::Path>,
+    ff: &ForceField,
+    precision: usize,
+) -> Result<(), ForceFieldWriteError> {
+    let text = GromacsTopForcefieldWriter::new()
+        .with_precision(precision)
+        .write_str(ff)?;
+    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
+}
+
+/// Write `ff` and the typed `frame` as one GROMACS topology
+/// ([`GromacsTopForcefieldWriter::write_system_str`]); the inverse of
+/// [`read_gromacs_top_system`](crate::io::read_gromacs_top_system).
+///
+/// # Errors
+///
+/// Every error of [`GromacsTopForcefieldWriter::write_system_str`], and an
+/// unwritable file.
+pub fn write_gromacs_top_system(
+    path: impl AsRef<std::path::Path>,
+    ff: &ForceField,
+    frame: &Frame,
+    precision: usize,
+) -> Result<(), ForceFieldWriteError> {
+    let text = GromacsTopForcefieldWriter::new()
+        .with_precision(precision)
+        .write_system_str(ff, frame)?;
+    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::constants::GROMACS_COULOMB;
     use crate::core::constants::VACUUM_DIELECTRIC;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
     use crate::io::writer::ForceFieldWriter;
@@ -2086,7 +2136,10 @@ mod tests {
             "pair",
             "coul/cut",
             Params::from_pairs(&[
-                ("coulomb", GROMACS_COULOMB),
+                (
+                    "coulomb",
+                    crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
+                ),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )
@@ -2451,9 +2504,9 @@ SOL  2
                 }
             }
         }
-        let c = |f: &molrs::core::Frame| f.get("constraints").unwrap().nrows();
+        let c = |f: &molrs::core::Frame| f.get("constraints").unwrap().n_rows();
         assert_eq!(c(&frame), c(&back_frame));
-        let n = frame.get("atoms").unwrap().nrows().unwrap();
+        let n = frame.get("atoms").unwrap().n_rows().unwrap();
         let x = coords(n);
         let (e, e_back) = (energy(&ff, &frame, &x), energy(&back, &back_frame, &x));
         assert!((e - e_back).abs() <= 1e-12 * e.abs(), "{e} vs {e_back}");

@@ -19,7 +19,7 @@ class TestReadDcd:
         assert len(frames) == 2
         for i, frame in enumerate(frames):
             assert "atoms" in frame, f"frame {i} missing atoms block"
-            assert frame["atoms"].nrows == 3
+            assert frame["atoms"].n_rows == 3
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
@@ -34,7 +34,7 @@ class TestDcdTrajReader:
         assert len(reader) == len(sequential)
         for n in reversed(range(len(sequential))):
             frame = reader[n]
-            assert frame["atoms"].nrows == sequential[n]["atoms"].nrows
+            assert frame["atoms"].n_rows == sequential[n]["atoms"].n_rows
 
     def test_iteration(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
@@ -46,7 +46,7 @@ class TestDcdTrajReader:
         path = str(water_dcd)
         reader = molrs.io.read_dcd_trajectory(path)
         eager = molrs.io.read_dcd_trajectory(path).read_all()
-        assert reader[-1]["atoms"].nrows == eager[-1]["atoms"].nrows
+        assert reader[-1]["atoms"].n_rows == eager[-1]["atoms"].n_rows
 
     def test_index_error(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
@@ -63,8 +63,8 @@ class TestDcdTrajReaderMolpyAligned:
         path = str(water_dcd)
         eager = molrs.io.read_dcd_trajectory(path).read_all()
         reader = molrs.io.read_dcd_trajectory(path)
-        assert reader.read_frame(0)["atoms"].nrows == eager[0]["atoms"].nrows
-        assert reader.read_frame(-1)["atoms"].nrows == eager[-1]["atoms"].nrows
+        assert reader.read_frame(0)["atoms"].n_rows == eager[0]["atoms"].n_rows
+        assert reader.read_frame(-1)["atoms"].n_rows == eager[-1]["atoms"].n_rows
 
     def test_read_frame_out_of_range_raises(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
@@ -92,6 +92,6 @@ class TestWriteDcd:
             molrs.io.write_dcd_trajectory(tmpname, [water_frame, water_frame])
             frames = molrs.io.read_dcd_trajectory(tmpname).read_all()
             assert len(frames) == 2
-            assert frames[0]["atoms"].nrows == 3
+            assert frames[0]["atoms"].n_rows == 3
         finally:
             os.unlink(tmpname)

@@ -15,12 +15,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{OPLS_COULOMB_14, OPLS_LJ_14, VACUUM_DIELECTRIC};
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::OPLSAA_TYPING;
 use crate::ff::params::{
-    OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_COULOMB_14, OPLSAA_DIHEDRALS, OPLSAA_LJ_14,
-    OPLSAA_MIXING, OPLSAA_NAME,
+    OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS, OPLSAA_MIXING, OPLSAA_NAME,
 };
 use crate::ff::params::{OplsAtomRow, OplsRuleRow};
 use molrs::core::TypeName;
@@ -119,8 +118,8 @@ fn try_force_field() -> Result<ForceField, DefError> {
     // OPLS excludes 1-2 / 1-3 (molrs omits them from the neighbour list) and
     // scales 1-4 by the source's own weights.
     ff.set_special_bonds(SpecialBonds {
-        lj: [0.0, 0.0, OPLSAA_LJ_14],
-        coul: [0.0, 0.0, OPLSAA_COULOMB_14],
+        lj: [0.0, 0.0, OPLS_LJ_14],
+        coul: [0.0, 0.0, OPLS_COULOMB_14],
     });
     Ok(ff)
 }

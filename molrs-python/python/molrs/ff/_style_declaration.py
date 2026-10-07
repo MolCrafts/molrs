@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
-from .._lib import ir as _ir
+from .._native import ir as _ir
 
 
 class StyleDeclaration:

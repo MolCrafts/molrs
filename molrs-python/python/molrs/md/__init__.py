@@ -48,7 +48,7 @@ Precision: ``MdDriver(dtype=np.float64)`` is the only entry. ``np.float32`` / mi
 raise; those loops belong in the Rust integrators.
 """
 
-from .._lib import md as _md
+from .._native import md as _md
 
 Langevin = _md.Langevin
 MdState = _md.MdState

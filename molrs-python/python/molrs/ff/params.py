@@ -9,6 +9,6 @@ AMBER's 1-4 divisors are engine constants:
 :data:`molrs.core.constants.AMBER_SCEE` / :data:`~molrs.core.constants.AMBER_SCNB`.
 """
 
-from .._lib import clpol_fragment_scaling, clpol_polarizability
+from .._native import clpol_fragment_scaling, clpol_polarizability
 
 __all__ = ["clpol_fragment_scaling", "clpol_polarizability"]

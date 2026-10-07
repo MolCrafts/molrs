@@ -46,8 +46,7 @@ use molrs::op::{F, Idx};
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;
 
-/// `π/180`, as Appendix A spells it.
-const D: &str = "0.017453292519943295";
+use super::spec::RADIANS_PER_DEGREE;
 
 /// Four atoms of type `A`, a non-planar chain (`super::tests::chain`'s,
 /// moved by up to ±0.2 Å per coordinate), with charges; one term of
@@ -402,7 +401,9 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                         row.push((format!("k{t}"), rng.uniform(-2.0, 2.0)));
                         row.push((format!("periodicity{t}"), (1 + (config + t) % 6) as F));
                         row.push((format!("phase{t}"), rng.uniform(-180.0, 180.0)));
-                        terms.push(format!("k{t}*(1+cos(periodicity{t}*phi-phase{t}*{D}))"));
+                        terms.push(format!(
+                            "k{t}*(1+cos(periodicity{t}*phi-phase{t}*{RADIANS_PER_DEGREE}))"
+                        ));
                     }
                     (c.name, twin(&mut r, spec, terms.join("+"), m))
                 }
@@ -661,7 +662,7 @@ fn every_param_source_is_what_its_constructor_reads() {
         } else {
             category.block.to_string()
         };
-        let n = frame.get(&block).unwrap().nrows().unwrap();
+        let n = frame.get(&block).unwrap().n_rows().unwrap();
         let b = frame.get_mut(&block).unwrap();
         for decl in &spec.params {
             if b.get(&decl.name).is_some() {

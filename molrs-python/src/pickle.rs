@@ -57,7 +57,7 @@ pub fn reduce_with_state<'py>(
         return PyTuple::new(py, [cls, args.into_any(), state]);
     };
     let setter = py
-        .import(intern!(py, "molrs._lib"))?
+        .import(intern!(py, "molrs._native"))?
         .getattr(intern!(py, "_restore_pickled_state"))?;
     let both = PyTuple::new(py, [state, dict.into_any()])?.into_any();
     PyTuple::new(

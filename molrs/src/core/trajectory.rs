@@ -180,12 +180,12 @@ pub struct ObservableRecord {
     pub domain: Option<String>,
     pub target: Option<String>,
     pub extra: JsonMap<String, JsonValue>,
-    pub data: ObservableValues,
+    pub values: ObservableValues,
 }
 
 impl ObservableRecord {
     /// Build a scalar observable.
-    pub fn scalar(name: impl Into<String>, data: Column) -> Self {
+    pub fn scalar(name: impl Into<String>, values: Column) -> Self {
         Self {
             name: name.into(),
             kind: ObservableKind::Scalar,
@@ -197,12 +197,12 @@ impl ObservableRecord {
             domain: None,
             target: None,
             extra: JsonMap::new(),
-            data: ObservableValues::Column(data),
+            values: ObservableValues::Column(values),
         }
     }
 
     /// Build a vector observable.
-    pub fn vector(name: impl Into<String>, data: Column) -> Self {
+    pub fn vector(name: impl Into<String>, values: Column) -> Self {
         Self {
             name: name.into(),
             kind: ObservableKind::Vector,
@@ -214,7 +214,7 @@ impl ObservableRecord {
             domain: None,
             target: None,
             extra: JsonMap::new(),
-            data: ObservableValues::Column(data),
+            values: ObservableValues::Column(values),
         }
     }
 
@@ -223,7 +223,7 @@ impl ObservableRecord {
     /// Every kind, an [`ObservableKind::Other`] included, is carried as one
     /// column; the contract fixes no shape per kind.
     pub fn validate(&self) -> Result<(), MolRsError> {
-        match &self.data {
+        match &self.values {
             ObservableValues::Column(_) => Ok(()),
         }
     }

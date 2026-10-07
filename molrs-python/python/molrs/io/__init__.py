@@ -47,13 +47,13 @@ model :mod:`molrs.ff.forcefield` owns:
 
 * readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
   :func:`read_lammps_cmap_forcefield`, :func:`read_gromacs_top_forcefield`,
-  :func:`read_gromacs_system`, :func:`read_amber_prmtop_forcefield`,
+  :func:`read_gromacs_top_system`, :func:`read_amber_prmtop_forcefield`,
   :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`,
   :func:`read_molrs_xml_forcefield`
 * writers — :func:`write_lammps_forcefield`,
   :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
   :func:`write_lammps_cmap_forcefield`, :func:`write_gromacs_top_forcefield`,
-  :func:`write_gromacs_system`, :func:`write_amber_frcmod`,
+  :func:`write_gromacs_top_system`, :func:`write_amber_frcmod`,
   :func:`write_openmm_xml_forcefield`, :func:`write_molrs_xml_forcefield`
 
 Each reader maps a format onto the force-field IR (adopts the LAMMPS standard),
@@ -76,7 +76,7 @@ refused (take it apart with ``SmilesIr(s).components()``) — and
 molecule a CGsmiles string states.
 """
 
-from .._lib import (
+from .._native import (
     read_amber_ac,
     read_amber_inpcrd,
     read_amber_prep,
@@ -89,7 +89,7 @@ from .._lib import (
     read_dcd_trajectory,
     read_gro,
     read_gro_trajectory,
-    read_gromacs_system,
+    read_gromacs_top_system,
     read_gromacs_top_forcefield,
     read_json_frame_str,
     read_lammps_cmap_forcefield,
@@ -100,7 +100,7 @@ from .._lib import (
     read_lammps_log_str,
     read_lammps_molecule,
     read_lammps_molecule_json,
-    read_lammps_trajectory,
+    read_lammps_dump_trajectory,
     read_mol2,
     read_molrs_xml_forcefield,
     read_mrec_forcefield,
@@ -129,7 +129,7 @@ from .._lib import (
     write_dcd_trajectory,
     write_gro,
     write_gro_trajectory,
-    write_gromacs_system,
+    write_gromacs_top_system,
     write_gromacs_top_forcefield,
     write_json_frame_str,
     write_lammps_bond_react_map,
@@ -142,7 +142,7 @@ from .._lib import (
     write_lammps_forcefield_str,
     write_lammps_molecule,
     write_lammps_molecule_json,
-    write_lammps_trajectory,
+    write_lammps_dump_trajectory,
     write_mol2,
     write_molrs_xml_forcefield,
     write_mrec_forcefield,
@@ -199,7 +199,7 @@ __all__ = [
     "read_dcd_trajectory",
     "read_gro",
     "read_gro_trajectory",
-    "read_gromacs_system",
+    "read_gromacs_top_system",
     "read_gromacs_top_forcefield",
     "read_json_frame_str",
     "read_lammps_cmap_forcefield",
@@ -210,7 +210,7 @@ __all__ = [
     "read_lammps_log_str",
     "read_lammps_molecule",
     "read_lammps_molecule_json",
-    "read_lammps_trajectory",
+    "read_lammps_dump_trajectory",
     "read_mol2",
     "read_molrs_xml_forcefield",
     "read_mrec_forcefield",
@@ -243,7 +243,7 @@ __all__ = [
     "write_dcd_trajectory",
     "write_gro",
     "write_gro_trajectory",
-    "write_gromacs_system",
+    "write_gromacs_top_system",
     "write_gromacs_top_forcefield",
     "write_json_frame_str",
     "write_lammps_bond_react_map",
@@ -256,7 +256,7 @@ __all__ = [
     "write_lammps_forcefield_str",
     "write_lammps_molecule",
     "write_lammps_molecule_json",
-    "write_lammps_trajectory",
+    "write_lammps_dump_trajectory",
     "write_mol2",
     "write_molrs_xml_forcefield",
     "write_mrec_forcefield",

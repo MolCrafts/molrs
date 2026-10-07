@@ -663,7 +663,7 @@ mod tests {
         }
     }
 
-    // -- 7) Public compute_qlm helper -----------------------------------------
+    // -- 7) Public steinhardt_qlm helper -----------------------------------------
 
     #[test]
     fn steinhardt_qlm_normalization_matches_internal() {
@@ -1030,7 +1030,7 @@ mod tests {
         // Deliberately not `expect_err`: the Ok payload is the whole q_ℓm
         // buffer, and dumping it buries the one thing the failure says.
         let Err(err) = steinhardt_qlm(&frame, &nl, 6) else {
-            panic!("compute_qlm must refuse a cross-query table outright, but returned Ok");
+            panic!("steinhardt_qlm must refuse a cross-query table outright, but returned Ok");
         };
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -1038,7 +1038,7 @@ mod tests {
         );
 
         let Err(err) = Steinhardt::new(&[6]).unwrap().compute(&[&frame], &[nl]) else {
-            panic!("Steinhardt::compute must inherit the compute_qlm cross-query guard");
+            panic!("Steinhardt::compute must inherit the steinhardt_qlm cross-query guard");
         };
         assert!(
             matches!(err, ComputeError::BadShape { .. }),

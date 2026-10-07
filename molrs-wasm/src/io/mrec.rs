@@ -179,7 +179,7 @@ impl MrecReader {
             .sequence
             .frame(0)
             .map_err(js_string_err)?
-            .and_then(|frame| frame.get("atoms").and_then(|block| block.nrows()))
+            .and_then(|frame| frame.get("atoms").and_then(|block| block.n_rows()))
             .unwrap_or(0))
     }
 

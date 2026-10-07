@@ -6,9 +6,32 @@ use std::sync::{Mutex, OnceLock};
 use crate::op::F;
 
 use crate::core::constants::{
-    ANGSTROM_PER_NM, BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE, GAS_CONSTANT,
-    KJ_PER_KCAL,
+    BOLTZMANN, BOLTZMANN_REAL, COULOMB_CONSTANT, COULOMB_METAL, COULOMB_REAL, GAS_CONSTANT,
 };
+use crate::core::units::UnitFactor;
+
+/// kcal·Å → kJ·nm: [`COULOMB_REAL`] in OpenMM's units.
+static KCAL_ANGSTROM_TO_KJ_NM: UnitFactor = UnitFactor::new("kcal*angstrom", "kJ*nm");
+/// J → kJ: the molar gas constant in kJ·mol⁻¹·K⁻¹.
+static J_TO_KJ: UnitFactor = UnitFactor::new("J", "kJ");
+
+/// The Boltzmann constant in `energy` per kelvin.
+fn boltzmann_in(energy: &str) -> F {
+    BOLTZMANN * registry_factor("J", energy)
+}
+
+/// The Coulomb constant `1/(4π ε₀)` in `energy · length / charge²`.
+fn coulomb_in(energy: &str, length: &str, charge: &str) -> F {
+    COULOMB_CONSTANT * registry_factor("J*m/C**2", &format!("({energy})*({length})/({charge})**2"))
+}
+
+/// [`UnitRegistry::factor`](super::UnitRegistry::factor) of the global
+/// registry over the presets' own (literal) unit expressions.
+fn registry_factor(from: &str, to: &str) -> F {
+    super::UnitRegistry::global()
+        .factor(from, to)
+        .unwrap_or_else(|e| panic!("unit preset factor {from} -> {to}: {e}"))
+}
 
 /// One of the ten named dimensions every [`UnitPreset`] reports.
 ///
@@ -198,8 +221,8 @@ impl UnitPreset {
                 ("force", "electron_volt / angstrom"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            BOLTZMANN / ELEMENTARY_CHARGE,
-            COULOMB_REAL * (BOLTZMANN / ELEMENTARY_CHARGE) / BOLTZMANN_REAL,
+            boltzmann_in("eV"),
+            COULOMB_METAL,
         )
     }
 
@@ -220,7 +243,7 @@ impl UnitPreset {
                 ("density", "kilogram / meter ** 3"),
             ],
             BOLTZMANN,
-            8.987_551_792_3e9,
+            COULOMB_CONSTANT,
         )
     }
 
@@ -240,7 +263,8 @@ impl UnitPreset {
                 ("force", "dyne"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            BOLTZMANN * 1e7,
+            boltzmann_in("erg"),
+            // Gaussian units define the statcoulomb by k_e = 1.
             1.0,
         )
     }
@@ -261,7 +285,8 @@ impl UnitPreset {
                 ("force", "hartree / bohr"),
                 ("density", "amu / bohr ** 3"),
             ],
-            BOLTZMANN / 4.359_744_722_207_1e-18,
+            boltzmann_in("hartree"),
+            // Atomic units define k_e = 1.
             1.0,
         )
     }
@@ -305,8 +330,12 @@ impl UnitPreset {
                 ("force", "picogram * micrometer / microsecond ** 2"),
                 ("density", "picogram / micrometer ** 3"),
             ],
-            BOLTZMANN,
-            1.0,
+            boltzmann_in("picogram * micrometer ** 2 / microsecond ** 2"),
+            coulomb_in(
+                "picogram * micrometer ** 2 / microsecond ** 2",
+                "micrometer",
+                "picocoulomb",
+            ),
         )
     }
 
@@ -326,8 +355,12 @@ impl UnitPreset {
                 ("force", "attogram * nanometer / nanosecond ** 2"),
                 ("density", "attogram / nanometer ** 3"),
             ],
-            BOLTZMANN,
-            1.0,
+            boltzmann_in("attogram * nanometer ** 2 / nanosecond ** 2"),
+            coulomb_in(
+                "attogram * nanometer ** 2 / nanosecond ** 2",
+                "nanometer",
+                "elementary_charge",
+            ),
         )
     }
 
@@ -335,7 +368,7 @@ impl UnitPreset {
     ///
     /// Not a LAMMPS style. `k_B` is the exact molar gas constant in
     /// kJ·mol⁻¹·K⁻¹ (`R / 1000`), and the Coulomb constant is
-    /// [`COULOMB_REAL`] in kJ·nm·mol⁻¹·e⁻² (× 4.184 kJ/kcal ÷ 10 Å/nm), so
+    /// [`COULOMB_REAL`] in kJ·nm·mol⁻¹·e⁻² (through the unit registry), so
     /// it prices charges exactly as the `real` preset does.
     pub fn openmm() -> Self {
         Self::from_table(
@@ -352,8 +385,8 @@ impl UnitPreset {
                 ("force", "kilojoule_per_mole / nanometer"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            GAS_CONSTANT / 1000.0,
-            COULOMB_REAL * KJ_PER_KCAL / ANGSTROM_PER_NM,
+            GAS_CONSTANT * J_TO_KJ.get(),
+            COULOMB_REAL * KCAL_ANGSTROM_TO_KJ_NM.get(),
         )
     }
 
@@ -541,6 +574,27 @@ pub fn unit_preset_names() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::core::constants::BOLTZMANN_REAL;
+
+    #[test]
+    fn micro_and_nano_constants_are_lammps_boltz_and_qqr2e() {
+        // LAMMPS `force.cpp`: micro boltz 1.3806504e-8, qqr2e 8.987556e6;
+        // nano boltz 0.013806504, qqr2e 230.7078669 (older CODATA, so 1e-5).
+        let close = |a: F, b: F| ((a - b) / b).abs() < 1e-5;
+        let micro = UnitPreset::micro();
+        assert!(
+            close(micro.boltzmann(), 1.380_650_4e-8),
+            "{}",
+            micro.boltzmann()
+        );
+        assert!(close(micro.coulomb(), 8.987_556e6), "{}", micro.coulomb());
+        let nano = UnitPreset::nano();
+        assert!(
+            close(nano.boltzmann(), 0.013_806_504),
+            "{}",
+            nano.boltzmann()
+        );
+        assert!(close(nano.coulomb(), 230.707_866_9), "{}", nano.coulomb());
+    }
 
     #[test]
     fn real_boltzmann_is_bit_identical_to_the_constant() {

@@ -8,7 +8,7 @@
 //! |---|---|
 //! | data file | [`read_lammps_data`](crate::io::read_lammps_data), [`read_lammps_data_bytes`](crate::io::read_lammps_data_bytes), [`write_lammps_data`](crate::io::write_lammps_data) |
 //! | molecule template | [`read_lammps_molecule`](crate::io::read_lammps_molecule), [`read_lammps_molecule_json`](crate::io::read_lammps_molecule_json), [`write_lammps_molecule`](crate::io::write_lammps_molecule), [`write_lammps_molecule_json`](crate::io::write_lammps_molecule_json) |
-//! | dump | [`read_lammps_trajectory`](crate::io::read_lammps_trajectory), [`read_lammps_dump_bytes`](crate::io::read_lammps_dump_bytes), [`write_lammps_trajectory`](crate::io::write_lammps_trajectory), [`write_lammps_dump_local`](crate::io::write_lammps_dump_local) |
+//! | dump | [`read_lammps_dump_trajectory`](crate::io::read_lammps_dump_trajectory), [`read_lammps_dump_bytes`](crate::io::read_lammps_dump_bytes), [`write_lammps_dump_trajectory`](crate::io::write_lammps_dump_trajectory), [`write_lammps_dump_local`](crate::io::write_lammps_dump_local) |
 //! | `fix bond/react` | [`write_lammps_bond_react_map`](crate::io::write_lammps_bond_react_map), [`write_lammps_bond_react_system`](crate::io::write_lammps_bond_react_system) |
 //! | log | [`read_lammps_log`](crate::io::read_lammps_log), [`read_lammps_log_str`](crate::io::read_lammps_log_str) |
 //! | `fix cmap` grid | [`read_lammps_cmap_str`](crate::io::read_lammps_cmap_str), [`write_lammps_cmap_str`](crate::io::write_lammps_cmap_str) |

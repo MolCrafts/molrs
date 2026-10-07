@@ -343,7 +343,7 @@ impl CgSmilesIr {
     /// # Errors
     ///
     /// Returns a [`SmilesError`] stamped
-    /// [`Notation::CGsmiles`](crate::io::smiles::Notation::CGsmiles) and carrying
+    /// [`Notation::CgSmiles`](crate::io::smiles::Notation::CgSmiles) and carrying
     /// the whole of `text`, so the rendered message reads `CGsmiles parse error at
     /// position N: …` with a caret under column N.
     ///

@@ -56,7 +56,7 @@ pub(crate) fn generate_3d_impl(
         ));
     }
 
-    let mut report = ConformerReport::new(ForceFieldKind::MMFF94);
+    let mut report = ConformerReport::new(ForceFieldKind::Mmff94);
 
     let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
     if opts.rng_seed.is_none() {

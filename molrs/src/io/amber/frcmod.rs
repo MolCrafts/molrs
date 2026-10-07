@@ -180,7 +180,7 @@ impl AmberFrcmodWriter {
     /// The trailing comment of an estimated row, parmchk2's way (`same as
     /// <analog>, penalty score= <penalty>`); empty for a matched term.
     fn provenance_comment(p: &Params) -> String {
-        match Provenance::read_from(p) {
+        match Provenance::from_params(p) {
             None => String::new(),
             Some(estimate) if estimate.analog.is_empty() => format!(
                 "  estimated ({}), penalty score= {:.1}",
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn estimated_term_writes_its_provenance_as_the_row_comment() {
         let mut params = Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]);
-        Provenance::analogy(2.5, "c3-os").write_onto(&mut params);
+        Provenance::analogy(2.5, "c3-os").apply_to(&mut params);
         let ff = one_type("bond", "harmonic", &["c3", "oh"], params);
         let text = write(&ff);
         let rows = section(&text, "BOND");
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn empirical_estimate_comment_names_the_method() {
         let mut params = Params::from_pairs(&[("k", 640.0), ("r0", 1.43)]);
-        Provenance::empirical(12.0).write_onto(&mut params);
+        Provenance::empirical(12.0).apply_to(&mut params);
         let ff = one_type("bond", "harmonic", &["c3", "oh"], params);
         let text = write(&ff);
         let rows = section(&text, "BOND");

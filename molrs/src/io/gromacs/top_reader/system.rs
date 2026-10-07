@@ -6,13 +6,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use ndarray::{Array1, ArrayD};
 
 use super::{Directives, Kind, Row, Table, convert};
-use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
+use crate::core::UnitFactor;
 use crate::ff::potential::MAX_ATOMS_FOR_A_FULL_PAIR_LIST;
 use molrs::core::Frame;
 use molrs::core::TypeName;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::{Block, BlockDtype};
 use molrs::op::{F, Idx};
+
+/// kcal → kJ (kcal/mol → kJ/mol).
+static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
+/// nm → Å.
+static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.
@@ -354,7 +359,7 @@ fn molecule_row(
                 .defaults
                 .ok_or_else(|| row.err("[ pairs ] needs [ defaults ] (fudgeQQ, gen-pairs)"))?;
             let values = numbers(row, &cols[3..])?;
-            let lj = |sigma: f64, eps: f64| (eps / KJ_PER_KCAL, sigma * ANGSTROM_PER_NM);
+            let lj = |sigma: f64, eps: f64| (eps / KCAL_TO_KJ.get(), sigma * NM_TO_ANGSTROM.get());
             let cells: Cells = match (cols[2], &values[..]) {
                 ("1", []) => {
                     let (a, b) = (&mt.atoms[i].atype, &mt.atoms[j].atype);
@@ -431,7 +436,7 @@ fn molecule_row(
                 }
             };
             let r0 = match &numbers(row, &cols[3..])?[..] {
-                [b0] => b0 * ANGSTROM_PER_NM,
+                [b0] => b0 * NM_TO_ANGSTROM.get(),
                 [] => {
                     let (a, b) = (
                         d.classes[&mt.atoms[i].atype].as_str(),
@@ -475,8 +480,8 @@ fn molecule_row(
                 return Err(row.err("a settle needs the two atoms after its oxygen"));
             }
             let (doh, dhh) = (
-                row.number(doh, "doh")? * ANGSTROM_PER_NM,
-                row.number(dhh, "dhh")? * ANGSTROM_PER_NM,
+                row.number(doh, "doh")? * NM_TO_ANGSTROM.get(),
+                row.number(dhh, "dhh")? * NM_TO_ANGSTROM.get(),
             );
             mt.constraints
                 .extend([(o, o + 1, doh), (o, o + 2, doh), (o + 1, o + 2, dhh)]);

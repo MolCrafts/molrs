@@ -5,7 +5,10 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, IxDyn};
 
-use crate::core::constants::ANGSTROM_PER_BOHR;
+use crate::core::UnitFactor;
+
+/// bohr → Å (a cube file's length unit when N1 > 0).
+static BOHR_TO_ANGSTROM: UnitFactor = UnitFactor::new("bohr", "angstrom");
 use molrs::core::Block;
 use molrs::core::Element;
 use molrs::core::Frame;
@@ -171,7 +174,11 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame, MolRsError> {
     // every downstream consumer (simbox, marching cubes, atom rendering)
     // can treat the frame as Å without further bookkeeping.
     // -----------------------------------------------------------------------
-    let unit_scale: f64 = if is_angstrom { 1.0 } else { ANGSTROM_PER_BOHR };
+    let unit_scale: f64 = if is_angstrom {
+        1.0
+    } else {
+        BOHR_TO_ANGSTROM.get()
+    };
     let origin_ang: [f64; 3] = [
         origin[0] * unit_scale,
         origin[1] * unit_scale,
@@ -382,8 +389,8 @@ pub fn write_cube<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<(), MolRsErr
 /// # Unit handling
 ///
 /// Atom coordinates and the simulation box are normalised to **Å** on read
-/// (Bohr → Å conversion by the private `ANGSTROM_PER_BOHR` constant — the Bohr radius,
-/// 0.529 177 210 67 Å — when the file uses Bohr units).
+/// (bohr → Å through the unit registry — the Bohr radius, CODATA 2018
+/// 0.529 177 210 903 Å — when the file uses Bohr units).
 /// The original unit system is recorded in `frame.meta["cube_units"]` so
 /// [`write_cube`] can round-trip the file without surprising the
 /// producing toolchain.
@@ -446,7 +453,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
         .as_ref()
         .ok_or_else(|| MolRsError::validation("frame has no simbox; cannot recover cube cell"))?;
 
-    let n_atoms = atoms.nrows().unwrap_or(0);
+    let n_atoms = atoms.n_rows().unwrap_or(0);
     let grid_shape = grid_block.shape();
     if grid_shape.len() != 3 {
         return Err(MolRsError::validation(format!(
@@ -480,7 +487,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<(), MolRsEr
     let unit_scale: f64 = if is_angstrom {
         1.0
     } else {
-        1.0 / ANGSTROM_PER_BOHR
+        1.0 / BOHR_TO_ANGSTROM.get()
     };
 
     // Recover origin and cell columns from simbox, in the writer's unit.

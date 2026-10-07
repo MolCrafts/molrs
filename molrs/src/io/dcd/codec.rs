@@ -1048,7 +1048,7 @@ fn write_dcd_frame<W: Write + Seek>(
     }
 
     let natoms_in_frame = frame
-        .visit_block("atoms", |a| a.nrows().unwrap_or(0))
+        .visit_block("atoms", |a| a.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("frame must contain 'atoms' block"))?
         as u32;
     if natoms_in_frame == 0 {
@@ -2182,7 +2182,7 @@ mod tests {
         )
         .expect("parse nopbc frame 0");
         assert!(f0.simbox.is_none());
-        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(f0.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[test]
@@ -2248,11 +2248,11 @@ mod tests {
         let hi = lo + entries[0].byte_len as usize;
         wrapped.extend_from_slice(&bytes[lo..hi]);
         let parsed = read_dcd_bytes(&wrapped, None).expect("parse with context");
-        assert_eq!(parsed.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(parsed.get("atoms").unwrap().n_rows().unwrap(), 2);
 
         let no_copy =
             read_dcd_bytes(&bytes[lo..hi], Some(&ctx)).expect("parse with context, no wrap");
-        assert_eq!(no_copy.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(no_copy.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[test]

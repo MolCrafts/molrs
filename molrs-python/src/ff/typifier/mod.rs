@@ -264,7 +264,7 @@ impl PyTypifier {
             .clone();
         match &mut slf.borrow_mut().state {
             TypifierState::Python(Some(output)) => matched
-                .write_onto(typed.borrow_mut().core_mut(), output)
+                .apply_to(typed.borrow_mut().core_mut(), output)
                 .map_err(PyValueError::new_err)?,
             TypifierState::Native(_) | TypifierState::Python(None) => {
                 return Err(unseeded_output());

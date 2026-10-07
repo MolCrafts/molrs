@@ -51678,7 +51678,7 @@ pub struct MmffEleStyle {
 /// MMFF's buffered-Coulomb constants (`<ElectrostaticParams coulomb=… dielectric=…
 /// delta=… scale14=…/>`).
 pub static MMFF_ELE_STYLE: MmffEleStyle = MmffEleStyle {
-    coulomb: 332.0716,
+    coulomb: crate::core::constants::MMFF_COULOMB,
     dielectric: 1.0,
     delta: 0.05,
     scale14: 0.75,

@@ -763,8 +763,9 @@ pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
 /// ----------
 /// text : str
 ///     Full log file contents.
-/// path : str, optional
-///     Recorded on the result as ``path`` (default ``"<string>"``).
+/// source_name : str, optional
+///     Where the text came from, recorded on the result as ``path`` (default
+///     ``"<string>"``); never opened.
 /// style : str, optional
 ///     Thermo style. Only ``"default"`` is currently parsed.
 ///
@@ -774,9 +775,9 @@ pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
 ///     Same structure as :func:`read_lammps_log`.
 #[cfg(feature = "fs")]
 #[pyfunction]
-#[pyo3(signature = (text, path = "<string>", style = "default"))]
-pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> PyLammpsLog {
-    PyLammpsLog::new(read_lammps_log_str_rs(text, path, style))
+#[pyo3(signature = (text, source_name = "<string>", style = "default"))]
+pub fn read_lammps_log_str(text: &str, source_name: &str, style: &str) -> PyLammpsLog {
+    PyLammpsLog::new(read_lammps_log_str_rs(text, source_name, style))
 }
 
 /// Whether ``text`` holds a LAMMPS run (``molrs::io::lammps::is_lammps_log``).

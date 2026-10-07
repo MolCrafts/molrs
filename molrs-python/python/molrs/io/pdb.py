@@ -6,6 +6,6 @@ The doors are functions of :mod:`molrs.io` (:func:`~molrs.io.read_pdb`,
 lazy reader, :class:`PdbReader` (every ``MODEL`` of one or several files).
 """
 
-from .._lib import PdbReader
+from .._native import PdbReader
 
 __all__ = ["PdbReader"]

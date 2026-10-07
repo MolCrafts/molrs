@@ -314,12 +314,12 @@ fn ring_angle(hyb: Hybridization, ring_size: usize) -> f64 {
         pi * (1.0 - 2.0 / ring_size as f64)
     } else if hyb == Hybridization::Sp3 {
         if ring_size == 5 {
-            104.0 * pi / 180.0
+            104.0_f64.to_radians()
         } else {
-            109.5 * pi / 180.0
+            109.5_f64.to_radians()
         }
     } else {
-        120.0 * pi / 180.0
+        120.0_f64.to_radians()
     }
 }
 
@@ -409,21 +409,21 @@ fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut
                             (2.0 * pi - angle_taken[aid2])
                                 / (n13.saturating_sub(visited[aid2])).max(1) as f64
                         } else if ahyb == Hybridization::Sp3 {
-                            let mut a = 109.5 * pi / 180.0;
+                            let mut a = 109.5_f64.to_radians();
                             if p.rings.is_atom_in_ring(p.atom_ids[aid2])
                                 && atom_in_ring_of_size(p, aid2, 3)
                             {
-                                a = 116.0 * pi / 180.0;
+                                a = 116.0_f64.to_radians();
                             } else if atom_in_ring_of_size(p, aid2, 4) {
-                                a = 112.0 * pi / 180.0;
+                                a = 112.0_f64.to_radians();
                             }
                             a
                         } else if deg == 5 {
-                            105.0 * pi / 180.0
+                            105.0_f64.to_radians()
                         } else if deg == 6 {
-                            135.0 * pi / 180.0
+                            135.0_f64.to_radians()
                         } else {
-                            120.0 * pi / 180.0
+                            120.0_f64.to_radians()
                         };
                         set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);
                         comp.set_angle(bid1, bid2, angle);
@@ -442,10 +442,10 @@ fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut
                     let angle = match ahyb {
                         Hybridization::Sp => pi,
                         Hybridization::Sp2 => 2.0 * pi / 3.0,
-                        Hybridization::Sp3 => 109.5 * pi / 180.0,
-                        Hybridization::Sp3d => 105.0 * pi / 180.0,
-                        Hybridization::Sp3d2 => 90.0 * pi / 180.0,
-                        Hybridization::S | Hybridization::Other => 120.0 * pi / 180.0,
+                        Hybridization::Sp3 => 109.5_f64.to_radians(),
+                        Hybridization::Sp3d => 105.0_f64.to_radians(),
+                        Hybridization::Sp3d2 => 90.0_f64.to_radians(),
+                        Hybridization::S | Hybridization::Other => 120.0_f64.to_radians(),
                     };
                     if deg <= 4 {
                         set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);

@@ -6,7 +6,7 @@
 //! `assign` ([`Typifier`]): it reads a molecular graph and produces a
 //! [`TypeAssignment`] — positional per-atom / per-link [`Annotation`]s, the styles they
 //! are defined under, and the pair rows among the atom types used. The base,
-//! [`Typing`], runs the match: [`TypeAssignment::write_onto`] stamps the annotations onto
+//! [`Typing`], runs the match: [`TypeAssignment::apply_to`] stamps the annotations onto
 //! a private copy of the input and defines the matched types in the output
 //! force field the base owns. No implementor writes the output itself.
 //!
@@ -281,7 +281,7 @@ impl TypeAssignment {
     ///
     /// On `Err`, `forcefield` is unchanged, and `graph` may be partly stamped
     /// and must be discarded. The force field is never cloned.
-    pub fn write_onto(
+    pub fn apply_to(
         self,
         graph: &mut Atomistic,
         forcefield: &mut ForceField,
@@ -686,13 +686,13 @@ impl<T: Typifier> Typing<T> {
     }
 
     /// Type `mol`: copy it, match the copy and write the match onto the copy
-    /// and the output ([`TypeAssignment::write_onto`]). Returns the typed copy.
+    /// and the output ([`TypeAssignment::apply_to`]). Returns the typed copy.
     ///
     /// `mol` is never touched. On `Err` the output is unchanged.
     pub fn typify(&mut self, mol: &Atomistic) -> Result<Atomistic, String> {
         let mut graph = mol.clone();
         let m = self.typifier.assign(&mut graph)?;
-        m.write_onto(&mut graph, &mut self.output)?;
+        m.apply_to(&mut graph, &mut self.output)?;
         Ok(graph)
     }
 
@@ -709,7 +709,7 @@ impl<T: Typifier> Typing<T> {
 
 #[cfg(test)]
 mod tests {
-    //! `TypeAssignment::write_onto` and `Typing<T>` against hand-written stub typifiers.
+    //! `TypeAssignment::apply_to` and `Typing<T>` against hand-written stub typifiers.
     //! Every expectation is written by hand; no native typifier runs here.
 
     use indexmap::IndexMap;
@@ -905,10 +905,10 @@ mod tests {
         (atoms, links)
     }
 
-    // -- TypeAssignment::write_onto: stamps ---------------------------------------------
+    // -- TypeAssignment::apply_to: stamps ---------------------------------------------
 
     #[test]
-    fn write_onto_stamps_a_value_on_the_atom_at_its_position_only() {
+    fn apply_to_stamps_a_value_on_the_atom_at_its_position_only() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -920,7 +920,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_eq!(
             nth_atom(&g, 0).get("class"),
@@ -938,7 +938,7 @@ mod tests {
     /// `Type` stamps `key = name` plus every param under its own key: numeric
     /// as `F64`, string as `Str`.
     #[test]
-    fn write_onto_stamps_a_type_name_and_every_param_on_its_atom() {
+    fn apply_to_stamps_a_type_name_and_every_param_on_its_atom() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let mut params = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
@@ -949,7 +949,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         let a0 = nth_atom(&g, 0);
         assert_eq!(a0.get("type"), Some(&PropValue::Str("CT".into())));
@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn write_onto_stamps_a_bond_type_on_the_bond_at_its_position_only() {
+    fn apply_to_stamps_a_bond_type_on_the_bond_at_its_position_only() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -983,7 +983,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert!(!nth_bond_props(&g, 0).contains_key("type"));
         let b1 = nth_bond_props(&g, 1);
@@ -995,7 +995,7 @@ mod tests {
     /// Dihedral and improper vectors are positional against their own kind's
     /// rows: an improper never shifts a dihedral position, and vice versa.
     #[test]
-    fn write_onto_stamps_each_link_kind_on_its_own_rows() {
+    fn apply_to_stamps_each_link_kind_on_its_own_rows() {
         let mut g = Atomistic::new();
         let ids: Vec<_> = (0..4).map(|_| g.add_atom_bare("C")).collect();
         g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
@@ -1009,7 +1009,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         let dihedral = g.dihedrals().next().unwrap().1.props;
         let improper = g.impropers().next().unwrap().1.props;
@@ -1025,7 +1025,7 @@ mod tests {
 
     /// An empty vector means "nothing for this kind", whatever the count.
     #[test]
-    fn write_onto_accepts_an_empty_vector_for_a_kind_the_graph_has() {
+    fn apply_to_accepts_an_empty_vector_for_a_kind_the_graph_has() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -1034,15 +1034,15 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        assert_eq!(m.write_onto(&mut g, &mut ff), Ok(()));
+        assert_eq!(m.apply_to(&mut g, &mut ff), Ok(()));
     }
 
-    // -- TypeAssignment::write_onto: definitions ------------------------------------------
+    // -- TypeAssignment::apply_to: definitions ------------------------------------------
 
     /// The output defines the match's `Type`s (one row per distinct
     /// definition) and pair rows, and nothing else.
     #[test]
-    fn write_onto_defines_exactly_the_match_types_and_pair_rows() {
+    fn apply_to_defines_exactly_the_match_types_and_pair_rows() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let lj = |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
@@ -1082,7 +1082,7 @@ mod tests {
             ],
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_eq!(ff.styles().len(), 3);
         assert_eq!(type_names(&ff, "atom", "full"), vec!["CT", "OH"]);
@@ -1108,7 +1108,7 @@ mod tests {
     /// The given endpoints are the ones defined, under the name as given:
     /// `1-6` on `2`, `7` holds `2`, `7` — the name is never read.
     #[test]
-    fn write_onto_defines_the_given_endpoints_and_never_reads_the_name() {
+    fn apply_to_defines_the_given_endpoints_and_never_reads_the_name() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let k = || Params::from_pairs(&[("kb", 4.2)]);
@@ -1124,7 +1124,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         let s = ff.get_style("bond", "mmff_bond").unwrap();
         assert_eq!(
@@ -1138,7 +1138,7 @@ mod tests {
     }
 
     #[test]
-    fn write_onto_declares_styles_in_the_order_of_styles() {
+    fn apply_to_declares_styles_in_the_order_of_styles() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -1151,7 +1151,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_eq!(
             style_keys(&ff),
@@ -1169,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn write_onto_of_a_stamp_only_match_leaves_the_forcefield_empty() {
+    fn apply_to_of_a_stamp_only_match_leaves_the_forcefield_empty() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -1177,7 +1177,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert!(ff.styles().is_empty(), "{:?}", ff.styles());
         assert_eq!(
@@ -1193,7 +1193,7 @@ mod tests {
     /// A `Type` whose style the force field already declares needs no entry
     /// in `styles`.
     #[test]
-    fn write_onto_accepts_a_type_whose_style_the_forcefield_already_declares() {
+    fn apply_to_accepts_a_type_whose_style_the_forcefield_already_declares() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new()).unwrap();
@@ -1202,7 +1202,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_eq!(type_names(&ff, "atom", "full"), vec!["CT"]);
     }
@@ -1210,7 +1210,7 @@ mod tests {
     /// Re-defining a type the force field holds with identical params is a
     /// no-op: still one row.
     #[test]
-    fn write_onto_of_an_identical_existing_type_is_a_no_op() {
+    fn apply_to_of_an_identical_existing_type_is_a_no_op() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
@@ -1224,17 +1224,17 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_same_definitions(&ff, &before);
     }
 
-    // -- TypeAssignment::write_onto: errors leave the force field unchanged ----------------
+    // -- TypeAssignment::apply_to: errors leave the force field unchanged ----------------
 
     /// A conflicting `Type` fails the whole match: the new style and the new
     /// type that precede it in the batch do not land either.
     #[test]
-    fn write_onto_type_conflicting_with_the_forcefield_errs_and_changes_nothing() {
+    fn apply_to_type_conflicting_with_the_forcefield_errs_and_changes_nothing() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new())
@@ -1253,7 +1253,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
@@ -1262,7 +1262,7 @@ mod tests {
     /// Two elements of one match defining one name differently is a
     /// conflict within the batch.
     #[test]
-    fn write_onto_two_conflicting_types_within_one_match_err_and_change_nothing() {
+    fn apply_to_two_conflicting_types_within_one_match_err_and_change_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1272,14 +1272,14 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
     }
 
     #[test]
-    fn write_onto_style_conflicting_with_the_forcefield_errs_and_changes_nothing() {
+    fn apply_to_style_conflicting_with_the_forcefield_errs_and_changes_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
@@ -1293,14 +1293,14 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
     }
 
     #[test]
-    fn write_onto_type_under_an_undeclared_style_errs_and_changes_nothing() {
+    fn apply_to_type_under_an_undeclared_style_errs_and_changes_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1310,14 +1310,14 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
     }
 
     #[test]
-    fn write_onto_pair_row_under_an_undeclared_style_errs_and_changes_nothing() {
+    fn apply_to_pair_row_under_an_undeclared_style_errs_and_changes_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1332,7 +1332,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
@@ -1341,7 +1341,7 @@ mod tests {
     /// A non-empty node vector must have one entry per atom; the error names
     /// both counts.
     #[test]
-    fn write_onto_node_vector_of_the_wrong_length_errs_naming_both_counts() {
+    fn apply_to_node_vector_of_the_wrong_length_errs_naming_both_counts() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1357,14 +1357,14 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        let err = m.apply_to(&mut g, &mut ff).unwrap_err();
 
         assert!(err.contains('5') && err.contains('2'), "{err}");
         assert_same_definitions(&ff, &before);
     }
 
     #[test]
-    fn write_onto_bond_vector_of_the_wrong_length_errs_naming_kind_and_counts() {
+    fn apply_to_bond_vector_of_the_wrong_length_errs_naming_kind_and_counts() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1373,7 +1373,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        let err = m.apply_to(&mut g, &mut ff).unwrap_err();
 
         assert!(err.contains("bond"), "{err}");
         assert!(err.contains('4') && err.contains('2'), "{err}");
@@ -1383,7 +1383,7 @@ mod tests {
     /// A `Type` param and a `Value` both writing `charge` on one atom, with
     /// different values.
     #[test]
-    fn write_onto_one_key_written_twice_with_different_values_errs() {
+    fn apply_to_one_key_written_twice_with_different_values_errs() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1405,7 +1405,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
@@ -1414,7 +1414,7 @@ mod tests {
     /// Only *different* values collide; the same value written twice is one
     /// write.
     #[test]
-    fn write_onto_one_key_written_twice_with_the_same_value_is_accepted() {
+    fn apply_to_one_key_written_twice_with_the_same_value_is_accepted() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let m = TypeAssignment {
@@ -1435,7 +1435,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
 
         assert_eq!(nth_atom(&g, 0).get("charge"), Some(&PropValue::F64(0.5)));
         assert_eq!(type_names(&ff, "atom", "full"), vec!["CT"]);
@@ -1445,7 +1445,7 @@ mod tests {
     /// refused at the stamp. The valid `Type` on the other atom is not
     /// defined: stamping precedes the commit.
     #[test]
-    fn write_onto_stamp_the_graph_refuses_errs_and_changes_nothing() {
+    fn apply_to_stamp_the_graph_refuses_errs_and_changes_nothing() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
@@ -1455,7 +1455,7 @@ mod tests {
             ..TypeAssignment::default()
         };
 
-        let result = m.write_onto(&mut g, &mut ff);
+        let result = m.apply_to(&mut g, &mut ff);
 
         assert!(result.is_err(), "{result:?}");
         assert_same_definitions(&ff, &before);
@@ -1811,7 +1811,7 @@ mod tests {
     /// not have is refused by name, and a type under a kind no category
     /// names is refused while a stamped value there is not.
     #[test]
-    fn write_onto_takes_any_relation_kind_and_refuses_a_kind_the_graph_lacks() {
+    fn apply_to_takes_any_relation_kind_and_refuses_a_kind_the_graph_lacks() {
         register_urey_bradley();
         let mut g = ub_chain("urey_bradleys");
         let mut ff = ForceField::new("out");
@@ -1819,7 +1819,7 @@ mod tests {
             links: links([("urey_bradleys", vec![vec![value("tag", "first")], vec![]])]),
             ..TypeAssignment::default()
         };
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
         let kid = g.as_molgraph().kind_id("urey_bradleys").unwrap();
         let first = g.as_molgraph().relations(kid).next().unwrap().1.props;
         assert_eq!(first.get("tag"), Some(&PropValue::Str("first".into())));
@@ -1828,7 +1828,7 @@ mod tests {
             links: links([("cross_terms", vec![vec![]])]),
             ..TypeAssignment::default()
         };
-        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        let err = m.apply_to(&mut g, &mut ff).unwrap_err();
         assert!(
             err.contains("graph has no 'cross_terms' relation kind"),
             "{err}"
@@ -1841,7 +1841,7 @@ mod tests {
             links: links([("link", vec![vec![value("tag", "x")]])]),
             ..TypeAssignment::default()
         };
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
         let m = TypeAssignment {
             links: links([(
                 "link",
@@ -1849,7 +1849,7 @@ mod tests {
             )]),
             ..TypeAssignment::default()
         };
-        let err = m.write_onto(&mut g, &mut ff).unwrap_err();
+        let err = m.apply_to(&mut g, &mut ff).unwrap_err();
         assert!(
             err.contains("relation kind 'link' is the block of no category"),
             "{err}"
@@ -1953,7 +1953,7 @@ mod tests {
         );
 
         let mut ff = ForceField::new("out");
-        m.write_onto(&mut g, &mut ff).unwrap();
+        m.apply_to(&mut g, &mut ff).unwrap();
         assert_eq!(
             type_names(&ff, "bond", "harmonic"),
             vec!["b-a", "x-b", "any"]

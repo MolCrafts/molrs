@@ -61,9 +61,9 @@ default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
 # Do NOT set paths = ["python"]. Cloudflare Pages / CI run
-# `pip install ".[doc]"` first, so the installed wheel (with _lib.abi3.so) lives
+# `pip install ".[doc]"` first, so the installed wheel (with _native.abi3.so) lives
 # in site-packages. Pointing paths at the bare checkout makes griffe import the
-# pure-Python tree without the compiled extension → ModuleNotFoundError: molrs._lib.
+# pure-Python tree without the compiled extension → ModuleNotFoundError: molrs._native.
 # Local: `maturin develop` / `pip install -e ".[doc]"` then `zensical build`.
 
 [project.plugins.mkdocstrings.handlers.python.options]
@@ -73,6 +73,6 @@ show_root_heading = true
 show_root_full_path = false
 show_source = false
 # Every PyO3 class declares its public module (``module = "molrs.core"``, …)
-# and lives in the private ``molrs._lib``; force runtime inspection so griffe
+# and lives in the private ``molrs._native``; force runtime inspection so griffe
 # resolves the extension types through the package's re-exports.
 force_inspection = true

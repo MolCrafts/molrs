@@ -188,7 +188,7 @@ impl CgSmilesIr {
                 SmilesErrorKind::CgNotExpandable("base-only string (no fragment table)".to_owned()),
                 self.span,
                 "",
-                Notation::CGsmiles,
+                Notation::CgSmiles,
             ));
         };
 
@@ -202,7 +202,7 @@ impl CgSmilesIr {
                     SmilesErrorKind::CgNotExpandable(name.clone()),
                     def.span,
                     "",
-                    Notation::CGsmiles,
+                    Notation::CgSmiles,
                 ));
             };
             let context = format!("fragment '{name}'");
@@ -378,7 +378,7 @@ fn port_order(desc: &BondingDescriptor, span: Span) -> Result<BondNumber, Smiles
             SmilesErrorKind::InvalidDescriptorOrder(written),
             span,
             "",
-            Notation::CGsmiles,
+            Notation::CgSmiles,
         ));
     }
     Ok(order)
@@ -391,14 +391,14 @@ fn port_order(desc: &BondingDescriptor, span: Span) -> Result<BondNumber, Smiles
 ///
 /// The input text is not carried: 01b froze the IR without its source string,
 /// so by the time it is built from, the string is the caller's. The notation
-/// is stamped [`Notation::CGsmiles`] so the refusal can never render as a
+/// is stamped [`Notation::CgSmiles`] so the refusal can never render as a
 /// SMILES one.
 pub(super) fn cg_build(span: Span, reason: String) -> SmilesError {
     SmilesError::new(
         SmilesErrorKind::CgBuild(reason),
         span,
         "",
-        Notation::CGsmiles,
+        Notation::CgSmiles,
     )
 }
 
@@ -633,7 +633,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.span, DEF_SPAN);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
     }
 
     // -- templates: the table it returns ----------------------------------
@@ -1027,7 +1027,7 @@ mod tests {
         assert_eq!(err.span, ir.span);
         assert_eq!(
             err.notation,
-            Notation::CGsmiles,
+            Notation::CgSmiles,
             "a CGsmiles refusal never renders as a SMILES one"
         );
     }

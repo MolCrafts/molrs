@@ -65,7 +65,7 @@ CH  2
 def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
-    ff, frame = molrs.io.read_gromacs_system(path)
+    ff, frame = molrs.io.read_gromacs_top_system(path)
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert list(frame["bonds"]["type"]) == ["CT-HC", "CT-HC"]
     assert list(frame["bonds"]["atomi"]) == [0, 2]
@@ -78,10 +78,10 @@ def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path)
 def test_write_gromacs_system_round_trips_read_gromacs_system(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
-    ff, frame = molrs.io.read_gromacs_system(path)
+    ff, frame = molrs.io.read_gromacs_top_system(path)
     out = tmp_path / "out.top"
-    molrs.io.write_gromacs_system(out, ff, frame)
-    ff2, frame2 = molrs.io.read_gromacs_system(out)
+    molrs.io.write_gromacs_top_system(out, ff, frame)
+    ff2, frame2 = molrs.io.read_gromacs_top_system(out)
     # The writer states each bond's parameters on its row; the reader names
     # such a row's type after its lookup type.
     assert all(str(t).startswith("CT-HC") for t in frame2["bonds"]["type"])

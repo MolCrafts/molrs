@@ -211,7 +211,7 @@ fn with_pairs(ff: &ForceField, mut frame: Frame) -> Frame {
 /// `angles` and `dihedrals` rows (untyped: for the pair list only).
 fn graph_topology(frame: &Frame) -> Frame {
     let mut out = frame.clone();
-    let n = frame.get("atoms").unwrap().nrows().unwrap();
+    let n = frame.get("atoms").unwrap().n_rows().unwrap();
     let mut adj = vec![Vec::new(); n];
     if let Some(b) = frame.get("bonds") {
         let col = |k: &str| b.get(k).unwrap().as_uint().unwrap().to_owned();
@@ -863,7 +863,7 @@ mod codecs {
                 let tokens: Vec<String> = values.iter().map(|t| t.render(6)).collect();
                 let strs: Vec<&str> = tokens.iter().map(String::as_str).collect();
                 codec
-                    .read_extra(&spec, keyword, &strs, &mut Params::new())
+                    .parse_extra(&spec, keyword, &strs, &mut Params::new())
                     .unwrap();
             }
             seen.push(format!("{} {}", spec.category, spec.name));
@@ -1295,7 +1295,8 @@ mod codecs {
         .unwrap();
         let p = [25.0, 1.9, 0.8, 1.4];
         for r in [1.1, 1.3, 1.45, 1.7] {
-            let (e_omm, _) = openmm.eval_scalar_one(r / 10.0, &p);
+            let (e_omm, _) = openmm
+                .eval_scalar_one(r * crate::core::UnitFactor::new("angstrom", "nm").get(), &p);
             let (e_ir, _) = ir.eval_scalar_one(r, &p);
             assert!(
                 (e_omm - 4.184 * e_ir).abs() <= 1e-13 * e_omm.abs(),

@@ -1,5 +1,5 @@
-//! LAMMPS run logs for the WASM API — the face of molrs `io::read_lammps_log_str`
-//! and `io::lammps::is_lammps_log`.
+//! LAMMPS run logs for the WASM API — the face of `molrs::io::lammps::log`
+//! (`io::read_lammps_log_str`, `io::lammps::is_lammps_log`).
 //!
 //! A thermo table is the one thing a running simulation emits that a chart
 //! wants, and it arrives as text — so the browser reads it directly rather

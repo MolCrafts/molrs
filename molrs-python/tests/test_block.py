@@ -1,6 +1,6 @@
 """``molrs.core.Block`` — the one column store, native end to end.
 
-There is exactly one ``Block`` class: the PyO3 ``molrs._lib.Block``. Every
+There is exactly one ``Block`` class: the PyO3 ``molrs._native.Block``. Every
 capability below (construction from a mapping, schema-dtype adoption, row and
 multi-column indexing, rename, deep copy, sort) is implemented once, in Rust.
 """
@@ -19,7 +19,7 @@ class _SubBlock(molrs.core.Block):
 
 class TestOneClass:
     def test_molrs_block_is_the_native_class(self):
-        assert molrs.core.Block is molrs._lib.Block
+        assert molrs.core.Block is molrs._native.Block
 
     def test_a_block_can_be_subclassed(self):
         """Core data classes are extensible; a subclass is still a Block."""
@@ -42,7 +42,7 @@ class TestOneClass:
 class TestBlockConstruction:
     def test_empty(self):
         b = Block()
-        assert b.nrows == 0
+        assert b.n_rows == 0
         assert len(b) == 0
         assert b.keys() == []
 
@@ -52,7 +52,7 @@ class TestBlockConstruction:
     def test_from_a_mapping(self):
         b = Block({"x": [1.0, 2.0, 3.0], "name": ["C", "H", "O"]})
         assert sorted(b.keys()) == ["name", "x"]
-        assert b.nrows == 3
+        assert b.n_rows == 3
         assert b["x"].dtype == np.float64
         np.testing.assert_array_equal(b["x"], [1.0, 2.0, 3.0])
         assert list(b["name"]) == ["C", "H", "O"]
@@ -83,23 +83,23 @@ class TestBlockInsert:
     def test_f64(self):
         b = Block()
         b.insert("x", np.array([1.0, 2.0], dtype=np.float64))
-        assert b.nrows == 2
+        assert b.n_rows == 2
         assert "x" in b
 
     def test_uint(self):
         b = Block()
         b.insert("id", np.array([10, 20, 30], dtype=np.uint32))
-        assert b.nrows == 3
+        assert b.n_rows == 3
 
     def test_bool(self):
         b = Block()
         b.insert("mask", np.array([True, False, True]))
-        assert b.nrows == 3
+        assert b.n_rows == 3
 
     def test_2d_array(self):
         b = Block()
         b.insert("pos", np.zeros((5, 3), dtype=np.float64))
-        assert b.nrows == 5
+        assert b.n_rows == 5
 
     def test_nrows_enforcement(self):
         b = Block()

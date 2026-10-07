@@ -28,7 +28,7 @@ an IR is not a path-backed cursor, and the one-shot door onto a notation is
 a ``molrs.io.read_<fmt>_str`` function, not a class.
 """
 
-from .._lib import (
+from .._native import (
     CgEdge,
     CgFragmentDef,
     CgGraph,

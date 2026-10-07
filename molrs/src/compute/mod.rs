@@ -170,10 +170,10 @@
 //! | `fitting` | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
 //! | `dynamics` | van Hove G(r, t), pair survival |
 //! | `dielectric` | static dielectric constant from dipole fluctuations |
-//! | `cluster` | connected-component clustering + per-cluster properties |
+//! | `cluster` | cluster analysis (freud's `Cluster`): connected components by distance + per-cluster properties |
 //! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
 //! | `decomposition` | PCA projection |
-//! | `clustering` | k-means |
+//! | `kmeans` | k-means over a PCA projection |
 //! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
 //! | `order` | Steinhardt, hexatic, nematic, cubatic, solid-liquid, … |
 //! | `environment` | bond order, local descriptors, environment matching, … |
@@ -186,7 +186,6 @@
 
 mod analysis_contract;
 mod cluster;
-mod clustering;
 mod decomposition;
 mod density;
 mod dielectric;
@@ -200,6 +199,7 @@ mod fitting;
 pub(crate) mod fixtures;
 mod hbond;
 mod kinetic;
+mod kmeans;
 mod msd;
 mod order;
 mod pmft;
@@ -215,10 +215,9 @@ mod voronoi;
 // Re-exports
 pub use analysis_contract::{Check, Compute, ComputeResult, DescriptorRow, Fit, Verdict};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
-pub use clustering::{Kmeans, KmeansResult};
 pub use decomposition::{Pca, PcaResult};
 pub use density::{
-    CorrelationArgs, CorrelationFunction, CorrelationFunctionResult, GaussianDensity,
+    CorrelationFunction, CorrelationFunctionArgs, CorrelationFunctionResult, GaussianDensity,
     GaussianDensityResult, GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution,
     SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
 };
@@ -257,6 +256,7 @@ pub use hbond::{
     HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
 };
 pub use kinetic::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
+pub use kmeans::{Kmeans, KmeansResult};
 pub use msd::{Msd, MsdAccumulator, MsdMode, MsdResult, MsdTimeSeries};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
@@ -290,10 +290,10 @@ pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
     DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IrFlux, IrFluxArgs,
     IrFluxResult, IrSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
-    RamanSpectrumResult, RamanTensor, RamanTensorArgs, RamanTensorResult, ResonanceRamanArgs,
-    ResonanceRamanSpectrum, ResonanceRamanTensor, RoaCrossArgs, RoaCrossResult, RoaCrossTensor,
-    RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult, SumRuleCheck, VcdCrossArgs,
-    VcdCrossFlux, VcdCrossResult, VcdSpectrum,
+    RamanSpectrumResult, RamanTensor, RamanTensorArgs, RamanTensorResult, ResonanceRamanSpectrum,
+    ResonanceRamanTensor, ResonanceRamanTensorArgs, RoaCrossTensor, RoaCrossTensorArgs,
+    RoaCrossTensorResult, RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult,
+    SumRuleCheck, VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult, VcdSpectrum,
 };
 pub use transport::{
     DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,

@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    ANGSTROM_PER_NM, Endpoints, KJ_PER_KCAL, OpenmmXmlWriter, Out, centre_first, either_way, esc,
+    Endpoints, KCAL_TO_KJ, NM_TO_ANGSTROM, OpenmmXmlWriter, Out, centre_first, either_way, esc,
 };
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
@@ -137,7 +137,11 @@ fn rewrite(e: &Expr, f: &dyn Fn(&Expr) -> Option<Expr>) -> Expr {
 /// The energy `4.184*(main')` with every node rewritten by `f`: the
 /// expression in kJ/mol of OpenMM's coordinates, its parameters in IR units.
 fn in_openmm_units(p: &Parsed, f: &dyn Fn(&Expr) -> Option<Expr>) -> Parsed {
-    let main = Expr::bin(BinOp::Mul, Expr::num(KJ_PER_KCAL), rewrite(p.main(), f));
+    let main = Expr::bin(
+        BinOp::Mul,
+        Expr::num(KCAL_TO_KJ.get()),
+        rewrite(p.main(), f),
+    );
     let defs = p
         .defs()
         .iter()
@@ -151,7 +155,7 @@ fn in_openmm_units(p: &Parsed, f: &dyn Fn(&Expr) -> Option<Expr>) -> Parsed {
 
 /// `10*e`: an OpenMM length (nm) in Å.
 fn angstrom(e: Expr) -> Expr {
-    Expr::bin(BinOp::Mul, Expr::num(ANGSTROM_PER_NM), e)
+    Expr::bin(BinOp::Mul, Expr::num(NM_TO_ANGSTROM.get()), e)
 }
 
 /// Every identifier the expression names (definitions included).

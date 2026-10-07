@@ -295,7 +295,7 @@ fn numbered_template(
         let Some(block) = out.get(block_name) else {
             continue;
         };
-        let n = block.nrows().unwrap_or(0);
+        let n = block.n_rows().unwrap_or(0);
         if n == 0 {
             continue;
         }
@@ -329,7 +329,7 @@ fn numbered_template(
         out.insert(block_name, block);
     }
     if let Some(atoms) = out.get_mut("atoms") {
-        let n = atoms.nrows().unwrap_or(0) as Idx;
+        let n = atoms.n_rows().unwrap_or(0) as Idx;
         atoms
             .insert(keys::ID, Array1::from_iter(1..=n).into_dyn())
             .map_err(|e| invalid_data(e.to_string()))?;
@@ -565,7 +565,7 @@ mod tests {
             .unwrap();
         let mut t = coupling();
         for part in [&mut t.pre, &mut t.post] {
-            let n = part["atoms"].nrows().unwrap();
+            let n = part["atoms"].n_rows().unwrap();
             part.get_mut("atoms")
                 .unwrap()
                 .insert("mol_id", Array1::from_vec(vec![1 as Idx; n]).into_dyn())

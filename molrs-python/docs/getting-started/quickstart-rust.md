@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let atoms = frame.get("atoms").expect("an atoms block");
     let x = atoms.get("x").and_then(|c| c.as_float()).expect("an f64 x column");
-    println!("atoms: {}", atoms.nrows().unwrap_or(0));
+    println!("atoms: {}", atoms.n_rows().unwrap_or(0));
     println!("first x: {:.3}", x[0]);
     println!("final energy: {:?}", report.final_energy);
 

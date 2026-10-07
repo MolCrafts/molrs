@@ -45,7 +45,7 @@ use crate::core::schema::block_names::ATOMS;
 ///
 /// // Access via Index trait
 /// let atoms_ref = &frame["atoms"];
-/// assert_eq!(atoms_ref.nrows(), Some(3));
+/// assert_eq!(atoms_ref.n_rows(), Some(3));
 ///
 /// // Add metadata
 /// frame.meta.insert("title", "My Molecule");
@@ -69,7 +69,7 @@ impl std::fmt::Debug for Frame {
         // Format blocks as a map of name -> (nrows, ncols)
         let mut blocks_map = std::collections::BTreeMap::new();
         for (k, b) in &self.map {
-            blocks_map.insert(k.as_str(), (b.nrows(), b.len()));
+            blocks_map.insert(k.as_str(), (b.n_rows(), b.len()));
         }
         debug_struct.field("blocks", &blocks_map);
 
@@ -521,7 +521,7 @@ impl Frame {
     ///
     /// let x: Vec<F> = one["atoms"].get("x").and_then(|c| c.as_float()).unwrap().iter().copied().collect();
     /// assert_eq!(x, vec![2.0, 1.0]);
-    /// assert_eq!(one["bonds"].nrows(), Some(1));
+    /// assert_eq!(one["bonds"].n_rows(), Some(1));
     /// assert_eq!(one["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap()[[0]], 1);
     /// assert_eq!(one["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap()[[0]], 0);
     /// assert_eq!(one["bonds"].get("type_id").and_then(|c| c.as_uint()).unwrap()[[0]], 11);
@@ -530,7 +530,7 @@ impl Frame {
         let target = self.get(block).ok_or_else(|| {
             MolRsError::not_found("block", format!("frame has no '{block}' block"))
         })?;
-        let nrows = target.nrows().unwrap_or(0);
+        let nrows = target.n_rows().unwrap_or(0);
         // new_row[old] = Some(new) for a selected row.
         let mut new_row: Vec<Option<usize>> = vec![None; nrows];
         for (k, &r) in rows.iter().enumerate() {
@@ -594,7 +594,9 @@ impl Frame {
                 }
                 rows.to_vec()
             } else {
-                (0..b.nrows().unwrap_or(0)).filter(|&i| inside(i)).collect()
+                (0..b.n_rows().unwrap_or(0))
+                    .filter(|&i| inside(i))
+                    .collect()
             };
             let mut cut = b.select_rows(&kept)?;
             for col in &columns {
@@ -671,7 +673,7 @@ impl Frame {
     /// frame.insert("bonds", bonds);
     ///
     /// let three = frame.replicate(3).unwrap();
-    /// assert_eq!(three["atoms"].nrows(), Some(6));
+    /// assert_eq!(three["atoms"].n_rows(), Some(6));
     /// let i: Vec<Idx> = three["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
     /// let j: Vec<Idx> = three["bonds"].get("atomj").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
     /// assert_eq!((i, j), (vec![0, 2, 4], vec![1, 3, 5]));
@@ -681,7 +683,7 @@ impl Frame {
         out.meta = self.meta.clone();
         out.simbox = self.simbox.clone();
         for (name, b) in self.iter() {
-            let rows = b.nrows().unwrap_or(0);
+            let rows = b.n_rows().unwrap_or(0);
             let tile: Vec<usize> = (0..count).flat_map(|_| 0..rows).collect();
             let mut tiled = b.select_rows(&tile)?;
             if b.is_empty() {
@@ -705,7 +707,7 @@ impl Frame {
                             ),
                         )
                     })?
-                    .nrows()
+                    .n_rows()
                     .unwrap_or(0);
                 let values = tiled
                     .get_mut(col)
@@ -779,7 +781,7 @@ impl Frame {
     ///
     /// // A diatomic then a triatomic: the second part's bonds start at atom 2.
     /// let joined = Frame::concat([&chain(2), &chain(3)]).unwrap();
-    /// assert_eq!(joined["atoms"].nrows(), Some(5));
+    /// assert_eq!(joined["atoms"].n_rows(), Some(5));
     /// let i: Vec<Idx> = joined["bonds"].get("atomi").and_then(|c| c.as_uint()).unwrap().iter().copied().collect();
     /// assert_eq!(i, vec![0, 2, 3]);
     /// ```
@@ -794,7 +796,7 @@ impl Frame {
         for frame in &frames {
             for (name, b) in frame.iter() {
                 let mut part = b.clone();
-                let rows = b.nrows().unwrap_or(0);
+                let rows = b.n_rows().unwrap_or(0);
                 let references = if rows > 0 {
                     local_reference_targets(name, b)
                 } else {
@@ -828,7 +830,7 @@ impl Frame {
                 parts.entry(name.to_owned()).or_default().push(part);
             }
             for (name, b) in frame.iter() {
-                *seen_rows.entry(name.to_owned()).or_default() += b.nrows().unwrap_or(0);
+                *seen_rows.entry(name.to_owned()).or_default() += b.n_rows().unwrap_or(0);
             }
         }
         let mut out = Frame::with_capacity(parts.len());
@@ -1051,7 +1053,7 @@ mod tests {
         assert!(frame.contains_key("atoms"));
 
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
     }
 
     #[test]
@@ -1065,7 +1067,7 @@ mod tests {
 
         // Immutable index
         let atoms = &frame["atoms"];
-        assert_eq!(atoms.nrows(), Some(1));
+        assert_eq!(atoms.n_rows(), Some(1));
 
         // Mutable index
         let atoms_mut = &mut frame["atoms"];
@@ -1374,7 +1376,7 @@ mod tests {
         let out = chain_of_four().subset("atoms", &[2, 1]).unwrap();
 
         assert_eq!(float_values(&out, "atoms", "x"), vec![2.0, 1.0]);
-        assert_eq!(out["bonds"].nrows(), Some(1));
+        assert_eq!(out["bonds"].n_rows(), Some(1));
         assert_eq!(uint_values(&out, "bonds", "atomi"), vec![1]);
         assert_eq!(uint_values(&out, "bonds", "atomj"), vec![0]);
         assert_eq!(uint_values(&out, "bonds", "type_id"), vec![11]);
@@ -1392,7 +1394,7 @@ mod tests {
 
         let out = frame.subset("atoms", &[1, 2, 3]).unwrap();
 
-        assert_eq!(out["angles"].nrows(), Some(1));
+        assert_eq!(out["angles"].n_rows(), Some(1));
         assert_eq!(uint_values(&out, "angles", "atomi"), vec![0]);
         assert_eq!(uint_values(&out, "angles", "atomj"), vec![1]);
         assert_eq!(uint_values(&out, "angles", "atomk"), vec![2]);
@@ -1411,7 +1413,7 @@ mod tests {
 
         let out = frame.subset("atoms", &[2, 3]).unwrap();
 
-        assert_eq!(out["ports"].nrows(), Some(1));
+        assert_eq!(out["ports"].n_rows(), Some(1));
         assert_eq!(uint_values(&out, "ports", "atomi"), vec![1]);
         assert_eq!(uint_values(&out, "ports", "atomj"), vec![0]);
     }
@@ -1441,7 +1443,7 @@ mod tests {
         assert_eq!(after.h_view(), before.h_view());
         assert_eq!(after.origin_view(), before.origin_view());
         assert_eq!(after.pbc(), before.pbc());
-        assert_eq!(out["labels"].nrows(), Some(3));
+        assert_eq!(out["labels"].n_rows(), Some(3));
         assert_eq!(float_values(&out, "labels", "weight"), vec![0.5, 1.5, 2.5]);
     }
 
@@ -1488,8 +1490,8 @@ mod tests {
     fn subset_with_no_rows_gives_zero_row_atoms_and_bonds() {
         let out = chain_of_four().subset("atoms", &[]).unwrap();
 
-        assert_eq!(out["atoms"].nrows(), Some(0));
-        assert_eq!(out["bonds"].nrows(), Some(0));
+        assert_eq!(out["atoms"].n_rows(), Some(0));
+        assert_eq!(out["bonds"].n_rows(), Some(0));
     }
 
     #[test]
@@ -1533,7 +1535,7 @@ mod tests {
     #[test]
     fn replicate_offsets_endpoints_by_the_target_row_count_per_copy() {
         let two = chain_of_four().replicate(2).unwrap();
-        assert_eq!(two["atoms"].nrows(), Some(8));
+        assert_eq!(two["atoms"].n_rows(), Some(8));
         assert_eq!(uint_values(&two, "bonds", "atomi"), [0, 1, 2, 4, 5, 6]);
         assert_eq!(uint_values(&two, "bonds", "atomj"), [1, 2, 3, 5, 6, 7]);
         // Non-endpoint columns (identifiers included) are copied verbatim.
@@ -1570,7 +1572,7 @@ mod tests {
         // rows [1..=5]: cmap 0 touches atom 0 and is dropped; cmap 1 becomes
         // (0,1,2,3,4) and keeps type_id 8.
         let out = two_cmaps().subset("atoms", &[1, 2, 3, 4, 5]).unwrap();
-        assert_eq!(out["cmaps"].nrows(), Some(1));
+        assert_eq!(out["cmaps"].n_rows(), Some(1));
         for (key, want) in [
             ("atomi", 0),
             ("atomj", 1),
@@ -1629,8 +1631,8 @@ mod tests {
     #[test]
     fn replicate_zero_times_gives_zero_row_blocks() {
         let none = chain_of_four().replicate(0).unwrap();
-        assert_eq!(none["atoms"].nrows(), Some(0));
-        assert_eq!(none["bonds"].nrows(), Some(0));
+        assert_eq!(none["atoms"].n_rows(), Some(0));
+        assert_eq!(none["bonds"].n_rows(), Some(0));
     }
 
     #[test]
@@ -1639,7 +1641,7 @@ mod tests {
         let mut marker = Block::new();
         marker.resize(2).unwrap();
         frame.insert("marker", marker);
-        assert_eq!(frame.replicate(3).unwrap()["marker"].nrows(), Some(6));
+        assert_eq!(frame.replicate(3).unwrap()["marker"].n_rows(), Some(6));
     }
 
     #[test]
@@ -1716,7 +1718,7 @@ mod tests {
         atoms.insert("charge", float_col(&[0.5, -0.5])).unwrap();
         lone.insert("atoms", atoms);
         let joined = Frame::concat([&lone, &chain_of_four()]).unwrap();
-        assert_eq!(joined["atoms"].nrows(), Some(6));
+        assert_eq!(joined["atoms"].n_rows(), Some(6));
         assert_eq!(uint_values(&joined, "bonds", "atomi"), [2, 3, 4]);
         // `charge` only the first part had: null on the chain's rows.
         assert_eq!(
@@ -1774,7 +1776,7 @@ mod tests {
         frame
             .set_coords(ndarray::array![[1.0 as F, 2.0, 3.0]].view())
             .unwrap();
-        assert_eq!(frame["atoms"].nrows(), Some(1));
+        assert_eq!(frame["atoms"].n_rows(), Some(1));
     }
 
     #[test]

@@ -42,6 +42,27 @@ pub enum GaffParameterSet {
 }
 
 impl GaffParameterSet {
+    /// Both sets.
+    pub const ALL: [GaffParameterSet; 2] = [Self::Gaff, Self::Gaff2];
+
+    /// The set [`name`](Self::name) names.
+    ///
+    /// # Errors
+    ///
+    /// An unknown name; there is no default set.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|set| set.name() == name)
+            .ok_or_else(|| {
+                let known: Vec<&str> = Self::ALL.iter().map(|set| set.name()).collect();
+                format!(
+                    "unknown GAFF parameter set {name:?}; expected one of {}",
+                    known.join(", ")
+                )
+            })
+    }
+
     /// The compile-time table this set names.
     pub fn table(self) -> ParmTable {
         match self {
@@ -462,7 +483,7 @@ impl GaffTypifier {
         let mut missed = Misses::default();
 
         // Topology first, so every positional vector below is read off the
-        // graph `TypeAssignment::write_onto` stamps: angles and dihedrals regenerated
+        // graph `TypeAssignment::apply_to` stamps: angles and dihedrals regenerated
         // from the bond graph, impropers rebuilt as AmberTools builds them.
         graph
             .generate_topology(true, true, false, true)
@@ -757,7 +778,7 @@ impl Bonded {
             name = name.with_qualifier(&fields).map_err(malformed)?;
         }
         if let Some(provenance) = &estimate {
-            provenance.write_onto(&mut params);
+            provenance.apply_to(&mut params);
         }
         Ok(vec![(
             keys::TYPE.to_owned(),

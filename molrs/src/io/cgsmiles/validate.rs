@@ -69,7 +69,7 @@ fn squash_error(span: Span, input: &str) -> SmilesError {
         SmilesErrorKind::CgSquashUnsupported,
         span,
         input,
-        Notation::CGsmiles,
+        Notation::CgSmiles,
     )
 }
 
@@ -190,7 +190,7 @@ mod tests {
         );
         assert_eq!(err.span.start, 11, "the caret must point at the '[!]'");
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
     }
 
     // -- a `Shared` descriptor in a last-block (atomistic) body -------------
@@ -215,7 +215,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
     }
 
     // -- a `Shared` descriptor on a base-graph node -------------------------

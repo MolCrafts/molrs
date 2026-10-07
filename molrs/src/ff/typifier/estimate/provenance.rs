@@ -68,7 +68,7 @@ impl EstimateMethod {
 ///
 /// # The provenance convention
 ///
-/// [`Provenance::write_onto`] writes four keys onto an estimated term's
+/// [`Provenance::apply_to`] writes four keys onto an estimated term's
 /// [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
 /// the parmchk2 oracle test) reads the same four:
 ///
@@ -135,7 +135,7 @@ impl Provenance {
     ];
 
     /// Write the four provenance keys onto an estimated term's params.
-    pub fn write_onto(&self, params: &mut Params) {
+    pub fn apply_to(&self, params: &mut Params) {
         params.set(Self::KEYS[0], 1.0);
         params.set(Self::KEYS[1], self.penalty);
         params.set_str(Self::KEYS[2], self.method.as_str());
@@ -143,10 +143,10 @@ impl Provenance {
     }
 
     /// The provenance `params` carry: the inverse of
-    /// [`write_onto`](Self::write_onto). `None` for a term that was matched,
+    /// [`apply_to`](Self::apply_to). `None` for a term that was matched,
     /// not estimated (no `estimated` key), or whose `estimate_method` is not
     /// one this module writes.
-    pub fn read_from(params: &Params) -> Option<Self> {
+    pub fn from_params(params: &Params) -> Option<Self> {
         params.get(Self::KEYS[0])?;
         let method = EstimateMethod::parse(params.get_str(Self::KEYS[2])?)?;
         Some(Self {
@@ -229,7 +229,7 @@ impl Estimate {
             Self::Covered { params, analog } => (params, Provenance::wildcard(0.0, analog)),
             Self::Estimated { params, provenance } => (params, provenance),
         };
-        provenance.write_onto(&mut params);
+        provenance.apply_to(&mut params);
         params
     }
 }
@@ -262,23 +262,23 @@ mod tests {
     }
 
     #[test]
-    fn read_from_inverts_write_onto() {
+    fn from_params_inverts_apply_to() {
         let written = Provenance::analogy(2.5, "c3-oh");
         let mut params = Params::from_pairs(&[("k", 300.9)]);
-        written.write_onto(&mut params);
-        assert_eq!(Provenance::read_from(&params), Some(written));
+        written.apply_to(&mut params);
+        assert_eq!(Provenance::from_params(&params), Some(written));
     }
 
     #[test]
     fn a_matched_term_reads_as_no_provenance() {
         let params = Params::from_pairs(&[("k", 300.9)]);
-        assert_eq!(Provenance::read_from(&params), None);
+        assert_eq!(Provenance::from_params(&params), None);
     }
 
     #[test]
     fn provenance_writes_the_four_keys() {
         let mut params = Params::from_pairs(&[("k", 300.9)]);
-        Provenance::analogy(2.5, "c3-oh").write_onto(&mut params);
+        Provenance::analogy(2.5, "c3-oh").apply_to(&mut params);
         assert_eq!(params.get("estimated"), Some(1.0));
         assert_eq!(params.get("estimate_penalty"), Some(2.5));
         let strings: Vec<(&str, &str)> = params.iter_strings().collect();

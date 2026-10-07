@@ -45,7 +45,7 @@ use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 use pyo3::{PyTraverseError, PyVisit};
 
-use molrs::op::CenterError;
+use molrs::core::CenterError;
 
 use molrs::core::keys;
 
@@ -1761,8 +1761,11 @@ impl PyAtomistic {
     ///     its int handle); or if the total mass is not positive.
     fn center<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let atoms: Vec<NodeId> = self.inner.node_ids().collect();
-        let center =
-            molrs::op::center(self.inner.as_molgraph(), &atoms).map_err(center_error_to_pyerr)?;
+        let center = self
+            .inner
+            .as_molgraph()
+            .center(&atoms)
+            .map_err(center_error_to_pyerr)?;
         Ok(vector_to_py(py, &center))
     }
 }
@@ -2312,8 +2315,11 @@ impl PyCoarseGrain {
     ///     If a handle in ``group`` is negative (handles are unsigned ints).
     fn center<'py>(&self, py: Python<'py>, group: Vec<u64>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let group: Vec<NodeId> = group.into_iter().map(node_from_u64).collect();
-        let center =
-            molrs::op::center(self.inner.as_molgraph(), &group).map_err(center_error_to_pyerr)?;
+        let center = self
+            .inner
+            .as_molgraph()
+            .center(&group)
+            .map_err(center_error_to_pyerr)?;
         Ok(vector_to_py(py, &center))
     }
 
@@ -2542,7 +2548,7 @@ macro_rules! rigid_body_impl {
             /// Translate every node that has coordinates by `delta`. Returns
             /// this graph, so moves chain.
             fn translate(mut slf: PyRefMut<'_, Self>, delta: [f64; 3]) -> PyRefMut<'_, Self> {
-                molrs::op::translate(slf.mol_mut(), delta);
+                slf.mol_mut().translate(delta);
                 slf
             }
 
@@ -2556,7 +2562,8 @@ macro_rules! rigid_body_impl {
                 angle: f64,
                 about: Option<[f64; 3]>,
             ) -> PyResult<PyRefMut<'_, Self>> {
-                molrs::op::rotate(slf.mol_mut(), axis, angle, about)
+                slf.mol_mut()
+                    .rotate(axis, angle, about)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 Ok(slf)
             }
@@ -2570,7 +2577,7 @@ macro_rules! rigid_body_impl {
                 factor: [f64; 3],
                 about: Option<[f64; 3]>,
             ) -> PyRefMut<'_, Self> {
-                molrs::op::scale(slf.mol_mut(), factor, about);
+                slf.mol_mut().scale(factor, about);
                 slf
             }
         }

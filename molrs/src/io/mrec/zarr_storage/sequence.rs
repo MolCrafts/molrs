@@ -291,7 +291,7 @@ fn inner_codecs(pipeline: Pipeline) -> Result<Vec<Arc<dyn BytesToBytesCodecTrait
 /// Whether a column width is floating point — the widths whose compression is
 /// the producer's [`Compression`] choice rather than always-`gzip`.
 fn is_float_width(dtype: DType) -> bool {
-    matches!(dtype, DType::Float | DType::Complex64 | DType::Complex128)
+    matches!(dtype, DType::Float | DType::C64 | DType::C128)
 }
 
 /// The tag a column's storage width is written as in the schema attributes.
@@ -307,35 +307,35 @@ fn dtype_tag(dtype: DType) -> &'static str {
     match dtype {
         DType::Float => "f64",
         DType::Int => "i32",
-        DType::UInt => "u64",
-        DType::Int8
-        | DType::Int16
-        | DType::Int64
+        DType::Uint => "u64",
+        DType::I8
+        | DType::I16
+        | DType::I64
         | DType::Bool
         | DType::U8
-        | DType::UInt16
-        | DType::UInt32
+        | DType::U16
+        | DType::U32
         | DType::String
-        | DType::Complex64
-        | DType::Complex128 => dtype.name(),
+        | DType::C64
+        | DType::C128 => dtype.name(),
     }
 }
 
 /// Every width a column may take, in the order molrec's dtype enum lists them.
 const SCHEMA_WIDTHS: [DType; 13] = [
     DType::Float,
-    DType::Int8,
-    DType::Int16,
+    DType::I8,
+    DType::I16,
     DType::Int,
-    DType::Int64,
+    DType::I64,
     DType::U8,
-    DType::UInt16,
-    DType::UInt32,
-    DType::UInt,
+    DType::U16,
+    DType::U32,
+    DType::Uint,
     DType::Bool,
     DType::String,
-    DType::Complex64,
-    DType::Complex128,
+    DType::C64,
+    DType::C128,
 ];
 
 /// The column width a schema dtype tag names — the public spelling of the
@@ -357,7 +357,7 @@ fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
     match tag {
         "float" => return Ok(DType::Float),
         "int" => return Ok(DType::Int),
-        "uint" => return Ok(DType::UInt),
+        "uint" => return Ok(DType::Uint),
         _ => {}
     }
     SCHEMA_WIDTHS
@@ -399,18 +399,18 @@ fn meta_layout(tag: &str) -> Option<(DType, Vec<u64>)> {
     match tag {
         "bool" => scalar(DType::Bool),
         "i32" => scalar(DType::Int),
-        "i64" => scalar(DType::Int64),
-        "u32" => scalar(DType::UInt32),
-        "u64" => scalar(DType::UInt),
+        "i64" => scalar(DType::I64),
+        "u32" => scalar(DType::U32),
+        "u64" => scalar(DType::Uint),
         "f64" => scalar(DType::Float),
         // A JSON document per step rides in a string array; the tag says how
         // to read it back.
         "string" | "json" => scalar(DType::String),
         "bool3" => vector(DType::Bool, 3),
         "i32x3" => vector(DType::Int, 3),
-        "i64x3" => vector(DType::Int64, 3),
-        "u32x3" => vector(DType::UInt32, 3),
-        "u64x3" => vector(DType::UInt, 3),
+        "i64x3" => vector(DType::I64, 3),
+        "u32x3" => vector(DType::U32, 3),
+        "u64x3" => vector(DType::Uint, 3),
         "f64x3" => vector(DType::Float, 3),
         "f64x6" => vector(DType::Float, 6),
         "f64x9" => vector(DType::Float, 9),
@@ -464,22 +464,22 @@ fn same_column(left: &Column, right: &Column) -> bool {
     }
     match (left, right) {
         (Column::Float(a), Column::Float(b)) => bits!(a, b),
-        (Column::Complex64(a), Column::Complex64(b)) => a
+        (Column::C64(a), Column::C64(b)) => a
             .iter()
             .zip(b.iter())
             .all(|(x, y)| x.re.to_bits() == y.re.to_bits() && x.im.to_bits() == y.im.to_bits()),
-        (Column::Complex128(a), Column::Complex128(b)) => a
+        (Column::C128(a), Column::C128(b)) => a
             .iter()
             .zip(b.iter())
             .all(|(x, y)| x.re.to_bits() == y.re.to_bits() && x.im.to_bits() == y.im.to_bits()),
-        (Column::Int8(a), Column::Int8(b)) => exact!(a, b),
-        (Column::Int16(a), Column::Int16(b)) => exact!(a, b),
+        (Column::I8(a), Column::I8(b)) => exact!(a, b),
+        (Column::I16(a), Column::I16(b)) => exact!(a, b),
         (Column::Int(a), Column::Int(b)) => exact!(a, b),
-        (Column::Int64(a), Column::Int64(b)) => exact!(a, b),
+        (Column::I64(a), Column::I64(b)) => exact!(a, b),
         (Column::U8(a), Column::U8(b)) => exact!(a, b),
-        (Column::UInt16(a), Column::UInt16(b)) => exact!(a, b),
-        (Column::UInt32(a), Column::UInt32(b)) => exact!(a, b),
-        (Column::UInt(a), Column::UInt(b)) => exact!(a, b),
+        (Column::U16(a), Column::U16(b)) => exact!(a, b),
+        (Column::U32(a), Column::U32(b)) => exact!(a, b),
+        (Column::Uint(a), Column::Uint(b)) => exact!(a, b),
         (Column::Bool(a), Column::Bool(b)) => exact!(a, b),
         (Column::String(a), Column::String(b)) => exact!(a, b),
         _ => false,
@@ -493,7 +493,7 @@ fn same_column(left: &Column, right: &Column) -> bool {
 /// earn no update would carry the first frame's mask forward over it.
 fn same_block(left: &Block, right: &Block) -> bool {
     left.len() == right.len()
-        && left.nrows() == right.nrows()
+        && left.n_rows() == right.n_rows()
         && left.structural_shape() == right.structural_shape()
         && left.iter().all(|(name, column)| {
             right
@@ -579,7 +579,7 @@ fn check_resolved_frame<'a>(
         let Some(block) = resolve(aligned) else {
             continue;
         };
-        let rows = block.nrows().unwrap_or(0);
+        let rows = block.n_rows().unwrap_or(0);
         match resolve(target) {
             None => {
                 return Err(MolRsError::zarr(format!(
@@ -587,12 +587,12 @@ fn check_resolved_frame<'a>(
                      {target:?}, which is absent there"
                 )));
             }
-            Some(with) if with.nrows().unwrap_or(0) != rows => {
+            Some(with) if with.n_rows().unwrap_or(0) != rows => {
                 return Err(MolRsError::zarr(format!(
                     "trajectory frame {ordinal}: block {aligned:?} has {rows} rows but the block \
                      it is aligned with, {target:?}, has {}; restate {aligned:?} when \
                      {target:?} changes its row count",
-                    with.nrows().unwrap_or(0)
+                    with.n_rows().unwrap_or(0)
                 )));
             }
             Some(_) => {}
@@ -638,7 +638,7 @@ fn boundary_is_default(cell: &SimBox) -> bool {
 /// The whole column comes back as a cheap Arc clone; any other range is one
 /// copy of exactly those rows.
 fn column_rows(column: &Column, start: usize, end: usize) -> Column {
-    let rows = column.nrows().unwrap_or(0);
+    let rows = column.n_rows().unwrap_or(0);
     if start == 0 && end == rows {
         return column.clone();
     }
@@ -653,18 +653,18 @@ fn column_rows(column: &Column, start: usize, end: usize) -> Column {
     }
     match column {
         Column::Float(h) => slice!(h, from_float),
-        Column::Int8(h) => slice!(h, from_i8),
-        Column::Int16(h) => slice!(h, from_i16),
+        Column::I8(h) => slice!(h, from_i8),
+        Column::I16(h) => slice!(h, from_i16),
         Column::Int(h) => slice!(h, from_int),
-        Column::Int64(h) => slice!(h, from_i64),
+        Column::I64(h) => slice!(h, from_i64),
         Column::U8(h) => slice!(h, from_u8),
-        Column::UInt16(h) => slice!(h, from_u16),
-        Column::UInt32(h) => slice!(h, from_u32),
-        Column::UInt(h) => slice!(h, from_uint),
+        Column::U16(h) => slice!(h, from_u16),
+        Column::U32(h) => slice!(h, from_u32),
+        Column::Uint(h) => slice!(h, from_uint),
         Column::Bool(h) => slice!(h, from_bool),
         Column::String(h) => slice!(h, from_string),
-        Column::Complex64(h) => slice!(h, from_c64),
-        Column::Complex128(h) => slice!(h, from_c128),
+        Column::C64(h) => slice!(h, from_c64),
+        Column::C128(h) => slice!(h, from_c128),
     }
 }
 
@@ -681,18 +681,18 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
     }
     Ok(match dtype {
         DType::Float => empty!(from_float, f64),
-        DType::Int8 => empty!(from_i8, i8),
-        DType::Int16 => empty!(from_i16, i16),
+        DType::I8 => empty!(from_i8, i8),
+        DType::I16 => empty!(from_i16, i16),
         DType::Int => empty!(from_int, i32),
-        DType::Int64 => empty!(from_i64, i64),
+        DType::I64 => empty!(from_i64, i64),
         DType::U8 => empty!(from_u8, u8),
-        DType::UInt16 => empty!(from_u16, u16),
-        DType::UInt32 => empty!(from_u32, u32),
-        DType::UInt => empty!(from_uint, u64),
+        DType::U16 => empty!(from_u16, u16),
+        DType::U32 => empty!(from_u32, u32),
+        DType::Uint => empty!(from_uint, u64),
         DType::Bool => empty!(from_bool, bool),
         DType::String => empty!(from_string, String),
-        DType::Complex64 => empty!(from_c64, num_complex::Complex<f32>),
-        DType::Complex128 => empty!(from_c128, num_complex::Complex<f64>),
+        DType::C64 => empty!(from_c64, num_complex::Complex<f32>),
+        DType::C128 => empty!(from_c128, num_complex::Complex<f64>),
     })
 }
 
@@ -873,7 +873,7 @@ impl SequenceSchema {
 
         for frame in frames {
             for (name, block) in frame.iter() {
-                let rows = block.nrows().unwrap_or(0) as u64;
+                let rows = block.n_rows().unwrap_or(0) as u64;
                 schema.declare_block(name, Some(rows))?;
                 let shape = block.structural_shape().map(<[usize]>::to_vec);
                 match shapes.get(name) {
@@ -1147,7 +1147,7 @@ impl SequenceSchema {
                  declared"
             ))
         })?;
-        if pinned.dtype != dtype_tag(DType::UInt) {
+        if pinned.dtype != dtype_tag(DType::Uint) {
             return Err(MolRsError::zarr(format!(
                 "column {column:?} of block {block:?} is {}; a row reference is u64",
                 pinned.dtype
@@ -1829,18 +1829,18 @@ impl GrowthArray {
         }
         match dtype {
             DType::Float => landed!(Float),
-            DType::Int8 => landed!(Int8),
-            DType::Int16 => landed!(Int16),
+            DType::I8 => landed!(I8),
+            DType::I16 => landed!(I16),
             DType::Int => landed!(Int),
-            DType::Int64 => landed!(Int64),
+            DType::I64 => landed!(I64),
             DType::Bool => landed!(Bool),
-            DType::UInt => landed!(UInt),
+            DType::Uint => landed!(Uint),
             DType::U8 => landed!(U8),
-            DType::UInt16 => landed!(UInt16),
-            DType::UInt32 => landed!(UInt32),
+            DType::U16 => landed!(U16),
+            DType::U32 => landed!(U32),
             DType::String => landed!(String),
-            DType::Complex64 => landed!(Complex64),
-            DType::Complex128 => landed!(Complex128),
+            DType::C64 => landed!(C64),
+            DType::C128 => landed!(C128),
         }
         Ok(())
     }
@@ -2013,7 +2013,7 @@ fn apply_structural_shape(
     path: &str,
 ) -> Result<(), MolRsError> {
     if let Some(shape) = &schema.structural_shape
-        && block.nrows() == Some(shape.iter().product::<usize>())
+        && block.n_rows() == Some(shape.iter().product::<usize>())
     {
         block
             .set_shape(shape)
@@ -2285,7 +2285,7 @@ impl BlockArrays {
             for block in blocks {
                 match block.validity(column) {
                     Some(mask) => flags.extend_from_slice(mask),
-                    None => flags.extend(std::iter::repeat_n(true, block.nrows().unwrap_or(0))),
+                    None => flags.extend(std::iter::repeat_n(true, block.n_rows().unwrap_or(0))),
                 }
             }
             land_values!(array, added, flags, options);
@@ -2425,7 +2425,7 @@ impl IndexArrays {
         let mut offset = GrowthArray::create(
             store,
             &join_path(path, OFFSET_ARRAY),
-            DType::UInt,
+            DType::Uint,
             &[],
             knobs.dense(),
             serde_json::Map::new(),
@@ -2434,7 +2434,7 @@ impl IndexArrays {
         let mut step_index = GrowthArray::create(
             store,
             &join_path(path, STEP_INDEX_ARRAY),
-            DType::UInt,
+            DType::Uint,
             &[],
             knobs.dense(),
             serde_json::Map::new(),
@@ -2552,7 +2552,7 @@ impl BoxArrays {
     ) -> Result<&mut GrowthArray, MolRsError> {
         if self.step_index.is_none() {
             let mut step_index =
-                Self::create_optional(store, STEP_INDEX_ARRAY, DType::UInt, &[], knobs)?;
+                Self::create_optional(store, STEP_INDEX_ARRAY, DType::Uint, &[], knobs)?;
             if previous > 0 {
                 // The omitted form is one update at ordinal 0.
                 let fill = vec![0u64; previous as usize];
@@ -2751,7 +2751,7 @@ trait Series: Copy + PartialEq + zarrs::array::Element + zarrs::array::ElementOw
 }
 
 impl Series for i64 {
-    const DTYPE: DType = DType::Int64;
+    const DTYPE: DType = DType::I64;
     fn nth(start: Self, stride: Self, i: u64) -> Option<Self> {
         let i = i64::try_from(i).ok()?;
         start.checked_add(stride.checked_mul(i)?)
@@ -3736,7 +3736,7 @@ impl MrecWriter {
         // Frames appended now are current-version frames; a store of an
         // earlier version is read (and converted), never continued.
         let version =
-            crate::io::mrec::validation::read_version(&super::record_io::read_meta(&store)?)?;
+            crate::io::mrec::validation::molrec_version_of(&super::record_io::read_meta(&store)?)?;
         if version != crate::io::mrec::MOLREC_VERSION {
             return Err(MolRsError::zarr(format!(
                 "the store is a molrec_version {version} record; appending would mix version \
@@ -4209,11 +4209,11 @@ impl MrecWriter {
             }
             if let Some(shape) = &declared.structural_shape {
                 let expected = shape.iter().product::<usize>();
-                if block.nrows() != Some(expected) {
+                if block.n_rows() != Some(expected) {
                     return Err(MolRsError::zarr(format!(
                         "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
                          this frame carries {} rows: a shaped block keeps its row count",
-                        block.nrows().unwrap_or(0)
+                        block.n_rows().unwrap_or(0)
                     )));
                 }
             }
@@ -4367,7 +4367,7 @@ impl MrecWriter {
             let landed: Vec<&Block> = updates.iter().map(|(_, block)| *block).collect();
             let added: u64 = landed
                 .iter()
-                .map(|block| block.nrows().unwrap_or(0) as u64)
+                .map(|block| block.n_rows().unwrap_or(0) as u64)
                 .sum();
             if added > 0 {
                 for (column, pinned) in &declared.columns {
@@ -4402,7 +4402,7 @@ impl MrecWriter {
                 hints.observe(
                     section.updates + k as u64,
                     *ordinal,
-                    block.nrows().unwrap_or(0) as u64,
+                    block.n_rows().unwrap_or(0) as u64,
                 );
             }
             let regular = hints.is_regular() && !declared.columns.is_empty();
@@ -4410,7 +4410,7 @@ impl MrecWriter {
             let mut running = section.total_rows;
             let mut offsets = Vec::with_capacity(updates.len());
             for (_, update) in &updates {
-                running += update.nrows().unwrap_or(0) as u64;
+                running += update.n_rows().unwrap_or(0) as u64;
                 offsets.push(running);
             }
             let ordinals: Vec<u64> = updates.iter().map(|(ordinal, _)| *ordinal).collect();
@@ -5969,7 +5969,7 @@ mod tests {
             frame_at(&mut seq, 1)
                 .get(BONDS)
                 .expect("bonds exists at step 1")
-                .nrows(),
+                .n_rows(),
             Some(2),
             "and at step 1 it carries the rows it was appended with"
         );
@@ -6245,7 +6245,7 @@ mod tests {
     #[test]
     fn a_canonical_identifier_cannot_be_declared_narrow() {
         let mut schema = SequenceSchema::new();
-        for dtype in [DType::U8, DType::UInt16, DType::UInt32] {
+        for dtype in [DType::U8, DType::U16, DType::U32] {
             let err = schema
                 .declare_column("bonds", "atomi", dtype, &[])
                 .unwrap_err()
@@ -6253,11 +6253,11 @@ mod tests {
             assert!(err.contains("atomi") && err.contains(dtype.name()), "{err}");
         }
         schema
-            .declare_column("bonds", "atomi", DType::UInt, &[])
+            .declare_column("bonds", "atomi", DType::Uint, &[])
             .unwrap();
         // A non-canonical name keeps its arrival width.
         schema
-            .declare_column("bonds", "my_label", DType::UInt32, &[])
+            .declare_column("bonds", "my_label", DType::U32, &[])
             .unwrap();
     }
 
@@ -6384,7 +6384,7 @@ mod tests {
                     .unwrap()
                     .get(BONDS)
                     .unwrap()
-                    .nrows(),
+                    .n_rows(),
                 Some(2)
             );
         }
@@ -6583,7 +6583,7 @@ mod tests {
         );
         assert!(step2.get("charges").is_some());
         assert_eq!(
-            step2.get(BONDS).expect("bonds carried forward").nrows(),
+            step2.get(BONDS).expect("bonds carried forward").n_rows(),
             Some(2)
         );
         assert_eq!(
@@ -6621,18 +6621,18 @@ mod tests {
             frame_at(&mut seq, 0).get(BONDS).is_none(),
             "no update at or before frame 0: absent"
         );
-        assert_eq!(frame_at(&mut seq, 1).get(BONDS).unwrap().nrows(), Some(2));
+        assert_eq!(frame_at(&mut seq, 1).get(BONDS).unwrap().n_rows(), Some(2));
         assert_eq!(
-            frame_at(&mut seq, 2).get(BONDS).unwrap().nrows(),
+            frame_at(&mut seq, 2).get(BONDS).unwrap().n_rows(),
             Some(2),
             "an omitted block carries forward"
         );
         let empty = frame_at(&mut seq, 3);
         let bonds = empty.get(BONDS).expect("a zero-row update is present");
-        assert_eq!(bonds.nrows(), Some(0), "and empty");
+        assert_eq!(bonds.n_rows(), Some(0), "and empty");
         assert!(bonds.get(I).is_some(), "with its declared columns");
         assert_eq!(
-            frame_at(&mut seq, 4).get(BONDS).unwrap().nrows(),
+            frame_at(&mut seq, 4).get(BONDS).unwrap().n_rows(),
             Some(0),
             "an omission after the empty update carries the empty block forward"
         );
@@ -6898,15 +6898,15 @@ mod tests {
         // spelling so a schema validates against molrec's dtype enum.
         assert_eq!(dtype_tag(DType::Float), "f64");
         assert_eq!(dtype_tag(DType::Int), "i32");
-        assert_eq!(dtype_tag(DType::UInt), "u64");
+        assert_eq!(dtype_tag(DType::Uint), "u64");
         assert_eq!(dtype_from_tag("f64").unwrap(), DType::Float);
         assert_eq!(dtype_from_tag("i32").unwrap(), DType::Int);
-        assert_eq!(dtype_from_tag("u64").unwrap(), DType::UInt);
+        assert_eq!(dtype_from_tag("u64").unwrap(), DType::Uint);
         // Stores written by molrs < 0.14 tagged them `float`/`int`/`uint`;
         // those must stay readable forever (e.g. the driving `growth.mrec`).
         assert_eq!(dtype_from_tag("float").unwrap(), DType::Float);
         assert_eq!(dtype_from_tag("int").unwrap(), DType::Int);
-        assert_eq!(dtype_from_tag("uint").unwrap(), DType::UInt);
+        assert_eq!(dtype_from_tag("uint").unwrap(), DType::Uint);
     }
 
     #[test]
@@ -7153,7 +7153,7 @@ mod tests {
             "must carry the declared dtype (schema tag): {message}"
         );
         assert!(
-            message.contains(&DType::Int64.to_string()),
+            message.contains(&DType::I64.to_string()),
             "must carry the dtype found on disk: {message}"
         );
     }
@@ -8212,7 +8212,7 @@ mod tests {
         assert!(atoms.get("y").is_some());
         assert!(atoms.get(X).is_none(), "an unnamed column is not decoded");
         assert!(picked.get(BONDS).is_none(), "an unnamed block is left out");
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
 
         let err = seq
             .frame_columns(0, &[(ATOMS, "nope")])
@@ -8326,7 +8326,7 @@ mod tests {
         declared
             .declare_column(ATOMS, X, DType::Float, &[])
             .unwrap();
-        declared.declare_column(BONDS, I, DType::UInt, &[]).unwrap();
+        declared.declare_column(BONDS, I, DType::Uint, &[]).unwrap();
         declared.declare_meta("energy", "f64").unwrap();
         assert_eq!(declared, derived);
 
@@ -8804,7 +8804,7 @@ mod tests {
     fn declare_precision_refuses_what_cannot_carry_one() {
         let mut schema = SequenceSchema::new();
         schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
-        schema.declare_column(BONDS, I, DType::UInt, &[]).unwrap();
+        schema.declare_column(BONDS, I, DType::Uint, &[]).unwrap();
         assert!(schema.declare_precision(ATOMS, "nope", 1e-3).is_err());
         assert!(schema.declare_precision(BONDS, I, 1e-3).is_err());
         for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
@@ -8980,7 +8980,7 @@ mod tests {
         let mut schema = SequenceSchema::new();
         schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
         schema
-            .declare_column("refs", "site", DType::UInt, &[])
+            .declare_column("refs", "site", DType::Uint, &[])
             .unwrap();
         assert!(schema.declare_target("refs", "nope", ATOMS).is_err());
         assert!(schema.declare_target(ATOMS, X, ATOMS).is_err());

@@ -698,7 +698,7 @@ mod tests {
         )
         .expect("lenient bonded typing accepts an untyped endpoint");
         m.declare_styles_of(&wildcard_bond_ff());
-        m.write_onto(&mut out, &mut ForceField::new("out"))
+        m.apply_to(&mut out, &mut ForceField::new("out"))
             .expect("the match writes");
         let (_, bond) = out.bonds().next().expect("the one bond");
         assert_eq!(bond.props.get("type"), None, "bond stays untyped");

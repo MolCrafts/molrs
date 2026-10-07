@@ -106,7 +106,7 @@ impl std::fmt::Debug for FrameView<'_> {
 
         let mut blocks_map = std::collections::BTreeMap::new();
         for (&k, b) in &self.map {
-            blocks_map.insert(k, (b.nrows(), b.len()));
+            blocks_map.insert(k, (b.n_rows(), b.len()));
         }
         debug_struct.field("blocks", &blocks_map);
 
@@ -162,7 +162,7 @@ mod tests {
         let view = FrameView::from(&frame);
 
         let atoms = view.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(3));
+        assert_eq!(atoms.n_rows(), Some(3));
         assert!(atoms.get("x").and_then(|c| c.as_float()).is_some());
     }
 
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(owned.meta.get("title").unwrap().as_str(), Some("Test"));
 
         let atoms = owned.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(3));
+        assert_eq!(atoms.n_rows(), Some(3));
         assert_eq!(
             atoms
                 .get("x")

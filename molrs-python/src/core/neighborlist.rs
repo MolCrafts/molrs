@@ -359,11 +359,11 @@ impl PyNeighborList {
 impl PyNeighborList {
     /// Build an engine with the O(N) cell-list backend — the production choice.
     #[new]
-    #[pyo3(signature = (cutoff, points=None, simbox=None, brute_force=false))]
+    #[pyo3(signature = (cutoff, points=None, r#box=None, brute_force=false))]
     fn new(
         cutoff: f64,
         points: Option<PyReadonlyArray2<'_, f64>>,
-        simbox: Option<&PyBox>,
+        r#box: Option<&PyBox>,
         brute_force: bool,
     ) -> PyResult<Self> {
         check_cutoff(cutoff)?;
@@ -377,8 +377,8 @@ impl PyNeighborList {
             points: None,
             simbox: None,
         };
-        if let (Some(points), Some(simbox)) = (points, simbox) {
-            neighbors.build(points, simbox)?;
+        if let (Some(points), Some(r#box)) = (points, r#box) {
+            neighbors.build(points, r#box)?;
         }
         Ok(neighbors)
     }
@@ -700,7 +700,7 @@ impl PyVerletSkin {
 impl PyVerletSkin {
     /// Wrap ``neighbors`` (cutoff must equal ``cutoff + skin``) with Verlet policy.
     #[new]
-    #[pyo3(signature = (neighbors, cutoff, positions, r#box, skin=0.0, every=1, delay=0, check=true, ago=0, rebuild_count=0, ndanger=0))]
+    #[pyo3(signature = (neighbors, cutoff, positions, r#box, skin=0.0, every=1, delay=0, check=true, ago=0, n_rebuilds=0, ndanger=0))]
     #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
     fn new(
         neighbors: &mut PyNeighborList,
@@ -712,7 +712,7 @@ impl PyVerletSkin {
         delay: usize,
         check: bool,
         ago: usize,
-        rebuild_count: usize,
+        n_rebuilds: usize,
         ndanger: usize,
     ) -> PyResult<Self> {
         check_points(&positions, "positions")?;
@@ -735,8 +735,8 @@ impl PyVerletSkin {
             r#box.inner.clone(),
         )
         .map_err(skin_err)?;
-        if ago != 0 || rebuild_count != 0 || ndanger != 0 {
-            inner.restore_progress(ago, rebuild_count, ndanger);
+        if ago != 0 || n_rebuilds != 0 || ndanger != 0 {
+            inner.restore_progress(ago, n_rebuilds, ndanger);
         }
         Ok(Self {
             inner: Some(inner),
@@ -765,8 +765,8 @@ impl PyVerletSkin {
     }
 
     #[getter]
-    fn rebuild_count(&self) -> PyResult<usize> {
-        Ok(self.get()?.rebuild_count())
+    fn n_rebuilds(&self) -> PyResult<usize> {
+        Ok(self.get()?.n_rebuilds())
     }
 
     #[getter]
@@ -802,7 +802,7 @@ impl PyVerletSkin {
                 s.cutoff(),
                 s.skin(),
                 s.n_edges(),
-                s.rebuild_count()
+                s.n_rebuilds()
             ),
             None => "VerletSkin(<moved>)".into(),
         }
@@ -828,7 +828,7 @@ impl PyVerletSkin {
                 this.delay,
                 this.check,
                 inner.ago(),
-                inner.rebuild_count(),
+                inner.n_rebuilds(),
                 inner.ndanger(),
             ),
         )

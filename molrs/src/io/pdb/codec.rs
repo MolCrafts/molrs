@@ -868,7 +868,7 @@ fn write_atom_conect_records<W: Write>(
     if frame.contains_block("bonds") {
         let bond_data: Option<Result<Vec<Vec<usize>>, std::io::Error>> =
             frame.visit_block("bonds", |bonds| {
-                let bn = bonds.nrows().unwrap_or(0);
+                let bn = bonds.n_rows().unwrap_or(0);
                 if bn == 0 {
                     return Ok(vec![Vec::new(); n]);
                 }
@@ -1461,7 +1461,7 @@ END
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
             let frame = read_pdb_bytes(&bytes[lo..hi]).expect("parse model");
-            assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+            assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
         }
     }
 
@@ -1516,7 +1516,7 @@ END
         let frames = read_all_models(MULTI_PDB);
         assert_eq!(frames.len(), 2);
         for f in &frames {
-            assert_eq!(f.get("atoms").unwrap().nrows().unwrap(), 2);
+            assert_eq!(f.get("atoms").unwrap().n_rows().unwrap(), 2);
         }
     }
 
@@ -1557,7 +1557,7 @@ END
 
         let reparsed = read_all_models(&text);
         assert_eq!(reparsed.len(), 2);
-        assert_eq!(reparsed[0].get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(reparsed[0].get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[test]

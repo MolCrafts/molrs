@@ -15,10 +15,11 @@ use crate::op::vec3::{cross, dot, norm, scale, sub};
 /// Tetrahedral stereochemistry at an atom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TetrahedralStereo {
-    /// Clockwise (R) — from the lowest-priority substituent's viewpoint.
-    CW,
-    /// Counter-clockwise (S).
-    CCW,
+    /// Clockwise (RDKit `CHI_TETRAHEDRAL_CW`, SMILES `@@`): the neighbours,
+    /// in order, turn clockwise seen from the first.
+    Clockwise,
+    /// Counter-clockwise (RDKit `CHI_TETRAHEDRAL_CCW`, SMILES `@`).
+    CounterClockwise,
     /// No stereo information available or applicable.
     Unspecified,
 }
@@ -129,9 +130,9 @@ pub fn perceive_tetrahedral_stereo(mol: &Atomistic) -> HashMap<NodeId, Tetrahedr
         let arr = [nbrs[0], nbrs[1], nbrs[2], nbrs[3]];
         let vol = chiral_volume(mol, center, &arr);
         let stereo = if vol > 1e-9 {
-            TetrahedralStereo::CCW
+            TetrahedralStereo::CounterClockwise
         } else if vol < -1e-9 {
-            TetrahedralStereo::CW
+            TetrahedralStereo::Clockwise
         } else {
             TetrahedralStereo::Unspecified
         };
@@ -304,8 +305,8 @@ pub fn assign_stereo(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     for (id, s) in atom_stereo {
         let label = match s {
-            TetrahedralStereo::CW => "CW",
-            TetrahedralStereo::CCW => "CCW",
+            TetrahedralStereo::Clockwise => "CW",
+            TetrahedralStereo::CounterClockwise => "CCW",
             TetrahedralStereo::Unspecified => continue,
         };
         let _ = out.set_atom(id, STEREO, label);

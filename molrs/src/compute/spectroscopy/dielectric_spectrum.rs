@@ -30,8 +30,7 @@ const DIELECTRIC_PAD_FACTOR: usize = 4;
 use molrs::core::constants::BOLTZMANN_REAL as K_B;
 use molrs::core::constants::COULOMB_REAL as KAPPA;
 
-/// 4π/3 — the isotropic dielectric fluctuation prefactor numerator.
-const FOUR_PI_OVER_3: f64 = 4.1887902047863905;
+use crate::compute::dielectric::FOUR_PI_OVER_3;
 
 /// Result of a dielectric ε(ω) spectrum transform.
 ///
@@ -1153,7 +1152,7 @@ mod tests {
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.0);
         let mct = 50;
-        // Current density with NaN row 0 (as compute_current_density emits).
+        // Current density with NaN row 0 (as current_density emits).
         let mut current = rng_dipole(n, 7);
         for d in 0..3 {
             current[[0, d]] = f64::NAN;

@@ -15,7 +15,7 @@ labels by element symbol alone and defines no force field.
 dihedrals, against a force field's CMAP types.
 """
 
-from .._lib import (
+from .._native import (
     AtdTypifier,
     ElementTypifier,
     GaffTypifier,

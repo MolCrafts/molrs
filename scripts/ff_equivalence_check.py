@@ -26,7 +26,6 @@ pairs), total, and the force fingerprint fdotv = ΣF·v, fnorm2 = Σ|F|².
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import math
 import os
@@ -35,7 +34,14 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from engine_check_tables import element_of_mass, lammps_thermo, molecule_ids, read_energy_tsv
+from engine_check_tables import (
+    lammps_dump_forces,
+    lammps_thermo,
+    openmm_residue_topology,
+    read_energy_tsv,
+    split_system,
+    unit_factor,
+)
 
 TERMS = ["bond", "angle", "dihedral", "improper", "cmap", "vdw", "coul", "total"]
 REPO = Path(__file__).resolve().parents[1]
@@ -106,57 +112,18 @@ def run_sander(d: Path):
 
 def openmm_written(sub: Path, sysj):
     """The molrs-written XML with one residue template per molecule (atoms
-    named A<i>, charges per atom), and the topology it matches."""
-    from openmm import app
-
-    root = ET.parse(sub / "openmm" / "ff.xml").getroot()
-    element = {}
-    for t in root.iter("Type"):
-        element[t.get("name")] = t.get("element") or element_of_mass(
-            float(t.get("mass"))
-        )
-    # OpenMM orders an AMBER improper's outer atoms by element: every type
-    # names its element.
-    for t in root.iter("Type"):
-        t.set("element", element[t.get("name")])
-    n = len(sysj["types"])
-    mol = molecule_ids(n, sysj["bonds"])
-    residues = ET.SubElement(root, "Residues")
-    top = app.Topology()
-    chain = top.addChain()
-    made, res_of = [], {}
-    for r in sorted(set(mol)):
-        members = [a for a in range(n) if mol[a] == r]
-        tmpl = ET.SubElement(residues, "Residue", name=f"R{r}")
-        res = top.addResidue(f"R{r}", chain)
-        for a in members:
-            ET.SubElement(
-                tmpl,
-                "Atom",
-                name=f"A{a}",
-                type=sysj["types"][a],
-                charge=repr(sysj["charges"][a]),
-            )
-            res_of[a] = res
-        for i, j in sysj["bonds"]:
-            if mol[i] == r:
-                ET.SubElement(tmpl, "Bond", atomName1=f"A{i}", atomName2=f"A{j}")
-    for a in range(n):
-        made.append(
-            top.addAtom(
-                f"A{a}", app.Element.getBySymbol(element[sysj["types"][a]]), res_of[a]
-            )
-        )
-    for i, j in sysj["bonds"]:
-        top.addBond(made[i], made[j])
+    named A<i>, charges per atom), the topology it matches and the topology's
+    atom order."""
     path = sub / "openmm" / "ff+residues.xml"
-    ET.ElementTree(root).write(path)
-    return path, top, root.get("combining_rule") == "geometric"
+    top, order, root = openmm_residue_topology(
+        sub / "openmm" / "ff.xml", path, sysj["types"], sysj["bonds"], sysj["charges"]
+    )
+    return path, top, order, root.get("combining_rule") == "geometric"
 
 
 def openmm_native(sysj):
-    """An OpenMM-native source's own XML and the topology of its one residue
-    template (atom order = the source's)."""
+    """An OpenMM-native source's own XML, the topology of its one residue
+    template and its atom order (the source's)."""
     from openmm import app
 
     path = REPO / sysj["native_file"]
@@ -171,127 +138,53 @@ def openmm_native(sysj):
     ]
     for i, j in sysj["bonds"]:
         top.addBond(made[i], made[j])
-    return path, top, root.get("combining_rule") == "geometric"
+    return path, top, list(range(len(made))), root.get("combining_rule") == "geometric"
 
 
-def split_system(system, bonds, impropers, foyer_geometric):
-    """Every term family in its own force group; the groups."""
-    import openmm as mm
-
-    forces = [copy.deepcopy(f) for f in system.getForces()]
-    while system.getNumForces():
-        system.removeForce(0)
-    groups, out = {}, []
-
-    def add(name, force):
-        force.setForceGroup(len(out))
-        groups[len(out)] = name
-        out.append(force)
-
-    for f in forces:
-        if isinstance(f, mm.HarmonicBondForce):
-            real, ub = mm.HarmonicBondForce(), mm.HarmonicBondForce()
-            for i in range(f.getNumBonds()):
-                a, b, r0, k = f.getBondParameters(i)
-                (real if frozenset((a, b)) in bonds else ub).addBond(a, b, r0, k)
-            add("bond", real)
-            if ub.getNumBonds():
-                add("angle", ub)
-        elif isinstance(f, mm.HarmonicAngleForce):
-            add("angle", f)
-        elif isinstance(f, mm.PeriodicTorsionForce):
-            prop, imp = mm.PeriodicTorsionForce(), mm.PeriodicTorsionForce()
-            for i in range(f.getNumTorsions()):
-                *t, n, ph, k = f.getTorsionParameters(i)
-                (imp if frozenset(t) in impropers else prop).addTorsion(*t, n, ph, k)
-            add("dihedral", prop)
-            add("improper", imp)
-        elif isinstance(f, mm.RBTorsionForce):
-            add("dihedral", f)
-        elif isinstance(f, mm.CustomTorsionForce):
-            add("improper", f)
-        elif isinstance(f, mm.CMAPTorsionForce):
-            add("cmap", f)
-        elif isinstance(f, mm.NonbondedForce):
-            lj, coul = copy.deepcopy(f), copy.deepcopy(f)
-            for i in range(f.getNumParticles()):
-                q, s, e = f.getParticleParameters(i)
-                lj.setParticleParameters(i, 0.0, s, 0.0 if foyer_geometric else e)
-                coul.setParticleParameters(i, q, 1.0, 0.0)
-            for i in range(f.getNumExceptions()):
-                a, b, qq, s, e = f.getExceptionParameters(i)
-                if foyer_geometric and e._value != 0.0:
-                    # foyer: the 1-4 sigma mixes geometrically too.
-                    _, si, _ = f.getParticleParameters(a)
-                    _, sj, _ = f.getParticleParameters(b)
-                    s = math.sqrt(si._value * sj._value)
-                lj.setExceptionParameters(i, a, b, 0.0, s, e)
-                coul.setExceptionParameters(i, a, b, qq, 1.0, 0.0)
-            add("vdw", lj)
-            add("coul", coul)
-            if foyer_geometric:
-                geo = mm.CustomNonbondedForce(
-                    "4*epsilon*((sigma/r)^12-(sigma/r)^6); sigma=sqrt(sigma1*sigma2); epsilon=sqrt(epsilon1*epsilon2)"
-                )
-                geo.addPerParticleParameter("sigma")
-                geo.addPerParticleParameter("epsilon")
-                for i in range(f.getNumParticles()):
-                    _, s, e = f.getParticleParameters(i)
-                    geo.addParticle([s, e])
-                for i in range(f.getNumExceptions()):
-                    a, b, *_ = f.getExceptionParameters(i)
-                    geo.addExclusion(a, b)
-                geo.setNonbondedMethod(mm.CustomNonbondedForce.NoCutoff)
-                add("vdw", geo)
-        elif isinstance(f, (mm.CustomNonbondedForce, mm.CustomBondForce)):
-            add("vdw", f)
-        elif isinstance(f, mm.CMMotionRemover):
-            continue
-        else:
-            raise SystemExit(f"unexpected force {type(f).__name__}")
-    for f in out:
-        system.addForce(f)
-    return groups
-
-
-def openmm_price(path, top, foyer, sysj):
+def openmm_price(path, top, order, foyer, sysj):
+    """OpenMM's per-term energies and forces at each configuration; the
+    topology's atom ``t`` is the source's atom ``order[t]``."""
     import openmm as mm
     import openmm.unit as u
-    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
     from openmm import app
 
     ff = app.ForceField(str(path))
     system = ff.createSystem(
         top, nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False
     )
-    bonds = {frozenset(b) for b in sysj["bonds"]}
-    impropers = {frozenset(t) for t in sysj["impropers"]}
-    groups = split_system(system, bonds, impropers, foyer)
+    groups = split_system(system, sysj["bonds"], foyer, impropers=sysj["impropers"])
     ctx = mm.Context(
         system, mm.VerletIntegrator(1.0), mm.Platform.getPlatformByName("Reference")
     )
+    angstrom_per_nm = unit_factor("nm", "angstrom")
+    kj_per_kcal = unit_factor("kcal", "kJ")
     out = []
-    for k, x in enumerate(sysj["configs"]):
+    for x in sysj["configs"]:
         ctx.setPositions(
             [
-                mm.Vec3(x[3 * i], x[3 * i + 1], x[3 * i + 2]) / ANGSTROM_PER_NM
-                for i in range(len(x) // 3)
+                mm.Vec3(x[3 * a], x[3 * a + 1], x[3 * a + 2]) / angstrom_per_nm
+                for a in order
             ]
         )
         terms = {}
         for g, name in groups.items():
             e = ctx.getState(getEnergy=True, groups={g}).getPotentialEnergy()
             terms[name] = (
-                terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+                terms.get(name, 0.0)
+                + e.value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
             )
         state = ctx.getState(getEnergy=True, getForces=True)
         terms["total"] = (
-            state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+            state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
         )
         f = state.getForces(asNumpy=False).value_in_unit(
             u.kilojoule_per_mole / u.angstrom
         )
-        forces = [c / KJ_PER_KCAL for v in f for c in (v.x, v.y, v.z)]
+        forces = [0.0] * len(x)
+        for t, a in enumerate(order):
+            forces[3 * a : 3 * a + 3] = [
+                c / kj_per_kcal for c in (f[t].x, f[t].y, f[t].z)
+            ]
         out.append((terms, forces))
     return out
 
@@ -311,9 +204,9 @@ def lammps(sub: Path, k: int):
         "coul": v["E_coul"],
         "total": v["PotEng"],
     }
-    dump = (sub / "lammps" / f"forces.{k}.dump").read_text().splitlines()
-    start = dump.index("ITEM: ATOMS id fx fy fz") + 1
-    forces = [float(c) for row in dump[start:] for c in row.split()[1:]]
+    forces = [
+        c for f in lammps_dump_forces(sub / "lammps" / f"forces.{k}.dump") for c in f
+    ]
     return terms, forces
 
 
@@ -334,8 +227,6 @@ GMX_TERMS = {
 def trr_forces(path: Path):
     """The forces of a GROMACS .trr's first frame (XDR, single or double),
     in kcal/(mol·Å)."""
-    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
-
     b = path.read_bytes()
     pos = 0
 
@@ -354,19 +245,25 @@ def trr_forces(path: Path):
     pos += 2 * real
     pos += box + vir + pres + x + v
     fmt = ">d" if real == 8 else ">f"
+    kj_per_kcal, angstrom_per_nm = (
+        unit_factor("kcal", "kJ"),
+        unit_factor("nm", "angstrom"),
+    )
     return [
-        struct.unpack(fmt, b[pos + real * i : pos + real * (i + 1)])[0] / KJ_PER_KCAL / ANGSTROM_PER_NM
+        struct.unpack(fmt, b[pos + real * i : pos + real * (i + 1)])[0]
+        / kj_per_kcal
+        / angstrom_per_nm
         for i in range(3 * natoms)
     ]
 
 
 def gromacs(run: Path):
     import pyedr
-    from molrs.core.constants import KJ_PER_KCAL
 
     edr = pyedr.edr_to_dict(str(run / "sp.edr"))
+    kj_per_kcal = unit_factor("kcal", "kJ")
     terms = {
-        t: sum(float(edr[n][0]) for n in names if n in edr) / KJ_PER_KCAL
+        t: sum(float(edr[n][0]) for n in names if n in edr) / kj_per_kcal
         for t, names in GMX_TERMS.items()
     }
     return terms, trr_forces(run / "sp.trr")
@@ -403,7 +300,8 @@ def collect(d: Path, pin: Path | None):
                 rows += rows_of(name, k, "native", terms, forces, probes[k])
     if (d / "sander.tsv").exists():
         rows += [
-            (s, k, e, t, v) for (s, k, e, t), v in read_energy_tsv(d / "sander.tsv").items()
+            (s, k, e, t, v)
+            for (s, k, e, t), v in read_energy_tsv(d / "sander.tsv").items()
         ]
     rows.sort(
         key=lambda r: (

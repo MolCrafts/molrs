@@ -6,6 +6,6 @@ this module holds the format's lazy reader, :class:`DcdReader` (O(1) random
 access).
 """
 
-from .._lib import DcdReader
+from .._native import DcdReader
 
 __all__ = ["DcdReader"]

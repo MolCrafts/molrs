@@ -165,7 +165,7 @@ impl SmartsPattern {
     ) -> Result<SmartsPattern, MolRsError> {
         let ir = environment::environment_ir(mol, center, options)
             .map_err(|e| MolRsError::parse(e.to_string()))?;
-        let smarts = crate::line_notation::writer::write_smarts(&ir)
+        let smarts = crate::line_notation::writer::smarts_text(&ir)
             .map_err(|e| MolRsError::parse(e.to_string()))?;
         Self::parse(&smarts)
     }

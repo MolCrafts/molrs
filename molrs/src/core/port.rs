@@ -863,7 +863,7 @@ mod tests {
         assert!(frame.contains_key("ports"));
 
         let ports = frame.get("ports").expect("ports block");
-        assert_eq!(ports.nrows(), Some(1));
+        assert_eq!(ports.n_rows(), Some(1));
         for col in ["atomi", "atomj", "port_kind", "port_label", "port_order"] {
             assert!(ports.contains_key(col), "ports block carries '{col}'");
         }

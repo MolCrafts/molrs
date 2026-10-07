@@ -748,7 +748,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("atoms")
         .ok_or_else(|| invalid_data("CIF write: frame has no atoms block"))?;
     let n = atoms
-        .nrows()
+        .n_rows()
         .ok_or_else(|| invalid_data("CIF write: atoms block has no rows"))?;
 
     let title = frame
@@ -827,7 +827,7 @@ fn angle_deg(u: &[F; 3], v: &[F; 3]) -> F {
     let nu = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
     let nv = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     let c = (dot / (nu * nv)).clamp(-1.0, 1.0);
-    c.acos() * 180.0 / std::f64::consts::PI
+    c.acos().to_degrees()
 }
 
 /// `FrameWriter`-trait wrapper.
@@ -883,7 +883,7 @@ C2 C 0.5 0.5 0.5
         let mut reader = CifReader::new(Cursor::new(SMALL_CIF.as_bytes()));
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
         let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 2.5).abs() < 1e-9, "got {}", xs[[1]]);
         assert!(frame.simbox.is_some());

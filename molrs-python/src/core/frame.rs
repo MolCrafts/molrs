@@ -981,7 +981,7 @@ impl PyFrame {
     #[pyo3(signature = (rows, block = "atoms"))]
     fn subset(&self, rows: &Bound<'_, PyAny>, block: &str) -> PyResult<Self> {
         let nrows = self
-            .with_frame(|f| f.get(block).map(|b| b.nrows().unwrap_or(0)))?
+            .with_frame(|f| f.get(block).map(|b| b.n_rows().unwrap_or(0)))?
             .ok_or_else(|| PyKeyError::new_err(block.to_string()))?;
         let rows = PyBlock::row_selection(rows, nrows)?;
         // `Frame::subset` already builds every block on new buffers.

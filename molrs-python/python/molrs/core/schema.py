@@ -10,7 +10,7 @@ the native module exports. Adding one in Rust adds it here with no edit.
 rows point into.
 """
 
-from .._lib import schema as _schema
+from .._native import schema as _schema
 
 ColumnSpec = _schema.ColumnSpec
 BlockSpec = _schema.BlockSpec

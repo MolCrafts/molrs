@@ -64,7 +64,7 @@ atoms = frame["atoms"]
 
 print("frame blocks:", frame.keys())
 print("atom columns:", atoms.keys())
-print("rows:", atoms.nrows)
+print("rows:", atoms.n_rows)
 print("first x values:", atoms["x"][:3])
 ```
 
@@ -207,7 +207,7 @@ work has become a portable coordinate table.
 ```python
 molrs.io.write_xyz("ethanol.xyz", frame)
 roundtrip = molrs.io.read_xyz("ethanol.xyz")
-print("roundtrip atoms:", roundtrip["atoms"].nrows)
+print("roundtrip atoms:", roundtrip["atoms"].n_rows)
 ```
 
 The XYZ format stores coordinates and element symbols, but it does not preserve

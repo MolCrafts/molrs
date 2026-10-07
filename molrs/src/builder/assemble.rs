@@ -838,7 +838,9 @@ impl Assembler {
             })
         };
         let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
-        let center = crate::op::center(template, &template.node_ids().collect::<Vec<_>>()).ok();
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
+            .ok();
         let mut out = Vec::new();
         for id in template.ports() {
             let port = template.port(id).map_err(refuse)?;
@@ -1331,7 +1333,8 @@ mod tests {
             template: &MolGraph,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
-            let c = crate::op::center(template, &template.node_ids().collect::<Vec<_>>())
+            let c = template
+                .center(&template.node_ids().collect::<Vec<_>>())
                 .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
             Ok(vec![rotation_about(rz, c); sites.len()])

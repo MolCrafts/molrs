@@ -7,7 +7,7 @@ accepts the ``qm`` argument and ignores it, which is what keeps the three
 interchangeable at a call site.
 """
 
-from .._lib import (
+from .._native import (
     BccModel,
     GasteigerModel,
     MullikenModel,

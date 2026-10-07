@@ -52,6 +52,50 @@ pub enum AtdParameterSet {
 }
 
 impl AtdParameterSet {
+    /// Every atom-type table, in antechamber's `-at` order.
+    pub const ALL: [AtdParameterSet; 7] = [
+        Self::Bcc,
+        Self::Abcg2,
+        Self::Gas,
+        Self::Gff,
+        Self::Gff2,
+        Self::Amber,
+        Self::Sybyl,
+    ];
+
+    /// The antechamber `-at` flag naming this table (`"bcc"`, `"gaff2"`, …).
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bcc => "bcc",
+            Self::Abcg2 => "abcg2",
+            Self::Gas => "gas",
+            Self::Gff => "gaff",
+            Self::Gff2 => "gaff2",
+            Self::Amber => "amber",
+            Self::Sybyl => "sybyl",
+        }
+    }
+
+    /// The table an antechamber `-at` flag names — the inverse of
+    /// [`name`](Self::name).
+    ///
+    /// # Errors
+    ///
+    /// An unknown name. Never a fallback to a default table: an atom type
+    /// from the wrong table is a plausible-looking answer.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|set| set.name() == name)
+            .ok_or_else(|| {
+                let known: Vec<&str> = Self::ALL.iter().map(|set| set.name()).collect();
+                format!(
+                    "unknown atom-type parameter set {name:?}; expected one of {}",
+                    known.join(", ")
+                )
+            })
+    }
+
     /// The compile-time table this set names.
     pub fn table(self) -> AtdTable {
         match self {
@@ -129,6 +173,33 @@ pub enum AtdBondOrders {
     /// The graph's own bond orders; aromatic bonds without a Kekulé number are
     /// kekulized ([`assign_bcc_bond_types`]).
     Input,
+}
+
+impl AtdBondOrders {
+    /// Both sources.
+    pub const ALL: [AtdBondOrders; 2] = [Self::Perceive, Self::Input];
+
+    /// The source's name: `"perceive"` or `"input"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Perceive => "perceive",
+            Self::Input => "input",
+        }
+    }
+
+    /// The source `name` names — the inverse of [`name`](Self::name).
+    ///
+    /// # Errors
+    ///
+    /// An unknown name.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|orders| orders.name() == name)
+            .ok_or_else(|| {
+                format!("unknown bond_orders {name:?}; expected \"perceive\" or \"input\"")
+            })
+    }
 }
 
 /// The ATD rule engine, bound to one atom-type table.

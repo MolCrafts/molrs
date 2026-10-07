@@ -4,10 +4,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::core::CenterError;
 use crate::core::CoarseGrain;
 use crate::core::keys;
 use crate::core::{MolGraph, NodeId, node_to_u64};
-use crate::op::{CenterError, center};
 
 /// Why [`Coarsener::coarsen`] refuses its input. Nothing is built when it
 /// returns one.
@@ -39,7 +39,7 @@ pub enum CoarsenError {
     Center {
         /// Index of the group.
         group: usize,
-        /// Why [`center`] refused it.
+        /// Why [`MolGraph::center`](crate::core::MolGraph::center) refused it.
         source: CenterError,
     },
 }
@@ -129,7 +129,7 @@ impl<'a> Coarsener<'a> {
     /// - **Mass** M_I = Σ_{i∈G_I} m_i, written as the site's `mass`, in the
     ///   unit the source `mass` column is stored in (nothing is converted).
     /// - **Position** R_I = Σ_{i∈G_I} m_i r_i / M_I, in Å, computed by
-    ///   [`center`]. Only mass ratios enter R_I, so the mass unit does not
+    ///   [`MolGraph::center`](crate::core::MolGraph::center). Only mass ratios enter R_I, so the mass unit does not
     ///   affect it. No periodic imaging is applied: a group split across a
     ///   periodic box face averages its split coordinates, so unwrap the source
     ///   first when a group straddles the box.
@@ -244,7 +244,7 @@ impl<'a> Coarsener<'a> {
         let mut sites: Vec<([f64; 3], f64, [f64; 3])> = Vec::with_capacity(groups.len());
         for (group, members) in groups.iter().enumerate() {
             let refuse = |source| CoarsenError::Center { group, source };
-            let r = center(self.source, members).map_err(refuse)?;
+            let r = self.source.center(members).map_err(refuse)?;
             // `center` has just validated every member's mass.
             let mut m = 0.0;
             for &node in members {

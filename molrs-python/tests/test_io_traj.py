@@ -19,7 +19,7 @@ class TestReturnsTheFormatsReader:
         assert reader.n_frames == len(reader) > 0
 
     def test_lammps_returns_its_reader(self, water_lammpstrj):
-        reader = molrs.io.read_lammps_trajectory(str(water_lammpstrj))
+        reader = molrs.io.read_lammps_dump_trajectory(str(water_lammpstrj))
         assert isinstance(reader, molrs.io.lammps.LammpsDumpReader)
         assert reader.n_frames > 0
 
@@ -38,8 +38,8 @@ class TestTrajectoryReaderSurface:
         n = reader.n_frames
         assert reader.read_frame(0) is not None
         assert (
-            reader.read_frame(-1)["atoms"].nrows
-            == reader.read_frame(n - 1)["atoms"].nrows
+            reader.read_frame(-1)["atoms"].n_rows
+            == reader.read_frame(n - 1)["atoms"].n_rows
         )
 
     def test_out_of_range_raises(self, water_dcd):
@@ -97,8 +97,8 @@ class TestDumpLocalWrite:
         text = path.read_text()
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
-        loaded = molrs.io.read_lammps_trajectory(str(path)).read_all()
-        assert loaded[0]["entries"].nrows == 2
+        loaded = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()
+        assert loaded[0]["entries"].n_rows == 2
 
 
 class TestDumpColumnChoice:
@@ -119,7 +119,7 @@ class TestDumpColumnChoice:
 
     def test_writes_only_the_named_columns_in_order(self, tmp_path):
         path = tmp_path / "chosen.lammpstrj"
-        molrs.io.write_lammps_trajectory(
+        molrs.io.write_lammps_dump_trajectory(
             path, [self._frame()], columns=["id", "element", "mol", "x", "y", "z"]
         )
         text = path.read_text()
@@ -128,13 +128,13 @@ class TestDumpColumnChoice:
 
     def test_default_writes_every_column(self, tmp_path):
         path = tmp_path / "all.lammpstrj"
-        molrs.io.write_lammps_trajectory(path, [self._frame()])
+        molrs.io.write_lammps_dump_trajectory(path, [self._frame()])
         assert "ITEM: ATOMS id element mass mol x y z" in path.read_text()
 
     def test_rejects_a_column_the_frame_lacks(self, tmp_path):
         path = tmp_path / "missing.lammpstrj"
         with pytest.raises(OSError, match="'q'"):
-            molrs.io.write_lammps_trajectory(path, [self._frame()], columns=["id", "q"])
+            molrs.io.write_lammps_dump_trajectory(path, [self._frame()], columns=["id", "q"])
 
 
 class TestDumpTypeField:
@@ -153,10 +153,10 @@ class TestDumpTypeField:
         frame = molrs.core.Frame(
             {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.core.Box.cube(10.0)
         )
-        molrs.io.write_lammps_trajectory(path, [frame])
+        molrs.io.write_lammps_dump_trajectory(path, [frame])
         text = path.read_text()
         assert "ITEM: ATOMS id type x y z\n1 OW " in text
-        atoms = molrs.io.read_lammps_trajectory(str(path)).read_all()[0]["atoms"]
+        atoms = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type"]) == ["OW", "HW", "HW"]
         assert "type_id" not in atoms
 
@@ -166,10 +166,10 @@ class TestDumpTypeField:
             {"atoms": self._atoms(type=["OW", "HW", "HW"], type_id=[1, 2, 2])},
             box=molrs.core.Box.cube(10.0),
         )
-        molrs.io.write_lammps_trajectory(path, [frame])
+        molrs.io.write_lammps_dump_trajectory(path, [frame])
         text = path.read_text()
         assert "ITEM: ATOMS id type x y z\n1 1 " in text
-        atoms = molrs.io.read_lammps_trajectory(str(path)).read_all()[0]["atoms"]
+        atoms = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type_id"]) == [1, 2, 2]
         assert "type" not in atoms
 
@@ -210,7 +210,7 @@ class TestPdbAndGroReaders:
         molrs.io.write_gro_trajectory(path, self._frames())
         reader = molrs.io.read_gro_trajectory(path)
         assert isinstance(reader, molrs.io.gro.GroReader)
-        assert [f["atoms"].nrows for f in reader] == [3, 3]
+        assert [f["atoms"].n_rows for f in reader] == [3, 3]
         np.testing.assert_allclose(reader[1]["atoms"]["x"][0], 1.0, atol=1e-2)
 
 
@@ -225,14 +225,14 @@ class TestMultiFile:
         path = str(water_dcd)
         single = molrs.io.read_dcd_trajectory(path).n_frames
         reader = molrs.io.read_dcd_trajectory([path, path])
-        a = reader.read_frame(0)["atoms"].nrows
-        b = reader.read_frame(single)["atoms"].nrows
+        a = reader.read_frame(0)["atoms"].n_rows
+        b = reader.read_frame(single)["atoms"].n_rows
         assert a == b
         assert len(reader.read_all()) == 2 * single
 
 
 class TestCanonicalFields:
     def test_lammps_canonical_columns(self, water_lammpstrj):
-        reader = molrs.io.read_lammps_trajectory(str(water_lammpstrj))
+        reader = molrs.io.read_lammps_dump_trajectory(str(water_lammpstrj))
         atoms = reader.read_frame(0)["atoms"]
         assert "q" not in atoms

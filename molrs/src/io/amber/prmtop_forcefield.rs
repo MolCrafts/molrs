@@ -139,6 +139,20 @@ pub fn read_amber_prmtop_forcefield(path: impl AsRef<Path>) -> Result<ForceField
     AmberPrmtopForcefieldReader::new().read_str(&text)
 }
 
+/// Read a whole AMBER prmtop (or ParmEd chamber) topology at `path`: the
+/// force field and the structure frame with its 1-4 pairs priced
+/// ([`AmberPrmtopForcefieldReader::read_system_str`]).
+///
+/// # Errors
+///
+/// An unreadable file and every error of
+/// [`AmberPrmtopForcefieldReader::read_system_str`].
+pub fn read_amber_prmtop_system(path: impl AsRef<Path>) -> Result<(ForceField, Frame), String> {
+    let text = std::fs::read_to_string(path.as_ref())
+        .map_err(|e| format!("read {}: {e}", path.as_ref().display()))?;
+    AmberPrmtopForcefieldReader::new().read_system_str(&text)
+}
+
 fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
     let index = n_types
         .saturating_mul(iac_i.saturating_sub(1))
@@ -792,7 +806,7 @@ fn one_four_pairs(
     frame: &Frame,
 ) -> Result<Option<Block>, String> {
     use std::collections::{BTreeMap, HashSet};
-    let n_atoms = frame.get("atoms").and_then(|b| b.nrows()).unwrap_or(0);
+    let n_atoms = frame.get("atoms").and_then(|b| b.n_rows()).unwrap_or(0);
     let mut dihe_ptrs = section::<i64>(sections, "DIHEDRALS_INC_HYDROGEN")?;
     dihe_ptrs.extend(section::<i64>(sections, "DIHEDRALS_WITHOUT_HYDROGEN")?);
     // No divisors in the file (pre-Amber-11): no pair is priced on its own.

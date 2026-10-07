@@ -132,7 +132,7 @@ impl MdState {
     /// The columns are the canonical [`keys::COORDS`] and [`keys::IMAGES`], so
     /// a writer that emits whatever the block holds — the LAMMPS dump writer
     /// does — carries them without being told.
-    pub fn write_to(&self, frame: &mut Frame) -> Result<(), MdError> {
+    pub fn apply_to(&self, frame: &mut Frame) -> Result<(), MdError> {
         let n = self.pos.nrows();
         if self.images.nrows() != n {
             return Err(MdError::Invalid(format!(
@@ -143,7 +143,7 @@ impl MdState {
         let atoms = frame.get_mut(ATOMS).ok_or_else(|| {
             MdError::Invalid("frame has no \"atoms\" block to write into".to_string())
         })?;
-        if let Some(rows) = atoms.nrows()
+        if let Some(rows) = atoms.n_rows()
             && rows != n
         {
             return Err(MdError::Invalid(format!(
@@ -216,7 +216,7 @@ mod persistence_tests {
             virial: None,
         };
         let mut frame = frame_with(2);
-        state.write_to(&mut frame).unwrap();
+        state.apply_to(&mut frame).unwrap();
 
         let atoms = frame.get("atoms").unwrap();
         for (axis, key) in keys::COORDS.iter().enumerate() {
@@ -255,7 +255,7 @@ mod persistence_tests {
         assert!((state.unwrapped(&bx)[[0, 0]] - 32.0).abs() < 1e-12);
 
         let mut frame = frame_with(1);
-        state.write_to(&mut frame).unwrap();
+        state.apply_to(&mut frame).unwrap();
 
         // Read it back the way an analysis would, from the frame alone.
         let atoms = frame.get("atoms").unwrap();
@@ -285,7 +285,7 @@ mod persistence_tests {
             virial: None,
         };
         let mut frame = frame_with(3);
-        let err = state.write_to(&mut frame).unwrap_err();
+        let err = state.apply_to(&mut frame).unwrap_err();
         assert!(format!("{err}").contains("1 atoms"), "{err}");
     }
 }

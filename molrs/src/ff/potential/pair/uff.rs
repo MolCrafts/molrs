@@ -285,7 +285,7 @@ pub fn pair_uff_vdw_constructor(
         .get(PAIRS)
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
     let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
-    if pairs.nrows().unwrap_or(0) == 0 {
+    if pairs.n_rows().unwrap_or(0) == 0 {
         return Ok(ForceTerm::pair(PairUffVdw::compiled(
             vec![],
             vec![],

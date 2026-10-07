@@ -125,7 +125,7 @@ pub(in crate::io::mrec::zarr_storage) fn frame_codecs(
     if precision {
         codecs.push(precision_shuffle());
         codecs.push(default_precision_compressor()?);
-    } else if !matches!(dtype, DType::Float | DType::Complex64 | DType::Complex128) {
+    } else if !matches!(dtype, DType::Float | DType::C64 | DType::C128) {
         codecs.push(gzip(GZIP_LEVEL)?);
     }
     codecs.push(Arc::new(Crc32cCodec::new()));
@@ -196,18 +196,18 @@ pub(crate) fn write_column(
     }
     match col {
         Column::Float(a) => land!(a),
-        Column::Int8(a) => land!(a),
-        Column::Int16(a) => land!(a),
+        Column::I8(a) => land!(a),
+        Column::I16(a) => land!(a),
         Column::Int(a) => land!(a),
-        Column::Int64(a) => land!(a),
-        Column::UInt(a) => land!(a),
+        Column::I64(a) => land!(a),
+        Column::Uint(a) => land!(a),
         Column::U8(a) => land!(a),
-        Column::UInt16(a) => land!(a),
-        Column::UInt32(a) => land!(a),
+        Column::U16(a) => land!(a),
+        Column::U32(a) => land!(a),
         Column::Bool(a) => land!(a),
         Column::String(a) => land!(a),
-        Column::Complex64(a) => land!(a),
-        Column::Complex128(a) => land!(a),
+        Column::C64(a) => land!(a),
+        Column::C128(a) => land!(a),
     }
 }
 
@@ -251,18 +251,18 @@ pub(in crate::io::mrec::zarr_storage) fn zarr_dtype(
 ) -> (zarrs::array::DataType, zarrs::array::FillValue) {
     let dt = match dtype {
         DType::Float => data_type::float64(),
-        DType::Int8 => data_type::int8(),
-        DType::Int16 => data_type::int16(),
+        DType::I8 => data_type::int8(),
+        DType::I16 => data_type::int16(),
         DType::Int => data_type::int32(),
-        DType::Int64 => data_type::int64(),
+        DType::I64 => data_type::int64(),
         DType::Bool => data_type::bool(),
-        DType::UInt => data_type::uint64(),
+        DType::Uint => data_type::uint64(),
         DType::U8 => data_type::uint8(),
-        DType::UInt16 => data_type::uint16(),
-        DType::UInt32 => data_type::uint32(),
+        DType::U16 => data_type::uint16(),
+        DType::U32 => data_type::uint32(),
         DType::String => data_type::string(),
-        DType::Complex64 => data_type::complex64(),
-        DType::Complex128 => data_type::complex128(),
+        DType::C64 => data_type::complex64(),
+        DType::C128 => data_type::complex128(),
     };
     let fill = zarrs::array::FillValue::new(vec![0u8; dtype.itemsize().unwrap_or(0)]);
     (dt, fill)
@@ -527,15 +527,15 @@ pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>
         ArrayD::from_shape_vec(values.shape(), out).map_err(shape_err)
     }
     let converted = match (spec.dtype, col) {
-        (DType::Int, Column::Int8(h)) => Column::from_int(h.array().mapv(i32::from)),
-        (DType::Int, Column::Int16(h)) => Column::from_int(h.array().mapv(i32::from)),
-        (DType::Int, Column::Int64(h)) => Column::from_int(narrow::<i64, i32>(name, h.array())?),
-        (DType::Int64, Column::Int8(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::Int64, Column::Int16(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::Int64, Column::Int(h)) => Column::from_i64(h.array().mapv(i64::from)),
-        (DType::UInt, Column::U8(h)) => Column::from_uint(h.array().mapv(u64::from)),
-        (DType::UInt, Column::UInt16(h)) => Column::from_uint(h.array().mapv(u64::from)),
-        (DType::UInt, Column::UInt32(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::Int, Column::I8(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::I16(h)) => Column::from_int(h.array().mapv(i32::from)),
+        (DType::Int, Column::I64(h)) => Column::from_int(narrow::<i64, i32>(name, h.array())?),
+        (DType::I64, Column::I8(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::I64, Column::I16(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::I64, Column::Int(h)) => Column::from_i64(h.array().mapv(i64::from)),
+        (DType::Uint, Column::U8(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::Uint, Column::U16(h)) => Column::from_uint(h.array().mapv(u64::from)),
+        (DType::Uint, Column::U32(h)) => Column::from_uint(h.array().mapv(u64::from)),
         (expected, other) => {
             return Err(MolRsError::zarr(format!(
                 "column {name:?} is {}; the canonical key {name:?} is stored as {}",
@@ -884,7 +884,7 @@ pub(crate) fn write_block_group(
     let mut block_attrs = serde_json::Map::new();
     block_attrs.insert(
         "count".to_string(),
-        serde_json::Value::from(block.nrows().unwrap_or(0)),
+        serde_json::Value::from(block.n_rows().unwrap_or(0)),
     );
     if let Some(shape) = block.structural_shape() {
         block_attrs.insert(
@@ -1051,10 +1051,10 @@ where
         block
             .resize(count)
             .map_err(|e| MolRsError::zarr(format!("block {child_name:?} count={count}: {e}")))?;
-    } else if block.nrows() != Some(count) {
+    } else if block.n_rows() != Some(count) {
         return Err(MolRsError::zarr(format!(
             "row_count_mismatch: block {child_name:?} count={count}, columns have {}",
-            block.nrows().unwrap_or(0)
+            block.n_rows().unwrap_or(0)
         )));
     }
     if let Some(shape) = attrs.get("structural_shape").and_then(|v| v.as_array()) {
@@ -1162,7 +1162,7 @@ pub(crate) fn check_declared_references(
     rows_of: &dyn Fn(&str) -> Option<Option<usize>>,
 ) -> Result<(), MolRsError> {
     for (name, block) in frame.iter() {
-        let rows = block.nrows().unwrap_or(0);
+        let rows = block.n_rows().unwrap_or(0);
         for (column, target) in block.targets() {
             let Some(target_rows) = rows_of(target) else {
                 continue;
@@ -1198,7 +1198,7 @@ pub(crate) fn check_declared_references(
 /// [`check_declared_references`] for the targets inside `frame` itself.
 pub(crate) fn check_local_references(frame: &Frame, what: &str) -> Result<(), MolRsError> {
     check_declared_references(frame, what, &|target| {
-        (!target.starts_with('/')).then(|| frame.get(target).map(|b| b.nrows().unwrap_or(0)))
+        (!target.starts_with('/')).then(|| frame.get(target).map(|b| b.n_rows().unwrap_or(0)))
     })
 }
 
@@ -1227,7 +1227,7 @@ where
     if zarrs::group::Group::open(store.clone(), &group_path).is_err() {
         return Ok(());
     }
-    let rows = block.nrows().unwrap_or(0);
+    let rows = block.n_rows().unwrap_or(0);
     for child in Node::open(store, &group_path)?.children() {
         if !matches!(child.metadata(), NodeMetadata::Array(_)) {
             continue;
@@ -1380,7 +1380,7 @@ mod tests {
         let back = round_trip_column(Column::from_i8(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::Int8);
+        assert_eq!(back.dtype(), DType::I8);
         assert_eq!(
             *back.as_i8().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1445,7 +1445,7 @@ mod tests {
                 Column::from_u32(ArrayD::from_shape_vec(vec![1], vec![7u32]).unwrap()),
             )
             .unwrap();
-        assert_eq!(block.get("atomi").unwrap().dtype(), DType::UInt);
+        assert_eq!(block.get("atomi").unwrap().dtype(), DType::Uint);
     }
 
     #[test]
@@ -1454,7 +1454,7 @@ mod tests {
         let back = round_trip_column(Column::from_i16(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::Int16);
+        assert_eq!(back.dtype(), DType::I16);
         assert_eq!(
             *back.as_i16().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1480,7 +1480,7 @@ mod tests {
         let back = round_trip_column(Column::from_i64(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::Int64);
+        assert_eq!(back.dtype(), DType::I64);
         assert_eq!(
             *back.as_i64().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1506,7 +1506,7 @@ mod tests {
         let back = round_trip_column(Column::from_u16(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::UInt16);
+        assert_eq!(back.dtype(), DType::U16);
         assert_eq!(
             *back.as_u16().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1519,7 +1519,7 @@ mod tests {
         let back = round_trip_column(Column::from_u32(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::UInt32);
+        assert_eq!(back.dtype(), DType::U32);
         assert_eq!(
             *back.as_u32().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1532,7 +1532,7 @@ mod tests {
         let back = round_trip_column(Column::from_uint(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::UInt);
+        assert_eq!(back.dtype(), DType::Uint);
         assert_eq!(
             *back.as_uint().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1581,7 +1581,7 @@ mod tests {
         let back = round_trip_column(Column::from_c64(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::Complex64);
+        assert_eq!(back.dtype(), DType::C64);
         assert_eq!(
             *back.as_c64().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1599,7 +1599,7 @@ mod tests {
         let back = round_trip_column(Column::from_c128(
             ArrayD::from_shape_vec(vec![4], values.clone()).unwrap(),
         ));
-        assert_eq!(back.dtype(), DType::Complex128);
+        assert_eq!(back.dtype(), DType::C128);
         assert_eq!(
             *back.as_c128().unwrap(),
             ArrayD::from_shape_vec(vec![4], values).unwrap()
@@ -1669,7 +1669,7 @@ mod tests {
         write_frame_group(&store, FRAME, &frame).unwrap();
 
         let back = read_frame_group(&store, FRAME).unwrap();
-        assert_eq!(back.get("ghost").unwrap().nrows(), Some(7));
+        assert_eq!(back.get("ghost").unwrap().n_rows(), Some(7));
     }
 
     // -- bool is native, not a tagged uint8 (ac-005) -------------------------
@@ -2831,11 +2831,11 @@ mod tests {
         write_frame_group(&store, FRAME, &frame).unwrap();
         let back = read_frame_group(&store, FRAME).unwrap();
         let atoms = &back["atoms"];
-        assert_eq!(atoms.dtype("formal_charge"), Some(DType::Int64));
-        assert_eq!(atoms.dtype("atom_map"), Some(DType::UInt));
+        assert_eq!(atoms.dtype("formal_charge"), Some(DType::I64));
+        assert_eq!(atoms.dtype("atom_map"), Some(DType::Uint));
         assert_eq!(atoms.dtype("chain"), Some(DType::String));
         assert_eq!(back["virtual_sites"].validity("atoml"), Some(&[false][..]));
-        assert_eq!(back["drudes"].nrows(), Some(1));
+        assert_eq!(back["drudes"].n_rows(), Some(1));
     }
 
     /// A `cmaps` block — five endpoints, `atomi` through `atomm`, a `type`
@@ -2869,7 +2869,7 @@ mod tests {
         write_frame_group(&store, FRAME, &frame).unwrap();
         let back = read_frame_group(&store, FRAME).unwrap();
         let cmaps = &back["cmaps"];
-        assert_eq!(cmaps.dtype("atomm"), Some(DType::UInt));
+        assert_eq!(cmaps.dtype("atomm"), Some(DType::Uint));
         assert_eq!(
             cmaps
                 .get("atomm")

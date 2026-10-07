@@ -4,8 +4,8 @@ The doors are functions of :mod:`molrs.io`: the data file
 (:func:`~molrs.io.read_lammps_data`, :func:`~molrs.io.write_lammps_data`),
 molecule templates (:func:`~molrs.io.read_lammps_molecule`,
 :func:`~molrs.io.read_lammps_molecule_json` and their writers), dumps
-(:func:`~molrs.io.read_lammps_trajectory`,
-:func:`~molrs.io.write_lammps_trajectory`,
+(:func:`~molrs.io.read_lammps_dump_trajectory`,
+:func:`~molrs.io.write_lammps_dump_trajectory`,
 :func:`~molrs.io.write_lammps_dump_local`), ``fix bond/react`` file sets
 (:func:`~molrs.io.write_lammps_bond_react_map`,
 :func:`~molrs.io.write_lammps_bond_react_system`), logs
@@ -20,7 +20,7 @@ timing summaries; and :func:`is_lammps_log`, which tells a log by its first
 run before it is read.
 """
 
-from .._lib import (
+from .._native import (
     BondReactTemplate,
     LammpsCpuUse,
     LammpsDumpReader,

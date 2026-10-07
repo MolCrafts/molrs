@@ -777,13 +777,15 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 `GromacsTopForcefieldReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
-(`read_system`; Python `molrs.io.read_gromacs_system`); the writer
+(`read_system`; Python `molrs.io.read_gromacs_top_system`); the writer
 (`GromacsTopForcefieldWriter`) is the inverse of the directive map
 (`write_str`) and of `read_system` (`write_system_str`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
 degrees stay degrees. Every Coulomb style states GROMACS's own constant
-(`GROMACS_COULOMB`, its `ONE_4PI_EPS0` from CODATA 2018: 332.06371329919205
-kcal·Å/(mol·e²), 9.9·10⁻⁹ above LAMMPS `real`'s; 0.15 stated LAMMPS's).
+(`molrs.core.constants.GROMACS_ONE_4PI_EPS0`, its `ONE_4PI_EPS0` from
+CODATA 2018, 138.93545764438196 kJ·nm/(mol·e²), which the unit registry
+converts to 332.06371329919205 kcal·Å/(mol·e²): 9.9·10⁻⁹ above LAMMPS
+`real`'s; 0.15 stated LAMMPS's).
 
 | GROMACS | IR |
 |---|---|

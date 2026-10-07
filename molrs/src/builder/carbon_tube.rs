@@ -448,9 +448,9 @@ mod tests {
             .unwrap();
         let atoms = frame.get("atoms").unwrap();
         let bonds = frame.get("bonds").unwrap();
-        let atom_count = atoms.nrows().unwrap();
+        let atom_count = atoms.n_rows().unwrap();
         assert_eq!(atom_count, 112);
-        assert_eq!(bonds.nrows(), Some(3 * atom_count / 2));
+        assert_eq!(bonds.n_rows(), Some(3 * atom_count / 2));
 
         let mut degree = vec![0; atom_count];
         for &index in bonds.get("atomi").and_then(|c| c.as_uint()).unwrap() {
@@ -474,8 +474,8 @@ mod tests {
         let first = builder.build().unwrap();
         let second = builder.build().unwrap();
         assert_eq!(
-            first.get("atoms").unwrap().nrows(),
-            second.get("atoms").unwrap().nrows()
+            first.get("atoms").unwrap().n_rows(),
+            second.get("atoms").unwrap().n_rows()
         );
         let simbox = first.simbox.as_ref().unwrap();
         assert_eq!(simbox.pbc(), [false, false, true]);

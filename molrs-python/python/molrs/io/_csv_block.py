@@ -11,8 +11,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any
 
-from .._lib import csv_block_from_text as _from_text
-from .._lib import csv_block_to_text as _to_text
+from .._native import csv_block_from_text as _from_text
+from .._native import csv_block_to_text as _to_text
 
 PathInput = str | PathLike[str]
 

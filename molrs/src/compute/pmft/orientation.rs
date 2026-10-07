@@ -117,7 +117,7 @@ mod tests {
 
     fn with_quaternion(mut frame: Frame, q: [F; 4]) -> Frame {
         let atoms = frame.get_mut("atoms").unwrap();
-        let n = atoms.nrows().unwrap();
+        let n = atoms.n_rows().unwrap();
         for (key, value) in keys::QUAT.iter().zip(q) {
             atoms
                 .insert(*key, Array1::from_elem(n, value).into_dyn())

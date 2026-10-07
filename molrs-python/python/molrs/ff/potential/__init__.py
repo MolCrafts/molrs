@@ -26,7 +26,7 @@
   satisfies (one method, ``calc_energy_forces(pos) -> (energy, forces)``).
 """
 
-from ..._lib import (
+from ..._native import (
     PairLjCut,
     PotentialCompiler,
     Potentials,

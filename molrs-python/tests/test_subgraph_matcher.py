@@ -15,7 +15,7 @@ import itertools
 
 import molrs
 import pytest
-from molrs import _lib
+from molrs import _native
 
 
 def _chain(*bead_types: str) -> tuple[molrs.core.CoarseGrain, list[int]]:
@@ -28,7 +28,7 @@ def _chain(*bead_types: str) -> tuple[molrs.core.CoarseGrain, list[int]]:
 
 
 def test_subgraph_matcher_is_published_from_molrs_perceive() -> None:
-    assert molrs.perceive.SubgraphMatcher is _lib.SubgraphMatcher
+    assert molrs.perceive.SubgraphMatcher is _native.SubgraphMatcher
     assert "SubgraphMatcher" in molrs.perceive.__all__
     assert molrs.perceive.SubgraphMatcher.__module__ == "molrs.perceive"
 

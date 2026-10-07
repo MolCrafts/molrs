@@ -27,7 +27,7 @@ pub trait FrameAccess {
     /// Returns `true` if the frame contains the specified block key.
     fn contains_block(&self, key: &str) -> bool;
     /// Number of blocks.
-    fn block_count(&self) -> usize;
+    fn n_blocks(&self) -> usize;
     /// Returns `true` if the frame contains no blocks.
     fn is_empty(&self) -> bool;
     /// Visits a block by key through the [`BlockAccess`] trait, using the visitor pattern
@@ -56,7 +56,7 @@ impl FrameAccess for Frame {
         self.contains_key(key)
     }
 
-    fn block_count(&self) -> usize {
+    fn n_blocks(&self) -> usize {
         self.len()
     }
 
@@ -90,7 +90,7 @@ impl FrameAccess for FrameView<'_> {
         self.contains_key(key)
     }
 
-    fn block_count(&self) -> usize {
+    fn n_blocks(&self) -> usize {
         self.len()
     }
 
@@ -131,7 +131,7 @@ mod tests {
         assert!(column_is_uint(&frame, "atoms", "id"));
         assert!(!column_is_float(&frame, "atoms", "missing"));
         assert!(!column_is_float(&frame, "missing", "x"));
-        assert_eq!(FrameAccess::block_count(&frame), 1);
+        assert_eq!(FrameAccess::n_blocks(&frame), 1);
         assert!(FrameAccess::contains_block(&frame, "atoms"));
         assert!(!FrameAccess::is_empty(&frame));
         assert_eq!(
@@ -148,7 +148,7 @@ mod tests {
         assert!(column_is_float(&view, "atoms", "x"));
         assert!(column_is_uint(&view, "atoms", "id"));
         assert!(!column_is_float(&view, "atoms", "missing"));
-        assert_eq!(FrameAccess::block_count(&view), 1);
+        assert_eq!(FrameAccess::n_blocks(&view), 1);
         assert!(FrameAccess::contains_block(&view, "atoms"));
         assert!(!FrameAccess::is_empty(&view));
         assert_eq!(

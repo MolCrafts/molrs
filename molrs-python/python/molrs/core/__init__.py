@@ -35,7 +35,7 @@ constants).
 from collections.abc import Mapping as _AbcMapping
 from collections.abc import MutableMapping as _AbcMutableMapping
 
-from .._lib import (
+from .._native import (
     Angle,
     Atom,
     Atomistic,

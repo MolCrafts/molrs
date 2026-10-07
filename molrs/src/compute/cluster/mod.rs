@@ -40,7 +40,7 @@ impl Cluster {
         neighbors: &Neighbors,
     ) -> Result<ClusterResult, ComputeError> {
         let n = frame
-            .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+            .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
             .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
 
         if n == 0 {
@@ -151,7 +151,7 @@ impl Cluster {
         keys: &[Idx],
     ) -> Result<ClusterResult, ComputeError> {
         let n = frame
-            .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+            .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
             .ok_or(ComputeError::MissingBlock { name: "atoms" })?;
 
         if keys.len() != n {

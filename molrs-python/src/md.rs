@@ -230,13 +230,13 @@ pub struct PyVelocityVerlet {
 #[pymethods]
 impl PyVelocityVerlet {
     #[new]
-    #[pyo3(signature = (dt, *, potential, neighbors=None, mass, simbox=None))]
+    #[pyo3(signature = (dt, *, potential, neighbors=None, mass, r#box=None))]
     fn new(
         dt: F,
         potential: &Bound<'_, PyAny>,
         neighbors: Option<&Bound<'_, PyVerletSkin>>,
         mass: Bound<'_, PyAny>,
-        simbox: Option<PyBox>,
+        r#box: Option<PyBox>,
     ) -> PyResult<Self> {
         if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
@@ -255,7 +255,7 @@ impl PyVelocityVerlet {
                 dt,
                 provider(members, skin)?,
                 mass.view(),
-                simbox.map(|b| b.inner),
+                r#box.map(|b| b.inner),
             )
             .map_err(md_err)?,
             err_slots,
@@ -280,7 +280,7 @@ impl PyVelocityVerlet {
 
     /// Neighbour-list rebuilds since construction (``None`` without neighbors).
     #[getter]
-    fn rebuild_count(&self) -> Option<usize> {
+    fn n_rebuilds(&self) -> Option<usize> {
         self.inner.forces().neighbor_stats().rebuilds
     }
 
@@ -332,7 +332,7 @@ pub struct PyLangevin {
 #[pymethods]
 impl PyLangevin {
     #[new]
-    #[pyo3(signature = (dt, *, gamma, kbt, potential, neighbors=None, mass, seed=0, simbox=None))]
+    #[pyo3(signature = (dt, *, gamma, kbt, potential, neighbors=None, mass, seed=0, r#box=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         dt: F,
@@ -342,7 +342,7 @@ impl PyLangevin {
         neighbors: Option<&Bound<'_, PyVerletSkin>>,
         mass: Bound<'_, PyAny>,
         seed: u64,
-        simbox: Option<PyBox>,
+        r#box: Option<PyBox>,
     ) -> PyResult<Self> {
         if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
@@ -372,7 +372,7 @@ impl PyLangevin {
                 provider(members, skin)?,
                 mass.view(),
                 seed,
-                simbox.map(|b| b.inner),
+                r#box.map(|b| b.inner),
             )
             .map_err(md_err)?,
             err_slots,
@@ -426,7 +426,7 @@ impl PyLangevin {
 
     /// Neighbour-list rebuilds since construction (``None`` without neighbors).
     #[getter]
-    fn rebuild_count(&self) -> Option<usize> {
+    fn n_rebuilds(&self) -> Option<usize> {
         self.inner.forces().neighbor_stats().rebuilds
     }
 

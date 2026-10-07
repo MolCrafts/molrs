@@ -14,18 +14,18 @@ macro_rules! map_view {
     ($view:expr, $arr:ident => $body:expr) => {
         match $view {
             ColumnView::Float($arr) => $body,
-            ColumnView::Int8($arr) => $body,
-            ColumnView::Int16($arr) => $body,
+            ColumnView::I8($arr) => $body,
+            ColumnView::I16($arr) => $body,
             ColumnView::Int($arr) => $body,
-            ColumnView::Int64($arr) => $body,
+            ColumnView::I64($arr) => $body,
             ColumnView::U8($arr) => $body,
-            ColumnView::UInt16($arr) => $body,
-            ColumnView::UInt32($arr) => $body,
-            ColumnView::UInt($arr) => $body,
+            ColumnView::U16($arr) => $body,
+            ColumnView::U32($arr) => $body,
+            ColumnView::Uint($arr) => $body,
             ColumnView::Bool($arr) => $body,
             ColumnView::String($arr) => $body,
-            ColumnView::Complex64($arr) => $body,
-            ColumnView::Complex128($arr) => $body,
+            ColumnView::C64($arr) => $body,
+            ColumnView::C128($arr) => $body,
         }
     };
 }
@@ -39,36 +39,36 @@ pub enum ColumnView<'a> {
     /// Borrowed float column.
     Float(ArrayViewD<'a, F>),
     /// Borrowed `i8` column.
-    Int8(ArrayViewD<'a, i8>),
+    I8(ArrayViewD<'a, i8>),
     /// Borrowed `i16` column.
-    Int16(ArrayViewD<'a, i16>),
+    I16(ArrayViewD<'a, i16>),
     /// Borrowed signed integer column.
     Int(ArrayViewD<'a, I>),
     /// Borrowed `i64` column.
-    Int64(ArrayViewD<'a, i64>),
+    I64(ArrayViewD<'a, i64>),
     /// Borrowed boolean column.
     Bool(ArrayViewD<'a, bool>),
     /// Borrowed unsigned integer column.
-    UInt(ArrayViewD<'a, Idx>),
+    Uint(ArrayViewD<'a, Idx>),
     /// Borrowed u8 column.
     U8(ArrayViewD<'a, u8>),
     /// Borrowed `u16` column.
-    UInt16(ArrayViewD<'a, u16>),
+    U16(ArrayViewD<'a, u16>),
     /// Borrowed `u32` column.
-    UInt32(ArrayViewD<'a, u32>),
+    U32(ArrayViewD<'a, u32>),
     /// Borrowed string column.
     String(ArrayViewD<'a, String>),
     /// Borrowed `complex64` column.
-    Complex64(ArrayViewD<'a, Complex<f32>>),
+    C64(ArrayViewD<'a, Complex<f32>>),
     /// Borrowed `complex128` column.
-    Complex128(ArrayViewD<'a, Complex<f64>>),
+    C128(ArrayViewD<'a, Complex<f64>>),
 }
 
 impl<'a> ColumnView<'a> {
     /// Returns the number of rows (axis-0 length) of this column view.
     ///
     /// Returns `None` if the array has rank 0.
-    pub fn nrows(&self) -> Option<usize> {
+    pub fn n_rows(&self) -> Option<usize> {
         map_view!(self, a => a.shape().first().copied())
     }
 
@@ -76,18 +76,18 @@ impl<'a> ColumnView<'a> {
     pub fn dtype(&self) -> DType {
         match self {
             ColumnView::Float(_) => DType::Float,
-            ColumnView::Int8(_) => DType::Int8,
-            ColumnView::Int16(_) => DType::Int16,
+            ColumnView::I8(_) => DType::I8,
+            ColumnView::I16(_) => DType::I16,
             ColumnView::Int(_) => DType::Int,
-            ColumnView::Int64(_) => DType::Int64,
+            ColumnView::I64(_) => DType::I64,
             ColumnView::Bool(_) => DType::Bool,
-            ColumnView::UInt(_) => DType::UInt,
+            ColumnView::Uint(_) => DType::Uint,
             ColumnView::U8(_) => DType::U8,
-            ColumnView::UInt16(_) => DType::UInt16,
-            ColumnView::UInt32(_) => DType::UInt32,
+            ColumnView::U16(_) => DType::U16,
+            ColumnView::U32(_) => DType::U32,
             ColumnView::String(_) => DType::String,
-            ColumnView::Complex64(_) => DType::Complex64,
-            ColumnView::Complex128(_) => DType::Complex128,
+            ColumnView::C64(_) => DType::C64,
+            ColumnView::C128(_) => DType::C128,
         }
     }
 
@@ -104,18 +104,18 @@ impl<'a> ColumnView<'a> {
     pub fn reborrow(&self) -> ColumnView<'_> {
         match self {
             ColumnView::Float(a) => ColumnView::Float(a.view()),
-            ColumnView::Int8(a) => ColumnView::Int8(a.view()),
-            ColumnView::Int16(a) => ColumnView::Int16(a.view()),
+            ColumnView::I8(a) => ColumnView::I8(a.view()),
+            ColumnView::I16(a) => ColumnView::I16(a.view()),
             ColumnView::Int(a) => ColumnView::Int(a.view()),
-            ColumnView::Int64(a) => ColumnView::Int64(a.view()),
+            ColumnView::I64(a) => ColumnView::I64(a.view()),
             ColumnView::Bool(a) => ColumnView::Bool(a.view()),
-            ColumnView::UInt(a) => ColumnView::UInt(a.view()),
+            ColumnView::Uint(a) => ColumnView::Uint(a.view()),
             ColumnView::U8(a) => ColumnView::U8(a.view()),
-            ColumnView::UInt16(a) => ColumnView::UInt16(a.view()),
-            ColumnView::UInt32(a) => ColumnView::UInt32(a.view()),
+            ColumnView::U16(a) => ColumnView::U16(a.view()),
+            ColumnView::U32(a) => ColumnView::U32(a.view()),
             ColumnView::String(a) => ColumnView::String(a.view()),
-            ColumnView::Complex64(a) => ColumnView::Complex64(a.view()),
-            ColumnView::Complex128(a) => ColumnView::Complex128(a.view()),
+            ColumnView::C64(a) => ColumnView::C64(a.view()),
+            ColumnView::C128(a) => ColumnView::C128(a.view()),
         }
     }
 
@@ -146,7 +146,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the unsigned integer data, or `None` if not `UInt`.
     pub fn as_uint(&self) -> Option<ArrayViewD<'a, Idx>> {
         match self {
-            ColumnView::UInt(a) => Some(a.clone()),
+            ColumnView::Uint(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -170,7 +170,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `i8` data, or `None` if not `Int8`.
     pub fn as_i8(&self) -> Option<ArrayViewD<'a, i8>> {
         match self {
-            ColumnView::Int8(a) => Some(a.clone()),
+            ColumnView::I8(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -178,7 +178,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `i16` data, or `None` if not `Int16`.
     pub fn as_i16(&self) -> Option<ArrayViewD<'a, i16>> {
         match self {
-            ColumnView::Int16(a) => Some(a.clone()),
+            ColumnView::I16(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -186,7 +186,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `i64` data, or `None` if not `Int64`.
     pub fn as_i64(&self) -> Option<ArrayViewD<'a, i64>> {
         match self {
-            ColumnView::Int64(a) => Some(a.clone()),
+            ColumnView::I64(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -194,7 +194,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `u16` data, or `None` if not `UInt16`.
     pub fn as_u16(&self) -> Option<ArrayViewD<'a, u16>> {
         match self {
-            ColumnView::UInt16(a) => Some(a.clone()),
+            ColumnView::U16(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -202,7 +202,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `u32` data, or `None` if not `UInt32`.
     pub fn as_u32(&self) -> Option<ArrayViewD<'a, u32>> {
         match self {
-            ColumnView::UInt32(a) => Some(a.clone()),
+            ColumnView::U32(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -210,7 +210,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `complex64` data, or `None` if not `Complex64`.
     pub fn as_c64(&self) -> Option<ArrayViewD<'a, Complex<f32>>> {
         match self {
-            ColumnView::Complex64(a) => Some(a.clone()),
+            ColumnView::C64(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -218,7 +218,7 @@ impl<'a> ColumnView<'a> {
     /// Returns a view of the `complex128` data, or `None` if not `Complex128`.
     pub fn as_c128(&self) -> Option<ArrayViewD<'a, Complex<f64>>> {
         match self {
-            ColumnView::Complex128(a) => Some(a.clone()),
+            ColumnView::C128(a) => Some(a.clone()),
             _ => None,
         }
     }
@@ -246,18 +246,18 @@ impl<'a> ColumnView<'a> {
     pub fn to_owned(&self) -> Column {
         match self {
             ColumnView::Float(a) => Column::from_float(a.to_owned()),
-            ColumnView::Int8(a) => Column::from_i8(a.to_owned()),
-            ColumnView::Int16(a) => Column::from_i16(a.to_owned()),
+            ColumnView::I8(a) => Column::from_i8(a.to_owned()),
+            ColumnView::I16(a) => Column::from_i16(a.to_owned()),
             ColumnView::Int(a) => Column::from_int(a.to_owned()),
-            ColumnView::Int64(a) => Column::from_i64(a.to_owned()),
+            ColumnView::I64(a) => Column::from_i64(a.to_owned()),
             ColumnView::Bool(a) => Column::from_bool(a.to_owned()),
-            ColumnView::UInt(a) => Column::from_uint(a.to_owned()),
+            ColumnView::Uint(a) => Column::from_uint(a.to_owned()),
             ColumnView::U8(a) => Column::from_u8(a.to_owned()),
-            ColumnView::UInt16(a) => Column::from_u16(a.to_owned()),
-            ColumnView::UInt32(a) => Column::from_u32(a.to_owned()),
+            ColumnView::U16(a) => Column::from_u16(a.to_owned()),
+            ColumnView::U32(a) => Column::from_u32(a.to_owned()),
             ColumnView::String(a) => Column::from_string(a.to_owned()),
-            ColumnView::Complex64(a) => Column::from_c64(a.to_owned()),
-            ColumnView::Complex128(a) => Column::from_c128(a.to_owned()),
+            ColumnView::C64(a) => Column::from_c64(a.to_owned()),
+            ColumnView::C128(a) => Column::from_c128(a.to_owned()),
         }
     }
 }
@@ -266,18 +266,18 @@ impl<'a> From<&'a Column> for ColumnView<'a> {
     fn from(col: &'a Column) -> Self {
         match col {
             Column::Float(a) => ColumnView::Float(a.view()),
-            Column::Int8(a) => ColumnView::Int8(a.view()),
-            Column::Int16(a) => ColumnView::Int16(a.view()),
+            Column::I8(a) => ColumnView::I8(a.view()),
+            Column::I16(a) => ColumnView::I16(a.view()),
             Column::Int(a) => ColumnView::Int(a.view()),
-            Column::Int64(a) => ColumnView::Int64(a.view()),
+            Column::I64(a) => ColumnView::I64(a.view()),
             Column::Bool(a) => ColumnView::Bool(a.view()),
-            Column::UInt(a) => ColumnView::UInt(a.view()),
+            Column::Uint(a) => ColumnView::Uint(a.view()),
             Column::U8(a) => ColumnView::U8(a.view()),
-            Column::UInt16(a) => ColumnView::UInt16(a.view()),
-            Column::UInt32(a) => ColumnView::UInt32(a.view()),
+            Column::U16(a) => ColumnView::U16(a.view()),
+            Column::U32(a) => ColumnView::U32(a.view()),
             Column::String(a) => ColumnView::String(a.view()),
-            Column::Complex64(a) => ColumnView::Complex64(a.view()),
-            Column::Complex128(a) => ColumnView::Complex128(a.view()),
+            Column::C64(a) => ColumnView::C64(a.view()),
+            Column::C128(a) => ColumnView::C128(a.view()),
         }
     }
 }
@@ -303,7 +303,7 @@ mod tests {
         let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn());
         let view = ColumnView::from(&col);
         assert_eq!(view.dtype(), DType::Float);
-        assert_eq!(view.nrows(), Some(3));
+        assert_eq!(view.n_rows(), Some(3));
         assert_eq!(view.shape(), &[3]);
         assert!(view.as_float().is_some());
         assert!(view.as_int().is_none());
@@ -330,7 +330,7 @@ mod tests {
     fn test_from_column_uint() {
         let col = Column::from_uint(Array1::from_vec(vec![1 as Idx, 2]).into_dyn());
         let view = ColumnView::from(&col);
-        assert_eq!(view.dtype(), DType::UInt);
+        assert_eq!(view.dtype(), DType::Uint);
         assert!(view.as_uint().is_some());
     }
 
@@ -358,7 +358,7 @@ mod tests {
         let view = ColumnView::from(&col);
         let owned = view.to_owned();
         assert_eq!(owned.dtype(), DType::Float);
-        assert_eq!(owned.nrows(), Some(3));
+        assert_eq!(owned.n_rows(), Some(3));
         assert_eq!(
             owned.as_float().unwrap().as_slice_memory_order().unwrap(),
             &[1.0, 2.0, 3.0]

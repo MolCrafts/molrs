@@ -307,7 +307,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     }
 
     if let Some(atoms) = frame.get("atoms") {
-        let n = atoms.nrows().unwrap_or(0);
+        let n = atoms.n_rows().unwrap_or(0);
         let xs = atoms
             .get("x")
             .and_then(|c| c.as_float())
@@ -386,7 +386,7 @@ PRIMCOORD
 ";
         let frame = read_frame_from(Cursor::new(text)).expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
         let z = atoms
             .get("atomic_number")
             .and_then(|c| c.as_uint())
@@ -410,7 +410,7 @@ PRIMCOORD
 ";
         let frame = read_frame_from(Cursor::new(text)).expect("parse");
         let atoms = frame.get("atoms").expect("atoms");
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
         let sb = frame.simbox.as_ref().unwrap();
         assert!(!sb.is_cell_defined());
         assert!(sb.is_free());

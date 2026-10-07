@@ -154,10 +154,10 @@ pub(super) struct CgParser<'a> {
 // ---- block driver ----
 impl<'a> CgParser<'a> {
     /// A parser over the whole of `text`, reading it as
-    /// [`Notation::CGsmiles`].
+    /// [`Notation::CgSmiles`].
     pub(super) fn new(text: &'a str) -> Self {
         Self {
-            scanner: Scanner::new(text, Notation::CGsmiles),
+            scanner: Scanner::new(text, Notation::CgSmiles),
             nodes: Vec::new(),
             edges: Vec::new(),
             open_rings: HashMap::new(),
@@ -267,7 +267,7 @@ impl<'a> CgParser<'a> {
         for node in &level.nodes {
             if !table.contains_key(&node.name) {
                 let kind = SmilesErrorKind::CgUndefinedFragment(node.name.clone());
-                return Err(SmilesError::new(kind, node.span, input, Notation::CGsmiles));
+                return Err(SmilesError::new(kind, node.span, input, Notation::CgSmiles));
             }
         }
         Ok(())
@@ -478,7 +478,7 @@ impl<'a> CgParser<'a> {
             annotation @ SmilesErrorKind::AtomAnnotationUnsupported(_) => annotation,
             inner => SmilesErrorKind::CgLastBlockNotAtomistic(Box::new(inner)),
         };
-        SmilesError::new(kind, span, input, Notation::CGsmiles)
+        SmilesError::new(kind, span, input, Notation::CgSmiles)
     }
 }
 
@@ -986,7 +986,7 @@ impl<'a> CgParser<'a> {
         descriptor: BondingDescriptor,
         span: Span,
     ) -> Result<(), SmilesError> {
-        validate_descriptor(&descriptor, span, self.scanner.input(), Notation::CGsmiles)?;
+        validate_descriptor(&descriptor, span, self.scanner.input(), Notation::CgSmiles)?;
         match self.current.and_then(|index| self.nodes.get_mut(index)) {
             Some(node) => node.descriptors.push(descriptor),
             None => self.leading.push((descriptor, span)),
@@ -1877,7 +1877,7 @@ mod tests {
             "{[#PEO][#PEO]}[#X]",
         ] {
             let err = CgSmilesIr::parse(text).expect_err("input must be refused");
-            assert_eq!(err.notation, Notation::CGsmiles, "input was {text}");
+            assert_eq!(err.notation, Notation::CgSmiles, "input was {text}");
         }
     }
 
@@ -2346,7 +2346,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert!(
             err.span.start < text.len(),
             "span was {:?} in {text:?}",
@@ -2368,7 +2368,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert!(
             (15..22).contains(&err.span.start),
             "span was {:?} in {text:?}",
@@ -2389,7 +2389,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert!(
             (18..27).contains(&err.span.start),
             "span was {:?} in {text:?}",
@@ -2520,7 +2520,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span.start, 12);
         assert_eq!(text.as_bytes()[12], b'#');
     }
@@ -2560,7 +2560,7 @@ mod tests {
             err.kind
         );
         assert_eq!(err.input, text);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
         assert_eq!(err.span.start, 13);
         assert_eq!(text.as_bytes()[13], b'(');
     }

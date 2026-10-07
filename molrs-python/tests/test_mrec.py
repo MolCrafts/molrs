@@ -33,7 +33,7 @@ def _coords_frame() -> molrs.core.Frame:
 
 def _assert_coords(frame: molrs.core.Frame) -> None:
     atoms = frame["atoms"]
-    assert atoms.nrows == _N_ATOMS
+    assert atoms.n_rows == _N_ATOMS
     np.testing.assert_array_equal(
         np.asarray(atoms["x"]), np.array(_ATOM_X, dtype=np.float64)
     )
@@ -96,7 +96,7 @@ class TestTrajectoryDoors:
 class TestSchema:
     def test_version_constant_comes_from_molrs(self) -> None:
         assert molrs.io.mrec.MOLREC_VERSION == 2
-        assert molrs.io.mrec.MOLREC_VERSION == molrs._lib.mrec.MOLREC_VERSION
+        assert molrs.io.mrec.MOLREC_VERSION == molrs._native.mrec.MOLREC_VERSION
         assert molrs.io.mrec.RESERVED_META_KEYS == ["molrec_version"]
 
     def test_a_missing_molrec_version_is_accepted(self) -> None:
@@ -149,7 +149,7 @@ class TestMrecSurface:
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
         assert isinstance(reader, molrs.io.dcd.DcdReader)
         assert reader.n_frames == 2
-        assert reader.read_frame(0)["atoms"].nrows == 3
+        assert reader.read_frame(0)["atoms"].n_rows == 3
 
     def test_every_record_door_is_flat_on_io(self) -> None:
         doors = sorted(name for name in dir(molrs.io) if "mrec" in name and name != "mrec")
@@ -457,7 +457,7 @@ class TestAlignedBlocks:
             writer.append(self._frame(3, ["A", "B", "C"]))
         reader = molrs.io.mrec.MrecReader(path)
         assert list(reader.read_frame(1)["atom_types"]["type"]) == ["A", "B"]
-        assert reader.read_frame(2)["atom_types"].nrows == 3
+        assert reader.read_frame(2)["atom_types"].n_rows == 3
 
     def test_a_frame_that_breaks_the_alignment_is_refused(self, tmp_path: Path) -> None:
         schema = self._schema()

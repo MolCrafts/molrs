@@ -1,7 +1,7 @@
 //! `molrs.op` — the pure numeric base (`molrs::op`): weighted superposition
 //! and centroids over `float64` numpy arrays.
 //!
-//! Registered as a submodule of `_lib`, like `md`. Points cross as `(k, 3)`
+//! Registered as a submodule of `_native`, like `md`. Points cross as `(k, 3)`
 //! arrays and rotations as `(3, 3)` row-major matrices. A
 //! wrong shape is a `ValueError` naming the argument; a
 //! [`SuperpositionError`](molrs::op::SuperpositionError) is a `ValueError`

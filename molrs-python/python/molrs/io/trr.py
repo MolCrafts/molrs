@@ -5,6 +5,6 @@ The doors are functions of :mod:`molrs.io`
 this module holds the format's lazy reader, :class:`TrrReader`.
 """
 
-from .._lib import TrrReader
+from .._native import TrrReader
 
 __all__ = ["TrrReader"]

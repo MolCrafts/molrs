@@ -360,7 +360,7 @@ lazy_reader!(
     "molrs.io.lammps",
     molrs::io::lammps::LammpsDumpReader<Box<dyn ReadSeek>>,
     molrs::io::lammps::LammpsDumpReader::open,
-    door = read_lammps_trajectory,
+    door = read_lammps_dump_trajectory,
     format = "lammpstrj"
 );
 lazy_reader!(
@@ -418,7 +418,7 @@ fn core_frames(frames: &[PyRef<'_, PyFrame>]) -> PyResult<Vec<Frame>> {
 /// that is empty or contains whitespace raises.
 #[pyfunction]
 #[pyo3(signature = (path, frames, columns = None))]
-pub fn write_lammps_trajectory(
+pub fn write_lammps_dump_trajectory(
     path: PathBuf,
     frames: Vec<PyRef<'_, PyFrame>>,
     columns: Option<Vec<String>>,
@@ -428,7 +428,7 @@ pub fn write_lammps_trajectory(
     let chosen: Option<Vec<&str>> = columns
         .as_ref()
         .map(|c| c.iter().map(String::as_str).collect());
-    molrs::io::write_lammps_trajectory(path, &core_frames, chosen.as_deref())
+    molrs::io::write_lammps_dump_trajectory(path, &core_frames, chosen.as_deref())
         .map_err(io_error_to_pyerr)
 }
 
@@ -517,11 +517,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         wrap_pyfunction!(read_pdb_trajectory, m)?,
         wrap_pyfunction!(read_xyz_trajectory, m)?,
         wrap_pyfunction!(read_gro_trajectory, m)?,
-        wrap_pyfunction!(read_lammps_trajectory, m)?,
+        wrap_pyfunction!(read_lammps_dump_trajectory, m)?,
         wrap_pyfunction!(read_dcd_trajectory, m)?,
         wrap_pyfunction!(read_trr_trajectory, m)?,
         wrap_pyfunction!(read_xtc_trajectory, m)?,
-        wrap_pyfunction!(write_lammps_trajectory, m)?,
+        wrap_pyfunction!(write_lammps_dump_trajectory, m)?,
         wrap_pyfunction!(write_lammps_dump_local, m)?,
         wrap_pyfunction!(write_dcd_trajectory, m)?,
         wrap_pyfunction!(write_trr_trajectory, m)?,

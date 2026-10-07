@@ -171,12 +171,12 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
 
     // nrows
     size_t nrows = 0;
-    ASSERT_MOLRS_OK(molrs_block_nrows(block, &nrows));
+    ASSERT_MOLRS_OK(molrs_block_n_rows(block, &nrows));
     EXPECT_EQ(nrows, 3u);
 
     // ncols
     size_t ncols = 0;
-    ASSERT_MOLRS_OK(molrs_block_ncols(block, &ncols));
+    ASSERT_MOLRS_OK(molrs_block_n_columns(block, &ncols));
     EXPECT_EQ(ncols, 1u);
 
     // dtype
@@ -244,7 +244,7 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
 
     // verify ncols = 3
     size_t ncols = 0;
-    ASSERT_MOLRS_OK(molrs_block_ncols(block, &ncols));
+    ASSERT_MOLRS_OK(molrs_block_n_columns(block, &ncols));
     EXPECT_EQ(ncols, 3u);
 
     // verify dtypes
@@ -662,7 +662,7 @@ TEST(Abi, MolrsVersionIsANonEmptyDottedString) {
 }
 
 TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
-    char* json = molrs_schema_json();
+    char* json = molrs_schema_document();
     ASSERT_NE(json, nullptr);
     std::string s(json);
     molrs_free_string(json);

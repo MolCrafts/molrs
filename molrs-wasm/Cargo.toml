@@ -35,7 +35,7 @@ smiles  = ["io", "molrs/smiles"]
 io      = ["molrs/io"]
 # Live-stream wire encoding (MessagePack / JSON). On wasm32 this pulls only
 # the codec and `ControlCommand`; `FrameServer` is native-only upstream.
-stream  = ["molrs/stream"]
+stream  = ["io", "molrs/stream"]
 compute = ["molrs/compute"]
 conformer = ["molrs/conformer"]
 # Radical Voronoi tessellation + its domain/void consumers. Pure Rust, no FFI,

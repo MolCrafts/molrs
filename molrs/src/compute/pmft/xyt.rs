@@ -10,12 +10,11 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array3;
+use std::f64::consts::TAU;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::require_disp;
-
-const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
 /// `PmftXyt` analyzer.
 ///
@@ -81,8 +80,8 @@ pub struct PmftXytArgs<'a> {
 
 #[inline]
 fn wrap_2pi(a: F) -> F {
-    let v = a.rem_euclid(TWO_PI);
-    if v < 0.0 { v + TWO_PI } else { v }
+    let v = a.rem_euclid(TAU);
+    if v < 0.0 { v + TAU } else { v }
 }
 
 impl PmftXyt {
@@ -105,7 +104,7 @@ impl PmftXyt {
 
         let dx = 2.0 * self.x_max / self.n_x as F;
         let dy = 2.0 * self.y_max / self.n_y as F;
-        let dt = TWO_PI / self.n_t as F;
+        let dt = TAU / self.n_t as F;
         let bin_vol = dx * dy * dt;
 
         let mut counts = Array3::<u64>::zeros((self.n_x, self.n_y, self.n_t));
@@ -166,7 +165,7 @@ impl PmftXyt {
         };
         let area_box = lx * ly;
         let rho_ref = if area_box > 0.0 {
-            n_pairs_total / area_box / TWO_PI
+            n_pairs_total / area_box / TAU
         } else {
             0.0
         };

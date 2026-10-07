@@ -91,7 +91,7 @@ fn insert_inferred(block: &mut Block, name: String, raw: Vec<String>) -> Result<
 /// are intentionally not handled.
 pub fn write_csv_block_str(block: &Block, delimiter: char, header: bool) -> String {
     let names: Vec<&str> = block.keys().collect();
-    let nrows = block.nrows().unwrap_or(0);
+    let nrows = block.n_rows().unwrap_or(0);
     let delim = delimiter.to_string();
 
     let mut out = String::new();
@@ -164,7 +164,7 @@ fn insert_as(
                 .insert(name, Array1::from(v).into_dyn())
                 .map_err(|e| e.to_string())
         }
-        DType::UInt => {
+        DType::Uint => {
             let v: Vec<crate::op::Idx> = raw
                 .iter()
                 .map(|s| s.parse::<crate::op::Idx>().map_err(parse_err))
@@ -236,7 +236,7 @@ mod tests {
     fn roundtrip_headered() {
         let text = "x,y,name\n0,1.5,a\n3,4.5,b\n";
         let block = read_csv_block_str(text, ',', None).expect("parse");
-        assert_eq!(block.nrows(), Some(2));
+        assert_eq!(block.n_rows(), Some(2));
         // `x` parses as Float even though the file holds whole numbers: the
         // schema declares the dtype, so inference does not get to make a
         // coordinate column Int and reject the first fractional value later.
@@ -253,7 +253,7 @@ mod tests {
     fn headerless_with_names() {
         let names = vec!["a".to_string(), "b".to_string()];
         let block = read_csv_block_str("1,2\n3,4\n", ',', Some(&names)).expect("parse");
-        assert_eq!(block.nrows(), Some(2));
+        assert_eq!(block.n_rows(), Some(2));
         // Block keys are unordered; assert membership, not order.
         let keys: std::collections::HashSet<&str> = block.keys().collect();
         assert_eq!(keys, ["a", "b"].into_iter().collect());

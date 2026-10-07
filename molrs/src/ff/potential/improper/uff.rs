@@ -176,7 +176,7 @@ pub fn improper_uff_constructor(
             c2: vec![],
         }));
     };
-    if block.nrows().unwrap_or(0) == 0 {
+    if block.n_rows().unwrap_or(0) == 0 {
         return Ok(ForceTerm::indexed(ImproperUff {
             atom_i: vec![],
             atom_j: vec![],

@@ -34,12 +34,12 @@ const RELATIONS: [(&str, &str); 5] = [
 ];
 
 /// One column being built: a value and a validity flag per row.
-struct Column {
+struct ParamColumn {
     values: Vec<F>,
     valid: Vec<bool>,
 }
 
-impl Column {
+impl ParamColumn {
     fn new(rows: usize) -> Self {
         Self {
             values: vec![0.0; rows],
@@ -49,7 +49,7 @@ impl Column {
 }
 
 /// The columns of one block, keyed by parameter name, in name order.
-type Columns = BTreeMap<String, Column>;
+type ParamColumnMap = BTreeMap<String, ParamColumn>;
 
 impl ForceField {
     /// Write the parameters this force field gives each row of `frame` as
@@ -116,7 +116,7 @@ impl ForceField {
 
 /// The rows' `type` labels, or `None` for a block with no rows.
 fn type_labels(block: &Block, block_name: &str) -> Result<Option<Vec<String>>, String> {
-    let rows = block.nrows().unwrap_or(0);
+    let rows = block.n_rows().unwrap_or(0);
     if rows == 0 {
         return Ok(None);
     }
@@ -130,11 +130,11 @@ fn type_labels(block: &Block, block_name: &str) -> Result<Option<Vec<String>>, S
 }
 
 /// Copy every numeric parameter of `params` into row `row` of `columns`.
-fn fill(columns: &mut Columns, rows: usize, row: usize, params: &Params) {
+fn fill(columns: &mut ParamColumnMap, rows: usize, row: usize, params: &Params) {
     for (key, value) in params.iter() {
         let column = columns
             .entry(key.to_owned())
-            .or_insert_with(|| Column::new(rows));
+            .or_insert_with(|| ParamColumn::new(rows));
         column.values[row] = value;
         column.valid[row] = true;
     }
@@ -147,8 +147,8 @@ fn relation_columns(
     block_name: &str,
     styles: &[&Style],
     block: &Block,
-) -> Result<Columns, String> {
-    let mut columns = Columns::new();
+) -> Result<ParamColumnMap, String> {
+    let mut columns = ParamColumnMap::new();
     let Some(labels) = type_labels(block, block_name)? else {
         return Ok(columns);
     };
@@ -189,8 +189,8 @@ fn relation_columns(
 
 /// The per-atom parameter columns: every `atom` style's type row and every
 /// row-holding `pair` style's self row of each atom's type.
-fn atom_columns(ff: &ForceField, block: &Block) -> Result<Columns, String> {
-    let mut columns = Columns::new();
+fn atom_columns(ff: &ForceField, block: &Block) -> Result<ParamColumnMap, String> {
+    let mut columns = ParamColumnMap::new();
     let sources: Vec<&Style> = ff
         .styles()
         .iter()
@@ -207,7 +207,7 @@ fn atom_columns(ff: &ForceField, block: &Block) -> Result<Columns, String> {
     for style in sources {
         let rows_of: HashMap<String, Params> =
             style.defs().kernel_type_params()?.into_iter().collect();
-        let mut own = Columns::new();
+        let mut own = ParamColumnMap::new();
         for (row, label) in labels.iter().enumerate() {
             let key = match style.category() {
                 "pair" => pair_key(label, label)?,
@@ -248,7 +248,7 @@ fn write(
     frame: &mut Frame,
     block_name: &str,
     prefix: &str,
-    columns: Columns,
+    columns: ParamColumnMap,
 ) -> Result<Vec<(String, String)>, String> {
     if columns.is_empty() {
         return Ok(Vec::new());

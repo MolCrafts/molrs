@@ -16,7 +16,7 @@ pub trait BlockAccess {
     /// dtype, which is not the same as a missing key.
     fn column<'a>(&'a self, key: &str) -> Option<ColumnView<'a>>;
     /// Returns the common axis-0 length, or `None` if empty.
-    fn nrows(&self) -> Option<usize>;
+    fn n_rows(&self) -> Option<usize>;
     /// Number of columns.
     fn len(&self) -> usize;
     /// Returns `true` if there are no columns.
@@ -42,8 +42,8 @@ impl BlockAccess for Block {
         self.get(key).map(ColumnView::from)
     }
 
-    fn nrows(&self) -> Option<usize> {
-        Block::nrows(self)
+    fn n_rows(&self) -> Option<usize> {
+        Block::n_rows(self)
     }
 
     fn len(&self) -> usize {
@@ -86,8 +86,8 @@ impl BlockAccess for BlockView<'_> {
         self.get(key).map(ColumnView::reborrow)
     }
 
-    fn nrows(&self) -> Option<usize> {
-        BlockView::nrows(self)
+    fn n_rows(&self) -> Option<usize> {
+        BlockView::n_rows(self)
     }
 
     fn len(&self) -> usize {
@@ -150,7 +150,7 @@ mod tests {
         let col = Column::from_float(Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn());
         assert!(col.as_float().is_some());
         assert!(col.as_int().is_none());
-        assert_eq!(col.nrows(), Some(2));
+        assert_eq!(col.n_rows(), Some(2));
         assert_eq!(col.dtype(), DType::Float);
         assert_eq!(col.shape(), &[2]);
     }
@@ -161,7 +161,7 @@ mod tests {
         let view = ColumnView::from(&col);
         assert!(view.as_int().is_some());
         assert!(view.as_float().is_none());
-        assert_eq!(view.nrows(), Some(3));
+        assert_eq!(view.n_rows(), Some(3));
         assert_eq!(view.dtype(), DType::Int);
     }
 
@@ -170,7 +170,7 @@ mod tests {
         let block = make_block();
         assert!(block.column("x").and_then(|c| c.as_float()).is_some());
         assert!(block.column("id").and_then(|c| c.as_uint()).is_some());
-        assert_eq!(BlockAccess::nrows(&block), Some(3));
+        assert_eq!(BlockAccess::n_rows(&block), Some(3));
         assert_eq!(BlockAccess::len(&block), 2);
         assert!(!BlockAccess::is_empty(&block));
         assert!(BlockAccess::contains_key(&block, "x"));
@@ -183,7 +183,7 @@ mod tests {
         let view = BlockView::from(&block);
         assert!(view.column("x").and_then(|c| c.as_float()).is_some());
         assert!(view.column("id").and_then(|c| c.as_uint()).is_some());
-        assert_eq!(BlockAccess::nrows(&view), Some(3));
+        assert_eq!(BlockAccess::n_rows(&view), Some(3));
         assert_eq!(BlockAccess::len(&view), 2);
         assert!(!BlockAccess::is_empty(&view));
         assert!(BlockAccess::contains_key(&view, "x"));

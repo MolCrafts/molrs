@@ -38,11 +38,11 @@ pub use power_spectrum::PowerSpectrum;
 pub use raman_spectrum::RamanSpectrum;
 pub use raman_tensor::{RamanTensor, RamanTensorArgs, RamanTensorResult};
 pub use resonance_raman_spectrum::ResonanceRamanSpectrum;
-pub use resonance_raman_tensor::{ResonanceRamanArgs, ResonanceRamanTensor};
-pub use roa_cross_tensor::{RoaCrossArgs, RoaCrossResult, RoaCrossTensor};
+pub use resonance_raman_tensor::{ResonanceRamanTensor, ResonanceRamanTensorArgs};
+pub use roa_cross_tensor::{RoaCrossTensor, RoaCrossTensorArgs, RoaCrossTensorResult};
 pub use roa_spectrum::RoaSpectrum;
 pub use spectra::{RamanSpectrumResult, SpectrumResult};
-pub use vcd_cross_flux::{VcdCrossArgs, VcdCrossFlux, VcdCrossResult};
+pub use vcd_cross_flux::{VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult};
 pub use vcd_spectrum::VcdSpectrum;
 
 use ndarray::{Array1, Array2, ArrayD};
@@ -52,16 +52,19 @@ use rustfft::num_complex::Complex64;
 use crate::compute::ComputeError;
 use crate::compute::lag_times as transport_lag_times;
 use crate::signal::forward_fft_onesided;
-use molrs::core::constants::{
-    CENTIMETER_PER_METER, FEMTOSECOND_S, SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT,
-};
+use molrs::core::UnitFactor;
+use molrs::core::constants::{SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT};
 use molrs::signal as sig;
 
-/// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹).
-///
-/// ν̃ = ω · (2π · c · 10⁻¹⁵ s/fs · 100 cm/m)⁻¹
-pub(crate) const ANGULAR_FREQ_TO_CM1: f64 =
-    1.0 / (2.0 * std::f64::consts::PI * SPEED_OF_LIGHT * FEMTOSECOND_S * CENTIMETER_PER_METER);
+/// m/s → cm/fs: the speed of light in the units an angular frequency in
+/// rad/fs needs to become a wavenumber in cm⁻¹.
+static M_PER_S_TO_CM_PER_FS: UnitFactor = UnitFactor::new("m/s", "cm/fs");
+
+/// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹):
+/// ν̃ = ω / (2π · c), with `c` in cm/fs.
+pub(crate) fn angular_freq_to_cm1() -> f64 {
+    1.0 / (2.0 * std::f64::consts::PI * SPEED_OF_LIGHT * M_PER_S_TO_CM_PER_FS.get())
+}
 
 /// Largest exponent such that `exp(x)` does not overflow f64.
 const MAX_EXP_ARG: f64 = 700.0;
@@ -111,7 +114,7 @@ pub(crate) fn acf_to_spectrum(
     let n_freq = intensities.len();
     let mut frequencies_cm1 = Array1::zeros(n_freq);
     for j in 0..n_freq {
-        frequencies_cm1[j] = freqs_rad[j] * ANGULAR_FREQ_TO_CM1;
+        frequencies_cm1[j] = freqs_rad[j] * angular_freq_to_cm1();
     }
     (frequencies_cm1, intensities)
 }

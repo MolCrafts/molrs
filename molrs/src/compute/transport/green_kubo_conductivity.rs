@@ -142,9 +142,10 @@ mod tests {
         // (replaces the removed bundled Green–Kubo conductivity).
         use crate::compute::CumulativeTrapezoid;
         use crate::compute::Fit;
-        use molrs::core::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
+        use molrs::core::UnitFactor;
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = UnitFactor::new("angstrom", "m").get();
+        let femtosecond_s = UnitFactor::new("fs", "s").get();
 
         let n = 256;
         let dt = 0.5;
@@ -166,8 +167,8 @@ mod tests {
         assert!((integ.integral[last] - manual).abs() < 1e-12);
 
         // Green–Kubo 1/3 prefactor.
-        let prefactor = (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S)
-            / (3.0 * ANGSTROM_M.powi(3) * K_B_SI);
+        let prefactor = (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s)
+            / (3.0 * angstrom_m.powi(3) * K_B_SI);
         let sigma = prefactor * integ.integral[last] / (volume * temperature);
         assert!(sigma.is_finite());
     }

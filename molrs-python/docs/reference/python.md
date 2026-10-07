@@ -16,7 +16,7 @@ from molrs.ff.potential import PotentialCompiler
 ```
 
 This page is rendered from the installed `molrs` package by
-`mkdocstrings-python`. The type stub `molrs-python/python/molrs/_lib.pyi` is
+`mkdocstrings-python`. The type stub `molrs-python/python/molrs/_native.pyi` is
 the committed companion artifact that keeps signatures visible to static tools
 and the docs build.
 
@@ -255,9 +255,9 @@ Each `read_X_trajectory` returns its format's lazy reader,
 
 ::: molrs.io.write_lammps_molecule_json
 
-::: molrs.io.read_lammps_trajectory
+::: molrs.io.read_lammps_dump_trajectory
 
-::: molrs.io.write_lammps_trajectory
+::: molrs.io.write_lammps_dump_trajectory
 
 ::: molrs.io.write_lammps_dump_local
 
@@ -329,9 +329,9 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_gromacs_top_forcefield
 
-::: molrs.io.read_gromacs_system
+::: molrs.io.read_gromacs_top_system
 
-::: molrs.io.write_gromacs_system
+::: molrs.io.write_gromacs_top_system
 
 ::: molrs.io.read_amber_prmtop_forcefield
 

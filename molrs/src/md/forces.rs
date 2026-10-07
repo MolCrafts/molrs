@@ -382,7 +382,7 @@ impl ForceProvider for MicPairs {
     fn neighbor_stats(&self) -> NeighborStats {
         NeighborStats {
             edges: Some(self.skin.n_edges()),
-            rebuilds: Some(self.skin.rebuild_count()),
+            rebuilds: Some(self.skin.n_rebuilds()),
             ago: Some(self.skin.ago()),
         }
     }
@@ -1201,7 +1201,7 @@ mod tests {
         let pairs =
             intramolecular_pairs(&frame, field.special_bonds()).expect("fene is expressible");
         assert_eq!(
-            pairs.nrows(),
+            pairs.n_rows(),
             Some(1),
             "the 1-3 pair (0,2) stays and the two 1-2 pairs go"
         );

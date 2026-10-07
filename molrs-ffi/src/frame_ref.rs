@@ -164,8 +164,8 @@ impl BlockRef {
 
     /// Number of rows. Returns 0 for an empty block (never Err except on
     /// handle invalidation).
-    pub fn nrows(&self) -> Result<usize, FfiError> {
-        self.with(|b| b.nrows().unwrap_or(0))
+    pub fn n_rows(&self) -> Result<usize, FfiError> {
+        self.with(|b| b.n_rows().unwrap_or(0))
     }
 
     /// Column names currently present on this block.
@@ -272,7 +272,7 @@ impl BlockRef {
         self.with(|b| -> Result<Option<R>, FfiError> {
             match b.dtype(key) {
                 None => Ok(None),
-                Some(DType::UInt) => {
+                Some(DType::Uint) => {
                     let arr = b
                         .get(key)
                         .and_then(|c| c.as_uint())
@@ -286,7 +286,7 @@ impl BlockRef {
                 }
                 Some(actual) => Err(FfiError::DTypeMismatch {
                     key: key.to_string(),
-                    expected: DType::UInt,
+                    expected: DType::Uint,
                     actual,
                 }),
             }

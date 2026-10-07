@@ -103,7 +103,7 @@ fn insert_integer_column(
     nrows: usize,
 ) -> std::io::Result<()> {
     match molrs::core::schema::column(key).map(|spec| spec.dtype) {
-        Some(DType::UInt) => {
+        Some(DType::Uint) => {
             let values = raw
                 .into_iter()
                 .map(|v| {
@@ -129,7 +129,7 @@ fn insert_integer_column(
                 .collect::<std::io::Result<Vec<bool>>>()?;
             insert_vec(block, key, values, nrows)
         }
-        Some(DType::Int64) => insert_vec(block, key, raw, nrows),
+        Some(DType::I64) => insert_vec(block, key, raw, nrows),
         _ => match raw
             .iter()
             .map(|&v| I::try_from(v))
@@ -587,7 +587,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
             ColumnType::String => {
                 // A dump's `type` field is LAMMPS's numeric ordinal, which the
                 // alias table renames to `type_id`. Written with type labels
-                // (`dump_modify ... types labels`, or by `write_lammps_trajectory`
+                // (`dump_modify ... types labels`, or by `write_lammps_dump_trajectory`
                 // from a frame without `type_id`) it holds the force-field
                 // label instead, and that is the canonical string `type`: a
                 // string is not a `type_id`.
@@ -685,15 +685,15 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// # Examples
 ///
 /// ```no_run
-/// use molrs::io::{read_lammps_trajectory, write_lammps_trajectory};
+/// use molrs::io::{read_lammps_dump_trajectory, write_lammps_dump_trajectory};
 /// use molrs::io::lammps::LammpsDumpReader;
 ///
 /// # fn main() -> std::io::Result<()> {
-/// let frames = read_lammps_trajectory("trajectory.lammpstrj")?;
+/// let frames = read_lammps_dump_trajectory("trajectory.lammpstrj")?;
 /// use molrs::io::reader::TrajectoryReader;
 /// let mut reader = LammpsDumpReader::open("trajectory.lammpstrj")?;
 /// let frame_5 = reader.read_step(5)?;
-/// write_lammps_trajectory("output.lammpstrj", &frames, None)?;
+/// write_lammps_dump_trajectory("output.lammpstrj", &frames, None)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -888,12 +888,12 @@ impl<R: BufRead + Seek> TrajectoryReader for LammpsDumpReader<R> {
 /// # Examples
 ///
 /// ```no_run
-/// use molrs::io::write_lammps_trajectory;
+/// use molrs::io::write_lammps_dump_trajectory;
 /// use molrs::core::Frame;
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let frames: Vec<Frame> = vec![];
-/// write_lammps_trajectory("output.lammpstrj", &frames, None)?;
+/// write_lammps_dump_trajectory("output.lammpstrj", &frames, None)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -932,14 +932,14 @@ impl<W: Write> FrameWriter for LammpsDumpWriter<W> {
 ///
 /// `columns` is the caller's `dump custom` line: `Some` writes exactly those
 /// columns in that order, `None` writes every column the block holds. See
-/// [`write_lammps_trajectory`] for how the `type` field is chosen.
+/// [`write_lammps_dump_trajectory`] for how the `type` field is chosen.
 fn write_lammps_dump_frame<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,
     columns: Option<&[&str]>,
 ) -> std::io::Result<()> {
     let natoms = frame
-        .visit_block("atoms", |b| b.nrows().unwrap_or(0))
+        .visit_block("atoms", |b| b.n_rows().unwrap_or(0))
         .ok_or_else(|| invalid_data("Frame must contain 'atoms' block"))?;
 
     let meta = frame.meta_ref();
@@ -1088,7 +1088,7 @@ fn dump_lines(
                     column.shape()
                 )));
             }
-            if matches!(column, ColumnView::Complex64(_) | ColumnView::Complex128(_)) {
+            if matches!(column, ColumnView::C64(_) | ColumnView::C128(_)) {
                 return Err(invalid_data(format!(
                     "column '{key}' is {}; a LAMMPS dump has no complex fields",
                     column.dtype()
@@ -1115,14 +1115,14 @@ fn dump_lines(
 fn dump_value(key: &str, column: &ColumnView<'_>, row: usize) -> std::io::Result<String> {
     Ok(match column {
         ColumnView::Float(a) => format!("{:.6}", a[row]),
-        ColumnView::Int8(a) => a[row].to_string(),
-        ColumnView::Int16(a) => a[row].to_string(),
+        ColumnView::I8(a) => a[row].to_string(),
+        ColumnView::I16(a) => a[row].to_string(),
         ColumnView::Int(a) => a[row].to_string(),
-        ColumnView::Int64(a) => a[row].to_string(),
-        ColumnView::UInt(a) => a[row].to_string(),
+        ColumnView::I64(a) => a[row].to_string(),
+        ColumnView::Uint(a) => a[row].to_string(),
         ColumnView::U8(a) => a[row].to_string(),
-        ColumnView::UInt16(a) => a[row].to_string(),
-        ColumnView::UInt32(a) => a[row].to_string(),
+        ColumnView::U16(a) => a[row].to_string(),
+        ColumnView::U32(a) => a[row].to_string(),
         ColumnView::Bool(a) => if a[row] { "1" } else { "0" }.to_string(),
         ColumnView::String(a) => {
             let value = &a[row];
@@ -1134,7 +1134,7 @@ fn dump_value(key: &str, column: &ColumnView<'_>, row: usize) -> std::io::Result
             }
             value.clone()
         }
-        ColumnView::Complex64(_) | ColumnView::Complex128(_) => {
+        ColumnView::C64(_) | ColumnView::C128(_) => {
             return Err(invalid_data(format!(
                 "column '{key}' is complex; a LAMMPS dump has no complex fields"
             )));
@@ -1166,11 +1166,11 @@ fn write_lammps_dump_local_frame<W: Write>(
     let from_entries = frame.contains_block("entries");
     let nentries = if from_entries {
         frame
-            .visit_block("entries", |b| b.nrows().unwrap_or(0))
+            .visit_block("entries", |b| b.n_rows().unwrap_or(0))
             .unwrap_or(0)
     } else {
         frame
-            .visit_block("bonds", |b| b.nrows().unwrap_or(0))
+            .visit_block("bonds", |b| b.n_rows().unwrap_or(0))
             .unwrap_or(0)
     };
     if !from_entries && nentries == 0 && !frame.contains_block("bonds") {
@@ -1312,7 +1312,7 @@ fn write_dump_box_bounds<W: Write>(
 ///
 /// For large trajectories, prefer `LammpsDumpReader::open` with `TrajectoryReader::read_step`
 /// for random access without loading all frames into memory.
-pub fn read_lammps_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
+pub fn read_lammps_dump_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
     let mut dump_reader = LammpsDumpReader::new(reader);
     crate::io::reader::collect_frames(&mut dump_reader)
@@ -1348,7 +1348,7 @@ impl LammpsDumpReader<Box<dyn ReadSeek>> {
 /// Every value is formatted from its column's stored dtype; a column that a
 /// dump field cannot hold (complex, more than one value per row, a string that
 /// is empty or contains whitespace) is an error.
-pub fn write_lammps_trajectory<P: AsRef<Path>, FA: FrameAccess>(
+pub fn write_lammps_dump_trajectory<P: AsRef<Path>, FA: FrameAccess>(
     path: P,
     frames: &[FA],
     columns: Option<&[&str]>,
@@ -1599,7 +1599,7 @@ ITEM: ENTRIES c_1[1] c_1[2] c_1[3]
         // `bonds` contract (0-based `atomi`/`atomj`), so it does not take that name.
         assert!(frames[0].get("atoms").is_none());
         let entries = frames[0].get("entries").expect("entries block present");
-        assert_eq!(entries.nrows(), Some(3));
+        assert_eq!(entries.n_rows(), Some(3));
         // Column names preserved as-is from the file.
         assert!(entries.dtype("c_1[1]").is_some());
         assert!(entries.dtype("c_1[2]").is_some());
@@ -1644,7 +1644,7 @@ ITEM: {label} c_1[1] c_1[2]
             let entries = frames[0]
                 .get("entries")
                 .unwrap_or_else(|| panic!("label {label} produced no entries block"));
-            assert_eq!(entries.nrows(), Some(2), "label {label}");
+            assert_eq!(entries.n_rows(), Some(2), "label {label}");
             assert_eq!(
                 frames[0]
                     .meta
@@ -1826,8 +1826,8 @@ ITEM: ATOMS id type x y z
         let mut reader = LammpsDumpReader::new(cursor(dump));
         let frames = crate::io::reader::collect_frames(&mut reader).unwrap();
         assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].get("atoms").unwrap().nrows(), Some(2));
-        assert_eq!(frames[1].get("atoms").unwrap().nrows(), Some(3));
+        assert_eq!(frames[0].get("atoms").unwrap().n_rows(), Some(2));
+        assert_eq!(frames[1].get("atoms").unwrap().n_rows(), Some(3));
     }
 
     #[test]
@@ -2319,9 +2319,9 @@ ITEM: ATOMS id type x y z
         assert!(text.contains("ITEM: ENTRIES batom1 batom2"));
         assert!(text.contains("1 2"));
         assert!(text.contains("2 3"));
-        let loaded = read_lammps_trajectory(&path).unwrap();
+        let loaded = read_lammps_dump_trajectory(&path).unwrap();
         let entries = loaded[0].get("entries").expect("entries");
-        assert_eq!(entries.nrows(), Some(2));
+        assert_eq!(entries.n_rows(), Some(2));
         assert!(entries.dtype("batom1").is_some());
         assert!(entries.dtype("batom2").is_some());
     }
@@ -2358,7 +2358,7 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_writes_only_what_was_asked_in_order() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("chosen.lammpstrj");
-        write_lammps_trajectory(
+        write_lammps_dump_trajectory(
             &path,
             &[wide_frame()],
             Some(&["id", "element", "mol", "x", "y", "z"]),
@@ -2375,7 +2375,8 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_rejects_a_column_the_frame_lacks() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing.lammpstrj");
-        let err = write_lammps_trajectory(&path, &[wide_frame()], Some(&["id", "q"])).unwrap_err();
+        let err =
+            write_lammps_dump_trajectory(&path, &[wide_frame()], Some(&["id", "q"])).unwrap_err();
         let message = err.to_string();
         assert!(message.contains("'q'"), "{message}");
         assert!(message.contains("element"), "{message}");
@@ -2385,7 +2386,7 @@ ITEM: ATOMS id type x y z
     fn write_dump_columns_rejects_an_empty_list() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.lammpstrj");
-        assert!(write_lammps_trajectory(&path, &[wide_frame()], Some(&[])).is_err());
+        assert!(write_lammps_dump_trajectory(&path, &[wide_frame()], Some(&[])).is_err());
     }
 
     /// Three waters' worth of atoms in a 10 Å cube, with `extra` columns.
@@ -2437,9 +2438,9 @@ ITEM: ATOMS id type x y z
     fn dump_round_trip(frame: &Frame, columns: Option<&[&str]>) -> (String, Frame) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("typed.lammpstrj");
-        write_lammps_trajectory(&path, std::slice::from_ref(frame), columns).unwrap();
+        write_lammps_dump_trajectory(&path, std::slice::from_ref(frame), columns).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        let mut frames = read_lammps_trajectory(&path).unwrap();
+        let mut frames = read_lammps_dump_trajectory(&path).unwrap();
         assert_eq!(frames.len(), 1);
         (text, frames.remove(0))
     }
@@ -2525,7 +2526,7 @@ ITEM: ATOMS id type x y z
         let (text, _) = dump_round_trip(&frame, Some(&["id", "type"]));
         assert!(text.contains("ITEM: ATOMS id type\n1 1\n"), "{text}");
         let dir = tempfile::tempdir().unwrap();
-        let err = write_lammps_trajectory(
+        let err = write_lammps_dump_trajectory(
             dir.path().join("both.lammpstrj"),
             &[frame],
             Some(&["id", "type_id", "type"]),
@@ -2599,7 +2600,7 @@ ITEM: ATOMS id type x y z
             "{text}"
         );
         let atoms = back.get("atoms").unwrap();
-        assert_eq!(atoms.get("d_i64").unwrap().dtype(), DType::Int64);
+        assert_eq!(atoms.get("d_i64").unwrap().dtype(), DType::I64);
         assert_eq!(atoms.get("c_i32").unwrap().dtype(), DType::Int);
         assert_eq!(atoms.get("i_f64").unwrap().dtype(), DType::Float);
         assert_eq!(atoms.get("k_str").unwrap().dtype(), DType::String);
@@ -2607,7 +2608,7 @@ ITEM: ATOMS id type x y z
         // A column a dump field cannot hold is refused, not padded.
         let dir = tempfile::tempdir().unwrap();
         let refused = |extra: fn(&mut Block)| {
-            write_lammps_trajectory(
+            write_lammps_dump_trajectory(
                 dir.path().join("bad.lammpstrj"),
                 &[typed_frame(extra)],
                 None,

@@ -1,6 +1,13 @@
-//! Physical and engine constants (CODATA 2018 / SI-2019 exact where
-//! applicable), and the conversion factors and scale factors molecular engines
-//! and force fields define. Every numeric constant molrs uses lives here.
+//! Physical constants (CODATA 2018 / SI-2019 exact where applicable) and the
+//! constants molecular engines and force fields define as data (Coulomb
+//! prefactors, 1-4 scale factors). Every such number molrs uses lives here,
+//! once; [`ALL`] lists them by name, which is what the bindings expose.
+//!
+//! A unit-conversion factor is not a constant: kcal ↔ kJ, nm ↔ Å, bohr ↔ Å,
+//! cm³ ↔ Å³ and every other conversion is the unit module's
+//! ([`UnitFactor`](crate::core::UnitFactor),
+//! [`UnitRegistry::factor`](crate::core::UnitRegistry::factor)), whose unit
+//! definitions are built from the constants here.
 //!
 //! Reference: SI Brochure, 9th edition (2019) for the exact defining
 //! constants; CODATA 2018 recommended values,
@@ -29,13 +36,30 @@ pub const GAS_CONSTANT: F = AVOGADRO * BOLTZMANN;
 /// Elementary charge `e` (exact, SI-2019), in coulombs.
 pub const ELEMENTARY_CHARGE: F = 1.602_176_634e-19;
 
+/// Planck constant `h` (exact, SI-2019), in J·s.
+pub const PLANCK: F = 6.626_070_15e-34;
+
+/// Bohr radius `a₀` (CODATA 2018), in metres: the `bohr` unit, the
+/// Gaussian cube format's length unit.
+pub const BOHR_RADIUS: F = 5.291_772_109_03e-11;
+
+/// Hartree energy `E_h` (CODATA 2018), in joules: the `hartree` unit.
+pub const HARTREE_ENERGY: F = 4.359_744_722_207_1e-18;
+
+/// Atomic mass constant `m_u` (CODATA 2018), in kilograms: the `dalton`
+/// unit.
+pub const ATOMIC_MASS_CONSTANT: F = 1.660_539_066_60e-27;
+
+/// Coulomb constant `k_e = 1/(4π·ε₀)` (CODATA 2018), in N·m²·C⁻².
+pub const COULOMB_CONSTANT: F = 8.987_551_792_3e9;
+
 /// Coulomb constant `k_e = 1/(4π·ε₀)` in MD "real" units — LAMMPS `real`'s `qqr2e`
 /// (kcal·Å·mol⁻¹·e⁻²), CODATA-derived. It is what the dielectric/conductivity
 /// analyses use, and what the OPLS and LAMMPS force fields declare on their
 /// `pair/coul/cut` style.
 ///
 /// It is **not** a constant of the Coulomb kernel. MMFF rounds it differently
-/// (Halgren's 332.0716, which lives in `ff::params::mmff::MMFF_ELE_STYLE`), and the
+/// (Halgren's 332.0716, [`MMFF_COULOMB`]), and the
 /// 2.4e-5 difference is above the RDKit parity tolerance on caffeine. Both values
 /// are correct: the *force field* chooses one and states it on its `pair/coul/cut`
 /// style, and the kernel has no default.
@@ -68,36 +92,18 @@ pub const AMBER_CHARGE_FACTOR: F = 18.2223;
 /// `CHARMM_ELECTROSTATIC`) evaluates.
 pub const CHARMM_COULOMB: F = 332.0716;
 
-/// OpenMM's Coulomb constant `ONE_4PI_EPS0` = 138.93545764438198
-/// kJ·nm·mol⁻¹·e⁻², here in kcal·Å·mol⁻¹·e⁻² — the constant every OpenMM
-/// energy is computed with ([`COULOMB_REAL`]'s 332.06371 × (1 + 9.9·10⁻⁹)).
-pub const OPENMM_COULOMB: F = 138.935_457_644_381_98 * ANGSTROM_PER_NM / KJ_PER_KCAL;
+/// OpenMM's Coulomb constant `ONE_4PI_EPS0`, kJ·nm·mol⁻¹·e⁻², as OpenMM
+/// states it (`SimTKOpenMMRealType.h`): every OpenMM energy is computed with
+/// it, [`COULOMB_REAL`]'s 332.06371 kcal·Å·mol⁻¹·e⁻² × (1 + 9.9·10⁻⁹).
+pub const OPENMM_ONE_4PI_EPS0: F = 138.935_457_644_381_98;
 
-/// GROMACS's Coulomb constant `ONE_4PI_EPS0`, 1/(4π ε₀) from CODATA 2018 in
-/// GROMACS's own expression (`units.h`), 138.93545764438196 kJ·nm·mol⁻¹·e⁻²
-/// — one ulp below OpenMM's — here in kcal·Å·mol⁻¹·e⁻².
-pub const GROMACS_COULOMB: F = 138.935_457_644_381_96 * ANGSTROM_PER_NM / KJ_PER_KCAL;
-
-/// kJ per kcal (the thermochemical calorie, exact): kJ/mol = kcal/mol × this.
-pub const KJ_PER_KCAL: F = 4.184;
-
-/// Å per nm (exact): lengths in nm are multiplied by it, lengths in Å divided.
-pub const ANGSTROM_PER_NM: F = 10.0;
-
-/// Å per bohr (the Bohr radius, CODATA 2014): the Gaussian cube format's
-/// length unit.
-pub const ANGSTROM_PER_BOHR: F = 0.529_177_210_67;
+/// GROMACS's Coulomb constant `ONE_4PI_EPS0`, kJ·nm·mol⁻¹·e⁻²: 1/(4π ε₀)
+/// from CODATA 2018 in GROMACS's own expression (`units.h`), one ulp below
+/// [`OPENMM_ONE_4PI_EPS0`].
+pub const GROMACS_ONE_4PI_EPS0: F = 138.935_457_644_381_96;
 
 /// Boltzmann constant in MD "real" units, kcal·mol⁻¹·K⁻¹.
 pub const BOLTZMANN_REAL: F = 1.987_204_258_640_83e-3;
-
-/// 1 ångström expressed in metres (SI length-unit conversion factor).
-pub const ANGSTROM_M: F = 1e-10;
-
-/// 1 femtosecond expressed in seconds (SI time-unit conversion factor).
-///
-/// Project analysis time unit (science.md / LAMMPS `real`).
-pub const FEMTOSECOND_S: F = 1e-15;
 
 /// Speed of light in vacuum `c` (exact, SI-2019), in m/s.
 pub const SPEED_OF_LIGHT: F = 299_792_458.0;
@@ -106,13 +112,6 @@ pub const SPEED_OF_LIGHT: F = 299_792_458.0;
 /// CODATA 2018), in cm·K: the `hcν̃ / k_BT` of a Boltzmann factor at
 /// wavenumber `ν̃` (cm⁻¹).
 pub const SECOND_RADIATION_CONSTANT: F = 1.438_776_877;
-
-/// cm per m (exact).
-pub const CENTIMETER_PER_METER: F = 100.0;
-
-/// Å³ per cm³ (exact, `(10⁸)³`): a number density per cm³ is divided by it to
-/// give one per Å³.
-pub const ANGSTROM3_PER_CM3: F = 1e24;
 
 /// kcal·mol⁻¹ per mdyne·Å (RDKit `MDYNE_A_TO_KCAL_MOL`, `Params.h`): MMFF's
 /// force-constant unit conversion, to RDKit's digits.
@@ -129,6 +128,20 @@ pub const VACUUM_DIELECTRIC: F = 1.0;
 /// with `664.12 = 2 · 332.06`; RDKit `Params::G`).
 pub const UFF_COULOMB: F = 332.06;
 
+/// MMFF94's Coulomb constant, kcal·Å·mol⁻¹·e⁻² (Halgren 1996, the
+/// `332.0716` of the buffered-Coulomb term; RDKit's). Not CODATA's
+/// [`COULOMB_REAL`]: the 2.4e-5 difference is above the RDKit parity
+/// tolerance, so MMFF states its own.
+pub const MMFF_COULOMB: F = 332.0716;
+
+/// OPLS-AA's 1-4 Lennard-Jones scale weight (GROMACS `[ defaults ]`
+/// fudgeLJ): `lj_14 = OPLS_LJ_14`.
+pub const OPLS_LJ_14: F = 0.5;
+
+/// OPLS-AA's 1-4 Coulomb scale weight (GROMACS `[ defaults ]` fudgeQQ):
+/// `coul_14 = OPLS_COULOMB_14`.
+pub const OPLS_COULOMB_14: F = 0.5;
+
 /// AMBER's 1-4 Coulomb **divisor** (`SCEE`): `coul_14 = 1 / AMBER_SCEE`.
 ///
 /// The GAFF/GAFF2 typifier force field's 1-4 Coulomb scale, and the
@@ -142,6 +155,39 @@ pub const AMBER_SCEE: F = 1.2;
 /// The GAFF/GAFF2 typifier force field's 1-4 LJ scale, and the force-field
 /// prmtop reader's value when `SCNB_SCALE_FACTOR` is absent.
 pub const AMBER_SCNB: F = 2.0;
+
+/// Every constant of this module, by its name: the table the bindings
+/// expose (Python `molrs.core.constants`), so a constant added here needs
+/// no binding edit.
+pub const ALL: &[(&str, F)] = &[
+    ("AVOGADRO", AVOGADRO),
+    ("BOLTZMANN", BOLTZMANN),
+    ("GAS_CONSTANT", GAS_CONSTANT),
+    ("ELEMENTARY_CHARGE", ELEMENTARY_CHARGE),
+    ("PLANCK", PLANCK),
+    ("BOHR_RADIUS", BOHR_RADIUS),
+    ("HARTREE_ENERGY", HARTREE_ENERGY),
+    ("ATOMIC_MASS_CONSTANT", ATOMIC_MASS_CONSTANT),
+    ("COULOMB_CONSTANT", COULOMB_CONSTANT),
+    ("COULOMB_REAL", COULOMB_REAL),
+    ("COULOMB_METAL", COULOMB_METAL),
+    ("AMBER_COULOMB", AMBER_COULOMB),
+    ("AMBER_CHARGE_FACTOR", AMBER_CHARGE_FACTOR),
+    ("CHARMM_COULOMB", CHARMM_COULOMB),
+    ("OPENMM_ONE_4PI_EPS0", OPENMM_ONE_4PI_EPS0),
+    ("GROMACS_ONE_4PI_EPS0", GROMACS_ONE_4PI_EPS0),
+    ("BOLTZMANN_REAL", BOLTZMANN_REAL),
+    ("SPEED_OF_LIGHT", SPEED_OF_LIGHT),
+    ("SECOND_RADIATION_CONSTANT", SECOND_RADIATION_CONSTANT),
+    ("KCAL_MOL_PER_MDYNE_ANGSTROM", KCAL_MOL_PER_MDYNE_ANGSTROM),
+    ("VACUUM_DIELECTRIC", VACUUM_DIELECTRIC),
+    ("UFF_COULOMB", UFF_COULOMB),
+    ("MMFF_COULOMB", MMFF_COULOMB),
+    ("OPLS_LJ_14", OPLS_LJ_14),
+    ("OPLS_COULOMB_14", OPLS_COULOMB_14),
+    ("AMBER_SCEE", AMBER_SCEE),
+    ("AMBER_SCNB", AMBER_SCNB),
+];
 
 #[cfg(test)]
 mod tests {
@@ -159,8 +205,38 @@ mod tests {
     /// `c₂ = h·c / k_B` from the exact SI-2019 constants, in cm·K.
     #[test]
     fn second_radiation_constant_is_hc_over_kb() {
-        const PLANCK: F = 6.626_070_15e-34;
-        let c2 = PLANCK * SPEED_OF_LIGHT / BOLTZMANN * CENTIMETER_PER_METER;
+        let c2 =
+            PLANCK * SPEED_OF_LIGHT / BOLTZMANN * crate::core::UnitFactor::new("m", "cm").get();
         assert!((c2 - SECOND_RADIATION_CONSTANT).abs() < 1e-9, "{c2}");
+    }
+}
+
+#[cfg(test)]
+mod all_tests {
+    use super::*;
+
+    /// [`ALL`] names every `pub const` of this file, once.
+    #[test]
+    fn all_lists_every_constant() {
+        let text = include_str!("constants.rs");
+        let mut declared: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.strip_prefix("pub const "))
+            .filter_map(|l| l.split(':').next())
+            .filter(|name| *name != "ALL")
+            .collect();
+        declared.sort_unstable();
+        let mut listed: Vec<&str> = ALL.iter().map(|(name, _)| *name).collect();
+        listed.sort_unstable();
+        assert_eq!(declared, listed);
+    }
+
+    /// The Bohr radius, CODATA 2018: one value, the `bohr` unit's.
+    #[test]
+    fn the_bohr_unit_is_the_bohr_radius() {
+        let factor = crate::core::UnitRegistry::global()
+            .factor("bohr", "angstrom")
+            .unwrap();
+        assert!((factor - 0.529_177_210_903).abs() < 1e-15, "{factor}");
     }
 }

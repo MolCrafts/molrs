@@ -39,7 +39,7 @@ ff = typifier.forcefield()  # a copy of exactly the types typify assigned
 frame["pairs"] = intramolecular_pairs(frame, ff)
 pots = PotentialCompiler(ff).compile(frame)
 energy, forces = pots.calc_energy_forces(frame)
-assert forces.shape == (frame["atoms"].nrows, 3)
+assert forces.shape == (frame["atoms"].n_rows, 3)
 ```
 
 ## Package layout

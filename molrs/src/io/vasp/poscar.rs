@@ -250,7 +250,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("POSCAR write: frame has no atoms block"))?;
-    let n = atoms.nrows().unwrap_or(0);
+    let n = atoms.n_rows().unwrap_or(0);
     if n == 0 {
         return Err(invalid_data("POSCAR write: atoms block is empty"));
     }
@@ -431,7 +431,7 @@ Direct\n\
     fn reads_basic_poscar() {
         let frame = read_frame_from(Cursor::new(POSCAR_BN.as_bytes())).unwrap();
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
         assert!(frame.simbox.is_some());
 
         let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();

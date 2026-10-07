@@ -14,32 +14,30 @@ use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::sync::OnceLock;
 
-// XYZ now produces a core::Frame consisting of blocks of NdArray columns
-
-/// Primitive value in extended XYZ comment
+/// A scalar value of an extended XYZ comment line (string, integer, real or logical)
 #[derive(Debug, Clone, PartialEq)]
-enum Primitive {
+enum ExtxyzScalar {
     Str(String),
     Int(i64),
     Real(f64),
     Logical(bool),
 }
 
-/// Extended value (nested arrays)
+/// An extended XYZ comment value: a scalar, or a 1-D or 2-D array of them
 #[derive(Debug, Clone, PartialEq)]
-enum ExtValue {
-    Primitive(Primitive),
-    Array1(Vec<Primitive>),
-    Array2(Vec<Vec<Primitive>>),
+enum ExtxyzValue {
+    Scalar(ExtxyzScalar),
+    Array1(Vec<ExtxyzScalar>),
+    Array2(Vec<Vec<ExtxyzScalar>>),
 }
 
-/// Property type (S=string, I=int, R=real, L=logical)
+/// The kind of a `Properties` column: `S` (string), `I` (integer), `R` (real), `L` (logical)
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum PropType {
-    S,
-    I,
-    R,
-    L,
+enum ExtxyzPropertyKind {
+    String,
+    Integer,
+    Real,
+    Logical,
 }
 
 /// Property specification: name, type and multiplicity
@@ -48,7 +46,7 @@ struct PropertySpec {
     /// Property name
     pub name: String,
     /// Property type
-    pub ty: PropType,
+    pub ty: ExtxyzPropertyKind,
     /// Multiplicity (1 for scalar)
     pub m: usize,
 }
@@ -57,7 +55,7 @@ struct PropertySpec {
 #[derive(Debug, Clone, PartialEq)]
 struct XYZComment {
     /// Key-value pairs
-    pub kv: HashMap<String, ExtValue>,
+    pub kv: HashMap<String, ExtxyzValue>,
     /// Parsed properties (from key "Properties"), if present
     pub properties: Option<Vec<PropertySpec>>, // parsed from key "Properties" if present
     /// Original comment line when treated as extxyz
@@ -74,32 +72,32 @@ fn parse_logical_token(tok: &str) -> Option<bool> {
     }
 }
 
-fn parse_primitive_token(tok: &str) -> Primitive {
+fn parse_scalar_token(tok: &str) -> ExtxyzScalar {
     if let Some(b) = parse_logical_token(tok) {
-        Primitive::Logical(b)
+        ExtxyzScalar::Logical(b)
     } else if tok.contains('.') || tok.contains('e') || tok.contains('E') {
         match tok.parse::<f64>() {
-            Ok(v) => Primitive::Real(v),
-            Err(_) => Primitive::Str(tok.to_string()),
+            Ok(v) => ExtxyzScalar::Real(v),
+            Err(_) => ExtxyzScalar::Str(tok.to_string()),
         }
     } else {
         match tok.parse::<i64>() {
-            Ok(v) => Primitive::Int(v),
-            Err(_) => Primitive::Str(tok.to_string()),
+            Ok(v) => ExtxyzScalar::Int(v),
+            Err(_) => ExtxyzScalar::Str(tok.to_string()),
         }
     }
 }
 
-fn parse_array_from_quoted(s: &str) -> ExtValue {
+fn parse_array_from_quoted(s: &str) -> ExtxyzValue {
     // Try 2D using row separators ';' or '|' or comma between rows
     let has_row_sep = s.contains(';') || s.contains('|') || s.contains('\n');
     if has_row_sep {
-        let rows: Vec<Vec<Primitive>> = s
+        let rows: Vec<Vec<ExtxyzScalar>> = s
             .split([';', '|', '\n'])
             .filter(|row| !row.trim().is_empty())
-            .map(|row| row.split_whitespace().map(parse_primitive_token).collect())
+            .map(|row| row.split_whitespace().map(parse_scalar_token).collect())
             .collect();
-        return ExtValue::Array2(rows);
+        return ExtxyzValue::Array2(rows);
     }
 
     // Try comma-separated values or whitespace-separated
@@ -109,20 +107,20 @@ fn parse_array_from_quoted(s: &str) -> ExtValue {
         s.split_whitespace().collect()
     };
     if elements.len() > 1 {
-        let values: Vec<Primitive> = elements
+        let values: Vec<ExtxyzScalar> = elements
             .into_iter()
-            .map(|t| parse_primitive_token(t.trim()))
+            .map(|t| parse_scalar_token(t.trim()))
             .collect();
         if values
             .iter()
-            .all(|value| matches!(value, Primitive::Str(_)))
+            .all(|value| matches!(value, ExtxyzScalar::Str(_)))
         {
-            ExtValue::Primitive(Primitive::Str(s.to_string()))
+            ExtxyzValue::Scalar(ExtxyzScalar::Str(s.to_string()))
         } else {
-            ExtValue::Array1(values)
+            ExtxyzValue::Array1(values)
         }
     } else {
-        ExtValue::Primitive(Primitive::Str(s.to_string()))
+        ExtxyzValue::Scalar(ExtxyzScalar::Str(s.to_string()))
     }
 }
 
@@ -137,17 +135,17 @@ fn parse_properties(spec: &str) -> Option<Vec<PropertySpec>> {
     while i + 2 < parts.len() {
         let name = parts[i].to_string();
         let ty = match parts[i + 1] {
-            "S" => PropType::S,
-            "I" => PropType::I,
-            "R" => PropType::R,
-            "L" => PropType::L,
+            "S" => ExtxyzPropertyKind::String,
+            "I" => ExtxyzPropertyKind::Integer,
+            "R" => ExtxyzPropertyKind::Real,
+            "L" => ExtxyzPropertyKind::Logical,
             other => {
                 // try tolerate lower-case
                 match other.to_ascii_uppercase().as_str() {
-                    "S" => PropType::S,
-                    "I" => PropType::I,
-                    "R" => PropType::R,
-                    "L" => PropType::L,
+                    "S" => ExtxyzPropertyKind::String,
+                    "I" => ExtxyzPropertyKind::Integer,
+                    "R" => ExtxyzPropertyKind::Real,
+                    "L" => ExtxyzPropertyKind::Logical,
                     _ => return None,
                 }
             }
@@ -171,7 +169,7 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
         let mut kv = HashMap::new();
         kv.insert(
             "comment".to_string(),
-            ExtValue::Primitive(Primitive::Str(original)),
+            ExtxyzValue::Scalar(ExtxyzScalar::Str(original)),
         );
         return Ok(XYZComment {
             kv,
@@ -184,7 +182,7 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
     let bytes = input.as_bytes();
     let mut idx = 0usize;
     let len = bytes.len();
-    let mut kv: HashMap<String, ExtValue> = HashMap::new();
+    let mut kv: HashMap<String, ExtxyzValue> = HashMap::new();
     let mut properties: Option<Vec<PropertySpec>> = None;
 
     let skip_ws = |pos: &mut usize| {
@@ -225,7 +223,7 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
         skip_ws(&mut idx);
         if idx >= len || bytes[idx] != b'=' {
             // Bare boolean key (no '=' follows) — valid EXTXYZ, treat as true.
-            kv.insert(key, ExtValue::Primitive(Primitive::Logical(true)));
+            kv.insert(key, ExtxyzValue::Scalar(ExtxyzScalar::Logical(true)));
             continue;
         }
         idx += 1;
@@ -252,16 +250,16 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
                 idx += 1;
             }
             let token = &input[start..idx];
-            ExtValue::Primitive(parse_primitive_token(token))
+            ExtxyzValue::Scalar(parse_scalar_token(token))
         };
 
         if key.eq_ignore_ascii_case("properties") {
             let spec_str = match &value {
-                ExtValue::Primitive(Primitive::Str(s)) => s.clone(),
-                ExtValue::Array1(vs) => vs
+                ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => s.clone(),
+                ExtxyzValue::Array1(vs) => vs
                     .iter()
                     .map(|p| match p {
-                        Primitive::Str(s) => s.clone(),
+                        ExtxyzScalar::Str(s) => s.clone(),
                         _ => "".into(),
                     })
                     .collect::<Vec<_>>()
@@ -276,7 +274,7 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
     if properties.is_none() {
         kv.insert(
             "comment".to_string(),
-            ExtValue::Primitive(Primitive::Str(original)),
+            ExtxyzValue::Scalar(ExtxyzScalar::Str(original)),
         );
         Ok(XYZComment {
             kv,
@@ -315,7 +313,7 @@ fn extxyz_property_name(column: &str) -> &str {
 /// property type, and how many values per row it holds.
 struct XyzColumn {
     name: String,
-    ty: PropType,
+    ty: ExtxyzPropertyKind,
     width: usize,
 }
 
@@ -335,11 +333,11 @@ fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
     let declares_element = props.iter().any(|p| p.name == consts::ELEMENT);
     let mut cols = Vec::new();
     for p in props {
-        if p.m == 3 && p.ty == PropType::R && p.name.eq_ignore_ascii_case("pos") {
+        if p.m == 3 && p.ty == ExtxyzPropertyKind::Real && p.name.eq_ignore_ascii_case("pos") {
             for axis in [consts::X, consts::Y, consts::Z] {
                 cols.push(XyzColumn {
                     name: axis.to_string(),
-                    ty: PropType::R,
+                    ty: ExtxyzPropertyKind::Real,
                     width: 1,
                 });
             }
@@ -347,11 +345,14 @@ fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
         }
         let name = if p.m != 1 {
             p.name.clone()
-        } else if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
+        } else if p.name.eq_ignore_ascii_case("type") && p.ty == ExtxyzPropertyKind::Integer {
             consts::TYPE_ID.to_string()
         } else if p.name == EXTXYZ_RESNAME {
             consts::RES_NAME.to_string()
-        } else if p.name == EXTXYZ_SPECIES && p.ty == PropType::S && !declares_element {
+        } else if p.name == EXTXYZ_SPECIES
+            && p.ty == ExtxyzPropertyKind::String
+            && !declares_element
+        {
             consts::ELEMENT.to_string()
         } else {
             p.name.clone()
@@ -385,22 +386,22 @@ fn build_complete_schema(ec: &XYZComment) -> Vec<PropertySpec> {
         vec![
             PropertySpec {
                 name: "element".into(),
-                ty: PropType::S,
+                ty: ExtxyzPropertyKind::String,
                 m: 1,
             },
             PropertySpec {
                 name: "x".into(),
-                ty: PropType::R,
+                ty: ExtxyzPropertyKind::Real,
                 m: 1,
             },
             PropertySpec {
                 name: "y".into(),
-                ty: PropType::R,
+                ty: ExtxyzPropertyKind::Real,
                 m: 1,
             },
             PropertySpec {
                 name: "z".into(),
-                ty: PropType::R,
+                ty: ExtxyzPropertyKind::Real,
                 m: 1,
             },
         ]
@@ -428,10 +429,10 @@ fn build_block_from_props(
     let mut buffers: Vec<ColBuf> = cols
         .iter()
         .map(|c| match c.ty {
-            PropType::S => ColBuf::S(Vec::with_capacity(n * c.width)),
-            PropType::I => ColBuf::I(Vec::with_capacity(n * c.width)),
-            PropType::R => ColBuf::R(Vec::with_capacity(n * c.width)),
-            PropType::L => ColBuf::L(Vec::with_capacity(n * c.width)),
+            ExtxyzPropertyKind::String => ColBuf::S(Vec::with_capacity(n * c.width)),
+            ExtxyzPropertyKind::Integer => ColBuf::I(Vec::with_capacity(n * c.width)),
+            ExtxyzPropertyKind::Real => ColBuf::R(Vec::with_capacity(n * c.width)),
+            ExtxyzPropertyKind::Logical => ColBuf::L(Vec::with_capacity(n * c.width)),
         })
         .collect();
 
@@ -486,7 +487,7 @@ fn build_block_from_props(
                 // unsigned there, and an Int column under that name would be
                 // invisible to every consumer reading it as unsigned.
                 if molrs::core::schema::column(&name).map(|c| c.dtype)
-                    == Some(molrs::core::DType::UInt)
+                    == Some(molrs::core::DType::Uint)
                 {
                     let unsigned: Vec<molrs::op::Idx> = v
                         .iter()
@@ -521,18 +522,18 @@ fn build_block_from_props(
     Ok(block)
 }
 
-/// Parse 9 floats from an ExtValue into a 3×3 H matrix.
-fn parse_lattice_values(v: &ExtValue) -> Option<Vec<F>> {
+/// Parse 9 floats from an ExtxyzValue into a 3×3 H matrix.
+fn parse_lattice_values(v: &ExtxyzValue) -> Option<Vec<F>> {
     let values: Vec<F> = match v {
-        ExtValue::Array1(vals) => vals
+        ExtxyzValue::Array1(vals) => vals
             .iter()
             .filter_map(|p| match p {
-                Primitive::Real(r) => Some(*r as F),
-                Primitive::Int(i) => Some(*i as F),
+                ExtxyzScalar::Real(r) => Some(*r as F),
+                ExtxyzScalar::Int(i) => Some(*i as F),
                 _ => None,
             })
             .collect(),
-        ExtValue::Primitive(Primitive::Str(s)) => s
+        ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => s
             .split_whitespace()
             .filter_map(|tok| tok.parse::<F>().ok())
             .collect(),
@@ -545,18 +546,18 @@ fn parse_lattice_values(v: &ExtValue) -> Option<Vec<F>> {
     }
 }
 
-/// Parse 3 floats from an Origin ExtValue.
-fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
+/// Parse 3 floats from an Origin ExtxyzValue.
+fn parse_origin_values(v: &ExtxyzValue) -> Option<[F; 3]> {
     let values: Vec<F> = match v {
-        ExtValue::Array1(vals) => vals
+        ExtxyzValue::Array1(vals) => vals
             .iter()
             .filter_map(|p| match p {
-                Primitive::Real(r) => Some(*r as F),
-                Primitive::Int(i) => Some(*i as F),
+                ExtxyzScalar::Real(r) => Some(*r as F),
+                ExtxyzScalar::Int(i) => Some(*i as F),
                 _ => None,
             })
             .collect(),
-        ExtValue::Primitive(Primitive::Str(s)) => s
+        ExtxyzValue::Scalar(ExtxyzScalar::Str(s)) => s
             .split_whitespace()
             .filter_map(|tok| tok.parse::<F>().ok())
             .collect(),
@@ -575,15 +576,15 @@ fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
 /// `Connct="[0,1,0,2]"` describes bonds 0-1 and 0-2. Bond order is implicitly
 /// one. Brackets are required by the public convention but are accepted
 /// leniently here so older hand-written inputs remain readable.
-fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, String> {
-    fn append_primitive(raw: &mut String, value: &Primitive) -> Result<(), String> {
+fn parse_connct(value: &ExtxyzValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, String> {
+    fn append_primitive(raw: &mut String, value: &ExtxyzScalar) -> Result<(), String> {
         if !raw.is_empty() {
             raw.push(',');
         }
         match value {
-            Primitive::Int(value) => raw.push_str(&value.to_string()),
-            Primitive::Str(value) => raw.push_str(value),
-            Primitive::Real(_) | Primitive::Logical(_) => {
+            ExtxyzScalar::Int(value) => raw.push_str(&value.to_string()),
+            ExtxyzScalar::Str(value) => raw.push_str(value),
+            ExtxyzScalar::Real(_) | ExtxyzScalar::Logical(_) => {
                 return Err("Connct accepts integer atom indices only".to_string());
             }
         }
@@ -592,13 +593,15 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, Str
 
     let mut raw = String::new();
     match value {
-        ExtValue::Primitive(value) => append_primitive(&mut raw, value)?,
-        ExtValue::Array1(values) => {
+        ExtxyzValue::Scalar(value) => append_primitive(&mut raw, value)?,
+        ExtxyzValue::Array1(values) => {
             for value in values {
                 append_primitive(&mut raw, value)?;
             }
         }
-        ExtValue::Array2(_) => return Err("Connct must be a flat list of atom indices".to_string()),
+        ExtxyzValue::Array2(_) => {
+            return Err("Connct must be a flat list of atom indices".to_string());
+        }
     }
 
     let indices = raw
@@ -631,7 +634,7 @@ fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, Str
     Ok(pairs)
 }
 
-fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, String> {
+fn connct_block(value: &ExtxyzValue, n_atoms: usize) -> Result<Option<Block>, String> {
     let pairs = parse_connct(value, n_atoms)?;
     if pairs.is_empty() {
         return Ok(None);
@@ -651,7 +654,7 @@ fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, Strin
 /// Build a SimBox from Lattice + optional Origin ExtValues.
 ///
 /// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
-fn parse_simbox(lattice: &ExtValue, origin: Option<&ExtValue>) -> Option<SimBox> {
+fn parse_simbox(lattice: &ExtxyzValue, origin: Option<&ExtxyzValue>) -> Option<SimBox> {
     let h_vals = parse_lattice_values(lattice)?;
     // extxyz lists the three lattice vectors one after another (R1 R2 R3);
     // `SimBox` keeps them as the *columns* of H, so the row-major reshape is
@@ -698,10 +701,10 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Frame>>
     // Parse comment to metadata and properties
     let ec = parse_comment_line(comment)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let mut kv_meta: HashMap<String, ExtValue> = HashMap::new();
-    let mut lattice_value: Option<ExtValue> = None;
-    let mut origin_value: Option<ExtValue> = None;
-    let mut connct_value: Option<ExtValue> = None;
+    let mut kv_meta: HashMap<String, ExtxyzValue> = HashMap::new();
+    let mut lattice_value: Option<ExtxyzValue> = None;
+    let mut origin_value: Option<ExtxyzValue> = None;
+    let mut connct_value: Option<ExtxyzValue> = None;
     for (k, v) in ec.kv.iter() {
         if k.eq_ignore_ascii_case("Properties") {
             continue;
@@ -776,43 +779,45 @@ fn parse_frame_str(s: &str) -> std::result::Result<Frame, String> {
         .ok_or_else(|| "no frame in the text".to_owned())
 }
 
-fn ext_value_to_meta(value: ExtValue) -> std::result::Result<MetaValue, String> {
+fn ext_value_to_meta(value: ExtxyzValue) -> std::result::Result<MetaValue, String> {
     match value {
-        ExtValue::Primitive(Primitive::Str(value)) => Ok(MetaValue::String(value)),
-        ExtValue::Primitive(Primitive::Int(value)) => Ok(MetaValue::I64(value)),
-        ExtValue::Primitive(Primitive::Real(value)) => Ok(MetaValue::F64(value)),
-        ExtValue::Primitive(Primitive::Logical(value)) => Ok(MetaValue::Bool(value)),
-        ExtValue::Array2(rows) => ext_array_to_meta(rows.into_iter().flatten().collect()),
-        ExtValue::Array1(values) => ext_array_to_meta(values),
+        ExtxyzValue::Scalar(ExtxyzScalar::Str(value)) => Ok(MetaValue::String(value)),
+        ExtxyzValue::Scalar(ExtxyzScalar::Int(value)) => Ok(MetaValue::I64(value)),
+        ExtxyzValue::Scalar(ExtxyzScalar::Real(value)) => Ok(MetaValue::F64(value)),
+        ExtxyzValue::Scalar(ExtxyzScalar::Logical(value)) => Ok(MetaValue::Bool(value)),
+        ExtxyzValue::Array2(rows) => ext_array_to_meta(rows.into_iter().flatten().collect()),
+        ExtxyzValue::Array1(values) => ext_array_to_meta(values),
     }
 }
 
-fn ext_array_to_meta(values: Vec<Primitive>) -> std::result::Result<MetaValue, String> {
-    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Logical(_))) {
+fn ext_array_to_meta(values: Vec<ExtxyzScalar>) -> std::result::Result<MetaValue, String> {
+    if values.len() == 3 && values.iter().all(|v| matches!(v, ExtxyzScalar::Logical(_))) {
         let values: Vec<bool> = values
             .into_iter()
             .map(|v| match v {
-                Primitive::Logical(v) => v,
+                ExtxyzScalar::Logical(v) => v,
                 _ => unreachable!(),
             })
             .collect();
         return Ok(MetaValue::Bool3(values.try_into().unwrap()));
     }
-    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Int(_))) {
+    if values.len() == 3 && values.iter().all(|v| matches!(v, ExtxyzScalar::Int(_))) {
         let values: Vec<i64> = values
             .into_iter()
             .map(|v| match v {
-                Primitive::Int(v) => v,
+                ExtxyzScalar::Int(v) => v,
                 _ => unreachable!(),
             })
             .collect();
         return Ok(MetaValue::I64x3(values.try_into().unwrap()));
     }
-    if matches!(values.len(), 3 | 6 | 9) && values.iter().all(|v| matches!(v, Primitive::Real(_))) {
+    if matches!(values.len(), 3 | 6 | 9)
+        && values.iter().all(|v| matches!(v, ExtxyzScalar::Real(_)))
+    {
         let values: Vec<f64> = values
             .into_iter()
             .map(|v| match v {
-                Primitive::Real(v) => v,
+                ExtxyzScalar::Real(v) => v,
                 _ => unreachable!(),
             })
             .collect();
@@ -1089,7 +1094,7 @@ impl<R: BufRead + Seek> TrajectoryReader for XyzReader<R> {
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let frame = read_xyz("water.xyz")?;
-/// println!("Loaded {} atoms", frame.get("atoms").map(|b| b.nrows().unwrap_or(0)).unwrap_or(0));
+/// println!("Loaded {} atoms", frame.get("atoms").map(|b| b.n_rows().unwrap_or(0)).unwrap_or(0));
 /// # Ok(())
 /// # }
 /// ```
@@ -1287,10 +1292,9 @@ impl FrameIndexBuilder for XyzIndexBuilder {
                 staged.push((line.to_string(), line_offset, line_len));
             });
         for (line, off, len) in staged {
-            // Errors during streaming index building are silently ignored —
-            // the legacy reader's strict-error behavior surfaces when
-            // parse_frame_bytes is later called on the resulting slice.
-            // For oversized frames we still surface via finish().
+            // `feed` has no error channel: a malformed line here ends no
+            // frame, and `read_xyz_bytes` on the indexed slice reports it.
+            // `finish` re-runs the tail and does raise.
             let _ = self.process_line(&line, off, len);
         }
     }
@@ -1311,8 +1315,8 @@ impl FrameIndexBuilder for XyzIndexBuilder {
         // Trailing partial frame: if pending_frame_start is still Some,
         // we have an incomplete frame at EOF. The spec for XYZ says
         // ConsumingAtoms must reach zero before emit; an incomplete final
-        // frame is malformed. Be lenient: drop it (legacy reader would
-        // error at parse time on this slice).
+        // frame is malformed. It is dropped from the index (no offset
+        // names it), so no reader is handed a truncated frame.
         Ok(std::mem::take(&mut self.pending_entries))
     }
 
@@ -1410,7 +1414,7 @@ mod tests {
             props[0],
             PropertySpec {
                 name: "species".into(),
-                ty: PropType::S,
+                ty: ExtxyzPropertyKind::String,
                 m: 1
             }
         );
@@ -1418,7 +1422,7 @@ mod tests {
             props[1],
             PropertySpec {
                 name: "pos".into(),
-                ty: PropType::R,
+                ty: ExtxyzPropertyKind::Real,
                 m: 3
             }
         );
@@ -1426,7 +1430,7 @@ mod tests {
             props[2],
             PropertySpec {
                 name: "mass".into(),
-                ty: PropType::R,
+                ty: ExtxyzPropertyKind::Real,
                 m: 1
             }
         );
@@ -1441,15 +1445,19 @@ mod tests {
         assert!(!ec.is_plain_xyz);
         // Lattice
         match ec.kv.get("Lattice").unwrap() {
-            ExtValue::Array1(v) => {
+            ExtxyzValue::Array1(v) => {
                 assert_eq!(v.len(), 9);
-                assert!(matches!(v[0], Primitive::Real(_)) || matches!(v[0], Primitive::Int(_)));
+                assert!(
+                    matches!(v[0], ExtxyzScalar::Real(_)) || matches!(v[0], ExtxyzScalar::Int(_))
+                );
             }
             other => panic!("unexpected Lattice value: {other:?}"),
         }
         // energy
         match ec.kv.get("ENERGY").unwrap() {
-            ExtValue::Primitive(Primitive::Real(x)) => assert!((x - -2069.84934116).abs() < 1e-6),
+            ExtxyzValue::Scalar(ExtxyzScalar::Real(x)) => {
+                assert!((x - -2069.84934116).abs() < 1e-6)
+            }
             other => panic!("unexpected energy value: {other:?}"),
         }
     }
@@ -1781,7 +1789,7 @@ mod tests {
         assert!(bytes[lo..].starts_with(b"2\n"));
         let hi = lo + entries[0].byte_len as usize;
         let frame = read_xyz_bytes(&bytes[lo..hi]).expect("parse");
-        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     /// Legacy `XyzReader::build_index` (used by `len()` / random-access
@@ -1811,8 +1819,8 @@ H 1 0 1
 
         let f0 = reader.read_step(0).expect("step0").expect("some");
         let f1 = reader.read_step(1).expect("step1").expect("some");
-        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
-        assert_eq!(f1.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(f0.get("atoms").unwrap().n_rows().unwrap(), 2);
+        assert_eq!(f1.get("atoms").unwrap().n_rows().unwrap(), 2);
         let z0 = f0
             .get("atoms")
             .unwrap()
@@ -1839,7 +1847,7 @@ H 1 0 1
         let mut reader = XyzReader::new(BufReader::new(Cursor::new(s.as_bytes())));
         assert_eq!(reader.len().expect("len"), 1);
         let f0 = reader.read_step(0).expect("step0").expect("some");
-        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(f0.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 }
 
@@ -1900,7 +1908,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
     }
 
     let atom_data: Option<AtomBlockData> = frame.visit_block("atoms", |atoms| {
-        let n = atoms.nrows().unwrap_or(0);
+        let n = atoms.n_rows().unwrap_or(0);
 
         // Collect and sort keys
         let mut keys = atoms.column_keys();
@@ -1943,15 +1951,15 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
 
         let dtype_to_char = |dt: DType| -> &'static str {
             match dt {
-                DType::Float | DType::Complex64 | DType::Complex128 => "R",
+                DType::Float | DType::C64 | DType::C128 => "R",
                 DType::Int
-                | DType::Int8
-                | DType::Int16
-                | DType::Int64
-                | DType::UInt
+                | DType::I8
+                | DType::I16
+                | DType::I64
+                | DType::Uint
                 | DType::U8
-                | DType::UInt16
-                | DType::UInt32 => "I",
+                | DType::U16
+                | DType::U32 => "I",
                 DType::Bool => "L",
                 DType::String => "S",
             }

@@ -354,8 +354,8 @@ mod tests {
 
     #[test]
     fn test_error_carries_the_scanner_notation() {
-        let s = Scanner::new("{[#A]}", Notation::CGsmiles);
+        let s = Scanner::new("{[#A]}", Notation::CgSmiles);
         let err = s.error(SmilesErrorKind::UnexpectedEnd);
-        assert_eq!(err.notation, Notation::CGsmiles);
+        assert_eq!(err.notation, Notation::CgSmiles);
     }
 }

@@ -32,7 +32,7 @@ pub enum Notation {
     /// SMARTS, the SMILES query language.
     Smarts,
     /// `CGsmiles`, the coarse-grained resolution notation.
-    CGsmiles,
+    CgSmiles,
 }
 
 impl fmt::Display for Notation {
@@ -40,7 +40,7 @@ impl fmt::Display for Notation {
         let name = match self {
             Notation::Smiles => "SMILES",
             Notation::Smarts => "SMARTS",
-            Notation::CGsmiles => "CGsmiles",
+            Notation::CgSmiles => "CGsmiles",
         };
         f.write_str(name)
     }
@@ -134,7 +134,7 @@ pub enum SmilesErrorKind {
     /// A bonding descriptor (`[$]`, `[<]`, `[>]`, `[!]`) met a stage that
     /// speaks plain SMILES, which has no such notation: `SmilesIr::parse` on a
     /// descriptor bracket, `SmilesIr::validate` on a node carrying one, or
-    /// `write_smiles` / `write_smarts` asked to emit one. This is a routing
+    /// `smiles_text` / `smarts_text` asked to emit one. This is a routing
     /// error, and the rendered message says where to go instead — it names
     /// `SmilesIr::from_fragment`, the entry point of the dialect that does
     /// accept descriptors.
@@ -161,7 +161,7 @@ pub enum SmilesErrorKind {
     /// A bond order was written next to a descriptor that no formed bond could
     /// take — aromatic (`c:[$]`), directional (`/`, `\`), wildcard (`~`) or
     /// ring (`@`); the payload is the offending kind. Raised by the parser at
-    /// the descriptor's construction site, and by `write_fragment_smiles` for
+    /// the descriptor's construction site, and by `fragment_smiles_text` for
     /// a hand-built IR that no parser could have produced.
     InvalidDescriptorOrder(BondKind),
     /// A descriptor was written where no atom can anchor it: `[$]` alone, or
@@ -720,7 +720,7 @@ mod tests {
             SmilesErrorKind::TrailingCharacters,
             Span::new(14, 15),
             "{[#PEO][#PEO]}[#X]",
-            Notation::CGsmiles,
+            Notation::CgSmiles,
         )
         .to_string()
     }
@@ -777,7 +777,7 @@ mod tests {
     /// [`message`] for the coarse-graph kinds.
     fn cg_message(kind: SmilesErrorKind) -> String {
         let rendered =
-            SmilesError::new(kind, Span::new(0, 6), "{[#A]}", Notation::CGsmiles).to_string();
+            SmilesError::new(kind, Span::new(0, 6), "{[#A]}", Notation::CgSmiles).to_string();
         let first = rendered.lines().next().expect("rendered error is empty");
         match first.split_once(": ") {
             Some((_, body)) => body.to_owned(),
@@ -884,7 +884,7 @@ mod tests {
             SmilesErrorKind::CgExpectedBlock,
             Span::new(14, 15),
             "{[#PEO][#PEO]}[#X]",
-            Notation::CGsmiles,
+            Notation::CgSmiles,
         )
         .to_string();
         let caret = rendered.lines().nth(2).expect("caret line is missing");

@@ -14,7 +14,7 @@ import pickle
 import molrs
 import numpy as np
 import pytest
-from molrs import _lib
+from molrs import _native
 
 HANDLE_CLASSES = (
     "ForceField",
@@ -42,7 +42,7 @@ def _rows(style) -> list[tuple[str, dict]]:
 
 @pytest.mark.parametrize("name", HANDLE_CLASSES)
 def test_the_force_field_classes_are_the_native_classes(name):
-    assert getattr(molrs.ff.forcefield, name) is getattr(_lib, name)
+    assert getattr(molrs.ff.forcefield, name) is getattr(_native, name)
 
 
 def test_the_force_field_class_can_be_subclassed():
@@ -439,7 +439,7 @@ def test_defer_returns_empty_potentials_that_bind_on_evaluation():
 
 
 def test_compile_typed_returns_typed_potentials():
-    from molrs._lib import WeightedTerms
+    from molrs._native import WeightedTerms
 
     typed = molrs.ff.potential.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
     assert isinstance(typed, WeightedTerms)

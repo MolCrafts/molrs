@@ -12,6 +12,7 @@ imported for an annotation cannot leak into it as a second public spelling.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import re
 from pathlib import Path
@@ -481,7 +482,7 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.core.schema.ColumnSpec",
         "molrs.core.constants.AMBER_COULOMB",
         "molrs.core.constants.AMBER_SCEE",
-        "molrs.core.constants.ANGSTROM3_PER_CM3",
+        "molrs.core.constants.BOHR_RADIUS",
     ],
 )
 def test_the_one_path_exists(path):
@@ -545,7 +546,7 @@ def test_memory_doors_end_in_str_or_bytes():
         ("read_pdb_trajectory", "molrs.io.pdb.PdbReader"),
         ("read_xyz_trajectory", "molrs.io.xyz.XyzReader"),
         ("read_gro_trajectory", "molrs.io.gro.GroReader"),
-        ("read_lammps_trajectory", "molrs.io.lammps.LammpsDumpReader"),
+        ("read_lammps_dump_trajectory", "molrs.io.lammps.LammpsDumpReader"),
         ("read_dcd_trajectory", "molrs.io.dcd.DcdReader"),
         ("read_trr_trajectory", "molrs.io.trr.TrrReader"),
         ("read_xtc_trajectory", "molrs.io.xtc.XtcReader"),
@@ -628,7 +629,7 @@ def test_find_matches_has_no_mapped_shortcut():
 def test_core_constants_mirror_rust_in_full():
     """``molrs.core.constants`` is ``molrs::core::constants``, name for name."""
     rust = Path(__file__).parents[2] / "molrs" / "src" / "core" / "constants.rs"
-    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.MULTILINE))
+    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.MULTILINE)) - {"ALL"}
     assert names
     assert set(molrs.core.constants.__all__) == names
 
@@ -637,3 +638,76 @@ def test_the_version_is_the_package_version():
     from importlib.metadata import version
 
     assert molrs.__version__ == version("molcrafts-molrs")
+
+
+@pytest.mark.parametrize(
+    "gone",
+    [
+        # Wave S6: the native module is molrs._native.
+        "molrs._lib",
+        # Every door names its format: gromacs_top, lammps_dump.
+        "molrs.io.read_gromacs_system",
+        "molrs.io.write_gromacs_system",
+        "molrs.io.read_lammps_trajectory",
+        "molrs.io.write_lammps_trajectory",
+        # Counts are n_*.
+        "molrs.core.Block.nrows",
+        # Unit conversions are the unit registry's, not constants.
+        "molrs.core.constants.KJ_PER_KCAL",
+        "molrs.core.constants.ANGSTROM_PER_NM",
+        "molrs.core.constants.ANGSTROM_PER_BOHR",
+        "molrs.core.constants.ANGSTROM3_PER_CM3",
+        "molrs.core.constants.ANGSTROM_M",
+        "molrs.core.constants.FEMTOSECOND_S",
+        "molrs.core.constants.CENTIMETER_PER_METER",
+        "molrs.core.constants.OPENMM_COULOMB",
+        "molrs.core.constants.GROMACS_COULOMB",
+    ],
+)
+def test_names_retired_by_wave_s6_are_absent(gone):
+    if gone == "molrs._lib":
+        with pytest.raises(ImportError):
+            importlib.import_module(gone)
+        return
+    owner_path, _, name = gone.rpartition(".")
+    owner: object = molrs
+    for part in owner_path.split(".")[1:]:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, name), gone
+
+
+def test_wave_s6_names_exist():
+    assert molrs.io.read_gromacs_top_system
+    assert molrs.io.write_gromacs_top_system
+    assert molrs.io.read_lammps_dump_trajectory
+    assert molrs.io.write_lammps_dump_trajectory
+    assert molrs.core.Block().n_rows == 0
+    assert molrs.__dict__["_native"].__name__ == "molrs._native"
+
+
+def test_unit_conversions_come_from_the_unit_registry():
+    units = molrs.core.UnitRegistry()
+    assert units.factor("kcal", "kJ") == 4.184
+    assert units.factor("nm", "angstrom") == 10.0
+    assert units.factor("angstrom", "nm") == 0.1
+    assert units.factor("bohr", "angstrom") == pytest.approx(0.529177210903, rel=1e-15)
+    names = set(molrs.core.constants.__all__)
+    assert not {n for n in names if n.endswith(("_PER_NM", "_PER_BOHR", "_PER_KCAL", "_PER_CM3"))}
+
+
+def test_scripts_convert_units_through_the_registry():
+    """No engine-check script spells a conversion factor or a retired constant."""
+    root = Path(__file__).parents[2] / "scripts"
+    retired = re.compile(
+        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB|GROMACS_COULOMB)\b"
+        r"|(?<![\w.])4\.184(?![\w])"
+    )
+    offenders = []
+    for path in sorted(root.iterdir()):
+        if path.suffix not in {".py", ".sh"}:
+            continue
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#", 1)[0]
+            if retired.search(code):
+                offenders.append(f"{path.name}:{n}: {line.strip()}")
+    assert not offenders, "\n".join(offenders)

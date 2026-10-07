@@ -52,7 +52,7 @@ kernel that raises during an evaluation, a compile or a registration surfaces
 as :class:`KernelShapeError` with the original exception as ``__cause__``.
 """
 
-from .._lib import ir as _ir
+from .._native import ir as _ir
 from ._style_declaration import StyleDeclaration
 
 IrError = _ir.IrError

@@ -3,7 +3,7 @@ import pickle
 
 import molrs
 import numpy as np
-from molrs import _lib
+from molrs import _native
 
 
 def _unit_cube_mesh() -> "molrs.core.TriMesh":
@@ -51,7 +51,7 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
 
     empty_rows = molrs.core.Block()
     empty_rows.resize(3)
-    assert roundtrip(empty_rows).nrows == 3
+    assert roundtrip(empty_rows).n_rows == 3
 
     frame = molrs.core.Frame({"grid": block}, meta={"nested": {"ok": True}})
     frame.box = molrs.core.Box.cube(4.0)
@@ -86,7 +86,7 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
         "atoms",
     )
     restored_observable = roundtrip(observable)
-    np.testing.assert_array_equal(restored_observable.data, observable.data)
+    np.testing.assert_array_equal(restored_observable.values, observable.values)
     assert restored_observable.description == "force vector"
     assert restored_observable.axes == ["atom", "xyz"]
     assert restored_observable.target == "atoms"
@@ -135,7 +135,7 @@ def test_spatial_types_preserve_queries_and_region_behavior() -> None:
     assert skin.update(points + 0.01) is False
     restored_skin = roundtrip(skin)
     assert restored_skin.ago == 1
-    assert restored_skin.rebuild_count == 0
+    assert restored_skin.n_rebuilds == 0
     assert restored_skin.n_edges == skin.n_edges
 
     cube_mesh = _unit_cube_mesh()
@@ -253,8 +253,8 @@ def test_graphs_views_and_extraction_pickle_as_one_object_graph() -> None:
         restored_partial.frag_id(atom.handle) for atom in restored_partial.atoms
     ] == [7, None, None]
 
-    assert type(roundtrip(_lib.Atomistic())) is _lib.Atomistic
-    assert type(roundtrip(_lib.CoarseGrain())) is _lib.CoarseGrain
+    assert type(roundtrip(_native.Atomistic())) is _native.Atomistic
+    assert type(roundtrip(_native.CoarseGrain())) is _native.CoarseGrain
     assert roundtrip(molrs.perceive.Reaction("[C:1]>>[C:1]")).forming_bonds == []
 
 

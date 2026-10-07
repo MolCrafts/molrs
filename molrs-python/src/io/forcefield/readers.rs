@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use crate::core::frame::PyFrame;
 use crate::ff::forcefield::PyForceField;
 use crate::path::path_str;
+use molrs::io::gromacs::GromacsTopReadOptions;
 
 /// Read a force field from a molrs force-field XML file — one
 /// ``<BondStyle>`` / ``<AngleStyle>`` / ``<DihedralStyle>`` /
@@ -111,9 +112,7 @@ pub fn read_openmm_xml_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
 #[pyfunction]
 #[pyo3(name = "read_lammps_forcefield")]
 pub fn read_lammps_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
-    use molrs::io::reader::ForceFieldReader;
-    let forcefield = molrs::io::lammps::LammpsForcefieldReader::new()
-        .read(path_str(&path)?)
+    let forcefield = molrs::io::read_lammps_forcefield(&path)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -151,8 +150,7 @@ pub fn read_amber_prmtop_forcefield_py(path: PathBuf) -> PyResult<PyForceField> 
 #[pyfunction]
 #[pyo3(name = "read_amber_prmtop_system")]
 pub fn read_amber_prmtop_system_py(path: PathBuf) -> PyResult<(PyForceField, PyFrame)> {
-    let (forcefield, frame) = molrs::io::amber::AmberPrmtopForcefieldReader::new()
-        .read_system(path_str(&path)?)
+    let (forcefield, frame) = molrs::io::read_amber_prmtop_system(&path)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok((
         PyForceField { inner: forcefield },
@@ -179,7 +177,7 @@ pub fn read_amber_prmtop_system_py(path: PathBuf) -> PyResult<(PyForceField, PyF
 /// What the IR cannot hold raises ``ValueError`` naming it: an unsupported
 /// function code or comb-rule, ``[ constrainttypes ]``,
 /// ``[ implicit_genborn_params ]``, any unknown section, and every molecule
-/// section — read a whole topology with :func:`read_gromacs_system`, or skip
+/// section — read a whole topology with :func:`read_gromacs_top_system`, or skip
 /// them here.
 ///
 /// ``include`` follows ``#include`` relative to the including file and then
@@ -198,9 +196,12 @@ pub fn read_gromacs_top_forcefield_py(
     include_dirs: Vec<PathBuf>,
     skip_directives: Vec<String>,
 ) -> PyResult<PyForceField> {
-    use molrs::io::reader::ForceFieldReader;
-    let forcefield = gromacs_top_reader(include, &include_dirs, &skip_directives)
-        .read(path_str(&path)?)
+    let options = GromacsTopReadOptions {
+        include,
+        include_dirs,
+        skip_directives,
+    };
+    let forcefield = molrs::io::read_gromacs_top_forcefield(&path, &options)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -226,37 +227,26 @@ pub fn read_gromacs_top_forcefield_py(
 /// it and where.
 #[pyfunction]
 #[pyo3(
-    name = "read_gromacs_system",
+    name = "read_gromacs_top_system",
     signature = (path, *, include_dirs = Vec::new(), skip_directives = Vec::new())
 )]
 
-pub fn read_gromacs_system_py(
+pub fn read_gromacs_top_system_py(
     path: PathBuf,
     include_dirs: Vec<PathBuf>,
     skip_directives: Vec<String>,
 ) -> PyResult<(PyForceField, PyFrame)> {
-    let (forcefield, frame) = gromacs_top_reader(true, &include_dirs, &skip_directives)
-        .read_system(path_str(&path)?)
+    let options = GromacsTopReadOptions {
+        include: true,
+        include_dirs,
+        skip_directives,
+    };
+    let (forcefield, frame) = molrs::io::read_gromacs_top_system(&path, &options)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok((
         PyForceField { inner: forcefield },
         PyFrame::from_core_frame(frame)?,
     ))
-}
-
-/// The GROMACS reader the Python entry points configure.
-fn gromacs_top_reader(
-    include: bool,
-    include_dirs: &[PathBuf],
-    skip_directives: &[String],
-) -> molrs::io::gromacs::GromacsTopForcefieldReader {
-    let reader = include_dirs.iter().fold(
-        molrs::io::gromacs::GromacsTopForcefieldReader::new().with_include(include),
-        |reader, dir| reader.with_include_dir(dir),
-    );
-    skip_directives
-        .iter()
-        .fold(reader, |reader, name| reader.with_skipped_directive(name))
 }
 
 /// The :class:`ForceField` a LAMMPS data file's ``* Coeffs`` sections define,
@@ -277,9 +267,7 @@ fn gromacs_top_reader(
 #[pyo3(name = "read_lammps_data_coeffs", signature = (frame, *, units = None))]
 pub fn read_lammps_data_coeffs_py(frame: &PyFrame, units: Option<&str>) -> PyResult<PyForceField> {
     let forcefield = frame
-        .with_frame(|frame| {
-            molrs::io::lammps::LammpsForcefieldReader::new().read_data_coeffs(frame, units)
-        })?
+        .with_frame(|frame| molrs::io::read_lammps_data_coeffs(frame, units))?
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -296,10 +284,7 @@ pub fn read_lammps_data_coeffs_py(frame: &PyFrame, units: Option<&str>) -> PyRes
 #[pyfunction]
 #[pyo3(name = "read_lammps_cmap_forcefield")]
 pub fn read_lammps_cmap_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))?;
-    let forcefield = molrs::io::lammps::LammpsForcefieldReader::new()
-        .read_cmap_str(&text)
+    let forcefield = molrs::io::read_lammps_cmap_forcefield(&path)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -336,7 +321,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "molrs.io",
         wrap_pyfunction!(read_gromacs_top_forcefield_py, m)?,
     )?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_gromacs_system_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(read_gromacs_top_system_py, m)?,
+    )?;
     crate::add_function(
         m,
         "molrs.io",

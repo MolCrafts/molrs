@@ -5,12 +5,11 @@ use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
 use molrs::op::F;
 use ndarray::Array1;
+use std::f64::consts::TAU;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
-
-const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
 #[derive(Debug, Clone)]
 enum KMode {
@@ -126,9 +125,9 @@ impl StaticStructureFactorDirect {
                 });
             }
         };
-        let dkx = TWO_PI / lx;
-        let dky = TWO_PI / ly;
-        let dkz = TWO_PI / lz;
+        let dkx = TAU / lx;
+        let dky = TAU / ly;
+        let dkz = TAU / lz;
         let nx = (k_max / dkx).ceil() as i32;
         let ny = (k_max / dky).ceil() as i32;
         let nz = (k_max / dkz).ceil() as i32;

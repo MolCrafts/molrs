@@ -144,20 +144,20 @@ impl CorrelationFunction {
 /// `Args` for [`CorrelationFunction`]: parallel per-frame triplets of
 /// `(neighbor list, A values, B values)`. All three slices must have the
 /// same length as `frames`.
-pub struct CorrelationArgs<'a> {
+pub struct CorrelationFunctionArgs<'a> {
     pub nlists: &'a [Neighbors],
     pub values_a: &'a [Vec<F>],
     pub values_b: &'a [Vec<F>],
 }
 
 impl Compute for CorrelationFunction {
-    type Args<'a> = CorrelationArgs<'a>;
+    type Args<'a> = CorrelationFunctionArgs<'a>;
     type Output = Vec<CorrelationFunctionResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: CorrelationArgs<'a>,
+        args: CorrelationFunctionArgs<'a>,
     ) -> Result<Vec<CorrelationFunctionResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -249,7 +249,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -285,7 +285,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -306,7 +306,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -344,7 +344,7 @@ mod tests {
         let solo = cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: std::slice::from_ref(&nl),
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -356,7 +356,7 @@ mod tests {
         let par = cf
             .compute(
                 &[&frame, &frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &nls,
                     values_a: &vs,
                     values_b: &vs,

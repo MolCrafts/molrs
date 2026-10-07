@@ -23,14 +23,14 @@ use crate::line_notation::error::{SmilesError, SmilesErrorKind};
 /// [`SmilesErrorKind::InvalidQueryPrimitive`] for a SMARTS query atom
 /// ([`AtomSpec::Query`]) or a SMARTS bond query (`!`, `&`, `,`), and
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
-/// descriptor — write that IR with [`write_fragment_smiles`] instead.
-pub fn write_smiles(ir: &SmilesIr) -> Result<String, SmilesError> {
+/// descriptor — write that IR with [`fragment_smiles_text`] instead.
+pub fn smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::Smiles)
 }
 
 /// Write a SMARTS string from the IR.
 ///
-/// SMILES is a subset of SMARTS, so every IR [`write_smiles`] accepts is
+/// SMILES is a subset of SMARTS, so every IR [`smiles_text`] accepts is
 /// writable here too, plus query atoms and the bond operators `!`, `&` and
 /// `,`.
 ///
@@ -40,14 +40,14 @@ pub fn write_smiles(ir: &SmilesIr) -> Result<String, SmilesError> {
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
 /// descriptor: descriptors are fragment notation, and SMARTS has no spelling
 /// for them either.
-pub fn write_smarts(ir: &SmilesIr) -> Result<String, SmilesError> {
+pub fn smarts_text(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::Smarts)
 }
 
 /// Write a SMILES **fragment** body: SMILES plus `CGsmiles` / `BigSMILES`
 /// bonding descriptors.
 ///
-/// The fragment-dialect sibling of [`write_smiles`], which refuses a
+/// The fragment-dialect sibling of [`smiles_text`], which refuses a
 /// descriptor-bearing IR rather than emit text its own parser rejects; this
 /// function is where such an IR is meant to go.
 ///
@@ -76,7 +76,7 @@ pub fn write_smarts(ir: &SmilesIr) -> Result<String, SmilesError> {
 /// It never returns [`SmilesErrorKind::DescriptorInPlainSmiles`]: that is the
 /// plain writers' refusal of the input this one exists to accept.
 #[cfg(test)]
-pub(crate) fn write_fragment_smiles(ir: &SmilesIr) -> Result<String, SmilesError> {
+pub(crate) fn fragment_smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::FragmentSmiles)
 }
 
@@ -484,7 +484,7 @@ fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesErro
         AtomPrimitive::Recursive(ir) => {
             out.push_str("$(");
             // recursive body is a full SMILES/SMARTS molecule fragment
-            let body = write_smarts(ir)?;
+            let body = smarts_text(ir)?;
             out.push_str(&body);
             out.push(')');
             Ok(())
@@ -581,9 +581,9 @@ mod tests {
     #[test]
     fn write_smiles_ethanol_stable() {
         let ir = parse_smiles("CCO").unwrap();
-        let s1 = write_smiles(&ir).unwrap();
+        let s1 = smiles_text(&ir).unwrap();
         let ir2 = parse_smiles(&s1).unwrap();
-        let s2 = write_smiles(&ir2).unwrap();
+        let s2 = smiles_text(&ir2).unwrap();
         assert_eq!(s1, s2);
         assert!(!s1.is_empty());
     }
@@ -592,9 +592,9 @@ mod tests {
     fn write_smiles_acetic_and_benzene() {
         for src in ["C(=O)O", "c1ccccc1", "[NH4+]", "CCO.O"] {
             let ir = parse_smiles(src).unwrap();
-            let s = write_smiles(&ir).unwrap();
+            let s = smiles_text(&ir).unwrap();
             let ir2 = parse_smiles(&s).unwrap();
-            assert_eq!(write_smiles(&ir2).unwrap(), s, "src={src} wrote={s}");
+            assert_eq!(smiles_text(&ir2).unwrap(), s, "src={src} wrote={s}");
         }
     }
 
@@ -602,16 +602,16 @@ mod tests {
     fn write_smiles_rejects_query() {
         // Explicit OR query cannot be concrete SMILES.
         let ir = parse_smarts("[C,N]").unwrap();
-        assert!(write_smiles(&ir).is_err(), "wrote {:?}", write_smiles(&ir));
+        assert!(smiles_text(&ir).is_err(), "wrote {:?}", smiles_text(&ir));
     }
 
     #[test]
     fn write_smarts_query_and_recursive() {
         for src in ["[#6;D3]", "[C;$(C=O)]"] {
             let ir = parse_smarts(src).unwrap();
-            let s = write_smarts(&ir).unwrap();
+            let s = smarts_text(&ir).unwrap();
             let ir2 = parse_smarts(&s).unwrap();
-            let _ = write_smarts(&ir2).unwrap();
+            let _ = smarts_text(&ir2).unwrap();
         }
     }
 
@@ -627,15 +627,15 @@ mod tests {
         // The text is not preserved, the IR is: re-parsing the written string
         // must give back the same descriptor kinds, labels and orders.
         let ir = fragment("[$]COC[$]");
-        let written = write_fragment_smiles(&ir).unwrap();
+        let written = fragment_smiles_text(&ir).unwrap();
         let reparsed = fragment(&written);
         assert_eq!(descriptors(&reparsed), descriptors(&ir));
     }
 
     #[test]
     fn write_fragment_smiles_is_idempotent() {
-        let s1 = write_fragment_smiles(&fragment("[$]COC[$]")).unwrap();
-        let s2 = write_fragment_smiles(&fragment(&s1)).unwrap();
+        let s1 = fragment_smiles_text(&fragment("[$]COC[$]")).unwrap();
+        let s2 = fragment_smiles_text(&fragment(&s1)).unwrap();
         assert_eq!(s2, s1);
     }
 
@@ -645,22 +645,22 @@ mod tests {
         // single-bonded C-C-C chain (R4.4); the canonical form writes the
         // descriptor after its atom, so the leading input form is not kept.
         assert_eq!(
-            write_fragment_smiles(&fragment("[$]=CCC")).unwrap(),
+            fragment_smiles_text(&fragment("[$]=CCC")).unwrap(),
             "C=[$]CC"
         );
     }
 
     #[test]
     fn write_fragment_smiles_trailing_form_is_stable() {
-        let s1 = write_fragment_smiles(&fragment("[$]=CCC")).unwrap();
-        let s2 = write_fragment_smiles(&fragment(&s1)).unwrap();
+        let s1 = fragment_smiles_text(&fragment("[$]=CCC")).unwrap();
+        let s2 = fragment_smiles_text(&fragment(&s1)).unwrap();
         assert_eq!(s2, s1);
     }
 
     #[test]
     fn write_fragment_smiles_keeps_input_already_in_trailing_form() {
         assert_eq!(
-            write_fragment_smiles(&fragment("C[$]=CC")).unwrap(),
+            fragment_smiles_text(&fragment("C[$]=CC")).unwrap(),
             "C[$]=CC"
         );
     }
@@ -669,13 +669,13 @@ mod tests {
     fn write_smiles_rejects_descriptors() {
         // Plain SMILES has no descriptor notation, so writing one would emit
         // text its own parser refuses.
-        let err = write_smiles(&fragment("[$]COC[$]")).unwrap_err();
+        let err = smiles_text(&fragment("[$]COC[$]")).unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
     }
 
     #[test]
     fn write_smarts_rejects_descriptors() {
-        let err = write_smarts(&fragment("[$]COC[$]")).unwrap_err();
+        let err = smarts_text(&fragment("[$]COC[$]")).unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
     }
 
@@ -685,9 +685,9 @@ mod tests {
         // query atom must not leak into a fragment string.
         let ir = parse_smarts("[!C]").unwrap();
         assert!(
-            write_fragment_smiles(&ir).is_err(),
+            fragment_smiles_text(&ir).is_err(),
             "wrote {:?}",
-            write_fragment_smiles(&ir)
+            fragment_smiles_text(&ir)
         );
     }
 
@@ -695,9 +695,9 @@ mod tests {
     fn write_fragment_smiles_rejects_bond_queries() {
         let ir = parse_smarts("C!=C").unwrap();
         assert!(
-            write_fragment_smiles(&ir).is_err(),
+            fragment_smiles_text(&ir).is_err(),
             "wrote {:?}",
-            write_fragment_smiles(&ir)
+            fragment_smiles_text(&ir)
         );
     }
 
@@ -712,7 +712,7 @@ mod tests {
             label: String::new(),
             order: Some(BondKind::Aromatic),
         });
-        let err = write_fragment_smiles(&ir).unwrap_err();
+        let err = fragment_smiles_text(&ir).unwrap_err();
         assert!(matches!(
             err.kind,
             SmilesErrorKind::InvalidDescriptorOrder(BondKind::Aromatic)
@@ -733,7 +733,7 @@ mod tests {
                 order: Some(BondKind::Single),
             }],
         );
-        let written = write_fragment_smiles(&ir).unwrap();
+        let written = fragment_smiles_text(&ir).unwrap();
         assert_eq!(written, "CC-[$]");
         assert_eq!(descriptors(&fragment(&written)), descriptors(&ir));
     }
@@ -742,6 +742,6 @@ mod tests {
     fn write_fragment_smiles_emits_the_shared_glyph() {
         // `[!]` is the shared descriptor; like every other kind it is written
         // in the canonical trailing form, after its anchor atom.
-        assert_eq!(write_fragment_smiles(&fragment("[!]C")).unwrap(), "C[!]");
+        assert_eq!(fragment_smiles_text(&fragment("[!]C")).unwrap(), "C[!]");
     }
 }

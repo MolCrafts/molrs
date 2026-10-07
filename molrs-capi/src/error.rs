@@ -115,16 +115,16 @@ impl From<DType> for MolrsDType {
             DType::Float => Self::Float,
             DType::Int => Self::Int,
             DType::Bool => Self::Bool,
-            DType::UInt => Self::Uint,
+            DType::Uint => Self::Uint,
             DType::String => Self::String,
-            DType::Int8 => Self::I8,
-            DType::Int16 => Self::I16,
-            DType::Int64 => Self::I64,
+            DType::I8 => Self::I8,
+            DType::I16 => Self::I16,
+            DType::I64 => Self::I64,
             DType::U8 => Self::U8,
-            DType::UInt16 => Self::U16,
-            DType::UInt32 => Self::U32,
-            DType::Complex64 => Self::C64,
-            DType::Complex128 => Self::C128,
+            DType::U16 => Self::U16,
+            DType::U32 => Self::U32,
+            DType::C64 => Self::C64,
+            DType::C128 => Self::C128,
             // `DType` is `non_exhaustive`. Every variant that exists today is
             // named above; a future one must not be reported as `String`.
             other => unreachable!("no C dtype for {other:?}"),
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(MolrsDType::from(DType::Float) as u8, 0);
         assert_eq!(MolrsDType::from(DType::Int) as u8, 1);
         assert_eq!(MolrsDType::from(DType::Bool) as u8, 2);
-        assert_eq!(MolrsDType::from(DType::UInt) as u8, 3);
+        assert_eq!(MolrsDType::from(DType::Uint) as u8, 3);
         assert_eq!(MolrsDType::from(DType::String) as u8, 4);
     }
 

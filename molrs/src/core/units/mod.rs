@@ -11,6 +11,16 @@
 //! factors are SI-2019 exact or CODATA 2018 recommended values (see
 //! [`constants`] and the registry preload tables in `registry.rs`).
 //!
+//! # One definition per unit
+//!
+//! Every unit conversion in molrs — a reader's nm → Å, a writer's kcal/mol →
+//! kJ/mol, an analysis's Å³ → cm³ — goes through this module: a
+//! [`UnitFactor`] (a `static` resolved once, for hot paths),
+//! [`UnitRegistry::factor`] or [`Quantity::to`]. No module writes a factor
+//! by hand (`* 4.184`, `/ 10.0`), and [`constants`](crate::core::constants)
+//! holds physical constants and the constants engines define, never a
+//! unit-conversion factor. `module_boundaries` checks both.
+//!
 //! Reference: design follows pint (Python),
 //! <https://pint.readthedocs.io/en/stable/>.
 //!
@@ -36,6 +46,7 @@
 
 mod dimension;
 mod error;
+mod factor;
 mod parse;
 mod preset;
 mod quantity;
@@ -44,6 +55,7 @@ mod unit;
 
 pub use dimension::Dimension;
 pub use error::UnitsError;
+pub use factor::UnitFactor;
 pub use preset::{
     PresetDim, UnitPreset, UnitPresetRegistry, lookup_unit_preset, register_unit_preset,
     replace_unit_preset, unit_preset_names,

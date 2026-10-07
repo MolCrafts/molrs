@@ -10,12 +10,11 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array3;
+use std::f64::consts::TAU;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::require_disp;
-
-const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
 /// `PmftR12` analyzer.
 ///
@@ -78,8 +77,8 @@ pub struct PmftR12Args<'a> {
 
 #[inline]
 fn wrap_2pi(a: F) -> F {
-    let v = a.rem_euclid(TWO_PI);
-    if v < 0.0 { v + TWO_PI } else { v }
+    let v = a.rem_euclid(TAU);
+    if v < 0.0 { v + TAU } else { v }
 }
 
 impl PmftR12 {
@@ -101,8 +100,8 @@ impl PmftR12 {
         };
 
         let dr = self.r_max / self.n_r as F;
-        let dt1 = TWO_PI / self.n_t1 as F;
-        let dt2 = TWO_PI / self.n_t2 as F;
+        let dt1 = TAU / self.n_t1 as F;
+        let dt2 = TAU / self.n_t2 as F;
         let bin_vol = dr * dt1 * dt2;
 
         let mut counts = Array3::<u64>::zeros((self.n_r, self.n_t1, self.n_t2));
@@ -159,7 +158,7 @@ impl PmftR12 {
         let rho_ref = if area_box > 0.0 {
             // Per-pair density in 2-D, marginalised uniformly over the two
             // orientation axes.
-            n_pairs_total / area_box / (TWO_PI * TWO_PI)
+            n_pairs_total / area_box / (TAU * TAU)
         } else {
             0.0
         };

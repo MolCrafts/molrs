@@ -18,7 +18,9 @@ mod local_density;
 mod spatial_distribution;
 mod sphere_voxelization;
 
-pub use correlation_function::{CorrelationArgs, CorrelationFunction, CorrelationFunctionResult};
+pub use correlation_function::{
+    CorrelationFunction, CorrelationFunctionArgs, CorrelationFunctionResult,
+};
 pub use gaussian_density::{GaussianDensity, GaussianDensityResult};
 pub use local_density::{LocalDensity, LocalDensityResult};
 pub use spatial_distribution::{GridSpec, SpatialDistribution, SpatialDistributionResult};

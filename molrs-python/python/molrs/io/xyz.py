@@ -6,6 +6,6 @@ The doors are functions of :mod:`molrs.io` (:func:`~molrs.io.read_xyz`,
 reader, :class:`XyzReader`.
 """
 
-from .._lib import XyzReader
+from .._native import XyzReader
 
 __all__ = ["XyzReader"]

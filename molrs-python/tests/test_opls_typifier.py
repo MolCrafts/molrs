@@ -42,7 +42,7 @@ def test_typify_assigns_atom_types():
     assert isinstance(typed, molrs.core.Atomistic)
     frame = typed.to_frame()
     atoms = frame["atoms"]
-    assert atoms.nrows == 8
+    assert atoms.n_rows == 8
     types = atoms["type"]
     # Every atom typed (no empty / null type label).
     assert all(str(t) != "" for t in types)
@@ -54,9 +54,9 @@ def test_typify_and_compose_potentials():
     mol = _ethane()
     typed = typifier.typify(mol)
     frame = typed.to_frame()
-    assert frame["bonds"].nrows == 7
-    assert frame["angles"].nrows == 12
-    assert frame["dihedrals"].nrows == 9
+    assert frame["bonds"].n_rows == 7
+    assert frame["angles"].n_rows == 12
+    assert frame["dihedrals"].n_rows == 9
 
     pairs = molrs.ff.potential.intramolecular_pairs(frame)
     frame["pairs"] = pairs

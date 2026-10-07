@@ -34,7 +34,7 @@ The names are those of ``molrs::io::mrec`` — ``MrecReader``, ``MrecWriter``,
 ``SequenceSchema``, ``section_names``.
 """
 
-from ..._lib import mrec as _mrec
+from ..._native import mrec as _mrec
 from . import validation
 
 ForceFieldSection = _mrec.ForceFieldSection

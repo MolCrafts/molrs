@@ -38,7 +38,7 @@ class TestFrameWireCodec:
         assert list(back["atoms"]["element"]) == ["C", "C", "C"]
 
     def test_round_trip_returns_the_rich_frame_subclass(self):
-        # `_lib.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
+        # `_native.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
         back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(_frame()))
@@ -123,7 +123,7 @@ class TestFrameServer:
 
     def test_starts_with_no_clients(self):
         with molrs.stream.Publisher("127.0.0.1:0") as server:
-            assert server.client_count == 0
+            assert server.n_clients == 0
 
     def test_send_without_a_client_does_not_block(self):
         # The bounded buffer drops rather than stalls; a producer must be able

@@ -31,7 +31,7 @@ class TestFrameConstruction:
         f.meta = {"source": MetaValue("string", "pytest")}
 
         assert sorted(f.keys()) == ["atoms"]
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
         assert list(f["atoms"]["symbol"]) == ["C", "H"]
         np.testing.assert_allclose(f["atoms"]["x"], [0.0, 1.0])
         assert f.meta["source"] == "pytest"
@@ -46,7 +46,7 @@ class TestOneFrame:
     """There is one ``Frame``: the PyO3 class, constructed and read natively."""
 
     def test_molrs_frame_is_the_native_class(self):
-        assert molrs.core.Frame is molrs._lib.Frame
+        assert molrs.core.Frame is molrs._native.Frame
 
     def test_a_frame_can_be_subclassed(self):
         """Core data classes are extensible; a subclass is still a Frame."""
@@ -97,7 +97,7 @@ class TestOneFrame:
     def test_setitem_accepts_a_mapping(self):
         f = Frame()
         f["atoms"] = {"x": [1.0, 2.0], "id": np.array([1, 2], dtype=np.int64)}
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
         assert f["atoms"].dtype("id") == "uint"
 
     def test_setitem_refuses_anything_else(self):
@@ -141,7 +141,7 @@ class TestFrameBlockHandle:
     def test_resize_writes_through_to_the_frame(self):
         f = self._grid_frame()
         f["atoms"].resize(5)
-        assert f["atoms"].nrows == 5
+        assert f["atoms"].n_rows == 5
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0, 3.0, 0.0, 0.0])
 
     def test_a_column_write_through_the_handle_lands_in_the_frame(self):
@@ -197,7 +197,7 @@ class TestFrameBlockAccess:
         assert len(f) == 1
 
         atoms = f["atoms"]
-        assert atoms.nrows == 2
+        assert atoms.n_rows == 2
 
     def test_getitem_returns_live_block_handle(self):
         f = Frame()
@@ -264,12 +264,12 @@ class TestFrameBlockAccess:
         b1 = Block()
         b1.insert("x", np.array([1.0], dtype=np.float64))
         f["atoms"] = b1
-        assert f["atoms"].nrows == 1
+        assert f["atoms"].n_rows == 1
 
         b2 = Block()
         b2.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         f["atoms"] = b2
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
 
 
 class TestFrameBox:
@@ -353,7 +353,7 @@ class TestFrameMeta:
         # the process, so asserting in-process would take pytest down with it.
         script = (
             "import molrs\n"
-            "from molrs._lib import Frame\n"
+            "from molrs._native import Frame\n"
             "a = []\n"
             "a.append(a)\n"
             "try:\n"
@@ -852,7 +852,7 @@ class TestFrameSubset:
         assert type(sub) is molrs.core.Frame
         np.testing.assert_array_equal(sub["atoms"]["x"], [2.0, 3.0])
         np.testing.assert_array_equal(sub["atoms"]["mol_id"], [2, 2])
-        assert sub["bonds"].nrows == 1
+        assert sub["bonds"].n_rows == 1
         np.testing.assert_array_equal(sub["bonds"]["atomi"], [0])
         np.testing.assert_array_equal(sub["bonds"]["atomj"], [1])
 
@@ -864,7 +864,7 @@ class TestFrameSubset:
 
         np.testing.assert_array_equal(by_mask["atoms"]["x"], by_rows["atoms"]["x"])
         np.testing.assert_array_equal(by_mask["atoms"]["x"], [0.0, 2.0])
-        assert by_mask["bonds"].nrows == by_rows["bonds"].nrows == 0
+        assert by_mask["bonds"].n_rows == by_rows["bonds"].n_rows == 0
 
     def test_a_negative_row_wraps(self):
         sub = self._chain().subset([-1])
@@ -877,7 +877,7 @@ class TestFrameSubset:
         one = frame.subset(frame["atoms"]["mol_id"] == 1)
 
         np.testing.assert_array_equal(one["atoms"]["x"], [0.0, 1.0])
-        assert one["bonds"].nrows == 1
+        assert one["bonds"].n_rows == 1
 
     def test_a_row_past_the_end_is_a_value_error(self):
         with pytest.raises(ValueError):
@@ -909,7 +909,7 @@ class TestFrameConcat:
 
     def test_endpoints_are_offset_past_earlier_parts(self):
         joined = molrs.core.Frame.concat([self._chain(2), self._chain(3)])
-        assert joined["atoms"].nrows == 5
+        assert joined["atoms"].n_rows == 5
         assert list(joined["bonds"]["atomi"]) == [0, 2, 3]
         assert list(joined["bonds"]["atomj"]) == [1, 3, 4]
 

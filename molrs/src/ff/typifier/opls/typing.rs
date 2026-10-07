@@ -157,7 +157,7 @@ mod tests {
             ..TypeAssignment::default()
         };
         m.declare_styles_of(ff);
-        m.write_onto(&mut graph, &mut ff.empty_like())?;
+        m.apply_to(&mut graph, &mut ff.empty_like())?;
         Ok(graph)
     }
 

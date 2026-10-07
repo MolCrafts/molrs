@@ -47,7 +47,7 @@ impl CorrelationFunction {
             let nlists = std::slice::from_ref(&neighbors.inner);
             let va = vec![values_a.to_vec()];
             let vb = vec![values_b.to_vec()];
-            let args = molrs::compute::CorrelationArgs {
+            let args = molrs::compute::CorrelationFunctionArgs {
                 nlists,
                 values_a: &va,
                 values_b: &vb,

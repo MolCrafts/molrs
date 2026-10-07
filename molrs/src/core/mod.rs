@@ -21,12 +21,26 @@
 //!   [`TriMesh`], [`Trace`];
 //! - numerics and units: [`Complex`], the spherical harmonics and Wigner
 //!   symbols, [`Virial`], [`Unit`], [`Quantity`], [`UnitRegistry`],
-//!   [`UnitPreset`];
+//!   [`UnitFactor`], [`UnitPreset`];
 //! - the crate error, [`MolRsError`].
 //!
-//! Whole-graph transforms (`translate`, `rotate`, …) are `crate::op`'s (`crate::op::translate`, …);
-//! ring perception is `crate::perceive::perceive_rings`; the `*.mrec` record and its
-//! force-field section are `crate::io::mrec`.
+//! # Units: one definition each
+//!
+//! Every unit conversion in molrs goes through the unit registry: a
+//! `static` [`UnitFactor`] written as its two units
+//! (`UnitFactor::new("kcal", "kJ")`, resolved once), [`UnitRegistry::factor`]
+//! or [`Quantity::to`]. No module writes a factor by hand (`* 4.184`,
+//! `/ 10.0` for nm), and [`constants`] holds physical constants and the
+//! constants engines define as data, never a conversion factor; the units
+//! are built from those constants (`bohr` from [`constants::BOHR_RADIUS`],
+//! `eV` from [`constants::ELEMENTARY_CHARGE`]). `module_boundaries` fails on
+//! a conversion-factor constant or literal outside the units module.
+//! Degrees ↔ radians is arithmetic (`to_radians` / `to_degrees`), not a unit.
+//!
+//! Whole-graph transforms are [`MolGraph`] methods ([`MolGraph::translate`],
+//! [`MolGraph::rotate`], [`MolGraph::scale`], [`MolGraph::center`]); ring
+//! perception is `crate::perceive::perceive_rings`; the `*.mrec` record and
+//! its force-field section are `crate::io::mrec`.
 //!
 //! # Examples
 //!
@@ -68,6 +82,7 @@ mod extract;
 pub(crate) mod graph_hash;
 mod link;
 mod molgraph;
+mod molgraph_geometry;
 mod port;
 mod topology;
 
@@ -99,7 +114,7 @@ pub use precision::{
     PRECISION_MAX, PRECISION_MIN, check_precision, quantize, quantize_in_place, quantum,
 };
 pub use trajectory::{ObservableKind, ObservableRecord, ObservableValues, Trajectory};
-pub use type_labels::{BlockTypes, TypeLabels, TypeName};
+pub use type_labels::{BlockTypeLabels, TypeLabels, TypeName};
 
 pub use atomistic::{Atomistic, ExtractedAtomistic};
 pub use bond_order::{BondNumber, BondOrder};
@@ -114,6 +129,7 @@ pub use molgraph::{
     Atom, FromMolGraph, KindId, MolGraph, NodeId, PropValue, Relation, RelationId, node_from_u64,
     node_to_u64, relation_from_u64, relation_to_u64,
 };
+pub use molgraph_geometry::CenterError;
 pub use port::{Port, PortKind};
 pub use topology::{Topology, TopologyError};
 
@@ -137,6 +153,7 @@ pub use math::{
     ylm_all, ylm_complex, ylm_normalization, ylm_real,
 };
 pub use units::{
-    Dimension, PresetDim, Quantity, Unit, UnitDef, UnitPreset, UnitPresetRegistry, UnitRegistry,
-    UnitsError, lookup_unit_preset, register_unit_preset, replace_unit_preset, unit_preset_names,
+    Dimension, PresetDim, Quantity, Unit, UnitDef, UnitFactor, UnitPreset, UnitPresetRegistry,
+    UnitRegistry, UnitsError, lookup_unit_preset, register_unit_preset, replace_unit_preset,
+    unit_preset_names,
 };

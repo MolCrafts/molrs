@@ -119,9 +119,9 @@ pub(crate) fn frame_block_columns(fref: &FrameRef, block: &str) -> Vec<String> {
 /// @param fref  frame handle
 /// @param block block key
 /// @return number of rows; 0 if the block is absent or empty
-pub(crate) fn frame_block_nrows(fref: &FrameRef, block: &str) -> i64 {
+pub(crate) fn frame_block_n_rows(fref: &FrameRef, block: &str) -> i64 {
     match fref.0.block(block) {
-        Ok(blk) => blk.nrows().unwrap_or(0) as i64,
+        Ok(blk) => blk.n_rows().unwrap_or(0) as i64,
         Err(_) => 0,
     }
 }
@@ -585,8 +585,8 @@ mod tests {
         let mut cols = frame_block_columns(&fref, "atoms");
         cols.sort();
         assert_eq!(cols, vec!["element", "id", "spin", "x"]);
-        assert_eq!(frame_block_nrows(&fref, "atoms"), 3);
-        assert_eq!(frame_block_nrows(&fref, "missing"), 0);
+        assert_eq!(frame_block_n_rows(&fref, "atoms"), 3);
+        assert_eq!(frame_block_n_rows(&fref, "missing"), 0);
 
         // ── Readers ──
         assert_eq!(frame_column_f64(&fref, "atoms", "x"), xs);

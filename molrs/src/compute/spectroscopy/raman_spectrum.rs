@@ -182,7 +182,12 @@ mod tests {
         let mut pol = Array2::zeros((n, 6));
         for t in 0..n {
             let tf = t as f64 * dt;
-            let val = (2.0 * std::f64::consts::PI * 30.0 * 1e-3 * tf).sin();
+            let val = (2.0
+                * std::f64::consts::PI
+                * 30.0
+                * crate::core::UnitFactor::new("THz", "1/fs").get()
+                * tf)
+                .sin();
             for c in 0..6 {
                 pol[[t, c]] = val * (1.0 + 0.1 * c as f64);
             }

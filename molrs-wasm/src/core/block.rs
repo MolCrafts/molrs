@@ -1,7 +1,7 @@
 //! WASM bindings for [`Block`] -- typed columnar data container.
 //!
 //! A `Block` stores named columns, each backed by a homogeneously typed
-//! array. All columns within a block share the same row count (`nrows`).
+//! array. All columns within a block share the same row count (`nRows`).
 //!
 //! # Column access API
 //!
@@ -10,28 +10,27 @@
 //! | Method | JS signature | Semantics |
 //! |--------|--------------|-----------|
 //! | `view` | `(key: string) -> NumericColumn` | Zero-copy typed-array view of a numeric column. The primary immediate read |
-//! | `copy` | `(key: string) -> Column` | Owned copy of every dtype, including bool, string, and complex |
-//! | `get` | `(key: string, fallback?: Column) -> Column` | Optional owned lookup: present returns `copy`, absent returns `fallback` or throws |
+//! | `copy` | `(key: string, fallback?: Column) -> Column` | Owned copy of every dtype, including bool, string, and complex; an absent key returns `fallback` or throws |
 //! | `set` | `(key: string, data: Column, shape?: number[])` | Insert or replace; dtype inferred from `data` |
 //! | `has` | `(key: string) -> boolean` | Presence |
 //! | `dtype` | `(key: string) -> DType` | Dtype name; missing throws |
-//! | `shape` | `(key: string) -> number[]` | Column shape (`[nrows]`, `[nrows, 3]`, ...); missing throws |
+//! | `shape` | `(key: string) -> number[]` | Column shape (`[nRows]`, `[nRows, 3]`, ...); missing throws |
 //! | `keys` | `() -> string[]` | Column names in insertion order |
-//! | `nrows` | getter `number` | Shared row count (`0` when empty) |
+//! | `nRows` | getter `number` | Shared row count (`0` when empty) |
 //!
 //! # dtype <-> JS type
 //!
 //! The names are core `DType::name()`'s, the vocabulary every binding and the
 //! Frame schema share (`float` is `f64`, `int` is `i32`, `uint` is `u64`).
 //!
-//! | `dtype(key)` | `get` / `view` returns | `set` infers it from |
+//! | `dtype(key)` | `copy` / `view` returns | `set` infers it from |
 //! |--------------|------------------------|----------------------|
 //! | `"float"` | `Float64Array` | `Float64Array` |
 //! | `"i8"` / `"i16"` / `"int"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
 //! | `"u8"` / `"u16"` / `"u32"` / `"uint"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
-//! | `"bool"` | `boolean[]` (`copy` / `get`; `view` throws) | `boolean[]` |
-//! | `"string"` | `string[]` (`copy` / `get`; `view` throws) | `string[]` (also the empty `[]`) |
-//! | `"c64"` / `"c128"` | `{ real, imag, shape, dtype }` (`copy` / `get`; `view` throws) | never |
+//! | `"bool"` | `boolean[]` (`copy`; `view` throws) | `boolean[]` |
+//! | `"string"` | `string[]` (`copy`; `view` throws) | `string[]` (also the empty `[]`) |
+//! | `"c64"` / `"c128"` | `{ real, imag, shape, dtype }` (`copy`; `view` throws) | never |
 //!
 //! Numeric results are the typed array itself, with `shape` and `dtype`
 //! properties attached, so `arr[i]` still works. Complex values are not
@@ -79,7 +78,7 @@ export type NumericColumn =
     | Float64Array | Int8Array | Int16Array | Int32Array | BigInt64Array
     | Uint8Array | Uint16Array | Uint32Array | BigUint64Array;
 
-/** `copy` / `get` of a complex column. `real` and `imag` are not interleaved. */
+/** `copy` of a complex column. `real` and `imag` are not interleaved. */
 export type ComplexColumn = {
     real: Float32Array | Float64Array;
     imag: Float32Array | Float64Array;
@@ -88,7 +87,7 @@ export type ComplexColumn = {
 };
 
 /**
- * Any column value `Block.copy` and `Block.get` return.
+ * Any column value `Block.copy` returns.
  * `Block.set` accepts the numeric, boolean, and string forms.
  */
 export type Column = NumericColumn | boolean[] | string[] | ComplexColumn;
@@ -130,7 +129,7 @@ extern "C" {
 /// atoms.set("x", new Float64Array([0, 1, 2]));
 /// atoms.set("element", ["C", "C", "O"]);
 /// atoms.set("id", new BigUint64Array([0n, 1n, 2n]));
-/// atoms.nrows;            // 3
+/// atoms.nRows;            // 3
 /// atoms.dtype("id");      // "uint"
 /// const x = atoms.view("x"); // zero-copy Float64Array; copy("x") to keep it
 /// ```
@@ -199,18 +198,18 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const n = atoms.nrows; // e.g. 100
+    /// const n = atoms.nRows; // e.g. 100
     /// ```
-    #[wasm_bindgen(getter)]
-    pub fn nrows(&self) -> Result<usize, JsValue> {
-        self.with(|b| b.nrows().unwrap_or(0))
+    #[wasm_bindgen(getter, js_name = nRows)]
+    pub fn n_rows(&self) -> Result<usize, JsValue> {
+        self.with(|b| b.n_rows().unwrap_or(0))
     }
 
     /// The declared N-D structural shape (`[Nx, Ny, Nz]` for a volumetric
     /// grid), or `undefined` for a plain row table.
     ///
     /// Set with [`setShape`](Self::set_shape). Its product always equals
-    /// `nrows`. Distinct from [`shape`](Self::shape), which is the shape of
+    /// `nRows`. Distinct from [`shape`](Self::shape), which is the shape of
     /// one column.
     ///
     /// # Errors
@@ -230,7 +229,7 @@ impl Block {
 
     /// Declare this block as N-dimensional with the given `shape`.
     ///
-    /// `shape`'s product must equal the block's current `nrows` when the
+    /// `shape`'s product must equal the block's current `nRows` when the
     /// block has columns. Pass `[]` to clear it and revert to plain
     /// row-table semantics.
     ///
@@ -241,7 +240,7 @@ impl Block {
     /// # Errors
     ///
     /// Throws if `shape` holds anything but non-negative integers, if its
-    /// product does not match `nrows`, or if the handle has been invalidated.
+    /// product does not match `nRows`, or if the handle has been invalidated.
     ///
     /// # Example (JavaScript)
     ///
@@ -304,7 +303,7 @@ impl Block {
         })
     }
 
-    /// Shape of column `key`: `[nrows]` for a per-row scalar, `[nrows, 3]`
+    /// Shape of column `key`: `[nRows]` for a per-row scalar, `[nRows, 3]`
     /// for a per-row vector, and so on.
     ///
     /// # Errors
@@ -330,11 +329,11 @@ impl Block {
     /// the producer wrote there, typically `0` or `""`), so a consumer that
     /// must tell "no value" from "zero" reads this mask beside the column.
     /// Masks travel with the block through
-    /// [`readMsgpackFrameBytes`](crate::io::reader::read_msgpack_frame_bytes).
+    /// [`readMsgpackFrameBytes`](crate::io::frame_encoding::read_msgpack_frame_bytes).
     ///
     /// # Returns
     ///
-    /// A `Uint8Array` of length `nrows` when at least one row of the column
+    /// A `Uint8Array` of length `nRows` when at least one row of the column
     /// is null; `undefined` when the column is fully valid.
     ///
     /// # Errors
@@ -345,7 +344,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const fragId = atoms.get("frag_id");
+    /// const fragId = atoms.copy("frag_id");
     /// const valid = atoms.validity("frag_id"); // undefined → no nulls
     /// const isNull = (i) => valid !== undefined && valid[i] === 0;
     /// ```
@@ -443,36 +442,26 @@ impl Block {
     /// `{ real, imag, shape, dtype }` (`Float32Array` for `c64`,
     /// `Float64Array` for `c128`).
     ///
-    /// This is the read to keep. [`view`](Self::view) is the zero-copy
-    /// numeric read. [`get`](Self::get) is this copy, plus an optional
-    /// fallback when the key is absent.
+    /// This is the read to keep; [`view`](Self::view) is the zero-copy
+    /// numeric read. An absent `key` returns `fallback` when one was passed
+    /// (as given, not copied or checked), and throws otherwise.
     ///
     /// # Errors
     ///
-    /// Throws if `key` is absent or the handle has been invalidated.
-    #[wasm_bindgen(js_name = copy)]
-    pub fn copy(&self, key: &str) -> Result<JsColumn, JsValue> {
-        self.with_col(key, |col| column_to_js(key, col))
-            .map(JsCast::unchecked_into)
-    }
-
-    /// Optional owned lookup of column `key`.
-    ///
-    /// A present column returns the same value as [`copy`](Self::copy).
-    /// An absent column returns `fallback` when one was passed, and throws
-    /// otherwise. Any other failure (a dead handle) is not treated as a
-    /// missing key.
+    /// Throws if `key` is absent and no `fallback` was passed, or if the
+    /// handle has been invalidated (a dead handle throws even with a
+    /// `fallback`).
     ///
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const x = atoms.get("x"); // owned Float64Array, same as copy
-    /// const charge = atoms.get("charge", new Float64Array(atoms.nrows));
+    /// const x = atoms.copy("x"); // owned Float64Array
+    /// const charge = atoms.copy("charge", new Float64Array(atoms.nRows));
     /// ```
-    #[wasm_bindgen(js_name = get)]
-    pub fn get(&self, key: &str, fallback: Option<JsColumn>) -> Result<JsColumn, JsValue> {
-        match self.copy(key) {
-            Ok(value) => Ok(value),
+    #[wasm_bindgen(js_name = copy)]
+    pub fn copy(&self, key: &str, fallback: Option<JsColumn>) -> Result<JsColumn, JsValue> {
+        match self.with_col(key, |col| column_to_js(key, col)) {
+            Ok(value) => Ok(value.unchecked_into()),
             Err(err) => match fallback {
                 Some(fallback) if is_missing_column(&err, key) => Ok(fallback),
                 _ => Err(err),
@@ -905,7 +894,7 @@ mod tests {
         e.as_string().unwrap_or_default()
     }
 
-    /// `set` a typed array, then check `dtype`, `get` and `view` hand back the
+    /// `set` a typed array, then check `dtype`, `copy` and `view` hand back the
     /// same values in the same typed-array type.
     macro_rules! round_trip {
         ($name:ident, $js:ty, $t:ty, $dtype:literal, [$($v:expr),*]) => {
@@ -916,7 +905,7 @@ mod tests {
                 b.set("c", col(<$js>::from(values.as_slice())), None).unwrap();
                 assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), $dtype);
                 assert_eq!(shape_of(&b.shape("c").unwrap()), vec![values.len()]);
-                let got: JsValue = b.get("c", None).unwrap().into();
+                let got: JsValue = b.copy("c", None).unwrap().into();
                 assert!(got.is_instance_of::<$js>(), "get returned the wrong type");
                 assert_eq!(got.unchecked_into::<$js>().to_vec(), values);
                 let view: JsValue = b.view("c").unwrap().into();
@@ -957,7 +946,7 @@ mod tests {
             .collect();
         b.set("element", col(values), None).unwrap();
         assert_eq!(b.dtype("element").unwrap().as_string().unwrap(), "string");
-        let got: JsArray = JsValue::from(b.get("element", None).unwrap()).unchecked_into();
+        let got: JsArray = JsValue::from(b.copy("element", None).unwrap()).unchecked_into();
         let got: Vec<String> = got.iter().map(|v| v.as_string().unwrap()).collect();
         assert_eq!(got, vec!["C", "C", "O"]);
     }
@@ -971,11 +960,11 @@ mod tests {
             .collect();
         b.set("flag", col(values), None).unwrap();
         assert_eq!(b.dtype("flag").unwrap().as_string().unwrap(), "bool");
-        let got = b.get("flag", None).unwrap();
+        let got = b.copy("flag", None).unwrap();
         // boolean[] back, so feeding it to `set` again keeps `bool`.
         b.set("flag2", got, None).unwrap();
         assert_eq!(b.dtype("flag2").unwrap().as_string().unwrap(), "bool");
-        let got: JsArray = JsValue::from(b.get("flag2", None).unwrap()).unchecked_into();
+        let got: JsArray = JsValue::from(b.copy("flag2", None).unwrap()).unchecked_into();
         let got: Vec<bool> = got.iter().map(|v| v.as_bool().unwrap()).collect();
         assert_eq!(got, vec![true, false, true]);
     }
@@ -985,7 +974,7 @@ mod tests {
         let mut b = block();
         b.set("names", col(JsArray::new()), None).unwrap();
         assert_eq!(b.dtype("names").unwrap().as_string().unwrap(), "string");
-        assert_eq!(b.nrows().unwrap(), 0);
+        assert_eq!(b.n_rows().unwrap(), 0);
     }
 
     #[wasm_bindgen_test]
@@ -994,9 +983,9 @@ mod tests {
         let shape: JsShape = col(JsArray::of2(&2.into(), &3.into())).unchecked_into();
         let data = Float64Array::from(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0][..]);
         b.set("pos", col(data), Some(shape)).unwrap();
-        assert_eq!(b.nrows().unwrap(), 2);
+        assert_eq!(b.n_rows().unwrap(), 2);
         assert_eq!(shape_of(&b.shape("pos").unwrap()), vec![2, 3]);
-        let got: Float64Array = JsValue::from(b.get("pos", None).unwrap()).unchecked_into();
+        let got: Float64Array = JsValue::from(b.copy("pos", None).unwrap()).unchecked_into();
         assert_eq!(got.to_vec(), vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]);
     }
 
@@ -1018,15 +1007,15 @@ mod tests {
         let view: Float64Array = JsValue::from(b.view("x").unwrap()).unchecked_into();
         view.set_index(0, 1.0);
         view.set_index(2, 3.0);
-        let got: Float64Array = JsValue::from(b.get("x", None).unwrap()).unchecked_into();
+        let got: Float64Array = JsValue::from(b.copy("x", None).unwrap()).unchecked_into();
         assert_eq!(got.to_vec(), vec![1.0, 0.0, 3.0]);
     }
 
     #[wasm_bindgen_test]
-    fn has_keys_nrows() {
+    fn has_keys_n_rows() {
         let mut b = block();
         assert!(!b.has("x"));
-        assert_eq!(b.nrows().unwrap(), 0);
+        assert_eq!(b.n_rows().unwrap(), 0);
         b.set("x", col(Float64Array::from(&[1.0, 2.0][..])), None)
             .unwrap();
         b.set("id", col(BigUint64Array::from(&[1_u64, 2][..])), None)
@@ -1034,28 +1023,28 @@ mod tests {
         assert!(b.has("x"));
         assert!(!b.has("y"));
         assert_eq!(b.keys().unwrap(), vec!["x".to_string(), "id".to_string()]);
-        assert_eq!(b.nrows().unwrap(), 2);
+        assert_eq!(b.n_rows().unwrap(), 2);
     }
 
     // ---- errors ----
 
     #[wasm_bindgen_test]
-    fn get_missing_throws_unless_default() {
+    fn copy_missing_throws_unless_fallback() {
         let b = block();
-        assert!(err_text(b.get("nope", None).err().unwrap()).contains("'nope' not found"));
+        assert!(err_text(b.copy("nope", None).err().unwrap()).contains("'nope' not found"));
         let fallback = BigUint64Array::from(&[9_u64][..]);
         let got: BigUint64Array =
-            JsValue::from(b.get("nope", Some(col(fallback))).unwrap()).unchecked_into();
+            JsValue::from(b.copy("nope", Some(col(fallback))).unwrap()).unchecked_into();
         assert_eq!(got.to_vec(), vec![9]);
     }
 
     #[wasm_bindgen_test]
-    fn get_ignores_default_when_present() {
+    fn copy_ignores_fallback_when_present() {
         let mut b = block();
         b.set("x", col(Float64Array::from(&[1.0][..])), None)
             .unwrap();
         let got: JsValue = b
-            .get("x", Some(col(Int32Array::from(&[5][..]))))
+            .copy("x", Some(col(Int32Array::from(&[5][..]))))
             .unwrap()
             .into();
         assert!(got.is_instance_of::<Float64Array>());
@@ -1079,7 +1068,7 @@ mod tests {
         b.set("f", col(flags), None).unwrap();
         assert!(err_text(b.view("s").err().unwrap()).contains("use copy()"));
         assert!(err_text(b.view("f").err().unwrap()).contains("use copy()"));
-        let copied = b.copy("s").unwrap();
+        let copied = b.copy("s", None).unwrap();
         assert!(JsValue::from(copied).is_instance_of::<JsArray>());
     }
 

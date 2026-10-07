@@ -176,13 +176,13 @@ impl fmt::Display for TypeName {
 
 /// Resolved type space of one block: per-row ids, ordered labels, type count.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockTypes {
+pub struct BlockTypeLabels {
     type_ids: Vec<Idx>,
     labels: Option<Vec<String>>,
     n_types: usize,
 }
 
-impl BlockTypes {
+impl BlockTypeLabels {
     /// The 1-based type id of every row, in row order. Empty for a block that
     /// exists only through its inventory meta key.
     pub fn type_ids(&self) -> &[Idx] {
@@ -262,9 +262,9 @@ impl BlockTypes {
         frame: &impl FrameAccess,
         block: &str,
         meta_key: &str,
-    ) -> Result<Option<BlockTypes>, String> {
+    ) -> Result<Option<BlockTypeLabels>, String> {
         let n = frame
-            .visit_block(block, |b| b.nrows().unwrap_or(0))
+            .visit_block(block, |b| b.n_rows().unwrap_or(0))
             .unwrap_or(0);
         let inventory = match frame.meta_ref().get(meta_key) {
             None => Vec::new(),
@@ -283,7 +283,7 @@ impl BlockTypes {
                 return Ok(None);
             }
             let n_types = inventory.len();
-            return Ok(Some(BlockTypes {
+            return Ok(Some(BlockTypeLabels {
                 type_ids: Vec::new(),
                 labels: Some(inventory),
                 n_types,
@@ -314,7 +314,7 @@ impl BlockTypes {
                     max_id = max_id.max(id);
                     type_ids.push(id);
                 }
-                return Ok(Some(BlockTypes {
+                return Ok(Some(BlockTypeLabels {
                     type_ids,
                     labels: None,
                     n_types: (max_id as usize).max(1),
@@ -338,7 +338,7 @@ impl BlockTypes {
                 })
                 .collect::<Result<Vec<Idx>, String>>()?;
             let n_types = ordered.len().max(min_types);
-            return Ok(Some(BlockTypes {
+            return Ok(Some(BlockTypeLabels {
                 type_ids,
                 labels: Some(ordered),
                 n_types,
@@ -372,7 +372,7 @@ impl BlockTypes {
         } else {
             Some(inventory)
         };
-        Ok(Some(BlockTypes {
+        Ok(Some(BlockTypeLabels {
             type_ids,
             labels,
             n_types,
@@ -396,7 +396,7 @@ impl BlockTypes {
 ///
 /// # Id rules
 ///
-/// - Ids are 1-based and dense; label `i` of [`BlockTypes::labels`] has id
+/// - Ids are 1-based and dense; label `i` of [`BlockTypeLabels::labels`] has id
 ///   `i + 1`.
 /// - A string `type` column wins over `type_id` when both are present. Every
 ///   label must be non-empty.
@@ -417,7 +417,7 @@ impl BlockTypes {
 ///   writes the name of the type it defined.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TypeLabels {
-    blocks: Vec<(&'static str, BlockTypes)>,
+    blocks: Vec<(&'static str, BlockTypeLabels)>,
 }
 
 impl TypeLabels {
@@ -435,7 +435,7 @@ impl TypeLabels {
     pub fn from_frame(frame: &impl FrameAccess) -> Result<TypeLabels, String> {
         let mut blocks = Vec::new();
         for (block, meta_key) in Self::BLOCKS {
-            if let Some(types) = BlockTypes::resolve(frame, block, meta_key)? {
+            if let Some(types) = BlockTypeLabels::resolve(frame, block, meta_key)? {
                 blocks.push((block, types));
             }
         }
@@ -444,7 +444,7 @@ impl TypeLabels {
 
     /// The resolved types of `block`, or `None` when the block has neither
     /// rows nor an inventory.
-    pub fn block(&self, block: &str) -> Option<&BlockTypes> {
+    pub fn block(&self, block: &str) -> Option<&BlockTypeLabels> {
         self.blocks
             .iter()
             .find(|(name, _)| *name == block)
@@ -474,7 +474,7 @@ impl TypeLabels {
                 let raw = value
                     .as_str()
                     .ok_or_else(|| format!("meta {key:?} must be a string"))?;
-                BlockTypes::parse_inventory_ids(key, raw)
+                BlockTypeLabels::parse_inventory_ids(key, raw)
             }
         }
     }
@@ -517,7 +517,7 @@ impl TypeLabels {
                 let raw = value
                     .as_str()
                     .ok_or_else(|| format!("meta {key:?} must be a string"))?;
-                BlockTypes::parse_inventory(key, raw)?
+                BlockTypeLabels::parse_inventory(key, raw)?
             }
         };
         for label in labels {
@@ -532,7 +532,7 @@ impl TypeLabels {
             }
             all.push(label.to_owned());
         }
-        let ordered = BlockTypes::sorted(all);
+        let ordered = BlockTypeLabels::sorted(all);
         if ordered.is_empty() {
             return Ok(());
         }

@@ -1270,6 +1270,88 @@ pub fn refuse_pair_overrides(frame: &molrs::core::Frame) -> Result<(), String> {
     ))
 }
 
+/// The type labels of `frame`, its `pairs` block checked by
+/// [`refuse_pair_overrides`] when `check_pairs`.
+fn labels_of(
+    frame: &molrs::core::Frame,
+    check_pairs: bool,
+) -> Result<TypeLabels, ForceFieldWriteError> {
+    if check_pairs {
+        refuse_pair_overrides(frame)?;
+    }
+    Ok(TypeLabels::from_frame(frame)?)
+}
+
+/// Write `ff` as the LAMMPS force-field include (`*.ff`) of the typed
+/// `frame`: its type labels number the rows. The inverse of
+/// [`read_lammps_forcefield`](crate::io::read_lammps_forcefield).
+///
+/// # Errors
+///
+/// A per-pair override column on `frame` ([`refuse_pair_overrides`]), a
+/// malformed type-label inventory, every error of
+/// [`ForceFieldWriter::write_str`] on [`LammpsForcefieldWriter`], and an
+/// unwritable file.
+pub fn write_lammps_forcefield(
+    path: impl AsRef<std::path::Path>,
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    options: LammpsForcefieldWriteOptions,
+) -> Result<(), ForceFieldWriteError> {
+    let text = write_lammps_forcefield_str(ff, frame, options)?;
+    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
+}
+
+/// [`write_lammps_forcefield`] to a string.
+///
+/// # Errors
+///
+/// As [`write_lammps_forcefield`], less the file.
+pub fn write_lammps_forcefield_str(
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    options: LammpsForcefieldWriteOptions,
+) -> Result<String, ForceFieldWriteError> {
+    let labels = labels_of(frame, true)?;
+    LammpsForcefieldWriter::with_options(&labels, options).write_str(ff)
+}
+
+/// The `* Coeffs` sections of a LAMMPS data file for `ff` and the typed
+/// `frame` ([`LammpsForcefieldWriter::write_data_coeffs_str`]); the inverse
+/// of [`read_lammps_data_coeffs`](crate::io::read_lammps_data_coeffs).
+///
+/// # Errors
+///
+/// As [`write_lammps_forcefield_str`], and a used explicit cross pair.
+pub fn write_lammps_data_coeffs(
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    options: LammpsForcefieldWriteOptions,
+) -> Result<String, ForceFieldWriteError> {
+    let labels = labels_of(frame, true)?;
+    LammpsForcefieldWriter::with_options(&labels, options).write_data_coeffs_str(ff)
+}
+
+/// Write the LAMMPS `fix cmap` file of `ff` and the typed `frame`'s `cmaps`
+/// labels ([`LammpsForcefieldWriter::write_cmap_str`]), the file
+/// [`LammpsForcefieldWriteOptions::cmap_file`] names; the inverse of
+/// [`read_lammps_cmap_forcefield`](crate::io::read_lammps_cmap_forcefield).
+///
+/// # Errors
+///
+/// A malformed type-label inventory, every error of
+/// [`LammpsForcefieldWriter::write_cmap_str`], and an unwritable file.
+pub fn write_lammps_cmap_forcefield(
+    path: impl AsRef<std::path::Path>,
+    ff: &ForceField,
+    frame: &molrs::core::Frame,
+    options: LammpsForcefieldWriteOptions,
+) -> Result<(), ForceFieldWriteError> {
+    let labels = labels_of(frame, false)?;
+    let text = LammpsForcefieldWriter::with_options(&labels, options).write_cmap_str(ff)?;
+    crate::io::writer::write_forcefield_text(path.as_ref(), &text)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /// A LAMMPS `fix cmap` file of `maps` (`(title, grid)`, each grid N×N,

@@ -69,7 +69,7 @@ macro_rules! resolve_col_key {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_nrows(MolrsBlockHandle block, size_t* out);
+/// MolrsStatus molrs_block_n_rows(MolrsBlockHandle block, size_t* out);
 /// ```
 ///
 /// # Arguments
@@ -88,7 +88,7 @@ macro_rules! resolve_col_key {
 /// * `block` must be a live block handle.
 /// * `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_nrows(
+pub unsafe extern "C" fn molrs_block_n_rows(
     block: MolrsBlockHandle,
     out: *mut usize,
 ) -> MolrsStatus {
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn molrs_block_nrows(
         null_check!(out);
         let registry = lock_registry();
         let bh = resolve_block!(registry, &block);
-        match registry.frames.with_block(&bh, |b| b.nrows()) {
+        match registry.frames.with_block(&bh, |b| b.n_rows()) {
             Ok(Some(n)) => {
                 unsafe { *out = n };
                 MolrsStatus::Ok
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn molrs_block_nrows(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_ncols(MolrsBlockHandle block, size_t* out);
+/// MolrsStatus molrs_block_n_columns(MolrsBlockHandle block, size_t* out);
 /// ```
 ///
 /// # Arguments
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn molrs_block_nrows(
 /// * `block` must be a live block handle.
 /// * `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_ncols(
+pub unsafe extern "C" fn molrs_block_n_columns(
     block: MolrsBlockHandle,
     out: *mut usize,
 ) -> MolrsStatus {
@@ -384,7 +384,7 @@ fn scalar_bytes(col: &Column) -> Result<Vec<u8>, ReadFail> {
 /// Byte pointer and element count for one column.
 ///
 /// `*out_len` is the number of elements. The byte length is `*out_len` times
-/// the dtype's item size (`Bool` is 1, `Complex64` is 8, `Complex128` is 16).
+/// the dtype's item size (`Bool` is 1, `C64` is 8, `C128` is 16).
 /// `*out_dtype` is the stored variant.
 ///
 /// A missing column is `KeyNotFound`. A string column is `TypeMismatch`:

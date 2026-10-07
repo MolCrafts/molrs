@@ -31,7 +31,7 @@ prints are the ones the test pins.
 ``report`` test writes ``<case>.written.xml`` there) with OpenMM.
 
 Needs ``openmm`` (8.x), ``rdkit`` (for the conformers only) and molrs (the
-unit constants, ``molrs.core.constants``).
+unit factors, molrs's unit registry).
 """
 
 from __future__ import annotations
@@ -40,7 +40,6 @@ import argparse
 import copy
 import itertools
 import json
-import math
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -48,7 +47,7 @@ from pathlib import Path
 import numpy as np
 import openmm as mm
 import openmm.unit as u
-from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
+from engine_check_tables import is_chain, split_system, unit_factor
 from openmm import app
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -231,101 +230,16 @@ def graph_terms(mol: Chem.Mol):
     return bonds, angles, sorted(propers)
 
 
-def is_chain(bonds: set, t) -> bool:
-    return all(tuple(sorted(p)) in bonds for p in itertools.pairwise(t))
-
-
-def split_system(system: mm.System, bonds: set, foyer_geometric: bool):
-    """Put every term family in its own force group; return the groups."""
-    groups = {}
-    # The System owns its forces: copy them before removing them.
-    forces = [copy.deepcopy(f) for f in system.getForces()]
-    while system.getNumForces():
-        system.removeForce(0)
-    out = []
-
-    def add(name, force):
-        force.setForceGroup(len(out))
-        groups[len(out)] = name
-        out.append(force)
-
-    for f in forces:
-        if isinstance(f, mm.HarmonicBondForce):
-            real, ub = mm.HarmonicBondForce(), mm.HarmonicBondForce()
-            for i in range(f.getNumBonds()):
-                a, b, r0, k = f.getBondParameters(i)
-                (real if tuple(sorted((a, b))) in bonds else ub).addBond(a, b, r0, k)
-            add("bond", real)
-            if ub.getNumBonds():
-                add("angle", ub)
-        elif isinstance(f, mm.HarmonicAngleForce):
-            add("angle", f)
-        elif isinstance(f, mm.PeriodicTorsionForce):
-            prop, imp = mm.PeriodicTorsionForce(), mm.PeriodicTorsionForce()
-            for i in range(f.getNumTorsions()):
-                *t, n, ph, k = f.getTorsionParameters(i)
-                (prop if is_chain(bonds, t) else imp).addTorsion(*t, n, ph, k)
-            add("dihedral", prop)
-            if imp.getNumTorsions():
-                add("improper", imp)
-        elif isinstance(f, mm.RBTorsionForce):
-            add("dihedral", f)
-        elif isinstance(f, mm.CustomTorsionForce):
-            add("improper", f)
-        elif isinstance(f, mm.CMAPTorsionForce):
-            add("cmap", f)
-        elif isinstance(f, mm.NonbondedForce):
-            lj, coul = copy.deepcopy(f), copy.deepcopy(f)
-            for i in range(f.getNumParticles()):
-                q, s, e = f.getParticleParameters(i)
-                lj.setParticleParameters(i, 0.0, s, 0.0 if foyer_geometric else e)
-                coul.setParticleParameters(i, q, 1.0, 0.0)
-            for i in range(f.getNumExceptions()):
-                a, b, qq, s, e = f.getExceptionParameters(i)
-                if foyer_geometric and e._value != 0.0:
-                    # foyer: the 1-4 sigma mixes geometrically too.
-                    _, si, _ = f.getParticleParameters(a)
-                    _, sj, _ = f.getParticleParameters(b)
-                    s = math.sqrt(si._value * sj._value)
-                lj.setExceptionParameters(i, a, b, 0.0, s, e)
-                coul.setExceptionParameters(i, a, b, qq, 1.0, 0.0)
-            add("vdw", lj)
-            add("coul", coul)
-            if foyer_geometric:
-                geo = mm.CustomNonbondedForce(
-                    "4*epsilon*((sigma/r)^12-(sigma/r)^6);"
-                    " sigma=sqrt(sigma1*sigma2); epsilon=sqrt(epsilon1*epsilon2)"
-                )
-                geo.addPerParticleParameter("sigma")
-                geo.addPerParticleParameter("epsilon")
-                for i in range(f.getNumParticles()):
-                    _, s, e = f.getParticleParameters(i)
-                    geo.addParticle([s, e])
-                for i in range(f.getNumExceptions()):
-                    a, b, *_ = f.getExceptionParameters(i)
-                    geo.addExclusion(a, b)
-                geo.setNonbondedMethod(mm.CustomNonbondedForce.NoCutoff)
-                add("vdw", geo)
-        elif isinstance(f, (mm.CustomNonbondedForce, mm.CustomBondForce)):
-            add("vdw", f)
-        elif isinstance(f, mm.CMMotionRemover):
-            continue
-        else:
-            raise SystemExit(f"unexpected force {type(f).__name__}")
-    for f in out:
-        system.addForce(f)
-    return groups
-
-
 def energies(system: mm.System, groups: dict, positions_nm) -> dict:
     ctx = mm.Context(system, mm.VerletIntegrator(1.0), mm.Platform.getPlatformByName("Reference"))
     ctx.setPositions(positions_nm)
+    kj_per_kcal = unit_factor("kcal", "kJ")
     out = {}
     for g, name in groups.items():
         e = ctx.getState(getEnergy=True, groups={g}).getPotentialEnergy()
-        out[name] = out.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+        out[name] = out.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
     total = ctx.getState(getEnergy=True).getPotentialEnergy()
-    out["total"] = total.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
+    out["total"] = total.value_in_unit(u.kilojoule_per_mole) / kj_per_kcal
     return out
 
 
@@ -334,8 +248,8 @@ def price(xml_path: Path, mol, x, atoms, foyer_geometric: bool) -> dict:
     ff = app.ForceField(str(xml_path))
     system = ff.createSystem(topology(mol, atoms), nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False)
     bonds, _, _ = graph_terms(mol)
-    groups = split_system(system, set(bonds), foyer_geometric)
-    return energies(system, groups, x / ANGSTROM_PER_NM)
+    groups = split_system(system, bonds, foyer_geometric)
+    return energies(system, groups, x / unit_factor("nm", "angstrom"))
 
 
 def written(name, out_dir, written_dir, mol, x, atoms, foyer_geometric=False):
@@ -361,7 +275,7 @@ def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
     top = topology(mol, atoms)
     system = ff.createSystem(top, nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False)
     bonds, angles, propers = graph_terms(mol)
-    bond_set = set(bonds)
+    bond_set = {frozenset(b) for b in bonds}
     impropers, cmaps = [], []
     for f in system.getForces():
         if isinstance(f, mm.PeriodicTorsionForce):
@@ -382,8 +296,8 @@ def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
     for f in system.getForces():
         if isinstance(f, mm.NonbondedForce):
             charges = [f.getParticleParameters(i)[0].value_in_unit(u.elementary_charge) for i in range(f.getNumParticles())]
-    groups = split_system(system, bond_set, foyer_geometric)
-    e = energies(system, groups, x / ANGSTROM_PER_NM)
+    groups = split_system(system, bonds, foyer_geometric)
+    e = energies(system, groups, x / unit_factor("nm", "angstrom"))
     data = {
         "source": "scripts/openmm_xml_check.py, OpenMM " + mm.__version__ + ", Reference platform, NoCutoff",
         "types": [a[1] for a in atoms],

@@ -528,7 +528,7 @@ fn override_cells(frame: &Frame) -> Result<(Vec<Cells>, Vec<usize>), String> {
     let Some(block) = frame.get(PAIRS) else {
         return Ok((Vec::new(), Vec::new()));
     };
-    let n = block.nrows().unwrap_or(0);
+    let n = block.n_rows().unwrap_or(0);
     let mut cells = vec![[None; 5]; n];
     for (c, &key) in PAIR_OVERRIDE_COLUMNS.iter().enumerate() {
         let Some(col) = block.get(key) else {
@@ -625,7 +625,7 @@ struct BondClasses {
 impl BondClasses {
     fn new(frame: &Frame) -> Option<Self> {
         frame.get(BONDS)?;
-        let n = frame.get(ATOMS).and_then(|b| b.nrows()).unwrap_or(0);
+        let n = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
         let mut adjacency = vec![Vec::new(); n];
         for (a, b) in end_pairs(frame, BONDS, ATOMI, ATOMJ) {
             if a < n && b < n && a != b {

@@ -46,8 +46,8 @@ generated from GROMACS's `oplsaa.ff` by `cargo mrs-gen-opls`
 (`molrs/examples/gen_opls_params.rs`); `oplsaa_typing.rs`, `mmff.rs`, `uff.rs`,
 `clpol.rs`, `amber.rs` and `mod.rs` are hand-maintained source.
 
-Run it where AmberTools and `rustfmt` are installed (`rustfmt` formats the
-output as `cargo fmt` does):
+Run it where AmberTools, `rustfmt` (which formats the output as `cargo fmt`
+does) and molrs (its periodic table names the elements) are installed:
 
     AMBERHOME=/path/to/amber python3 scripts/gen_param_tables.py
     AMBERHOME=... python3 scripts/gen_param_tables.py --out-dir /tmp/tables
@@ -64,6 +64,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from functools import cache
 from pathlib import Path
 from typing import ClassVar
 
@@ -94,15 +95,28 @@ PARM_DIR = "dat/leap/parm"
 # are genuinely tree-shaped and are left to rustfmt.
 RUSTFMT_SKIP = "#[rustfmt::skip]"
 
-# --- Element symbol -> atomic number ---------------------------------------
-# Only the elements the antechamber tables actually name. A symbol outside this
-# map is a hard error: it means the upstream grammar grew something new.
-ELEMENTS = {
-    "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8,
-    "F": 9, "Ne": 10, "Na": 11, "Mg": 12, "Al": 13, "Si": 14, "P": 15,
-    "S": 16, "Cl": 17, "Ar": 18, "K": 19, "Ca": 20, "Fe": 26, "Cu": 29,
-    "Zn": 30, "Br": 35, "I": 53,
-}
+# --- Element symbol <-> atomic number --------------------------------------
+# molrs's periodic table (molrs.core.Element). A name is an element only when
+# it is the element's exact symbol (`Cl`, never `CL` or `chlorine`).
+
+
+@cache
+def atomic_number(symbol: str) -> int | None:
+    """The atomic number of the element whose symbol is exactly ``symbol``."""
+    from molrs.core import Element
+
+    try:
+        element = Element(symbol)
+    except (ValueError, KeyError):
+        return None
+    return element.number if element.symbol == symbol else None
+
+
+def element_symbol(z: int) -> str:
+    from molrs.core import Element
+
+    return Element(z).symbol
+
 
 # Atom-property tokens, mapped to the `AtomProp` Rust variant. The lowercase
 # forms (`sb`/`db`/`tb`) count aromatic + delocalized bonds too; the uppercase
@@ -877,9 +891,10 @@ def parse_wildatom_spec(token: str) -> tuple[int, int | None]:
     """`C3` -> (6, Some(3)); `O` -> (8, None)."""
     split = next((i for i, c in enumerate(token) if c.isdigit()), len(token))
     symbol, degree = token[:split], token[split:]
-    if symbol not in ELEMENTS:
+    z = atomic_number(symbol)
+    if z is None:
         raise GrammarError(f"unknown WILDATOM element symbol `{symbol}`")
-    return ELEMENTS[symbol], int(degree) if degree else None
+    return z, int(degree) if degree else None
 
 
 def parse_atomtype_def(path: Path) -> tuple[dict[str, list[tuple[int, int | None]]], list[Rule]]:
@@ -965,8 +980,8 @@ def emit_pattern(p: Pattern, wildatoms: dict) -> str:
         atom = "PatternAtom::ElectronWithdrawing"
     elif p.name in wildatoms:
         atom = f"PatternAtom::Wild({wild_const(p.name)})"
-    elif p.name in ELEMENTS:
-        atom = f"PatternAtom::Element({ELEMENTS[p.name]})"
+    elif atomic_number(p.name) is not None:
+        atom = f"PatternAtom::Element({atomic_number(p.name)})"
     else:
         raise GrammarError(
             f"pattern atom `{p.name}` is neither EW, a WILDATOM of this file, nor an element"
@@ -996,10 +1011,7 @@ def emit_atomtype(path: Path, const: str, eq: Equivalents | None) -> str:
 
     for name, specs in wildatoms.items():
         pretty = " ".join(
-            f"{sym}{d if d is not None else ''}"
-            for sym, d in (
-                (next(s for s, z in ELEMENTS.items() if z == zz), dd) for zz, dd in specs
-            )
+            f"{element_symbol(z)}{d if d is not None else ''}" for z, d in specs
         )
         w(f"/// `WILDATOM {name} {pretty}`")
         w(RUSTFMT_SKIP)

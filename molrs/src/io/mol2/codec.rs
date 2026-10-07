@@ -471,10 +471,10 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
         .get("atoms")
         .ok_or_else(|| invalid_data("MOL2 write: frame has no atoms block"))?;
     let n = atoms
-        .nrows()
+        .n_rows()
         .ok_or_else(|| invalid_data("MOL2 write: atoms block has no rows"))?;
     let bonds = frame.get("bonds");
-    let n_bonds = bonds.and_then(|b| b.nrows()).unwrap_or(0);
+    let n_bonds = bonds.and_then(|b| b.n_rows()).unwrap_or(0);
 
     let title = frame
         .meta
@@ -606,11 +606,11 @@ mod tests {
         let mut reader = Mol2Reader::new(Cursor::new(ETHANE_MIN.as_bytes()));
         let frame = reader.read().unwrap().unwrap();
         let atoms = frame.get("atoms").unwrap();
-        assert_eq!(atoms.nrows(), Some(2));
+        assert_eq!(atoms.n_rows(), Some(2));
         let xs = atoms.get("x").and_then(|c| c.as_float()).unwrap();
         assert!((xs[[1]] - 1.5).abs() < 1e-9);
         let bonds = frame.get("bonds").unwrap();
-        assert_eq!(bonds.nrows(), Some(1));
+        assert_eq!(bonds.n_rows(), Some(1));
         let atomi = bonds.get("atomi").and_then(|c| c.as_uint()).unwrap();
         let atomj = bonds.get("atomj").and_then(|c| c.as_uint()).unwrap();
         assert_eq!(atomi[[0]], 0);

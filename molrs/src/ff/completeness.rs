@@ -1436,7 +1436,7 @@ fn every_registered_style_persists_through_a_record() {
         if category == "cmap" {
             params = Params::new();
             params.set_array(
-                crate::ff::potential::cmap::charmm::GRID,
+                crate::ff::ir::CMAP_GRID,
                 ndarray::Array2::from_shape_fn((4, 4), |(i, j)| (i * 4 + j) as f64).into_dyn(),
             );
         }

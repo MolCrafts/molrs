@@ -77,6 +77,7 @@ ENV = _clean_env()
 def git(*args: str, cwd: Path | None = None, quiet: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
+        check=False,
         cwd=cwd,
         env=ENV,
         text=True,
@@ -290,7 +291,7 @@ def run(cmd: list[str]) -> int:
             sync(root / me)
             print(f"partners: running in {root / me}: {' '.join(cmd)}", file=sys.stderr)
             env_out = dict(ENV, PARTNERS_SOURCE=str(ROOT))
-            return subprocess.run(cmd, cwd=root / me, env=env_out).returncode
+            return subprocess.run(cmd, check=False, cwd=root / me, env=env_out).returncode
     finally:
         if not cache:
             shutil.rmtree(root, ignore_errors=True)

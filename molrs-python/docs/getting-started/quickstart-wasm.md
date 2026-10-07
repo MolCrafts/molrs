@@ -51,7 +51,7 @@ const x = atoms.copy("x");          // owned Float64Array
 const y = atoms.copy("y");
 const z = atoms.copy("z");
 
-console.log(atoms.nrows, atoms.dtype("x"), x[0], y[0], z[0]);
+console.log(atoms.nRows, atoms.dtype("x"), x[0], y[0], z[0]);
 ```
 
 `copy` returns an owned typed array that is safe to keep. `view(key)` returns
@@ -74,7 +74,7 @@ import { MrecReader, readMrecFrame } from "@molcrafts/molrs";
 const bytes = new Uint8Array(await (await fetch("run.mrec.zip")).arrayBuffer());
 const reader = MrecReader.fromZip(bytes);
 const first = reader.readFrame(0);
-console.log(reader.nFrames(), first?.get("atoms").nrows);
+console.log(reader.nFrames(), first?.get("atoms").nRows);
 
 const snapshot = readMrecFrame(
   new Uint8Array(await (await fetch("water.mrec.zip")).arrayBuffer()),

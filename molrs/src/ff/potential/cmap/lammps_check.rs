@@ -16,9 +16,9 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, Axis};
 
-use super::charmm::GRID;
 use super::charmm::tests::{alanine, chain, place};
 use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::ir::CMAP_GRID;
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::typifier::cmap::assign_cmaps;
 use crate::io::writer::ForceFieldWriter;
@@ -57,13 +57,13 @@ fn system() -> (ForceField, Frame, Vec<F>) {
     let mut ff = ForceField::new("charmm");
     let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
     let mut ala = Params::new();
-    ala.set_array(GRID, alanine());
+    ala.set_array(CMAP_GRID, alanine());
     style
         .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
         .unwrap();
     let mut swapped = Params::new();
     swapped.set_array(
-        GRID,
+        CMAP_GRID,
         alanine().reversed_axes().as_standard_layout().to_owned(),
     );
     style

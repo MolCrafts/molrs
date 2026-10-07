@@ -7,7 +7,7 @@ in ``1..=``:data:`molrs.io.mrec.MOLREC_VERSION` — and an absent key is no vers
 a record is the ``*.mrec/`` path suffix plus a Zarr root.
 """
 
-from ..._lib import mrec as _mrec
+from ..._native import mrec as _mrec
 
 validate_frame = _mrec.validation.validate_frame
 validate_meta = _mrec.validation.validate_meta

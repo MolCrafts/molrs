@@ -68,12 +68,12 @@ atoms.set("element", ["C", "C", "O"]);            // string[] → string
 atoms.set("pos", new Float64Array(9), [3, 3]);    // optional row-major shape
 const v = atoms.view("x");                        // zero-copy Float64Array; invalid after WASM memory grows
 const x = atoms.copy("x");                        // owned Float64Array to keep
-const q = atoms.get("charge", new Float64Array(atoms.nrows)); // copy, or this default if absent
+const q = atoms.copy("charge", new Float64Array(atoms.nRows)); // or this fallback if absent
 atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 ```
 
-| dtype | `view` | `copy` / `get` | `set` accepts |
-|-------|--------|----------------|---------------|
+| dtype | `view` | `copy` | `set` accepts |
+|-------|--------|--------|---------------|
 | `float` | `Float64Array` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
 | `i8` `i16` `int` `i64` | `Int8Array` … `BigInt64Array` (`int` is `Int32Array`) | same typed array | same |
 | `u8` `u16` `u32` `uint` | `Uint8Array` … `BigUint64Array` (`uint` is `BigUint64Array`) | same typed array | same |
@@ -90,6 +90,9 @@ const withH = addHydrogens(frame);
 ```
 
 ### I/O (`molrs::io`)
+
+The binding's `io` sources mirror `molrs::io`: one module per format, holding
+that format's reader (or stream) and writer.
 
 - `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
   `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included)

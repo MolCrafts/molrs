@@ -68,8 +68,7 @@
 extern crate self as molrs;
 
 // Op is always compiled: the numeric base beneath core (vector, rigid-motion,
-// linear-algebra kernels), plus the whole-graph transforms of
-// `op`'s geometry functions (`op::translate`, …), the one part of `op` that acts on a core `MolGraph`.
+// linear-algebra kernels). It names no other molrs module.
 pub mod op;
 
 // Core is always compiled: the data model (Frame, Block, Trajectory), the

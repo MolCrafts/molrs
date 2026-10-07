@@ -109,7 +109,7 @@ impl CgSmilesIr {
     ///
     /// Whatever converting a fragment body raises — an unmatched ring closure
     /// inside it, say — propagates with the converter's **own** kind, stamped
-    /// [`Notation::CGsmiles`](crate::io::smiles::Notation::CGsmiles) and with
+    /// [`Notation::CgSmiles`](crate::io::smiles::Notation::CgSmiles) and with
     /// no input text: a value returned by
     /// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse) has bodies that
     /// already converted once, so only a hand-built IR reaches this.
@@ -170,7 +170,7 @@ impl CgSmilesIr {
             // One conversion per definition, one replicate per run.
             let (template, map) = cache
                 .get_or_build(name, body)
-                .map_err(|e| SmilesError::new(e.kind, e.span, "", Notation::CGsmiles))?;
+                .map_err(|e| SmilesError::new(e.kind, e.span, "", Notation::CgSmiles))?;
             // The row of each port atom in the template: replicate returns
             // handles copy-major in template row order.
             let port_rows = map
@@ -308,7 +308,7 @@ impl CgSmilesIr {
             SmilesErrorKind::CgNotExpandable(payload),
             self.span,
             "",
-            Notation::CGsmiles,
+            Notation::CgSmiles,
         )
     }
 }

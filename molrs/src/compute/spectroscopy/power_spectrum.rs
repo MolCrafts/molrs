@@ -95,7 +95,12 @@ mod tests {
         let mut v = Array2::zeros((n, 3));
         for t in 0..n {
             let tf = t as f64 * dt_fs;
-            v[[t, 0]] = (2.0 * std::f64::consts::PI * freq_thz * 1e-3 * tf).sin();
+            v[[t, 0]] = (2.0
+                * std::f64::consts::PI
+                * freq_thz
+                * crate::core::UnitFactor::new("THz", "1/fs").get()
+                * tf)
+                .sin();
         }
         v
     }

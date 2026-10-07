@@ -137,7 +137,7 @@ impl Topology {
 
     /// Read connectivity from a [`Frame`]'s `atoms` / `bonds` blocks.
     ///
-    /// Atom count comes from `atoms.nrows()`. Edges come from uint
+    /// Atom count comes from `atoms.n_rows()`. Edges come from uint
     /// [`keys::ATOMI`] / [`keys::ATOMJ`] columns and are replayed through
     /// [`from_edges`](Self::from_edges), so neighbour slices follow bonds-block
     /// insertion order and are **never sorted**. Sorting them would reshape a
@@ -168,12 +168,12 @@ impl Topology {
             .get(ATOMS)
             .ok_or(TopologyError::MissingBlock { block: ATOMS })?;
         let n = atoms
-            .nrows()
+            .n_rows()
             .ok_or(TopologyError::NoRows { block: ATOMS })?;
         let Some(bonds) = frame.get(BONDS) else {
             return Ok(Self::from_edges(n, &[]));
         };
-        match bonds.nrows() {
+        match bonds.n_rows() {
             None | Some(0) => return Ok(Self::from_edges(n, &[])),
             Some(_) => {}
         }

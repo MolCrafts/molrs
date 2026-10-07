@@ -3,7 +3,7 @@
 //! [`read_mrec_system`] / [`write_mrec_system`], [`read_mrec_trajectory`] /
 //! [`write_mrec_trajectory`], [`read_mrec_forcefield`] /
 //! [`write_mrec_forcefield`], [`read_mrec_meta`]; [`register_doors`]), and
-//! the `_lib.mrec` submodule, `molrs.io.mrec` ([`register`]): the store
+//! the `_native.mrec` submodule, `molrs.io.mrec` ([`register`]): the store
 //! reader and writer ([`PyMrecReader`], [`PySequenceSchema`],
 //! [`PyMrecWriter`], named as `molrs::io::mrec`'s `MrecReader`,
 //! `SequenceSchema` and `MrecWriter`), [`section_names`], [`pack_mrec_zip`],
@@ -1035,7 +1035,7 @@ pub(crate) fn register_doors(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Register `molrs.io.mrec` on its `_lib.mrec` submodule, with
+/// Register `molrs.io.mrec` on its `_native.mrec` submodule, with
 /// `molrs.io.mrec.validation` as that submodule's `validation`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(section_names, m)?)?;

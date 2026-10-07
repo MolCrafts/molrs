@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::one_four::OneFour;
-use crate::ff::ir::positional::{self, number, read_named, value};
+use crate::ff::ir::positional::{self, number, parse_named, value};
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::ir::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};
 use crate::ff::ir::{ParamDimension, StyleSpec};
@@ -351,7 +351,7 @@ impl LammpsCodec for PeriodicAsCvffCodec {
     }
 
     fn read(&self, spec: &StyleSpec, values: &[&str]) -> Result<Params, String> {
-        let p = read_named(spec, &["k", "d", "periodicity"], values)?;
+        let p = parse_named(spec, &["k", "d", "periodicity"], values)?;
         let phase = match p.get("d") {
             Some(1.0) => 0.0,
             Some(-1.0) => 180.0,
@@ -493,7 +493,7 @@ impl LammpsCodec for AngleClass2Codec {
         &["bb", "ba"]
     }
 
-    fn read_extra(
+    fn parse_extra(
         &self,
         spec: &StyleSpec,
         keyword: &str,
@@ -533,7 +533,7 @@ impl LammpsCodec for DihedralClass2Codec {
         &["mbt", "ebt", "at", "aat", "bb13"]
     }
 
-    fn read_extra(
+    fn parse_extra(
         &self,
         spec: &StyleSpec,
         keyword: &str,
@@ -631,7 +631,7 @@ impl LammpsCodec for LjCharmmCodec {
     fn read(&self, spec: &StyleSpec, values: &[&str]) -> Result<Params, String> {
         match values.len() {
             2 => {
-                let mut p = read_named(spec, &["epsilon", "sigma"], values)?;
+                let mut p = parse_named(spec, &["epsilon", "sigma"], values)?;
                 p.set("epsilon14", p.get("epsilon").unwrap());
                 p.set("sigma14", p.get("sigma").unwrap());
                 Ok(p)
@@ -665,8 +665,8 @@ impl LammpsCodec for LjCharmmCodec {
         switch_args(spec, style, units)
     }
 
-    fn read_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
-        read_named(spec, &["inner", "cutoff"], args)
+    fn parse_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
+        parse_named(spec, &["inner", "cutoff"], args)
     }
 }
 
@@ -826,8 +826,8 @@ impl LammpsCodec for CoulCharmmCodec {
         switch_args(spec, style, units)
     }
 
-    fn read_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
-        read_named(spec, &["inner", "cutoff"], args)
+    fn parse_style_args(&self, spec: &StyleSpec, args: &[&str]) -> Result<Params, String> {
+        parse_named(spec, &["inner", "cutoff"], args)
     }
 }
 

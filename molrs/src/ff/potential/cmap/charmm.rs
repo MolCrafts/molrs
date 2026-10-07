@@ -2,11 +2,11 @@
 
 use crate::ff::potential::param_reads;
 use std::collections::HashMap;
-use std::f64::consts::PI;
 
 use ndarray::{Array2, ArrayD, ArrayView2};
 
 use crate::ff::forcefield::Params;
+use crate::ff::ir::CMAP_GRID;
 use crate::ff::potential::flat_coords::{compute_dihedral, sub3, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, scale};
@@ -14,9 +14,6 @@ use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
 use molrs::core::schema::block_names::CMAPS;
 use molrs::op::F;
-
-/// The array param a `cmap` type keeps its map under.
-pub const GRID: &str = "grid";
 
 /// Lower grid edge, degrees (LAMMPS `CMAPXMIN2`).
 const ORIGIN: F = -180.0;
@@ -188,7 +185,7 @@ impl CmapGrid {
             de_dphi = u * de_dphi + (3.0 * cij[3][i] * t + 2.0 * cij[2][i]) * t + cij[1][i];
             de_dpsi = t * de_dpsi + (3.0 * cij[i][3] * u + 2.0 * cij[i][2]) * u + cij[i][1];
         }
-        let per_radian = 180.0 / PI / dx;
+        let per_radian = (1.0 / dx).to_degrees();
         (e, de_dphi * per_radian, de_dpsi * per_radian)
     }
 }
@@ -449,10 +446,11 @@ pub fn cmap_charmm_constructor(
                     .get(label)
                     .ok_or_else(|| format!("cmap_charmm: unknown type '{label}'"))?;
                 let grid = params
-                    .get_array(GRID)
-                    .ok_or_else(|| param_reads::missing("charmm", label, GRID))?;
+                    .get_array(CMAP_GRID)
+                    .ok_or_else(|| param_reads::missing("charmm", label, CMAP_GRID))?;
                 maps.push(
-                    CmapGrid::new(grid).map_err(|e| param_reads::bad("charmm", label, GRID, e))?,
+                    CmapGrid::new(grid)
+                        .map_err(|e| param_reads::bad("charmm", label, CMAP_GRID, e))?,
                 );
                 index.insert(label, maps.len() - 1);
                 maps.len() - 1
@@ -699,12 +697,12 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         let mut ala = Params::new();
-        ala.set_array(GRID, alanine());
+        ala.set_array(CMAP_GRID, alanine());
         style
             .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
             .unwrap();
         let mut flat = Params::new();
-        flat.set_array(GRID, alanine().mapv(|v| 0.5 * v + 0.1));
+        flat.set_array(CMAP_GRID, alanine().mapv(|v| 0.5 * v + 0.1));
         style
             .def_type("flat", &["NH1", "CT1", "C", "NH1", "CT1"], flat)
             .unwrap();
@@ -782,7 +780,7 @@ pub(crate) mod tests {
             "{err}"
         );
         let mut odd = Params::new();
-        odd.set_array(GRID, ArrayD::zeros(vec![3, 4]));
-        assert!(CmapGrid::new(odd.get_array(GRID).unwrap()).is_err());
+        odd.set_array(CMAP_GRID, ArrayD::zeros(vec![3, 4]));
+        assert!(CmapGrid::new(odd.get_array(CMAP_GRID).unwrap()).is_err());
     }
 }

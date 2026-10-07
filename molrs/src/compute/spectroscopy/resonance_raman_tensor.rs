@@ -22,10 +22,10 @@ pub struct ResonanceRamanTensor;
 /// `(resonant_polarizabilities (n,6), dt, resolution)` for
 /// [`ResonanceRamanTensor`] — same shape/convention as
 /// [`RamanTensorArgs`](super::raman_tensor::RamanTensorArgs).
-pub type ResonanceRamanArgs<'a> = (&'a Array2<f64>, f64, usize);
+pub type ResonanceRamanTensorArgs<'a> = (&'a Array2<f64>, f64, usize);
 
 impl Compute for ResonanceRamanTensor {
-    type Args<'a> = ResonanceRamanArgs<'a>;
+    type Args<'a> = ResonanceRamanTensorArgs<'a>;
     type Output = RamanTensorResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(

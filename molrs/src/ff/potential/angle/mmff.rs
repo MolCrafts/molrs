@@ -459,7 +459,7 @@ mod tests {
 
         // The derivation, executed: convert the degree constant and land on -0.4.
         let cb_deg: f64 = -0.006981317;
-        let cb_rad = cb_deg * 180.0 / std::f64::consts::PI;
+        let cb_rad = cb_deg.to_degrees();
         assert!(
             (cb_rad - CB_RAD).abs() < 1e-7,
             "CB_RAD ({CB_RAD}) is not cb_deg * 180/pi ({cb_rad})"
@@ -467,7 +467,7 @@ mod tests {
 
         // And the rounded-first path is measurably NOT the same number, which is
         // the whole bug: 0.27% of the cubic term.
-        let rounded_first = -0.007 * 180.0 / std::f64::consts::PI;
+        let rounded_first = (-0.007_f64).to_degrees();
         assert!(
             (rounded_first - CB_RAD).abs() > 1e-3,
             "rounding cb to -0.007 before converting gives {rounded_first}, which must not \

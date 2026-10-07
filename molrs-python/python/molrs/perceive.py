@@ -31,7 +31,7 @@ overlapping groups. Mapping matched groups onto the sites of a new
 :class:`molrs.builder.Coarsener`.
 """
 
-from ._lib import (
+from ._native import (
     Reaction,
     RingInfo,
     SmartsMatch,

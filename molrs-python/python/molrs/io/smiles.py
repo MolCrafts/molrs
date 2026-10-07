@@ -28,7 +28,7 @@ an IR and never see the text it came from; and ``notation``, lowercase
 ``str(e)`` is the message Rust renders, caret line included.
 """
 
-from .._lib import BondingDescriptor, SmilesError, SmilesIr
+from .._native import BondingDescriptor, SmilesError, SmilesIr
 
 __all__ = [
     "BondingDescriptor",

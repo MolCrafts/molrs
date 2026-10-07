@@ -1232,7 +1232,7 @@ mod tests {
         }
     }
 
-    // --- Integration test: PME + PairLJCut in Potentials ---
+    // --- Integration test: PME + PairLjCut in Potentials ---
 
     #[test]
     fn test_pme_in_potentials_collection() {

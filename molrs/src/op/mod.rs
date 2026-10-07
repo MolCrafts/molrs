@@ -16,7 +16,6 @@
 //! | linear algebra | 3×3 determinant and inverse; eigenvalues and eigenvectors of symmetric 3×3 / 4×4 matrices |
 //! | rigid motions | [`Rigid`] — a rotation followed by a translation, which moves a body without deforming it — the quaternion kernels, and NeRF placement of a point from internal coordinates ([`place_from_internal_coords`]) |
 //! | superposition | [`superpose`] → [`Superposition`]: the rigid motion that best lays one set of matched points onto another (least squares), and the weighted [`centroid`] |
-//! | molecule geometry | [`translate`], [`scale`], [`rotate`] and [`center`] on a `MolGraph`'s coordinates |
 //! | sampling | uniform directions on S² ([`unit_vector_from_uniform`]) and the standard normal ([`standard_normal`]) |
 //!
 //! # Numeric aliases
@@ -32,21 +31,6 @@
 //! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
 //!   kernels compute on. [`to_vec3`] and [`to_mat3`] are where ndarray meets
 //!   them.
-//!
-//! # Molecule geometry
-//!
-//! The vocabulary is that of the entity–component–system (ECS) design molrs
-//! uses for its graphs: a node is an *entity*, its properties (`x`, `mass`, …)
-//! are *components*, and a *system* is a function that runs over the whole
-//! data set (the *world*). The graph is pure data, so spatial transforms and
-//! reductions live here as free functions rather than as methods on the data
-//! structure. Coordinates are read and written through the canonical
-//! [`crate::core::keys`] coordinate convention — no field-name literals — and
-//! are in Å by molrs convention.
-//!
-//! No function here applies a periodic image convention: [`MolGraph`](crate::core::MolGraph) holds no
-//! box. Callers unwrap and wrap with
-//! [`SimBox`](crate::core::SimBox) themselves.
 //!
 //! # Quaternions
 //!
@@ -65,7 +49,6 @@
 //! invariant under a uniform rescaling of the input: a structure in nm and the
 //! same structure in Å give the same eigenvectors, and a well-conditioned
 //! matrix of small entries is never declared singular.
-mod geometry;
 mod linalg;
 mod numeric;
 mod random;
@@ -74,7 +57,6 @@ mod so3;
 mod superpose;
 pub mod vec3;
 
-pub use geometry::{CenterError, center, rotate, scale, translate};
 pub use linalg::{det3, eigh_sym_3x3, eigh_sym_4x4, inv3};
 pub use numeric::{
     F, F3, F3View, Fnx3, Fnx3View, I, Idx, Mat3, Pbc3, Quat, Vec3, to_mat3, to_vec3,

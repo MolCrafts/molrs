@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::core::constants;
 use crate::op::F;
 
 use super::dimension::Dimension;
@@ -179,6 +180,39 @@ impl UnitRegistry {
         GLOBAL_REGISTRY.get_or_init(UnitRegistry::new)
     }
 
+    /// The factor that converts a value in `from` to `to`:
+    /// `value_in_to = value_in_from × factor`.
+    ///
+    /// The factor is `from`'s SI factor over `to`'s, except that when the
+    /// inverse ratio is a whole number (Å → nm is 1/10) it is that number's
+    /// reciprocal, so a power-of-ten conversion is the correctly rounded
+    /// `0.1`, not `1e-10 / 1e-9`.
+    ///
+    /// ```
+    /// use molrs::core::UnitRegistry;
+    ///
+    /// let reg = UnitRegistry::global();
+    /// assert_eq!(reg.factor("kcal", "kJ").unwrap(), 4.184);
+    /// assert_eq!(reg.factor("nm", "angstrom").unwrap(), 10.0);
+    /// assert_eq!(reg.factor("angstrom", "nm").unwrap(), 0.1);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Either expression does not parse, the two differ in dimension, or
+    /// one is affine (`degC`).
+    pub fn factor(&self, from: &str, to: &str) -> Result<F, UnitsError> {
+        let from = self.parse(from)?;
+        let to = self.parse(to)?;
+        let direct = from.factor_to(&to)?;
+        let inverse = to.factor_to(&from)?;
+        Ok(if inverse >= 1.0 && inverse.fract() == 0.0 {
+            1.0 / inverse
+        } else {
+            direct
+        })
+    }
+
     /// Define a unit, registering its name, symbol, and all aliases.
     ///
     /// # Errors
@@ -344,7 +378,7 @@ impl UnitRegistry {
         }
 
         let tau_s = (mass_kg * sigma_m * sigma_m / epsilon_j).sqrt();
-        let temperature_k = epsilon_j / crate::core::constants::BOLTZMANN;
+        let temperature_k = epsilon_j / constants::BOLTZMANN;
         let charge_c = crate::core::constants::ELEMENTARY_CHARGE
             * (sigma_angstrom * epsilon_kcal_mol / crate::core::constants::COULOMB_REAL).sqrt();
         let definitions = [
@@ -493,18 +527,28 @@ fn md_defs() -> Vec<UnitDef> {
     let l = Dimension::LENGTH;
     let e = Dimension::ENERGY;
     vec![
-        // Length. angstrom: exact; bohr: CODATA 2018 a0.
+        // Length. angstrom: exact; bohr: CODATA 2018 a0
+        // ([`constants::BOHR_RADIUS`]).
         def("angstrom", "Å", &["ang"], 1e-10, 0.0, l, false),
-        def("bohr", "bohr", &["a0"], 5.291_772_109_03e-11, 0.0, l, false),
-        // Energy. joule: SI derived; calorie: thermochemical, exact 4.184 J;
-        // eV: SI-2019 exact; hartree: CODATA 2018.
+        def(
+            "bohr",
+            "bohr",
+            &["a0"],
+            constants::BOHR_RADIUS,
+            0.0,
+            l,
+            false,
+        ),
+        // Energy. joule: SI derived; calorie: thermochemical, exact 4.184 J
+        // (the one definition of the calorie: kcal ↔ kJ is this unit's);
+        // eV: e × 1 V; hartree: CODATA 2018 E_h.
         def("joule", "J", &[], 1.0, 0.0, e, true),
         def("calorie", "cal", &[], 4.184, 0.0, e, true),
         def(
             "kilocalorie_per_mole",
             "kcal_per_mol",
             &[],
-            4184.0 / crate::core::constants::AVOGADRO,
+            4184.0 / constants::AVOGADRO,
             0.0,
             e,
             false,
@@ -513,20 +557,36 @@ fn md_defs() -> Vec<UnitDef> {
             "kilojoule_per_mole",
             "kJ_per_mol",
             &[],
-            1000.0 / crate::core::constants::AVOGADRO,
+            1000.0 / constants::AVOGADRO,
             0.0,
             e,
             false,
         ),
         def("erg", "erg", &[], 1e-7, 0.0, e, false),
-        def("electron_volt", "eV", &[], 1.602_176_634e-19, 0.0, e, true),
-        def("hartree", "Eh", &[], 4.359_744_722_207_1e-18, 0.0, e, false),
+        def(
+            "electron_volt",
+            "eV",
+            &[],
+            constants::ELEMENTARY_CHARGE,
+            0.0,
+            e,
+            true,
+        ),
+        def(
+            "hartree",
+            "Eh",
+            &[],
+            constants::HARTREE_ENERGY,
+            0.0,
+            e,
+            false,
+        ),
         // Boltzmann constant k_B (SI-2019 exact) as a unit, J/K.
         def(
             "boltzmann_constant",
             "k_B",
             &[],
-            crate::core::constants::BOLTZMANN,
+            constants::BOLTZMANN,
             0.0,
             Dimension::ENERGY / Dimension::TEMPERATURE,
             false,
@@ -555,7 +615,7 @@ fn md_defs() -> Vec<UnitDef> {
             "dalton",
             "Da",
             &["amu"],
-            1.660_539_066_60e-27,
+            constants::ATOMIC_MASS_CONSTANT,
             0.0,
             Dimension::MASS,
             true,
@@ -564,7 +624,7 @@ fn md_defs() -> Vec<UnitDef> {
             "gram_per_mole",
             "g_per_mol",
             &[],
-            1e-3 / crate::core::constants::AVOGADRO,
+            1e-3 / constants::AVOGADRO,
             0.0,
             Dimension::MASS,
             false,
@@ -605,7 +665,7 @@ fn md_defs() -> Vec<UnitDef> {
             "statcoulomb",
             "statC",
             &[],
-            3.335_640_951_981_52e-10,
+            0.1 / constants::SPEED_OF_LIGHT,
             0.0,
             Dimension::CHARGE,
             false,
@@ -614,7 +674,7 @@ fn md_defs() -> Vec<UnitDef> {
             "elementary_charge",
             "e",
             &[],
-            1.602_176_634e-19,
+            constants::ELEMENTARY_CHARGE,
             0.0,
             Dimension::CHARGE,
             false,
@@ -623,7 +683,7 @@ fn md_defs() -> Vec<UnitDef> {
             "debye",
             "D",
             &[],
-            3.335_640_951_98e-30,
+            1e-21 / constants::SPEED_OF_LIGHT,
             0.0,
             CHARGE_LENGTH,
             false,

@@ -60,7 +60,7 @@ use std::path::Path;
 use ndarray::Array1;
 use serde_json::{Value, json};
 
-use crate::core::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
+use crate::core::UnitFactor;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
@@ -87,6 +87,9 @@ use molrs::io::lammps::data::{read_lammps_data, write_lammps_data};
 use molrs::io::read_amber_inpcrd_str;
 use molrs::io::reader::FrameReader as _;
 use molrs::op::{F, Idx};
+
+/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
+static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// The terms compared, in print order.
 pub(crate) const TERMS: [&str; 8] = [
@@ -350,7 +353,7 @@ fn idx_col(frame: &Frame, block: &str, key: &str) -> Vec<usize> {
 }
 
 fn adjacency(frame: &Frame) -> Vec<Vec<usize>> {
-    let n = frame.get("atoms").unwrap().nrows().unwrap();
+    let n = frame.get("atoms").unwrap().n_rows().unwrap();
     let mut adjacent = vec![Vec::new(); n];
     for (i, j) in idx_col(frame, "bonds", "atomi")
         .into_iter()
@@ -618,8 +621,12 @@ pub(crate) fn engine_form(sys: &System, engine: &str) -> (ForceField, Frame) {
 pub(crate) fn coulomb_of(source: &Source, ir: F, engine: &str) -> F {
     match (engine, source.native) {
         ("lammps", _) => COULOMB_REAL,
-        ("openmm", _) | ("native", Native::OpenMm) => OPENMM_COULOMB,
-        ("gromacs", _) | ("native", Native::Gromacs) => GROMACS_COULOMB,
+        ("openmm", _) | ("native", Native::OpenMm) => {
+            crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
+        }
+        ("gromacs", _) | ("native", Native::Gromacs) => {
+            crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
+        }
         ("native", Native::Sander) => ir,
         _ => unreachable!("{engine}"),
     }
@@ -653,7 +660,7 @@ fn without_overrides(frame: &Frame) -> Frame {
     let Some(pairs) = frame.get("pairs") else {
         return out;
     };
-    let n = pairs.nrows().unwrap_or(0);
+    let n = pairs.n_rows().unwrap_or(0);
     let has = |r: usize| {
         PAIR_OVERRIDE_COLUMNS
             .iter()
@@ -837,7 +844,7 @@ fn lammps_frame(frame: &Frame) -> Frame {
     }
     let atoms = out.get_mut("atoms").unwrap();
     if atoms.get("mol_id").is_none() {
-        let n = atoms.nrows().unwrap();
+        let n = atoms.n_rows().unwrap();
         atoms
             .insert("mol_id", Array1::from_vec(vec![1 as Idx; n]).into_dyn())
             .unwrap();
@@ -871,8 +878,9 @@ pub(crate) fn lammps_include(ff: &ForceField, frame: &Frame) -> (String, String,
 /// A `.gro` of `frame` at `x` (Å; the 0.01 Å grid prints exactly) in a
 /// 10 nm box.
 fn gro(frame: &Frame, x: &[F]) -> String {
+    let angstrom_to_nm = crate::core::UnitFactor::new("angstrom", "nm").get();
     let atoms = frame.get("atoms").unwrap();
-    let n = atoms.nrows().unwrap();
+    let n = atoms.n_rows().unwrap();
     let name = atoms.get("name").and_then(|c| c.as_string());
     let res = atoms.get("res_name").and_then(|c| c.as_string());
     let resid = atoms.get("res_id").and_then(|c| c.as_uint());
@@ -886,9 +894,9 @@ fn gro(frame: &Frame, x: &[F]) -> String {
             cut(res.map_or("MOL", |c| c[[i]].as_str())),
             cut(&name.map_or_else(|| format!("A{}", i + 1), |c| c[[i]].clone())),
             (i + 1) % 100_000,
-            x[3 * i] / 10.0,
-            x[3 * i + 1] / 10.0,
-            x[3 * i + 2] / 10.0
+            x[3 * i] * angstrom_to_nm,
+            x[3 * i + 1] * angstrom_to_nm,
+            x[3 * i + 2] * angstrom_to_nm
         )
         .unwrap();
     }
@@ -900,7 +908,7 @@ fn gro(frame: &Frame, x: &[F]) -> String {
 /// topology from.
 fn openmm_json(frame: &Frame, ff: &ForceField) -> Value {
     let atoms = frame.get("atoms").unwrap();
-    let n = atoms.nrows().unwrap();
+    let n = atoms.n_rows().unwrap();
     let types = atoms.get("type").unwrap().as_string().unwrap();
     let charges = atoms.get("charge").unwrap().as_float().unwrap();
     let masses: Vec<F> = match atoms.get("mass").and_then(|c| c.as_float()) {

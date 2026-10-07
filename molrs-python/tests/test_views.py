@@ -5,7 +5,7 @@ import pickle
 import molrs
 import numpy as np
 import pytest
-from molrs import _lib
+from molrs import _native
 
 VIEW_CLASSES = (
     "NodeRef",
@@ -51,13 +51,13 @@ def _ethanol_skeleton() -> tuple[molrs.core.Atomistic, list[molrs.core.Atom]]:
 
 class TestOneClass:
     def test_graph_classes_are_the_native_classes(self) -> None:
-        assert molrs.core.Atomistic is _lib.Atomistic
-        assert molrs.core.CoarseGrain is _lib.CoarseGrain
-        assert molrs.core.MolGraph is _lib.MolGraph
+        assert molrs.core.Atomistic is _native.Atomistic
+        assert molrs.core.CoarseGrain is _native.CoarseGrain
+        assert molrs.core.MolGraph is _native.MolGraph
 
     @pytest.mark.parametrize("name", VIEW_CLASSES)
     def test_view_classes_are_the_native_classes(self, name: str) -> None:
-        assert getattr(molrs.core, name) is getattr(_lib, name)
+        assert getattr(molrs.core, name) is getattr(_native, name)
 
     @pytest.mark.parametrize("cls", [molrs.core.Atomistic, molrs.core.CoarseGrain])
     def test_leaf_graph_classes_can_be_subclassed(self, cls: type) -> None:

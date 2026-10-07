@@ -43,7 +43,7 @@ impl Validator {
         let mut nrows: HashMap<String, usize> = HashMap::new();
         for name in &names {
             if let Some(n) = frame
-                .visit_block(name, |b: &dyn BlockAccess| b.nrows())
+                .visit_block(name, |b: &dyn BlockAccess| b.n_rows())
                 .flatten()
             {
                 nrows.insert(name.clone(), n);
@@ -135,7 +135,7 @@ impl Validator {
             let declared: Vec<(&str, &str)> = b.targets();
             let refs = relation_endpoints(name, |k| b.contains_key(k), &declared);
             let declared: Vec<String> = declared.iter().map(|(c, _)| c.to_string()).collect();
-            (refs, declared, b.nrows().unwrap_or(0))
+            (refs, declared, b.n_rows().unwrap_or(0))
         }) else {
             return;
         };

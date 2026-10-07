@@ -18,7 +18,7 @@ class TestAmberAliasDeleted:
         assert not hasattr(molrs.io, "read_inpcrd")
         assert "read_prmtop" not in molrs.io.__all__
         assert not hasattr(molrs.io, "read_prmtop")
-        assert not hasattr(molrs._lib, "read_prmtop")
+        assert not hasattr(molrs._native, "read_prmtop")
         assert callable(molrs.io.read_amber_prmtop)
         assert callable(molrs.io.read_amber_inpcrd)
 
@@ -33,7 +33,7 @@ class TestReadPdb:
     def test_basic(self, water_pdb):
         frame = molrs.io.read_pdb(str(water_pdb))
         assert "atoms" in frame
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
 
     def test_has_coordinates(self, water_pdb):
         frame = molrs.io.read_pdb(str(water_pdb))
@@ -57,7 +57,7 @@ class TestReadGro:
         assert len(frames) == 1
         f0 = frames[0]
         assert "atoms" in f0
-        assert f0["atoms"].nrows == 3
+        assert f0["atoms"].n_rows == 3
         assert f0.box is not None
 
     def test_native_columns(self, water_gro):
@@ -86,7 +86,7 @@ class TestReadGro:
         # A write must not rename the caller's columns.
         assert "res_name" in f0["atoms"] and "resname" not in f0["atoms"]
         f1 = molrs.io.read_gro(out)
-        assert f0["atoms"].nrows == f1["atoms"].nrows
+        assert f0["atoms"].n_rows == f1["atoms"].n_rows
         assert list(f1["atoms"]["res_id"]) == list(f0["atoms"]["res_id"])
         assert list(f1["atoms"]["id"]) == list(f0["atoms"]["id"])
 
@@ -96,7 +96,7 @@ class TestReadGro:
         molrs.io.write_gro_trajectory(out, [f0, f0])
         frames = molrs.io.read_gro_trajectory(out)
         assert len(frames) == 2
-        assert frames[1]["atoms"].nrows == f0["atoms"].nrows
+        assert frames[1]["atoms"].n_rows == f0["atoms"].n_rows
 
     def test_missing_file_raises_os_error(self):
         with pytest.raises(OSError):
@@ -107,7 +107,7 @@ class TestReadXyz:
     def test_basic(self, water_xyz):
         frame = molrs.io.read_xyz(str(water_xyz))
         assert "atoms" in frame
-        assert frame["atoms"].nrows == 3
+        assert frame["atoms"].n_rows == 3
 
     def test_has_coordinates(self, water_xyz):
         frame = molrs.io.read_xyz(str(water_xyz))
@@ -124,7 +124,7 @@ class TestReadXyz:
         molrs.io.write_xyz_trajectory(out, [frame, frame, frame])
         with molrs.io.read_xyz_trajectory(out) as reader:
             assert reader.n_frames == 3
-            assert reader[2]["atoms"].nrows == frame["atoms"].nrows
+            assert reader[2]["atoms"].n_rows == frame["atoms"].n_rows
 
 
 def test_every_trajectory_reader_has_its_writer() -> None:
@@ -226,7 +226,7 @@ class TestCanonicalNativeColumns:
             "read_lammps_data",
             "read_lammps_molecule",
         ):
-            assert getattr(molrs.io, name) is getattr(molrs._lib, name), name
+            assert getattr(molrs.io, name) is getattr(molrs._native, name), name
         assert not hasattr(molrs, "fields")
         assert not hasattr(molrs.io, "raw")
 
@@ -252,7 +252,7 @@ class TestCanonicalNativeColumns:
             "ITEM: ATOMS id type mol q x y z\n"
             "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n"
         )
-        atoms = molrs.io.read_lammps_trajectory(path).read_frame(0)["atoms"]
+        atoms = molrs.io.read_lammps_dump_trajectory(path).read_frame(0)["atoms"]
         np.testing.assert_allclose(atoms["charge"], [-0.5, 0.5])
         assert list(atoms["mol_id"]) == [1, 1]
         for native in ("q", "mol"):

@@ -122,7 +122,7 @@ def water_xtc(tmp_path: Path) -> Path:
 def water_lammpstrj(tmp_path: Path) -> Path:
     path = tmp_path / "water.lammpstrj"
     frame = _water_frame(for_lammps=True)
-    molrs.io.write_lammps_trajectory(str(path), [frame, frame])
+    molrs.io.write_lammps_dump_trajectory(str(path), [frame, frame])
     return path
 
 
