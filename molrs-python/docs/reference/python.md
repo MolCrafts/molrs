@@ -49,6 +49,17 @@ and the docs build.
 | `molrs.signal` | `molrs::signal` | `acf_fft`, `xcorr_fft`, `apply_window`, `frequency_grid` |
 | `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand` |
 
+### Where Python's shape differs from Rust's
+
+Two binding classes have no one-to-one Rust type. Both are deliberate:
+they make the Python object behave the way Python code uses it, and the
+Rust names they map onto are listed here.
+
+| Python | Rust | Why |
+|---|---|---|
+| `molrs.core.RelationRef` and its per-kind subclasses `Bond` (`itom`, `jtom`), `Angle`, `Dihedral`, `Improper`, `CgBond`, `Port` (`anchor`, `handle_atom`) | one `molrs::core::Relation` (a kind name, endpoint handles and fields) | A view's class is its relation kind, so `isinstance(r, Bond)` and the named endpoints work; every view reads and writes the same graph row a `Relation` does. A user-registered kind is a plain `RelationRef`. |
+| `molrs.ff.typifier.Typifier` and the built-in typifiers (`Mmff94Typifier`, `GaffTypifier`, …): `assign`, `typify`, `forcefield` | the trait `molrs::ff::typifier::Typifier` (`assign`, `source_forcefield`) plus the driver `Typing<T>` (`typify`, `forcefield`) | Rust splits them because a trait cannot hold the output force field that typing accumulates; a Python class can, so one object is both. `Typifier.assign` is the trait's method; `typify` and `forcefield` are `Typing`'s. |
+
 ## `molrs.core`
 
 ::: molrs.core.Block

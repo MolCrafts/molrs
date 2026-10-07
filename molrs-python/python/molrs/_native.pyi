@@ -2991,7 +2991,7 @@ class Assembler:
     Raises
     ------
     TypeError
-        If ``source_forcefield`` is not a mapping of ``str`` to graphs, ``placer`` is
+        If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
         not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
         is not an :class:`AxisOrienter`.
     """
