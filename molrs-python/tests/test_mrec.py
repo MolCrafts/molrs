@@ -624,7 +624,7 @@ class TestMolrecVersion1:
         assert section.document["units"]["angle"] == "degree"
         ff = section.to_forcefield()
         system = molrs.io.read_mrec_system(path)
-        energy, forces = molrs.ff.potential.PotentialCompiler(ff).compile(system).calc_energy_forces(system)
+        energy, forces = molrs.ff.compile.PotentialCompiler(ff).compile(system).calc_energy_forces(system)
         assert energy == pytest.approx(want["energy"], rel=1e-10, abs=1e-10)
         np.testing.assert_allclose(
             np.asarray(forces).ravel(), want["forces"], rtol=1e-10, atol=1e-10

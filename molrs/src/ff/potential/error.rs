@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ff::ir::IrError;
 
-/// Why [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) (or a
+/// Why [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) (or a
 /// kernel constructor it calls) built no kernels.
 ///
 /// A refusal of the force-field IR stays typed ([`CompileError::Ir`]), so a
@@ -13,9 +13,12 @@ use crate::ff::ir::IrError;
 ///
 /// ```
 /// use molrs::core::Frame;
-/// use molrs::ff::forcefield::{ForceField, Params};
-/// use molrs::ff::ir::{IrError, Registry};
-/// use molrs::ff::potential::{CompileError, PotentialCompiler};
+/// use molrs::ff::forcefield::ForceField;
+/// use molrs::ff::ir::Params;
+/// use molrs::ff::ir::IrError;
+/// use molrs::ff::style_registry::Registry;
+/// use molrs::ff::potential::CompileError;
+/// use molrs::ff::compile::PotentialCompiler;
 ///
 /// let mut ff = ForceField::new("t");
 /// ff.def_style("bond", "harmonic", Params::new()).unwrap();

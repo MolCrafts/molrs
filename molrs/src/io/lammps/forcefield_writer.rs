@@ -4,13 +4,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::ff::forcefield::{
-    AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Params, Style,
+    AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Style,
     StyleDefs,
 };
+use crate::ff::ir::Params;
 use crate::ff::ir::{
-    Engine, LammpsCodec, LammpsCoeffs, ParamCombination, Registry, RegistryRef, StyleSpec, Token,
-    UnitScale,
+    Engine, LammpsCodec, LammpsCoeffs, ParamCombination, StyleSpec, Token, UnitScale,
 };
+use crate::ff::style_registry::{Registry, RegistryRef};
 use crate::io::lammps::forcefield_reader::{CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX};
 use crate::io::lammps::units::{LammpsUnitConverter, parse_lammps_units_style};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
@@ -92,7 +93,7 @@ pub(crate) fn codec_of<'r>(
         Engine::Lammps.refuse(
             category,
             style,
-            "the style is not registered (molrs.ff.ir.register_style), so nothing states \
+            "the style is not registered (molrs.ff.style_registry.register_style), so nothing states \
              its parameters' order and dimensions",
         )
     })?;
@@ -128,7 +129,7 @@ fn lammps_name(spec: &StyleSpec) -> String {
 /// [`IrError::NoEngineForm`]: crate::ff::ir::IrError::NoEngineForm
 ///
 /// ```
-/// use molrs::ff::forcefield::Params;
+/// use molrs::ff::ir::Params;
 /// use molrs::io::lammps::forcefield_writer::lammps_coeff_values;
 ///
 /// let p = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
@@ -143,7 +144,7 @@ pub(crate) fn lammps_coeff_values(
     units: &str,
 ) -> Result<Vec<f64>, ForceFieldWriteError> {
     parse_lammps_units_style(units)?;
-    crate::ff::ir::with_global_registry(|reg| {
+    crate::ff::style_registry::with_global_registry(|reg| {
         let (spec, codec) = codec_of(reg, category, style)?;
         Ok(codec
             .write(spec, params, &UnitScale::IDENTITY)?

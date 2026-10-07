@@ -19,9 +19,11 @@
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::{ForceField, SpecialBonds};
-use crate::ff::potential::pair::exceptions;
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::compile::exceptions;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::SpecialBonds;
+use crate::ff::potential::intramolecular_pairs;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::Block;
@@ -612,7 +614,7 @@ fn a_dihedral_weight_equals_per_pair_rows_of_its_parameters() {
         let refs = rows.iter().map(|(k, v)| (k.as_str(), v)).collect();
         crate::ff::potential::pair::charmm::charmm_pair_params(
             &refs,
-            crate::ff::forcefield::combining_rule::CombiningRule::Arithmetic,
+            crate::ff::ir::CombiningRule::Arithmetic,
             TYPES[i],
             TYPES[j],
         )
@@ -800,7 +802,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
         .def_type(
             "CT3",
             &["CT3"],
-            crate::ff::forcefield::Params::from_pairs(&[("a", 1.0), ("rho", 0.3), ("c", 1.0)]),
+            crate::ff::ir::Params::from_pairs(&[("a", 1.0), ("rho", 0.3), ("c", 1.0)]),
         )
         .unwrap();
     let base = frame(buck.special_bonds(), false);

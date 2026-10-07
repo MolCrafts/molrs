@@ -10,7 +10,8 @@ use std::str::FromStr;
 
 use molrs::core::Element;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::params::{EmpiricalTable, ParmchkTable};
 
 use super::opls::typing_metadata::OplsTypingMetadata;

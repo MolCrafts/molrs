@@ -30,7 +30,8 @@ mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
 from molrs.ff.typifier import Mmff94Typifier
-from molrs.ff.potential import PotentialCompiler, intramolecular_pairs
+from molrs.ff.potential import intramolecular_pairs
+from molrs.ff.compile import PotentialCompiler
 
 typifier = Mmff94Typifier()
 typed = typifier.typify(mol)

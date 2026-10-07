@@ -1,6 +1,6 @@
 //! What an estimate cost, and how it was reached.
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 
 /// Penalty tier for an estimate, following the CGenFF confidence bands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

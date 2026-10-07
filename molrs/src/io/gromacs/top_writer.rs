@@ -1,13 +1,16 @@
 //! GROMACS force-field directive writer.
 
 use crate::ff::ir::Engine;
+use crate::ff::style_registry::refuse_style;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::combining_rule::{CombiningRule, same_lj};
-use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
+use crate::ff::forcefield::{AtomType, ForceField, Style};
 use crate::ff::ir::CMAP_GRID;
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::Params;
+use crate::ff::ir::same_lj;
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
@@ -664,7 +667,7 @@ impl GromacsTopForcefieldWriter {
                 }
                 one(2, vec![chi0, 2.0 * need("k")? * KCAL_TO_KJ.get()], None)
             }
-            (category, style) => Err(Engine::Gromacs.refuse_style(category, style).into()),
+            (category, style) => Err(refuse_style(Engine::Gromacs, category, style).into()),
         }
     }
 }
@@ -723,7 +726,7 @@ fn check_style(style: &Style) -> Result<(), ForceFieldWriteError> {
             }
             Ok(())
         }
-        (category, name) => Err(Engine::Gromacs.refuse_style(category, name).into()),
+        (category, name) => Err(refuse_style(Engine::Gromacs, category, name).into()),
     }
 }
 
@@ -1364,7 +1367,8 @@ pub fn write_gromacs_top_system(
 mod tests {
     use super::*;
     use crate::core::constants::VACUUM_DIELECTRIC;
-    use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+    use crate::ff::forcefield::{ForceField, Style};
+    use crate::ff::ir::{Params, SpecialBonds};
     use crate::io::writer::ForceFieldWriter;
     use crate::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
 
@@ -2426,7 +2430,7 @@ SOL  2
                 s.set_param("cutoff", 100.0);
             }
         }
-        crate::ff::potential::PotentialCompiler::new(&ff)
+        crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(frame)
             .unwrap()
             .calc_energy(x)

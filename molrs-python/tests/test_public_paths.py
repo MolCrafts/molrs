@@ -726,3 +726,47 @@ def test_scripts_convert_units_through_the_registry():
             if retired.search(code):
                 offenders.append(f"{path.name}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
+
+
+# Wave S7: ``ff``'s submodules are layers. The registry left ``ir`` for
+# ``style_registry``, the compiler left ``potential`` for ``compile``, and the
+# CL&Pol fragment table is ``clpol_scaling``'s.
+@pytest.mark.parametrize(
+    "gone",
+    [
+        "molrs.ff.ir.register_category",
+        "molrs.ff.ir.register_style",
+        "molrs.ff.ir.register_engine_form",
+        "molrs.ff.ir.unregister_style",
+        "molrs.ff.ir.styles",
+        "molrs.ff.ir.categories",
+        "molrs.ff.ir.evaluate",
+        "molrs.ff.ir.StyleDeclaration",
+        "molrs.ff.potential.PotentialCompiler",
+        "molrs.ff.potential.compile_explicit_terms",
+        "molrs.ff.params.clpol_fragment_scaling",
+    ],
+)
+def test_names_moved_by_wave_s7_are_absent(gone):
+    owner_path, _, name = gone.rpartition(".")
+    owner: object = molrs
+    for part in owner_path.split(".")[1:]:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, name), gone
+
+
+def test_wave_s7_ff_layers_exist():
+    for name in (
+        "register_category",
+        "register_style",
+        "register_engine_form",
+        "unregister_style",
+        "styles",
+        "categories",
+        "evaluate",
+        "StyleDeclaration",
+    ):
+        assert hasattr(molrs.ff.style_registry, name), name
+    assert molrs.ff.compile.PotentialCompiler
+    assert molrs.ff.compile.compile_explicit_terms
+    assert "c2c1im" in molrs.ff.clpol_scaling.fragment_table()

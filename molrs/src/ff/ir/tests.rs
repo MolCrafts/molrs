@@ -4,16 +4,21 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use crate::ff::forcefield::{DefError, ForceField, Params, StyleDefs};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::{DefError, ForceField, StyleDefs};
+use crate::ff::ir::Params;
 use crate::ff::ir::{
-    Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, ExpressionForm,
-    ExpressionKernel, IrError, Kernel, ParamCombination, ParamDimension, ParamKind, ParamSpec,
-    ParamValue, Registry, RowSource, SpecialClass, StyleSpec, builtin_categories, builtin_styles,
-    register_style,
+    Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, IrError, ParamCombination,
+    ParamDimension, ParamKind, ParamSpec, ParamValue, SpecialClass, StyleSpec, builtin_categories,
+    builtin_styles,
 };
+use crate::ff::potential::CompileError;
 use crate::ff::potential::bond::bond_harmonic_constructor;
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
-use crate::ff::potential::{BuiltinKernels, CompileError, PotentialCompiler};
+use crate::ff::style_registry::BuiltinKernels;
+use crate::ff::style_registry::{
+    ExpressionForm, ExpressionKernel, Kernel, Registry, RowSource, register_style,
+};
 use crate::io::mrec::ForceFieldSection;
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -595,7 +600,7 @@ fn an_expression_reads_only_what_its_style_declares() {
 /// expression declared beside a native form must price what it prices, and
 /// an expression-only style is priced by it.
 ///
-/// [`ExpressionCompiler`]: crate::ff::ir::ExpressionCompiler
+/// [`ExpressionCompiler`]: crate::ff::style_registry::ExpressionCompiler
 #[test]
 fn an_expression_beside_a_native_form_must_agree_with_it() {
     fn agreeing(_: &CategorySpec, s: &StyleSpec) -> Result<Arc<dyn ExpressionKernel>, IrError> {
@@ -1492,7 +1497,7 @@ fn fresh_process_reads_custom_styles() {
     let expected: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
     // Nothing is registered here: the process-wide registry is the builtin one.
-    assert!(crate::ff::ir::with_global_registry(|g| g
+    assert!(crate::ff::style_registry::with_global_registry(|g| g
         .category("urey_bradley")
         .is_none()
         && g.style("bond", "fene").is_none()
@@ -1528,7 +1533,7 @@ fn fresh_process_reads_custom_styles() {
         .compile(&two_terms("urey_bradley"))
         .unwrap_err();
     assert!(
-        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.ir.register_style) or give it an expression"),
+        err.to_string().contains("no kernel for urey_bradley `harmonic`: register it (molrs.ff.style_registry.register_style) or give it an expression"),
         "{err}"
     );
     let table = read("table");

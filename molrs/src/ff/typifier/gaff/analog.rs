@@ -38,7 +38,7 @@ use std::collections::{BTreeSet, HashMap};
 use molrs::core::NodeId;
 use molrs::core::constants::parmchk2_radians;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::params::{EmpiricalTable, ParmTable, ParmchkTable, ParmchkWeights};
 use crate::ff::typifier::estimate::empirical::angle_k;
 use crate::ff::typifier::{EstimateMethod, Provenance};

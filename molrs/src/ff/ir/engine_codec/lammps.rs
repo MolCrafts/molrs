@@ -18,8 +18,8 @@
 
 use std::sync::{Arc, LazyLock};
 
-use crate::ff::forcefield::Params;
-use crate::ff::forcefield::one_four::OneFour;
+use crate::ff::ir::OneFour;
+use crate::ff::ir::Params;
 use crate::ff::ir::positional::{self, number, parse_named, value};
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::ir::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};

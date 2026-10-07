@@ -386,7 +386,7 @@ def test_a_force_field_pickles_with_its_whole_definition():
 # ---- PotentialCompiler: the one door from a ForceField to kernels ----
 #
 # The compile semantics (skipping absent blocks, the 1.5 kcal/mol closed form,
-# refusals) are unit-tested in ``molrs/src/ff/potential/compile.rs``. These
+# refusals) are unit-tested in ``molrs/src/ff/compile/mod.rs``. These
 # tests prove only the binding seam: construction, the three doors, their
 # return types, error mapping and the single public path.
 
@@ -413,24 +413,24 @@ def _bonded_pair(label: str = "CT-CT") -> molrs.core.Frame:
 
 
 def test_potential_compiler_constructs_from_a_forcefield():
-    compiler = molrs.ff.potential.PotentialCompiler(_bond_ff())
-    assert isinstance(compiler, molrs.ff.potential.PotentialCompiler)
+    compiler = molrs.ff.compile.PotentialCompiler(_bond_ff())
+    assert isinstance(compiler, molrs.ff.compile.PotentialCompiler)
 
 
 def test_compile_returns_potentials():
-    pots = molrs.ff.potential.PotentialCompiler(_bond_ff()).compile(_bonded_pair())
+    pots = molrs.ff.compile.PotentialCompiler(_bond_ff()).compile(_bonded_pair())
     assert isinstance(pots, molrs.ff.potential.Potentials)
     assert len(pots) == 1
 
 
 def test_compile_none_raises_type_error():
-    compiler = molrs.ff.potential.PotentialCompiler(_bond_ff())
+    compiler = molrs.ff.compile.PotentialCompiler(_bond_ff())
     with pytest.raises(TypeError):
         compiler.compile(None)  # type: ignore[arg-type]
 
 
 def test_defer_returns_empty_potentials_that_bind_on_evaluation():
-    compiler = molrs.ff.potential.PotentialCompiler(_bond_ff())
+    compiler = molrs.ff.compile.PotentialCompiler(_bond_ff())
     deferred = compiler.defer()
     assert isinstance(deferred, molrs.ff.potential.Potentials)
     assert len(deferred) == 0
@@ -441,13 +441,13 @@ def test_defer_returns_empty_potentials_that_bind_on_evaluation():
 def test_compile_typed_returns_typed_potentials():
     from molrs._native import WeightedTerms
 
-    typed = molrs.ff.potential.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
+    typed = molrs.ff.compile.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
     assert isinstance(typed, WeightedTerms)
     assert len(typed) == 1
 
 
 def test_compile_unknown_type_label_raises_value_error():
-    compiler = molrs.ff.potential.PotentialCompiler(_bond_ff())
+    compiler = molrs.ff.compile.PotentialCompiler(_bond_ff())
     with pytest.raises(ValueError):
         compiler.compile(_bonded_pair("XX-XX"))
 
@@ -476,7 +476,7 @@ def _lj_pair_energy(ff: molrs.ff.forcefield.ForceField, r: float) -> float:
     frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["pairs"] = pairs
-    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def _lj(eps: float, sigma: float, r: float) -> float:
@@ -509,7 +509,8 @@ def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
 
 
 def test_potential_compiler_has_one_public_path():
-    assert hasattr(molrs.ff.potential, "PotentialCompiler")
+    assert hasattr(molrs.ff.compile, "PotentialCompiler")
+    assert not hasattr(molrs.ff.potential, "PotentialCompiler")
     assert not hasattr(molrs.ff, "PotentialCompiler")
 
 

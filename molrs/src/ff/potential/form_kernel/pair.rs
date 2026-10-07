@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::SpecialClass;
-use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, ParamCombination, ParamKind, StyleSpec};
+use crate::ff::ir::{Params, pair_key};
+use crate::ff::potential::form_kernel::Probe;
 use crate::ff::potential::form_kernel::{
     ScalarForm, StyleParamColumn, TermParams, columns, retain_form_inputs, row_num,
 };

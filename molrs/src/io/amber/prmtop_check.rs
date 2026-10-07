@@ -19,8 +19,10 @@
 
 use std::path::Path;
 
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
+use crate::ff::potential::intramolecular_pairs;
 use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
 use crate::io::writer::ForceFieldWriter;
 use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};

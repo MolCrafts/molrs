@@ -1,22 +1,21 @@
 //! The AM1-BCC atom *typifier*: [`BccAtomChargeTypifier`] labels every atom with
-//! the BCC (or ABCG2) atom type of the table a
-//! [`crate::ff::charge::BccParameterSet`] names.
+//! the BCC (or ABCG2) atom type of `ATOMTYPE_BCC.DEF` (`ATOMTYPE_ABCG2.DEF`).
 
 use molrs::core::Atomistic;
 use std::sync::OnceLock;
 
-use super::atd::AtdTypifier;
+use super::atd::{AtdParameterSet, AtdTypifier};
 use super::{TypeAssignment, Typifier};
-use crate::ff::charge::BccParameterSet;
 use crate::ff::forcefield::ForceField;
 
 /// Graph-based BCC atom typifier: the [`AtdTypifier`] bound to a BCC table.
 ///
 /// This is a named shorthand, not a second engine — `BccAtomChargeTypifier::bcc()` and
 /// `AtdTypifier::new(AtdParameterSet::Bcc)` label every atom identically because
-/// the former *is* the latter. It exists because the AM1-BCC pipeline needs the
-/// atom-type table and the correction family chosen together, and
-/// [`BccParameterSet`] is the type that keeps that pair honest.
+/// the former *is* the latter. It offers exactly the two tables a BCC
+/// correction family exists for (`BCCPARM.DAT`, `BCCPARM_ABCG2.DAT`); the
+/// correction family itself is the charge model's
+/// ([`BccParameterSet`](crate::ff::charge::BccParameterSet)).
 ///
 /// It **writes** its labels into the graph's [`keys::TYPE`](molrs::core::keys::TYPE) column, so it is for
 /// callers who want a BCC-typed molecule and nothing else. Charges do **not** go
@@ -33,7 +32,7 @@ use crate::ff::forcefield::ForceField;
 /// into the caller's [`keys::TYPE`](molrs::core::keys::TYPE) column.
 #[derive(Debug, Clone)]
 pub struct BccAtomChargeTypifier {
-    model: BccParameterSet,
+    table: AtdParameterSet,
 }
 
 impl Default for BccAtomChargeTypifier {
@@ -43,26 +42,15 @@ impl Default for BccAtomChargeTypifier {
 }
 
 impl BccAtomChargeTypifier {
-    /// A typifier for the atom-type table `model` names.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` — the correction family whose atom-type table to walk.
-    ///
-    /// # Returns
-    ///
-    /// The typifier bound to that table.
-    pub fn parameter_set(model: BccParameterSet) -> Self {
-        Self { model }
-    }
-
     /// `ATOMTYPE_BCC.DEF` — the original AM1-BCC atom types.
     ///
     /// # Returns
     ///
     /// The typifier bound to `ATOMTYPE_BCC.DEF`.
     pub fn bcc() -> Self {
-        Self::parameter_set(BccParameterSet::Bcc)
+        Self {
+            table: AtdParameterSet::Bcc,
+        }
     }
 
     /// `ATOMTYPE_ABCG2.DEF` — the ABCG2 atom types.
@@ -71,7 +59,9 @@ impl BccAtomChargeTypifier {
     ///
     /// The typifier bound to `ATOMTYPE_ABCG2.DEF`.
     pub fn abcg2() -> Self {
-        Self::parameter_set(BccParameterSet::Abcg2)
+        Self {
+            table: AtdParameterSet::Abcg2,
+        }
     }
 }
 
@@ -98,7 +88,7 @@ impl Typifier for BccAtomChargeTypifier {
     ///
     /// A message naming the atom no rule of the table matched.
     fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
-        AtdTypifier::new(self.model.atd_set()).assign(graph)
+        AtdTypifier::new(self.table).assign(graph)
     }
 
     /// An empty force field named `BCC`: the atom-type table assigns labels,

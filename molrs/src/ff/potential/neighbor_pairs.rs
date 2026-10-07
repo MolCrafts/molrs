@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::SpecialBonds;
+use crate::ff::ir::SpecialBonds;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::Neighbors;

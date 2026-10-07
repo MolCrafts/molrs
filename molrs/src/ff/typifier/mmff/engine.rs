@@ -18,7 +18,7 @@
 //! 2. **The [`ForceField`] tree** — assembled from the compiled table under the
 //!    front door's own name ([`shipped_forcefield`](super::shipped_forcefield)); the typing output is
 //!    seeded from it and compiled by
-//!    [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile).
+//!    [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile).
 //!    It carries the force-field name and the style skeleton.
 //!
 //! Feeding only path 1 leaves a tree that still calls itself `MMFF94`; feeding

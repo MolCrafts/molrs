@@ -4,7 +4,7 @@ use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };

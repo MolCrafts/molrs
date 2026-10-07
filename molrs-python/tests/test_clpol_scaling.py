@@ -25,8 +25,8 @@ def test_native_scale_lj_clones_and_scales_cross_pair():
     }
     output = molrs.ff.clpol_scaling.scale_lj(ff, fragments)
     expected = molrs.ff.clpol_scaling.compute_k_ij(
-        molrs.ff.params.clpol_fragment_scaling()["c2c1im"],
-        molrs.ff.params.clpol_fragment_scaling()["bf4"],
+        molrs.ff.clpol_scaling.fragment_table()["c2c1im"],
+        molrs.ff.clpol_scaling.fragment_table()["bf4"],
         4.0,
     )
     assert isinstance(output, molrs.ff.forcefield.ForceField)

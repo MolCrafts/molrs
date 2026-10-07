@@ -4,7 +4,7 @@ use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::atom_type_index;

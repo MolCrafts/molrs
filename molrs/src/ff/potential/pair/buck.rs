@@ -4,7 +4,7 @@ use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::{Params, pair_key};
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::atom_type_index;
@@ -444,7 +444,7 @@ mod tests {
     /// Halving the weight must halve the energy exactly, whatever `r` is.
     #[test]
     fn a_1_4_pair_is_scaled_in_both_buckingham_terms() {
-        use crate::ff::forcefield::Params;
+        use crate::ff::ir::Params;
         use molrs::core::Block;
         use molrs::core::Frame;
         use molrs::op::Idx;

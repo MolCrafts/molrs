@@ -6,14 +6,14 @@ use std::sync::Arc;
 mod custom;
 
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
-use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
+use crate::ff::forcefield::{ForceField, Style, StyleDefs};
 use crate::ff::ir::CMAP_GRID;
-use crate::ff::ir::torsion::{
-    Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
-};
-use crate::ff::ir::{Registry, RegistryRef};
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::Params;
+use crate::ff::ir::torsion::{Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine};
+use crate::ff::ir::{OneFour, has_own_one_four};
+use crate::ff::style_registry::torsion_series;
+use crate::ff::style_registry::{Registry, RegistryRef};
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 
@@ -944,7 +944,8 @@ pub fn write_openmm_xml_forcefield_str(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{ForceField, Params, Style};
+    use crate::ff::forcefield::{ForceField, Style};
+    use crate::ff::ir::Params;
     use crate::io::openmm_xml::reader::OpenmmXmlReader;
     use crate::io::read_openmm_xml_forcefield_str;
     use crate::io::reader::ForceFieldReader;
@@ -1417,7 +1418,7 @@ mod tests {
                 ]),
             )
             .unwrap();
-        ff.set_special_bonds(crate::ff::forcefield::SpecialBonds {
+        ff.set_special_bonds(crate::ff::ir::SpecialBonds {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 0.5],
         });

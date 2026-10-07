@@ -7,7 +7,7 @@
 
 use pyo3::prelude::*;
 
-use molrs::ff::potential::PotentialCompiler;
+use molrs::ff::compile::PotentialCompiler;
 use molrs::optimize::{LbfgsSettings, OptimizationReport, minimize_lbfgs, minimize_lbfgs_batch};
 
 use crate::core::frame::PyFrame;
@@ -87,7 +87,7 @@ impl From<OptimizationReport> for PyOptimizationReport {
 ///
 /// Examples
 /// --------
-/// >>> pots = molrs.ff.potential.PotentialCompiler(molrs.ff.typifier.Mmff94Typifier().forcefield()).compile(frame)
+/// >>> pots = molrs.ff.compile.PotentialCompiler(molrs.ff.typifier.Mmff94Typifier().forcefield()).compile(frame)
 /// >>> opt = molrs.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
 /// >>> frame, report = opt.minimize(frame)
 /// >>> coords, report = opt.minimize(coords)         # (N, 3)

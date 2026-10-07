@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 
 use super::*;
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::PotentialCompiler;
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_angle, compute_dihedral};
 use molrs::core::Block;
 use molrs::core::Frame;

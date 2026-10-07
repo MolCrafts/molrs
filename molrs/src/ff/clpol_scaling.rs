@@ -21,6 +21,29 @@ pub struct FragmentScaling {
     pub polarizable: bool,
 }
 
+/// CL&Pol's fragment scaling table (paduagroup/clandpol `fragment.ff`,
+/// [`CLPOL_FRAGMENTS`](crate::ff::params::CLPOL_FRAGMENTS)): each fragment's
+/// charge, dipole and polarizability, by fragment name, as [`scale_lj`] reads
+/// it.
+pub fn fragment_table() -> HashMap<String, FragmentScaling> {
+    crate::ff::params::CLPOL_FRAGMENTS
+        .iter()
+        .copied()
+        .map(|(name, q, mu, alpha, polarizable)| {
+            (
+                name.to_string(),
+                FragmentScaling {
+                    name: name.to_string(),
+                    q,
+                    mu,
+                    alpha,
+                    polarizable,
+                },
+            )
+        })
+        .collect()
+}
+
 /// Atom data needed to assign force-field types and calculate a fragment COM.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FragmentAtoms {
@@ -199,7 +222,7 @@ pub fn scale_lj(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{Params, SpecialBonds};
+    use crate::ff::ir::{Params, SpecialBonds};
 
     /// Fragment `A` holds types `A1`, `A2` with its centre of mass at the
     /// origin; fragment `B` holds `B1` at (3, 4, 0), so the COM distance is 5.

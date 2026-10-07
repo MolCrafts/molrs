@@ -3,9 +3,11 @@
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Engine;
+use crate::ff::ir::Params;
+use crate::ff::style_registry::refuse_style;
 use crate::ff::typifier::Provenance;
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 
@@ -276,7 +278,7 @@ impl AmberFrcmodWriter {
             ("improper", "periodic") => 4,
             ("pair", "lj/cut") => 5,
             ("pair", "coul/cut") => return Ok((5, Vec::new())),
-            _ => return Err(Engine::AmberFrcmod.refuse_style(category, name).into()),
+            _ => return Err(refuse_style(Engine::AmberFrcmod, category, name).into()),
         };
         let mut rows = Vec::new();
         for (type_name, ends, p) in style.type_rows() {
@@ -385,7 +387,8 @@ pub fn write_amber_frcmod_str(forcefield: &ForceField) -> Result<String, ForceFi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{ForceField, Params};
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
 
     /// The rows under `header`, up to the blank line that closes the section.
     fn section<'a>(text: &'a str, header: &str) -> Vec<&'a str> {

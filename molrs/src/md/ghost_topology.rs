@@ -398,8 +398,9 @@ mod owned_potential_tests {
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
-    use molrs::ff::forcefield::{ForceField, Params};
-    use molrs::ff::potential::PotentialCompiler;
+    use molrs::ff::compile::PotentialCompiler;
+    use molrs::ff::forcefield::ForceField;
+    use molrs::ff::ir::Params;
     use molrs::op::Idx;
     use ndarray::{Array1, array};
 

@@ -330,7 +330,7 @@ lists each one.
   `TriMesh`, `Box.h()`, `Box.corners()`, `MrecReader.nFrames`,
   `readLammpsLogStr` → `LammpsLog`; C `molrs_read_smiles_str`,
   `molrs_forcefield_*`, `molrs_block_set_f64` / `_i32` / `_u64`; C++
-  `read_xyz_frame`, `write_mrec_frame`, `read_mrec_frame`, `MrecWriterRef`,
+  `read_xyz`, `write_xyz`, `write_mrec_frame`, `read_mrec_frame`, `MrecWriterRef`,
   `Msd`, `Rdf`, `Vacf`, `EinsteinDiffusion`, `frame_column_u64`. Frame
   metadata is `get_meta` / `set_meta` / `meta_keys`, the cell matrix is `h`,
   and dtype strings are the core's (`float`, `int`, `uint`) in every binding.

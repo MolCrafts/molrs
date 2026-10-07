@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::{ForceTerm, Potential};
 use molrs::core::Frame;
 use molrs::core::Mic;
@@ -1282,8 +1282,9 @@ mod tests {
     /// a frame without a usable box is refused by name.
     #[test]
     fn the_cell_is_the_frames_box_and_none_is_refused_by_name() {
+        use crate::ff::compile::PotentialCompiler;
         use crate::ff::forcefield::ForceField;
-        use crate::ff::potential::{CompileError, PotentialCompiler};
+        use crate::ff::potential::CompileError;
         use molrs::core::Block;
         use molrs::core::SimBox;
         use ndarray::{Array1, array};

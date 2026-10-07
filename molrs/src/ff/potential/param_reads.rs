@@ -9,8 +9,8 @@
 
 use ndarray::ArrayD;
 
-use crate::ff::forcefield::Params;
 use crate::ff::ir::IrError;
+use crate::ff::ir::Params;
 use molrs::core::Block;
 use molrs::op::F;
 
@@ -78,7 +78,7 @@ pub(crate) fn unmixed_row<'p>(
     a: &str,
     b: &str,
 ) -> Result<&'p Params, crate::ff::potential::CompileError> {
-    let key = crate::ff::forcefield::pair_key(a, b)?;
+    let key = crate::ff::ir::pair_key(a, b)?;
     match rows.get(key.as_str()) {
         Some(row) => Ok(row),
         None if a == b => Err(format!("{style}: unknown atom type '{a}'").into()),
@@ -131,9 +131,10 @@ pub(crate) fn neighbour_cutoff(style: &str, params: &Params) -> Result<F, IrErro
 
 #[cfg(test)]
 mod tests {
-    use crate::ff::forcefield::Params;
+    use crate::ff::compile::ExplicitTerms;
     use crate::ff::ir::IrError;
-    use crate::ff::potential::{CompileError, ExplicitTerms, Potentials};
+    use crate::ff::ir::Params;
+    use crate::ff::potential::{CompileError, Potentials};
     use molrs::op::F;
 
     const XYZ: [F; 12] = [
@@ -297,7 +298,7 @@ mod tests {
     }
 
     fn neighbour_cutoff_of(style: Params) -> Result<F, IrError> {
-        let gathered = crate::ff::ir::with_global_registry(|r| {
+        let gathered = crate::ff::style_registry::with_global_registry(|r| {
             r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
         })?;
         super::neighbour_cutoff("lj/cut", &gathered.0)

@@ -3,11 +3,11 @@
 //! of the styles that have one.
 //!
 //! A crate-private table, not a registry anyone extends: the force-field IR
-//! registry ([`crate::ff::ir::Registry`], the one registry) seeds its sealed
+//! registry ([`crate::ff::style_registry::Registry`], the one registry) seeds its sealed
 //! built-ins from [`BuiltinKernels::builtin`], each beside its spec, and
 //! `PotentialCompiler` resolves every style through that registry. A third
 //! party registers through
-//! [`ir::register_style`](crate::ff::ir::register_style).
+//! [`register_style`](crate::ff::style_registry::register_style).
 //!
 //! Where a kernel's numbers come from ([`ParamSource`](crate::ff::ir::ParamSource))
 //! is its spec's declaration ([`StyleSpec::source`](crate::ff::ir::StyleSpec::source)),
@@ -18,9 +18,10 @@
 
 use std::collections::HashMap;
 
-use crate::ff::ir::{KernelConstructor, RowSource, SpecialClass};
+use crate::ff::ir::SpecialClass;
+use crate::ff::style_registry::{KernelConstructor, RowSource};
 
-use super::{angle, bond, cmap, dihedral, improper, kspace, pair};
+use crate::ff::potential::{angle, bond, cmap, dihedral, improper, kspace, pair};
 
 /// Maps `(category, style_name)` to the constructor that builds its kernel.
 #[derive(Default)]
@@ -112,7 +113,7 @@ impl BuiltinKernels {
     /// Register the neighbour-driven form of an already-registered pair style.
     ///
     /// A style without one cannot be evaluated over a neighbour table at all,
-    /// and [`PotentialCompiler::compile_typed`](crate::ff::potential::PotentialCompiler::compile_typed)
+    /// and [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed)
     /// says so rather than quietly falling back to the compiled form, whose
     /// parameters would belong to a pair list nobody is evaluating.
     ///
@@ -159,12 +160,16 @@ impl BuiltinKernels {
             .and_then(|r| r.typed)
     }
 
-    /// `(category, name)` as a Tier-3 [`Kernel`](crate::ff::ir::Kernel) of
+    /// `(category, name)` as a Tier-3 [`Kernel`](crate::ff::style_registry::Kernel) of
     /// the force-field IR registry, which seeds its built-ins from here.
-    pub(crate) fn kernel(&self, category: &str, name: &str) -> Option<crate::ff::ir::Kernel> {
+    pub(crate) fn kernel(
+        &self,
+        category: &str,
+        name: &str,
+    ) -> Option<crate::ff::style_registry::Kernel> {
         self.constructors
             .get(&(category.to_owned(), name.to_owned()))
-            .map(|r| crate::ff::ir::Kernel::Constructor {
+            .map(|r| crate::ff::style_registry::Kernel::Constructor {
                 compiled: r.constructor,
                 typed: r.typed,
                 rows: r.rows,

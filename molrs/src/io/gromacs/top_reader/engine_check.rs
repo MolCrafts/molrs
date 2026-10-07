@@ -42,9 +42,10 @@ use std::io::Cursor;
 use std::path::Path;
 
 use super::GromacsTopForcefieldReader;
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::PotentialCompiler;
-use crate::ff::potential::pair::exceptions;
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::compile::exceptions;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::io::writer::ForceFieldWriter;
 use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Frame;

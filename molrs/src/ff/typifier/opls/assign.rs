@@ -45,7 +45,8 @@ use molrs::core::keys;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
 use molrs::core::{Atomistic, NodeId};
 
-use crate::ff::forcefield::{ForceField, Params, StyleDefs};
+use crate::ff::forcefield::{ForceField, StyleDefs};
+use crate::ff::ir::Params;
 use crate::ff::typifier::ParameterInterpolator;
 use crate::ff::typifier::estimate::candidate::is_wildcard;
 use crate::ff::typifier::{Annotation, TypeAssignment};

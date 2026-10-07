@@ -182,7 +182,7 @@ fn match_chains(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Params;
+    use crate::ff::ir::Params;
     use ndarray::ArrayD;
 
     /// Atoms of `types`, and the dihedrals `rows` (any direction).

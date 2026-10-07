@@ -554,9 +554,8 @@ The familiar chains are instances:
 In Rust:
 
 ```rust
-use molrs::ff::ir::torsion::{
-    FourierSeries, MultiHarmonic, Opls, TorsionRefusal, torsion_series,
-};
+use molrs::ff::ir::torsion::{FourierSeries, MultiHarmonic, Opls, TorsionRefusal};
+use molrs::ff::style_registry::torsion_series;
 
 // A stored row of any torsion style → its series (exact, constant included),
 // through the style's registered form codec.
@@ -646,7 +645,7 @@ residual["rms"], residual["types"][0]["offset"]
 ```
 
 A third party's style joins a family by registering a codec
-(`molrs::ff::ir::register_form(category, style, FormCodec::new(family,
+(`molrs::ff::style_registry::register_form(category, style, FormCodec::new(family,
 embed, project))`); from then on `canonical`, `to_form` and `fit_form` treat
 it as a built-in. `fit_form` refuses a pair category (its unlike pairs follow
 the style's mixing rule, which a per-row fit cannot hold).
@@ -1080,7 +1079,8 @@ registry, or the one `with_registry` gives them.
 Registering a LAMMPS form:
 
 ```rust
-use molrs::ff::ir::{ParamDimension, LammpsForm, ParamSpec, StyleSpec, register_style};
+use molrs::ff::ir::{ParamDimension, LammpsForm, ParamSpec, StyleSpec};
+use molrs::ff::style_registry::register_style;
 
 let fene = StyleSpec::new("bond", "fene")
     .params(vec![
@@ -1095,14 +1095,14 @@ register_style(fene, None)?;
 ```
 
 ```python
-from molrs.ff import ir
+from molrs.ff import ir, style_registry
 
 FENE = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
         "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
-ir.register_style("bond", "fene", params={"k": "E/L^2", "r0": "L",
+style_registry.register_style("bond", "fene", params={"k": "E/L^2", "r0": "L",
     "epsilon": "E", "sigma": "L"}, expression=FENE, lammps="positional")
-ir.register_engine_form("lammps", "bond", "other", "positional:fene")  # afterwards
-[s.lammps for s in ir.styles("dihedral") if s.name == "periodic"]  # ['custom:fourier']
+style_registry.register_engine_form("lammps", "bond", "other", "positional:fene")  # afterwards
+[s.lammps for s in style_registry.styles("dihedral") if s.name == "periodic"]  # ['custom:fourier']
 ```
 
 `register_engine_form(engine, category, style, form)` gives a style
@@ -1417,10 +1417,10 @@ reader refuses `ordering="smirnoff"`).
   `lj/cut/coul/cut 3.0` with `pair_modify shift yes` and `special_bonds` ½
   / ⅚ (the cutoff straddles the 1-4 pairs and the 1-5 ones): every term and
   force component to 1e-10, `compile` = `compile_typed` to 1e-12.
-- Both compile doors truncate at the cutoff: `ff::ir::builtin_conformance`
+- Both compile doors truncate at the cutoff: `ff::style_registry::builtin_conformance`
   holds every built-in pair style and its expression twin to each other at
   both doors and `compile` to `compile_typed` (1e-12) on pairs straddling
-  the cutoff (and CHARMM's switch); `ff::potential::compile` holds
+  the cutoff (and CHARMM's switch); `ff::compile` holds
   `lj/cut` (shifted and not) and `coul/cut` to LAMMPS's formula by hand,
   and those with `lj/class2`, `buck` and `morse` to `compile_typed`, with a
   1-4 pair and a regular one on each side of the cutoff.

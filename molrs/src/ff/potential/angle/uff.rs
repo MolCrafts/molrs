@@ -4,7 +4,7 @@ use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::angle::accumulate_angle_forces;
 use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};

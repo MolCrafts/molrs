@@ -6,7 +6,8 @@ use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
 use molrs::core::{Atomistic, Element, NodeId};
 
 use crate::core::constants::UFF_COULOMB;
-use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, LAMBDA, params_for_label};
 use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 use crate::perceive::perceive_rings;
@@ -18,7 +19,7 @@ use crate::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridi
 ///
 /// Assigns RDKit-style UFF atom labels, generates bond/angle/dihedral topology,
 /// and resolves per-instance force constants so
-/// [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile)
+/// [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
 /// can compile `uff_bond` / `uff_angle` / `uff_torsion` / `uff_lj` kernels.
 ///
 /// # Labels

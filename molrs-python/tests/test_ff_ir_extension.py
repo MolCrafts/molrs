@@ -13,7 +13,7 @@ registered nothing, and what does not conform is refused by the
 | ``urey_bradley`` from Python = pinned LAMMPS (``angle_style charmm``, K = 0) | ``test_a_python_category_is_lammps_urey_bradley`` | rel ≤ 1e-10 |
 | pair ``lj/smooth/linear`` by expression and numpy, its cutoff straddling the pairs = pinned LAMMPS; ``compile_typed`` (MD's first force call) = ``compile`` | ``test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors`` | rel ≤ 1e-10; doors rel ≤ 1e-12 |
 | ``.mrec`` round trip: expression byte for byte, a fresh subprocess prices it | ``test_a_record_prices_the_same_bits_in_a_fresh_process`` | bit for bit |
-| callable-only style in a fresh process | ``test_a_callable_only_style_is_no_kernel_in_a_fresh_process`` | ``NoKernel`` (a ``ValueError``) naming the style and ``molrs.ff.ir.register_style`` |
+| callable-only style in a fresh process | ``test_a_callable_only_style_is_no_kernel_in_a_fresh_process`` | ``NoKernel`` (a ``ValueError``) naming the style and ``molrs.ff.style_registry.register_style`` |
 | refusals | ``test_what_does_not_conform_is_refused_by_name`` | each its ``IrError`` subclass, naming the item |
 | array param ``dihedral table/linear`` (``table: f64[N]``), numpy kernel | ``test_an_array_param_style_is_hand_linear_interpolation_and_round_trips`` | rel ≤ 1e-12, bits round-trip |
 | class2's bond-angle term as a new category (optional) | ``test_class2_bond_angle_is_one_energy_three_ways`` | expression = numpy = hand −π/60 (= the Rust form, ``molrs-ext-example``), rel ≤ 1e-12; F = −∇E by central differences |
@@ -46,7 +46,7 @@ from pathlib import Path
 import molrs
 import numpy as np
 import pytest
-from molrs.ff import ir
+from molrs.ff import ir, style_registry
 
 PINNED = Path(__file__).with_name("ff_ir_extension_lammps.tsv")
 
@@ -118,7 +118,7 @@ CHAIN = np.array(
 UB_ROWS = [((0, 1, 2), "A-B-B", 22.5, 2.45), ((1, 2, 3), "B-B-A", 18.0, 2.62)]
 TABLE = np.array([1.25 + math.sin(0.7 * i) / 3.0 - 0.01 * i * i for i in range(12)])
 NO_KERNEL = (
-    "no kernel for {} `{}`: register it (molrs.ff.ir.register_style) "
+    "no kernel for {} `{}`: register it (molrs.ff.style_registry.register_style) "
     "or give it an expression"
 )
 
@@ -200,28 +200,28 @@ def table_kernel(phi, table):
 def extensions() -> Iterator[None]:
     """Everything this module adds to the IR, taken out again at the end
     (the categories stay: a registered category is not removed)."""
-    ir.register_style("bond", "fene/proof", params=FENE_PARAMS, expression=FENE,
-                      lammps="positional:fene")
-    ir.register_style("bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel)
-    ir.register_style("pair", "lj/smooth/linear/proof", params=SMOOTH_PARAMS,
-                      style_params=SMOOTH_STYLE, special="lj", expression=SMOOTH,
-                      lammps="positional:lj/smooth/linear")
-    ir.register_style("pair", "lj/smooth/linear/proof-np", params=SMOOTH_PARAMS,
-                      style_params=SMOOTH_STYLE, special="lj", kernel=smooth_kernel)
-    ir.register_category("urey_bradley", 3)
-    ir.register_style("urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"},
-                      expression=UB)
-    ir.register_category("bond_angle", 3)
-    ir.register_style("bond_angle", "class2", params=BA_PARAMS, expression=BOND_ANGLE)
-    ir.register_style(
+    style_registry.register_style("bond", "fene/proof", params=FENE_PARAMS, expression=FENE,
+                                  lammps="positional:fene")
+    style_registry.register_style("bond", "fene/proof-np", params=FENE_PARAMS, kernel=fene_kernel)
+    style_registry.register_style("pair", "lj/smooth/linear/proof", params=SMOOTH_PARAMS,
+                                  style_params=SMOOTH_STYLE, special="lj", expression=SMOOTH,
+                                  lammps="positional:lj/smooth/linear")
+    style_registry.register_style("pair", "lj/smooth/linear/proof-np", params=SMOOTH_PARAMS,
+                                  style_params=SMOOTH_STYLE, special="lj", kernel=smooth_kernel)
+    style_registry.register_category("urey_bradley", 3)
+    style_registry.register_style("urey_bradley", "proof", params={"k_ub": "E/L^2", "r_ub": "L"},
+                                  expression=UB)
+    style_registry.register_category("bond_angle", 3)
+    style_registry.register_style("bond_angle", "class2", params=BA_PARAMS, expression=BOND_ANGLE)
+    style_registry.register_style(
         "bond_angle", "class2/np", params=BA_PARAMS, expression=BOND_ANGLE,
         kernel=bond_angle_kernel,
         samples=[{"q": (1.2, 1.7), "n1": 10.0, "n2": 8.0, "r1": 1.5, "r2": 1.45,
                   "theta0": 105.0}],
     )
-    ir.register_style("dihedral", "table/linear",
-                      params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
-                      kernel=table_kernel)
+    style_registry.register_style("dihedral", "table/linear",
+                                  params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
+                                  kernel=table_kernel)
     yield
     for category, name in [
         ("bond", "fene/proof"),
@@ -233,7 +233,7 @@ def extensions() -> Iterator[None]:
         ("bond_angle", "class2/np"),
         ("dihedral", "table/linear"),
     ]:
-        ir.unregister_style(category, name)
+        style_registry.unregister_style(category, name)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +317,7 @@ def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.core.Frame:
 
 
 def price(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame) -> tuple[float, np.ndarray]:
-    e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+    e, forces = molrs.ff.compile.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
     return float(e), np.asarray(forces)
 
 
@@ -481,7 +481,7 @@ def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame,
 
     box = molrs.core.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
     skin = molrs.core.VerletSkin(molrs.core.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
-    vv = VelocityVerlet(1.0, potential=molrs.ff.potential.PotentialCompiler(ff).compile_typed(f),
+    vv = VelocityVerlet(1.0, potential=molrs.ff.compile.PotentialCompiler(ff).compile_typed(f),
                         neighbors=skin, mass=np.ones(len(xyz)))
     state = vv.initial(xyz, np.zeros_like(xyz))
     return float(state.energy), np.asarray(state.forces)
@@ -515,7 +515,7 @@ def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
 
 
 def test_a_python_category_is_lammps_urey_bradley() -> None:
-    cat = {c.name: c for c in ir.categories()}["urey_bradley"]
+    cat = {c.name: c for c in style_registry.categories()}["urey_bradley"]
     assert (cat.arity, cat.block, cat.builtin) == (3, "urey_bradleys", False)
     assert against_lammps("urey_bradley") <= 1e-10
 
@@ -531,7 +531,7 @@ FRESH = textwrap.dedent(
     import numpy as np
 
     path, frames = sys.argv[1], json.loads(sys.argv[2])
-    registered = [(s.category, s.name) for s in molrs.ff.ir.styles() if not s.builtin]
+    registered = [(s.category, s.name) for s in molrs.ff.style_registry.styles() if not s.builtin]
     ff = molrs.io.read_mrec_forcefield(path).to_forcefield()
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.styles]}
     for name, spec in frames.items():
@@ -548,7 +548,7 @@ FRESH = textwrap.dedent(
         terms.insert("type", spec["row_types"])
         f[spec["block"]] = terms
         try:
-            e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
+            e, forces = molrs.ff.compile.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
             out[name] = {"e": float(e).hex(), "f": [float(v).hex() for v in np.ravel(forces)]}
         except ValueError as err:
             out[name] = {"error": type(err).__name__, "message": str(err),
@@ -644,14 +644,14 @@ def _raising(r, k, r0):
 
 
 def _compile_with(kernel: Callable, name: str) -> None:
-    ir.register_style("bond", name, params={"k": "E/L^2", "r0": "L"}, kernel=kernel)
+    style_registry.register_style("bond", name, params={"k": "E/L^2", "r0": "L"}, kernel=kernel)
     try:
         price(fene_ff("fene/proof"), bead_frame())  # unaffected
         ff, t = field("x", "lj")
         ff.def_style("bond", name).def_type("B-B", t["B"], t["B"], k=1.0, r0=1.0)
         price(ff, bead_frame())
     finally:
-        ir.unregister_style("bond", name)
+        style_registry.unregister_style("bond", name)
 
 
 def _wrong_arity() -> None:
@@ -670,14 +670,14 @@ def _gromacs(tmp: Path) -> None:
 
 REFUSALS = [
     ("unknown function",
-     lambda tmp: ir.register_style("bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"),
+     lambda tmp: style_registry.register_style("bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"),
      ir.UnknownFunctionError, {"name": "sinh"}),
     ("unbound variable",
-     lambda tmp: ir.register_style("bond", "x/proof", params={"k": "E"}, expression="k*theta"),
+     lambda tmp: style_registry.register_style("bond", "x/proof", params={"k": "E"}, expression="k*theta"),
      ir.UnboundVariableError, {"style": "x/proof", "name": "theta"}),
     ("sealed bond harmonic",
-     lambda tmp: ir.register_style("bond", "harmonic", params={"k": "E/L^2", "r0": "L"},
-                                   expression="2*k*(r-r0)^2"),
+     lambda tmp: style_registry.register_style("bond", "harmonic", params={"k": "E/L^2", "r0": "L"},
+                                               expression="2*k*(r-r0)^2"),
      ir.SealedError, {"category": "bond", "style": "harmonic"}),
     ("wrong def_type arity", lambda tmp: _wrong_arity(),
      ir.ArityError, {"category": "urey_bradley", "arity": 2}),
@@ -702,7 +702,7 @@ def test_what_does_not_conform_is_refused_by_name(what, act, variant, names, tmp
     assert {k: getattr(err.value, k) for k in names} == names
     if what == "kernel raising":
         assert isinstance(err.value.__cause__, ZeroDivisionError)
-    assert "x/proof" not in {s.name for s in ir.styles("bond")}
+    assert "x/proof" not in {s.name for s in style_registry.styles("bond")}
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +711,7 @@ def test_what_does_not_conform_is_refused_by_name(what, act, variant, names, tmp
 
 
 def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_path) -> None:
-    (info,) = [s for s in ir.styles("dihedral") if s.name == "table/linear"]
+    (info,) = [s for s in style_registry.styles("dihedral") if s.name == "table/linear"]
     assert [(p.name, p.kind, p.rank) for p in info.params] == [("table", "array", 1)]
     ff, frames = everything()
     worst = 0.0
@@ -764,14 +764,14 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
     want = -math.pi / 60
     worst = 0.0
     for style in ("class2", "class2/np"):
-        (e,), _ = ir.evaluate("bond_angle", style, x=hand, **BA)
+        (e,), _ = style_registry.evaluate("bond_angle", style, x=hand, **BA)
         worst = max(worst, abs(e - want) / abs(want))
     e_np, g_np = bond_angle_kernel(hand, **BA)
     worst = max(worst, abs(e_np[0] - want) / abs(want))
     # Expression = numpy over the chain's terms, energy and gradient.
     x = np.stack([CHAIN[[0, 1, 2]], CHAIN[[1, 2, 3]], moved(CHAIN, 0.09)[[0, 1, 2]]])
-    e_x, g_x = ir.evaluate("bond_angle", "class2", x=x, **BA)
-    e_n, g_n = ir.evaluate("bond_angle", "class2/np", x=x, **BA)
+    e_x, g_x = style_registry.evaluate("bond_angle", "class2", x=x, **BA)
+    e_n, g_n = style_registry.evaluate("bond_angle", "class2/np", x=x, **BA)
     scale = max(np.abs(e_x).max(), np.abs(g_x).max())
     worst = max(worst, rel(e_n, e_x, scale), rel(g_n, g_x, scale))
     assert worst <= 1e-12

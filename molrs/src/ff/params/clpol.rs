@@ -1,10 +1,6 @@
 //! CL&Pol parameters: the scaleLJ fragment table and the per-atom-type
 //! Drude polarisation table.
 
-use std::collections::HashMap;
-
-use crate::ff::clpol_scaling::FragmentScaling;
-
 /// `(name, q, mu, alpha, polarizable)` rows used by CL&Pol scaleLJ.
 ///
 /// Source: paduagroup/clandpol (Goloviznina, Canongia Lopes, Costa Gomes &
@@ -163,28 +159,6 @@ pub fn clpol_polarizability(type_name: &str) -> Option<&'static ClpolPolarizabil
     CLPOL_POLARIZABILITY
         .iter()
         .find(|row| row.type_name == type_name)
-}
-
-/// CL&Pol's fragment scaling table (paduagroup/clandpol `fragment.ff`): each
-/// fragment's charge, dipole and polarizability, by fragment name, as
-/// [`scale_lj`](crate::ff::clpol_scaling::scale_lj) reads it.
-pub fn clpol_fragment_scaling() -> HashMap<String, FragmentScaling> {
-    CLPOL_FRAGMENTS
-        .iter()
-        .copied()
-        .map(|(name, q, mu, alpha, polarizable)| {
-            (
-                name.to_string(),
-                FragmentScaling {
-                    name: name.to_string(),
-                    q,
-                    mu,
-                    alpha,
-                    polarizable,
-                },
-            )
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -41,8 +41,10 @@ use super::forcefield_section::{
     EndpointKey, ForceFieldSection, SECTION_PRESETS, UNIT_QUANTITIES, style_block_name, unit_preset,
 };
 use crate::core::{Block, Column, DType};
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
-use crate::ff::ir::{ENDPOINT_COLUMNS, Registry};
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::ENDPOINT_COLUMNS;
+use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::style_registry::Registry;
 
 /// The string style params that are entry fields of `document.styles`.
 const ENTRY_FIELDS: [&str; 2] = ["expression", "endpoint_key"];
@@ -449,7 +451,8 @@ impl ForceFieldSection {
     /// # Examples
     ///
     /// ```
-    /// use molrs::ff::forcefield::{ForceField, Params};
+    /// use molrs::ff::forcefield::ForceField;
+    /// use molrs::ff::ir::Params;
     /// use molrs::io::mrec::ForceFieldSection;
     ///
     /// let mut ff = ForceField::new("example");
@@ -463,7 +466,9 @@ impl ForceFieldSection {
     /// assert_eq!(back.get_bondtypes()[0].params.get("k"), Some(300.0));
     /// ```
     pub fn from_forcefield(ff: &ForceField) -> Result<ForceFieldSection, String> {
-        crate::ff::ir::with_global_registry(|registry| Self::from_forcefield_in(ff, registry))
+        crate::ff::style_registry::with_global_registry(|registry| {
+            Self::from_forcefield_in(ff, registry)
+        })
     }
 
     /// [`Self::from_forcefield`] against `registry` instead of the
@@ -796,7 +801,7 @@ mod tests {
     /// section and the store, and still price their pair after the trip.
     #[test]
     fn explicit_cross_rows_round_trip_and_still_override_mixing() {
-        use crate::ff::potential::PotentialCompiler;
+        use crate::ff::compile::PotentialCompiler;
         use molrs::core::Frame;
         use molrs::op::Idx;
         use ndarray::Array1;
@@ -1152,7 +1157,7 @@ mod tests {
     /// crossterm to the same bits.
     #[test]
     fn a_populated_cmap_round_trips_and_prices_the_same() {
-        use crate::ff::potential::PotentialCompiler;
+        use crate::ff::compile::PotentialCompiler;
         use crate::ff::potential::cmap::charmm::tests::{alanine, chain};
         use molrs::core::Block;
         use ndarray::Array1;

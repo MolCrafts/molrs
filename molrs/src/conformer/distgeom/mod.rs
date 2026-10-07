@@ -8,7 +8,11 @@
 //!     `rdkit.Chem.rdDistGeom.GetMoleculeBoundsMatrix`,
 //!   * **experimental torsion** preferences (CrystalFF M6),
 //!   * **chiral** volume constraints,
-//!   * **improper** (out-of-plane) constraints.
+//!   * **improper** (out-of-plane) constraints,
+//!
+//! and the error function an embedding minimizes against them
+//! ([`ViolationEnergy`]: distance-bound and chiral-volume violations and the
+//! fourth-dimension penalty).
 //!
 //! ## References
 //! - Blaney & Dixon, *Rev. Comput. Chem.* **5**, 299 (1994) — bounds smoothing.
@@ -37,6 +41,7 @@ mod mol_features;
 mod torsion_prefs;
 mod torsion_tables;
 mod triangle_smoothing;
+mod violation_energy;
 
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
@@ -44,6 +49,7 @@ use molrs::core::MolRsError;
 pub use bounds_matrix::BoundsMatrix;
 pub use chirality::{ChiralConstraint, ChiralSign, ImproperConstraint};
 pub use torsion_prefs::TorsionConstraint;
+pub(crate) use violation_energy::{DistanceViolations, ViolationEnergy, chiral_volume};
 
 /// The full ETKDGv3 constraint set consumed by the embedding stage (spec 04).
 pub struct DgConstraints {

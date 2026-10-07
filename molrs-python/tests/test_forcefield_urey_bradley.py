@@ -63,7 +63,7 @@ def test_an_angle_style_named_charmm_carries_the_four_params() -> None:
 
 def test_it_compiles_to_the_lammps_energy() -> None:
     frame = _frame()
-    compiler = molrs.ff.potential.PotentialCompiler(_ub_ff())
+    compiler = molrs.ff.compile.PotentialCompiler(_ub_ff())
     e = compiler.compile(frame).calc_energy(frame)
     assert math.isclose(e, _hand_energy(), rel_tol=1e-12)
     assert len(compiler.compile_typed(frame)) == 1
@@ -79,9 +79,9 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()
-    assert molrs.ff.potential.PotentialCompiler(back).compile(frame).calc_energy(
+    assert molrs.ff.compile.PotentialCompiler(back).compile(frame).calc_energy(
         frame
-    ) == molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    ) == molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None:

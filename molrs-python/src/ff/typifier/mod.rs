@@ -5,7 +5,7 @@
 //! types a frame's CMAP crossterms from its dihedrals.
 //!
 //! A typifier's contract is `typify`: compiling potentials from what it
-//! defined is `molrs.ff.potential.PotentialCompiler`'s. There is deliberately
+//! defined is `molrs.ff.compile.PotentialCompiler`'s. There is deliberately
 //! no one-step `build(mol)`: one such shortcut once silently omitted the whole
 //! electrostatic term because no `ForceField` defined `pair/mmff_ele`.
 //!
@@ -520,7 +520,7 @@ py_mmff_front_door! {
     /// >>> typifier = Mmff94Typifier()
     /// >>> frame = typifier.typify(mol).to_frame()          # labels + charges
     /// >>> frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame)
-    /// >>> pots = molrs.ff.potential.PotentialCompiler(typifier.forcefield()).compile(frame)
+    /// >>> pots = molrs.ff.compile.PotentialCompiler(typifier.forcefield()).compile(frame)
     PyMmff94Typifier, Mmff94Typifier, "Mmff94Typifier"
 }
 

@@ -3,9 +3,8 @@
 //! A combining rule is a **force-field** declaration, not a kernel constant —
 //! it is what `<ForceField combining_rule>` and LAMMPS's `pair_modify mix` set,
 //! and reading an OPLS pack under Lorentz-Berthelot silently shifts every σ.
-//! It therefore lives with the force field that declares it, and the kernels
-//! read it from there; the reverse — a reader importing a rule out of a pair
-//! kernel — put a cycle between `ff::forcefield` and `ff::potential`.
+//! It is IR vocabulary: the force field declares it and the pair kernels read
+//! it, so it lives beneath both.
 
 use molrs::op::F;
 

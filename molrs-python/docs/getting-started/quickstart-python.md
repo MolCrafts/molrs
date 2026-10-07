@@ -140,7 +140,7 @@ print("typed blocks:", typed_frame.keys())
 ff = typifier.forcefield()
 # Non-bonded terms need an explicit pairs block; the caller owns it.
 typed_frame["pairs"] = molrs.ff.potential.intramolecular_pairs(typed_frame, ff)
-potentials = molrs.ff.potential.PotentialCompiler(ff).compile(typed_frame)
+potentials = molrs.ff.compile.PotentialCompiler(ff).compile(typed_frame)
 
 energy, forces = potentials.calc_energy_forces(typed_frame)
 print("energy:", energy)

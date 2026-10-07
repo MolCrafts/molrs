@@ -19,9 +19,10 @@ use wasm_bindgen::prelude::*;
 
 use molrs::core::Frame as RsFrame;
 use molrs::core::Neighbors as RsNeighbors;
+use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{
-    Potential, PotentialCompiler, Potentials as RsPotentials, intramolecular_pairs_from_neighbors,
+    Potential, Potentials as RsPotentials, intramolecular_pairs_from_neighbors,
 };
 use molrs::optimize::{Lbfgs as RsLbfgs, LbfgsSettings, Optimizer, set_free_mask};
 

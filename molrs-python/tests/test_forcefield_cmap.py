@@ -209,7 +209,7 @@ def test_assign_cmaps_builds_the_block_the_kernel_prices() -> None:
     cmaps = frame["cmaps"]
     assert [int(cmaps[k][0]) for k in ("atomi", "atomm")] == [0, 4]
     assert list(cmaps["type"]) == ["ala"]
-    compiler = molrs.ff.potential.PotentialCompiler(ff)
+    compiler = molrs.ff.compile.PotentialCompiler(ff)
     energy, forces = compiler.compile(frame).calc_energy_forces(frame)
     assert np.isfinite(energy) and energy != 0.0
     np.testing.assert_allclose(forces.reshape(-1, 3).sum(axis=0), 0.0, atol=1e-10)

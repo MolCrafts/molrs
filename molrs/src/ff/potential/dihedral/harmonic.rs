@@ -3,7 +3,7 @@
 use molrs::core::Frame;
 use molrs::core::schema::block_names::DIHEDRALS;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::ForceTerm;
 use crate::ff::potential::improper::cvff::signed_cosine_constructor;
 
@@ -30,8 +30,8 @@ pub fn dihedral_harmonic_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
-    use crate::ff::potential::PotentialCompiler;
     use molrs::core::Block;
     use molrs::op::{F, Idx};
     use ndarray::Array1;

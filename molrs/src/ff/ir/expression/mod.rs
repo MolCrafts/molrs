@@ -83,9 +83,6 @@ mod error;
 mod eval;
 mod parse;
 mod print;
-pub(crate) mod registry_kernel;
-
-pub(crate) use registry_kernel::fallback_spec;
 
 #[cfg(test)]
 mod tests;

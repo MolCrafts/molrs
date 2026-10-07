@@ -1,20 +1,20 @@
 //! The expression engine ([`expr`]) as a registry
 //! kernel: [`ExpressionKernel`] over a compiled expression, the
-//! [`ExpressionCompiler`](crate::ff::ir::ExpressionCompiler) every
-//! [`Registry::builtin`](crate::ff::ir::Registry::builtin) installs, and the
+//! [`ExpressionCompiler`](crate::ff::style_registry::ExpressionCompiler) every
+//! [`Registry::builtin`](crate::ff::style_registry::Registry::builtin) installs, and the
 //! spec an unregistered style that carries an expression is priced under.
 
 use std::sync::Arc;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::ir::expression::{self, Binding, Compiled, ExpressionError, Geometry};
 use crate::ff::ir::{
     CategorySpec, Coordinate, IrError, ParamCombination, ParamDimension, ParamKind, ParamSpec,
     StyleSpec,
 };
-use crate::ff::ir::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
+use crate::ff::style_registry::{ExpressionForm, ExpressionKernel};
 use molrs::op::F;
 
 /// Members an indexed family binds in an expression: `k1 … k16`. A table
@@ -173,7 +173,7 @@ fn ir_error(spec: &StyleSpec, source: &str, e: ExpressionError) -> IrError {
 }
 
 /// Compile `spec`'s expression for `category`: the
-/// [`ExpressionCompiler`](crate::ff::ir::ExpressionCompiler) the built-in
+/// [`ExpressionCompiler`](crate::ff::style_registry::ExpressionCompiler) the built-in
 /// registries carry. Only numeric parameters are variables (D9).
 pub fn compile_expression(
     category: &CategorySpec,

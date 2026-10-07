@@ -1,26 +1,26 @@
 //! Kernels: a force field's terms evaluated on coordinates — the
-//! [`Potential`] traits, every built-in kernel, the compiler that binds a
-//! force field's styles to a frame ([`PotentialCompiler`]), and the weights a
-//! non-bonded kernel takes on close pairs ([`PairWeights`], [`SpecialWeights`]).
+//! [`Potential`] traits, every built-in kernel, the generic form kernels, and
+//! the weights a non-bonded kernel takes on close pairs ([`PairWeights`],
+//! [`SpecialWeights`]).
 //!
-//! What a style *is* (its spec, its registration) is the IR's
-//! ([`crate::ff::ir`]); which integrator calls a kernel is `md`'s and
-//! `optimize`'s.
+//! What a style *is* (its spec) is the IR's ([`crate::ff::ir`]); which kernel
+//! prices a style is the style registry's ([`crate::ff::style_registry`]);
+//! binding a force field's styles to a frame is the compiler's
+//! ([`PotentialCompiler`](crate::ff::compile::PotentialCompiler)); which
+//! integrator calls a kernel is `md`'s and `optimize`'s.
 //!
 //! A [`Potential`] stores pre-resolved topology indices and parameters.
 //! Callers pass only flat coordinates — no [`Frame`] in the hot loop.
-//! Construction from a [`Frame`] happens once via [`PotentialCompiler::compile`](compile::PotentialCompiler::compile).
+//! Construction from a [`Frame`] happens once via
+//! [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile).
 
 pub(crate) mod flat_coords;
 
 pub mod angle;
 pub mod bond;
-pub(crate) mod builtin_kernels;
 pub mod cmap;
-pub(crate) mod compile;
 pub mod dihedral;
 mod error;
-mod explicit_terms;
 pub mod form_kernel;
 pub mod improper;
 pub mod kspace;
@@ -29,17 +29,14 @@ pub mod pair;
 pub(crate) mod param_reads;
 pub mod soft;
 
-pub(crate) use builtin_kernels::BuiltinKernels;
-pub use compile::PotentialCompiler;
 pub use error::CompileError;
-pub use explicit_terms::ExplicitTerms;
 pub use neighbor_pairs::intramolecular_pairs_from_neighbors;
 
 use std::collections::{HashMap, HashSet};
 
 use ndarray::{Array1, Array2, ArrayView2};
 
-use crate::ff::forcefield::SpecialBonds;
+use crate::ff::ir::SpecialBonds;
 use molrs::core::Block;
 use molrs::core::BondDistanceWeights;
 use molrs::core::Frame;
@@ -59,7 +56,7 @@ use molrs::op::{F, Idx};
 /// is still under 2 GiB and the caller is still plausibly asking for what this
 /// function is for: the intramolecular pairs of one molecule, in free space.
 /// A periodic or larger system wants a neighbour list and
-/// [`PotentialCompiler::compile_typed`](compile::PotentialCompiler::compile_typed).
+/// [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed).
 ///
 /// molrs-wasm caps the same path at 2 000 for its own memory budget; this is
 /// the native ceiling, not a duplicate of that policy.
@@ -72,7 +69,7 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
 /// 1-2 (bonded) and 1-3 (angle) pairs and flagging 1-4 (dihedral-end) pairs.
 ///
-/// This is the neighbour list that [`PotentialCompiler::compile`](compile::PotentialCompiler::compile) hands to every
+/// This is the neighbour list that [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile) hands to every
 /// pair kernel — the same logic the MMFF frame builder used to compute
 /// privately, lifted here so every force field (GAFF/LAMMPS, OPLS, MMFF, …)
 /// shares one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
@@ -94,11 +91,11 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// field said. LAMMPS's `special_bonds fene` (`[0, 1, 1]`) keeps 1-3 pairs at
 /// full strength, and a FENE chain without them has nothing holding it open.
 /// `special` answers it instead, via
-/// [`SpecialBonds::compiled_inclusion`](crate::ff::forcefield::SpecialBonds::compiled_inclusion),
+/// [`SpecialBonds::compiled_inclusion`](crate::ff::ir::SpecialBonds::compiled_inclusion),
 /// which is also where weights this list cannot express become an [`Err`]
 /// rather than a silently different force field.
 ///
-/// [`SpecialBonds::default`](crate::ff::forcefield::SpecialBonds::default)
+/// [`SpecialBonds::default`](crate::ff::ir::SpecialBonds::default)
 /// reproduces the historical behaviour exactly: both classes excluded.
 pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
@@ -284,7 +281,7 @@ pub(crate) fn end_pairs(
 /// Energy and forces from coordinates alone.
 ///
 /// A `Potential` is **molecule-bound**: its per-element parameters are expanded
-/// against the molecule's topology once at [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)
+/// against the molecule's topology once at [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
 /// (string type labels resolved to per-bond/angle/… arrays). Evaluation
 /// therefore takes only coordinates — there is no per-call topology resolution.
 ///
@@ -878,7 +875,7 @@ impl Potentials {
         self.n_atoms
     }
 
-    /// Record the compiled atom count (used by [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)).
+    /// Record the compiled atom count (used by [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)).
     pub fn set_n_atoms(&mut self, n_atoms: usize) {
         self.n_atoms = n_atoms;
     }
@@ -1077,6 +1074,7 @@ impl PairDriven for Potentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::compile::PotentialCompiler;
 
     /// The default scales nothing, and says so.
     ///
@@ -1095,7 +1093,8 @@ mod tests {
         assert_eq!(SpecialWeights::default().weight(0, 1), 1.0);
     }
 
-    use crate::ff::forcefield::{ForceField, Params};
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
     use molrs::core::Block;
     use molrs::op::Idx;
     use ndarray::Array1;
@@ -1429,9 +1428,11 @@ mod tests {
         ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
             Ok(ForceTerm::plain(DummyPotential { value: 42.0 }))
         }
-        crate::ff::ir::register_style(
+        crate::ff::style_registry::register_style(
             crate::ff::ir::StyleSpec::new("pair", "test/custom"),
-            Some(crate::ff::ir::Kernel::constructor(my_constructor)),
+            Some(crate::ff::style_registry::Kernel::constructor(
+                my_constructor,
+            )),
         )
         .unwrap();
 

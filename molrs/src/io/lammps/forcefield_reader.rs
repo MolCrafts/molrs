@@ -2,9 +2,11 @@
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::{LammpsCodec, StyleSpec};
+use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::style_registry::{Registry, RegistryRef};
 use crate::io::lammps::units::parse_lammps_units_style;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::FrameAccess;
@@ -750,7 +752,7 @@ fn lammps_style<'r>(
     reg.lammps_style(category, name).ok_or_else(|| {
         format!(
             "{}: unsupported {category}_style `{name}`: no registered style has this LAMMPS form \
-             (molrs.ff.ir.register_style with a LAMMPS form registers one)",
+             (molrs.ff.style_registry.register_style with a LAMMPS form registers one)",
             where_()
         )
     })
@@ -1568,7 +1570,7 @@ pub(crate) fn lammps_coeff_params(
         s => s,
     };
     let where_ = || format!("{category} {style}");
-    crate::ff::ir::with_global_registry(|reg| {
+    crate::ff::style_registry::with_global_registry(|reg| {
         let (spec, codec) = lammps_style(reg, category, style, &where_)?;
         codec.read(spec, values)
     })
@@ -1857,7 +1859,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     /// improper came out twice too high.
     #[test]
     fn a_lammps_improper_evaluates_at_the_lammps_energy() {
-        use crate::ff::potential::PotentialCompiler;
+        use crate::ff::compile::PotentialCompiler;
         use molrs::core::Block;
         use molrs::core::Frame;
         use molrs::op::Idx;

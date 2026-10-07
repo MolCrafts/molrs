@@ -29,64 +29,17 @@ use std::collections::HashMap;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::compile::gathered;
+use crate::ff::compile::exceptions::dihedral_weights;
+use crate::ff::compile::gathered;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::{CombiningRule, OneFour, Params};
 use crate::ff::potential::intramolecular_pairs;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
-use crate::ff::potential::pair::exceptions::dihedral_weights;
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use crate::ff::potential::param_reads;
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::F;
-
-/// The `lj/charmm` style param naming the 1-4 semantics.
-pub const ONE_FOUR: &str = "one_four";
-/// LAMMPS's semantics: `special_bonds` 1-4 pairs at the regular `epsilon` / `sigma`.
-pub const ONE_FOUR_REGULAR: &str = "regular";
-/// `special_bonds` 1-4 pairs at `epsilon14` / `sigma14`.
-pub const ONE_FOUR_EPSILON14: &str = "epsilon14";
-/// Every value [`ONE_FOUR`] may take.
-pub const ONE_FOUR_VALUES: [&str; 2] = [ONE_FOUR_REGULAR, ONE_FOUR_EPSILON14];
-
-/// The 1-4 semantics of a `lj/charmm` style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OneFour {
-    /// `"regular"` (or absent).
-    Regular,
-    /// `"epsilon14"`.
-    Epsilon14,
-}
-
-impl OneFour {
-    /// The `one_four` of a style's params.
-    ///
-    /// # Errors
-    ///
-    /// A value other than `"regular"` and `"epsilon14"`, or a number.
-    pub fn of(style: &Params) -> Result<Self, String> {
-        match (style.get_str(ONE_FOUR), style.get(ONE_FOUR)) {
-            (None, None) => Ok(Self::Regular),
-            (Some(ONE_FOUR_REGULAR), _) => Ok(Self::Regular),
-            (Some(ONE_FOUR_EPSILON14), _) => Ok(Self::Epsilon14),
-            (Some(other), _) => Err(format!(
-                "lj/charmm: one_four = {other:?}; it is \"{ONE_FOUR_REGULAR}\" or \
-                 \"{ONE_FOUR_EPSILON14}\""
-            )),
-            (None, Some(v)) => Err(format!(
-                "lj/charmm: one_four = {v} is a number; it is \"{ONE_FOUR_REGULAR}\" or \
-                 \"{ONE_FOUR_EPSILON14}\""
-            )),
-        }
-    }
-}
-
-/// Whether a `lj/charmm` row has 1-4 parameters other than its regular ones.
-pub(crate) fn has_own_one_four(p: &Params) -> bool {
-    let differs = |k14: &str, k: &str| p.get(k14).is_some_and(|v| Some(v) != p.get(k));
-    differs("epsilon14", "epsilon") || differs("sigma14", "sigma")
-}
 
 /// The van-der-Waals style a 1-4 pair's parameters come from.
 enum Vdw {
@@ -331,7 +284,7 @@ pub(crate) fn check_materialized(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::SpecialBonds;
+    use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, ONE_FOUR_REGULAR, SpecialBonds};
     use molrs::core::Block;
     use molrs::op::Idx;
 
@@ -470,7 +423,8 @@ mod tests {
     /// pair style's, with or without the rows.
     #[test]
     fn regular_materializes_the_regular_parameters_and_keeps_the_energy() {
-        use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+        use crate::ff::compile::PotentialCompiler;
+        use crate::ff::potential::intramolecular_pairs;
         let ff = lj_charmm(None);
         let mut frame = chain();
         frame.insert(
@@ -498,7 +452,8 @@ mod tests {
     /// operation; with them it prices A's ε₁₄/σ₁₄ at the 1-4 weight.
     #[test]
     fn epsilon14_without_rows_is_refused_and_with_them_priced() {
-        use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+        use crate::ff::compile::PotentialCompiler;
+        use crate::ff::potential::intramolecular_pairs;
         let ff = lj_charmm(Some(ONE_FOUR_EPSILON14));
         let mut frame = chain();
         frame.insert(

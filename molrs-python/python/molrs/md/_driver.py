@@ -98,7 +98,7 @@ class MdDriver:
         """Attach a pre-built potential (advanced; replaces :meth:`set_forcefield`).
 
         Accepts a compiled ``Potentials`` collection (e.g. one
-        :func:`molrs.ff.potential.compile_explicit_terms` built), an ``PairLjCut``, or a
+        :func:`molrs.ff.compile.compile_explicit_terms` built), an ``PairLjCut``, or a
         ``Potential`` subclass instance. The caller owns units — and, when skipping :meth:`set_neighbors`, neighbor correctness too:
         compiled ``Potentials`` evaluate exactly the topology (any ``pairs``
         block included) they were bound to; nothing is rebuilt as coordinates

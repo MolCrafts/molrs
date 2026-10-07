@@ -70,10 +70,7 @@ pub mod uff;
 
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use clpol::{
-    CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_fragment_scaling,
-    clpol_polarizability,
-};
+pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
 pub use gaff::GAFF;
 pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
 pub use gaff2::GAFF2;

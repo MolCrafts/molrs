@@ -7,13 +7,14 @@ use molrs::core::schema::block_names::ATOMS;
 use molrs::op::{F, Idx};
 use ndarray::Array1;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::form_conversion::{Converted, convert_rows, named, rewrite};
+use crate::ff::ir::Params;
 use crate::ff::ir::TypeParams;
-use crate::ff::ir::form::{Converted, convert_rows, declared, named, rewrite};
-use crate::ff::ir::{
-    CategorySpec, Coordinate, IrError, ParamDimension, ParamKind, Registry, StyleSpec,
-};
-use crate::ff::potential::PotentialCompiler;
+use crate::ff::ir::form::declared;
+use crate::ff::ir::{CategorySpec, Coordinate, IrError, ParamDimension, ParamKind, StyleSpec};
+use crate::ff::style_registry::Registry;
 
 /// The metric a fit minimises under: sample points of the category's
 /// coordinate, each with a weight.

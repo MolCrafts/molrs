@@ -1,6 +1,6 @@
 //! UFF van der Waals (RDKit `vdWContrib`).
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::energy_forces;

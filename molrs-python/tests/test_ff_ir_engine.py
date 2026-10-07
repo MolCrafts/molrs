@@ -11,7 +11,7 @@ from pathlib import Path
 import molrs
 import numpy as np
 import pytest
-from molrs.ff import ir
+from molrs.ff import ir, style_registry
 
 FENE = (
     "-0.5*k*r0^2*log(1-(r/r0)^2)"
@@ -27,7 +27,7 @@ def registered() -> Iterator[list[tuple[str, str]]]:
     yield names
     for category, name in names:
         try:
-            ir.unregister_style(category, name)
+            style_registry.unregister_style(category, name)
         except ir.IrError:
             pass
 
@@ -53,17 +53,17 @@ def chain(style: str) -> tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame]
 
 
 def energy(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame) -> float:
-    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 
 def test_a_positional_style_writes_and_reads_as_its_lammps_style(
     registered, tmp_path: Path
 ) -> None:
-    ir.register_style(
+    style_registry.register_style(
         "bond", "fene/py", params=FENE_PARAMS, expression=FENE, lammps="positional:fene"
     )
     registered.append(("bond", "fene/py"))
-    (info,) = [s for s in ir.styles("bond") if s.name == "fene/py"]
+    (info,) = [s for s in style_registry.styles("bond") if s.name == "fene/py"]
     assert info.lammps == "positional:fene"
     ff, frame = chain("fene/py")
     text = molrs.io.write_lammps_forcefield_str(ff, frame)
@@ -77,7 +77,7 @@ def test_a_positional_style_writes_and_reads_as_its_lammps_style(
 
 
 def test_built_ins_name_their_lammps_forms() -> None:
-    forms = {(s.category, s.name): s.lammps for s in ir.styles()}
+    forms = {(s.category, s.name): s.lammps for s in style_registry.styles()}
     assert forms[("bond", "harmonic")] == "positional"
     assert forms[("dihedral", "periodic")] == "custom:fourier"
     assert forms[("improper", "periodic")] == "custom:cvff"
@@ -86,32 +86,32 @@ def test_built_ins_name_their_lammps_forms() -> None:
 
 
 def test_without_a_lammps_form_lammps_refuses_by_name(registered) -> None:
-    ir.register_style("bond", "fene/none", params=FENE_PARAMS, expression=FENE)
+    style_registry.register_style("bond", "fene/none", params=FENE_PARAMS, expression=FENE)
     registered.append(("bond", "fene/none"))
     ff, frame = chain("fene/none")
     with pytest.raises(ValueError, match=r"LAMMPS has no form for bond `fene/none`.*LEPTON"):
         molrs.io.write_lammps_forcefield_str(ff, frame)
     # A form given afterwards: the style writes.
-    ir.register_engine_form("lammps", "bond", "fene/none", "positional:fene")
+    style_registry.register_engine_form("lammps", "bond", "fene/none", "positional:fene")
     assert "bond_style fene\n" in molrs.io.write_lammps_forcefield_str(ff, frame)
 
 
 def test_register_engine_form_refuses_by_variant(registered) -> None:
-    ir.register_style("bond", "fene/x", params=FENE_PARAMS, expression=FENE)
+    style_registry.register_style("bond", "fene/x", params=FENE_PARAMS, expression=FENE)
     registered.append(("bond", "fene/x"))
     with pytest.raises(ir.NoEngineFormError) as e:
-        ir.register_engine_form("gromacs", "bond", "fene/x", "positional")
+        style_registry.register_engine_form("gromacs", "bond", "fene/x", "positional")
     assert e.value.engine == "GROMACS"
     with pytest.raises(ir.SealedError):
-        ir.register_engine_form("lammps", "bond", "harmonic", "positional:other")
+        style_registry.register_engine_form("lammps", "bond", "harmonic", "positional:other")
     with pytest.raises(ir.NoKernelError):
-        ir.register_engine_form("lammps", "bond", "nothing/here", "positional")
+        style_registry.register_engine_form("lammps", "bond", "nothing/here", "positional")
     with pytest.raises(ValueError, match="positional"):
-        ir.register_engine_form("lammps", "bond", "fene/x", "lepton")
+        style_registry.register_engine_form("lammps", "bond", "fene/x", "lepton")
     # A positional form the spec cannot have: a style parameter LAMMPS's
     # line has no place for.
     with pytest.raises(ir.NoEngineFormError, match="style parameter `width`"):
-        ir.register_style(
+        style_registry.register_style(
             "pair",
             "soft/x",
             params={"a": "E"},
@@ -122,7 +122,7 @@ def test_register_engine_form_refuses_by_variant(registered) -> None:
 
 
 def test_a_style_spec_class_takes_its_lammps_form(registered) -> None:
-    class Fene(ir.StyleDeclaration):
+    class Fene(style_registry.StyleDeclaration):
         category = "bond"
         name = "fene/cls"
         params = FENE_PARAMS
@@ -130,5 +130,5 @@ def test_a_style_spec_class_takes_its_lammps_form(registered) -> None:
         lammps = "positional:fene"
 
     registered.append(("bond", "fene/cls"))
-    (info,) = [s for s in ir.styles("bond") if s.name == "fene/cls"]
+    (info,) = [s for s in style_registry.styles("bond") if s.name == "fene/cls"]
     assert info.lammps == "positional:fene"

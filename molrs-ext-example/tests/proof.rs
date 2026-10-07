@@ -32,14 +32,16 @@ use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::{Block, Frame};
 use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-use molrs::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
+use molrs::ff::compile::PotentialCompiler;
+use molrs::ff::forcefield::{DefError, ForceField};
 use molrs::ff::ir::{
     Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, Engine, FormCodec,
-    FormRefusal, IrError, Kernel, LammpsForm, ParamDimension, ParamSpec, ParamValue, Registry,
-    StyleSpec,
+    FormRefusal, IrError, LammpsForm, ParamDimension, ParamSpec, ParamValue, StyleSpec,
 };
+use molrs::ff::ir::{Params, SpecialBonds};
 use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
-use molrs::ff::potential::{CompileError, ForceTerm, PotentialCompiler, intramolecular_pairs};
+use molrs::ff::potential::{CompileError, ForceTerm, intramolecular_pairs};
+use molrs::ff::style_registry::{Kernel, Registry};
 use molrs::io::gromacs::GromacsTopForcefieldWriter;
 use molrs::io::lammps::{LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
 use molrs::io::mrec::ForceFieldSection;
@@ -743,8 +745,9 @@ fn mrec_round_trip() {
             })
         );
         assert!(
-            err.to_string()
-                .contains("register it (molrs.ff.ir.register_style) or give it an expression"),
+            err.to_string().contains(
+                "register it (molrs.ff.style_registry.register_style) or give it an expression"
+            ),
             "{err}"
         );
     }

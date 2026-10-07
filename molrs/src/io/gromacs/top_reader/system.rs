@@ -500,7 +500,7 @@ impl OwnTypes {
         category: &str,
         style: &str,
         labels: &[&str],
-        params: crate::ff::forcefield::Params,
+        params: crate::ff::ir::Params,
         row: &Row,
     ) -> Result<String, String> {
         let key = format!("{category}\u{1}{style}\u{1}{labels:?}\u{1}{params:?}");
@@ -511,7 +511,7 @@ impl OwnTypes {
         let name = TypeName::join(labels)
             .and_then(|t| t.with_qualifier(&["gmx", &n.to_string()]))
             .map_err(|e| row.err(&e))?;
-        d.ff.def_style(category, style, crate::ff::forcefield::Params::new())
+        d.ff.def_style(category, style, crate::ff::ir::Params::new())
             .and_then(|s| s.def_type(name.as_str(), labels, params))
             .map_err(|e| row.err(&e.to_string()))?;
         self.names.insert(key, name.as_str().to_owned());

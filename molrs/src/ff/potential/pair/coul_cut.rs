@@ -1,6 +1,6 @@
 //! Buffered Coulomb pair potential with a hard distance cutoff (`pair coul/cut`).
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::fold_chunks;
@@ -574,8 +574,8 @@ mod tests {
     /// apply when the style leaves them out, exactly as stating them does.
     #[test]
     fn coulomb_is_required_and_the_spec_defaults_apply() {
+        use crate::ff::compile::ExplicitTerms;
         use crate::ff::ir::IrError;
-        use crate::ff::potential::ExplicitTerms;
         let terms = |style: &[(&str, f64)]| {
             ExplicitTerms::new("pair", "coul/cut")
                 .style_params(Params::from_pairs(style))

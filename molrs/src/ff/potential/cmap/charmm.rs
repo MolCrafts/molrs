@@ -5,8 +5,8 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayD, ArrayView2};
 
-use crate::ff::forcefield::Params;
 use crate::ff::ir::CMAP_GRID;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_dihedral, sub3, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, scale};
@@ -465,8 +465,8 @@ pub fn cmap_charmm_constructor(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
-    use crate::ff::potential::PotentialCompiler;
     use crate::ff::potential::flat_coords::compute_dihedral;
     use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
     use molrs::core::Block;

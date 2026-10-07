@@ -2418,7 +2418,7 @@ mod tests {
     #[cfg(feature = "ff")]
     fn energy_forces(forcefield: &ForceFieldSection, system: &Frame) -> (F, Vec<F>) {
         let ff = forcefield.to_forcefield().unwrap();
-        let potentials = crate::ff::potential::PotentialCompiler::new(&ff)
+        let potentials = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(system)
             .unwrap();
         let coords: Vec<F> = system.coords().unwrap().iter().copied().collect();

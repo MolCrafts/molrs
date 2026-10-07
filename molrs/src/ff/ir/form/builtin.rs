@@ -2,12 +2,12 @@
 //! [`crate::ff::ir::torsion`], beside its algebra), `bond`, `angle`
 //! and `lj`.
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::ir::torsion;
 use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
 
 /// Every built-in `(category, style, codec)`, registered and sealed by
-/// [`Registry::builtin`](crate::ff::ir::Registry::builtin).
+/// [`Registry::builtin`](crate::ff::style_registry::Registry::builtin).
 pub fn builtin_forms() -> Vec<(&'static str, &'static str, FormCodec)> {
     let mut out = torsion::codecs();
     out.extend(polynomial("bond", "r0"));

@@ -487,9 +487,9 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   header comment (`Angle Coeffs # charmm`, `# hybrid` with the sub-style on
   each row), as LAMMPS's `write_data` does, so `read_lammps_data_coeffs`
   reads a non-`harmonic` section back under the right style.
-- **`read_lammps_data_coeffs` takes the frame.** The signature is
-  `read_lammps_data_coeffs(frame, *, units=None)` with the frame
-  `molrs.io.read_lammps_data` returned: it reads the frame's
+- **`read_lammps_data_coeffs` reads the data file.** The doors are
+  `read_lammps_data_coeffs(path, *, units=None)` and
+  `read_lammps_data_coeffs_str(text, *, units=None)`: each reads the file's
   `meta["lammps_coeffs_text"]` and names each row's type id by the label the
   file's `* Type Labels` section gave it (the reader's
   `meta["<kind>_type_labels"]`, ids as written). `units` defaults to the
@@ -503,10 +503,13 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   ff = read_lammps_data_coeffs(frame.meta["lammps_coeffs_text"], units="real",
                                atom_labels={1: "c3", 2: "hc"}, ...)
   # 0.16
-  ff = molrs.io.read_lammps_data_coeffs(frame)
+  ff = molrs.io.read_lammps_data_coeffs("system.data")
   ```
-  In Rust, `LammpsForcefieldReader::read_data_coeffs(&frame, units: Option<&str>)`
-  replaces `read_data_coeffs(text, &LammpsTypeLabelMaps, units)`;
+  In Rust, `io::read_lammps_data_coeffs(path, units)` /
+  `read_lammps_data_coeffs_str(text, units)`, or, with the frame
+  `read_lammps_data` returned in hand,
+  `LammpsForcefieldReader::read_data_coeffs(&frame, units: Option<&str>)`,
+  replace `read_data_coeffs(text, &LammpsTypeLabelMaps, units)`;
   `LammpsTypeLabelMaps` is no longer public. The meta keys are
   `core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS}`, and
   `TypeLabels::declared_ids(frame, block)` gives a block's inventory with
@@ -1095,7 +1098,7 @@ left column.
 | a section's `units.preset` of the LAMMPS styles only | the LAMMPS styles and `openmm` (`nm`, `kJ/mol`, `ps`) |
 | `molrs::system::port::PORTS`, `perceive::equivalence::EQUIV_CLASS`, `perceive::bond_type::BCC_BOND_TYPE`, `io::data::lammps_bond_react::REACT_ID`, `io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META}` | `molrs::core::keys::{PORTS, EQUIV_CLASS, BCC_BOND_TYPE, REACT_ID, LAMMPS_COEFFS_TEXT, LAMMPS_UNITS}`; also `FRAG_ID`, `VSITE`, `BEAD_ATOMS` (Python `molrs.core.keys.*`) |
 | `molrs::ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`, Python `molrs.ff.params.AMBER_SCEE` / `AMBER_SCNB` | `molrs::core::constants::{AMBER_SCEE, AMBER_SCNB}`, `molrs.core.constants.*` |
-| `ff::constants::{MDYNE_A_TO_KCAL, VACUUM_DIELECTRIC, DEG2RAD}` (crate-private) | `molrs::core::constants::{KCAL_MOL_PER_MDYNE_ANGSTROM, VACUUM_DIELECTRIC}`; `f64::to_radians` |
+| `ff::constants::{MDYNE_A_TO_KCAL, VACUUM_DIELECTRIC, DEG2RAD}` (crate-private) | `molrs::core::constants::{MMFF_MDYNE_A_TO_KCAL_MOL, VACUUM_DIELECTRIC}`; `f64::to_radians` |
 | `molrs::ff::params::uff::G` (332.06) | `molrs::core::constants::UFF_COULOMB` |
 | the spectroscopy literals (`c`, fs → s, m → cm, `1.438777`) | `molrs::core::constants::{SPEED_OF_LIGHT, SECOND_RADIATION_CONSTANT}` (`c₂ = 1.438776877` cm·K, CODATA 2018); fs → s and m → cm through the unit registry (`molrs::core::UnitFactor::new("fs", "s")`) |
 | `molrs::VERSION` | `env!("CARGO_PKG_VERSION")`; Python `molrs.__version__` |
@@ -1212,7 +1215,7 @@ column.
 |---|---|
 | JS `parseSMILES(s)` | `SmilesIr.parse(s)` (the IR, `toFrame()`), `readSmilesStr(s)` (one molecule's `Frame`) |
 | JS `readSTL` | `readStlBytes` |
-| JS `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CHGCARReader`, `AcReader` | `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `VaspChgcarReader`, `AmberAcReader` (`CubeReader`, `AmberInpcrdReader` unchanged) |
+| JS `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CHGCARReader`, `AcReader` | `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`; functions `readXsfStr`, `readVaspChgcarStr`, `readAmberAcStr` (and `CubeReader`, `AmberInpcrdReader` → `readCubeStr`, `readAmberInpcrdStr`), as Rust |
 | JS `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream`, `FrameIndexEntry` | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream`, `FrameOffset` |
 | JS `writeFrame(frame, fmt)` | one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr` (CIF, GRO and MOL2 now check the Frame schema first, as every writer class does) |
 | JS `writeFrameBytes(frame, fmt)`, `readFrameBytes(data, fmt)` | `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`, `writeMsgpackFrameBytes` / `readMsgpackFrameBytes`, `writeJsonFrameStr` / `readJsonFrameStr` |
@@ -1242,7 +1245,7 @@ Each engine's Coulomb constant and charge factor has one owner,
 | `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::core::constants::OPENMM_ONE_4PI_EPS0` (OpenMM's own value, kJ·nm·mol⁻¹·e⁻²) |
 | `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::core::constants::GROMACS_ONE_4PI_EPS0` (GROMACS's own value, kJ·nm·mol⁻¹·e⁻²) |
 | `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | the unit registry: `molrs::core::UnitFactor::new("bohr", "angstrom")` |
-| `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `molrs::core::constants::BOLTZMANN_REAL` (1.98720425864083e-3): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
+| `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `UnitPreset::real().boltzmann()` (1.9872042586408316e-3, R/4184 J): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
 
 The private kcal ↔ kJ and nm ↔ Å copies in the GROMACS, OpenMM XML, `.gro`,
 `.trr` and `.xtc` code are gone: unit conversions go through the unit
@@ -1671,7 +1674,7 @@ it any more.
 | `molrs.ff.read_gromacs_system` | `molrs.io.read_gromacs_top_system` |
 | `molrs.ff.read_gromacs_top_ff` | `molrs.io.read_gromacs_top_forcefield` |
 | `molrs.ff.read_lammps_cmap` | `molrs.io.read_lammps_cmap_forcefield` |
-| `molrs.ff.read_lammps_data_coeffs` | `molrs.io.read_lammps_data_coeffs` |
+| `molrs.ff.read_lammps_data_coeffs` | `molrs.io.read_lammps_data_coeffs` (path) / `read_lammps_data_coeffs_str` |
 | `molrs.ff.read_lammps_forcefield` | `molrs.io.read_lammps_forcefield` |
 | `molrs.ff.read_opls_xml` | `molrs.io.read_openmm_xml_forcefield` |
 | `molrs.ff.write_amber_frcmod` | `molrs.io.write_amber_frcmod` |
@@ -1679,7 +1682,7 @@ it any more.
 | `molrs.ff.write_gromacs_system` | `molrs.io.write_gromacs_top_system` |
 | `molrs.ff.write_gromacs_top_ff` | `molrs.io.write_gromacs_top_forcefield` |
 | `molrs.ff.write_lammps_cmap` | `molrs.io.write_lammps_cmap_forcefield` |
-| `molrs.ff.write_lammps_data_coeffs` | `molrs.io.write_lammps_data_coeffs` |
+| `molrs.ff.write_lammps_data_coeffs` | `molrs.io.write_lammps_data_coeffs_str` |
 | `molrs.ff.write_lammps_forcefield` | `molrs.io.write_lammps_forcefield` |
 | `molrs.ff.write_lammps_forcefield_str` | `molrs.io.write_lammps_forcefield_str` |
 | `molrs.ff.potential.protocol` | private; `Potential` is `molrs.ff.potential.Potential` |
@@ -1950,7 +1953,7 @@ molrs-capi and molrs-cxxapi link molrs with `full,filesystem,rayon,serde`.
 C++ (`molrs-cxxapi`):
 
 - **`write_frame_xyz` is removed**: it was `write_frame_xyz_typed` (now
-  `write_xyz_frame`) with no metadata. Pass an empty
+  `write_xyz`) with no metadata. Pass an empty
   `rust::Vec<KeyedMetaValue>`.
 - **The `zarr` cargo feature is removed.** It was on by default and the crate
   did not build without it; the `*.mrec` writers and readers are always
@@ -2249,7 +2252,7 @@ build on it):
 | `Block.dtype`, `schemaColumnDtype`, `NDArray.dtype` → `"f64"`, `"i32"`, `"u64"` | `"float"`, `"int"`, `"uint"` (core `DType::name()`) |
 | `Frame.metaNames` | `Frame.metaKeys` (beside `getMeta` / `setMeta`) |
 | `Box.hMatrix()`, `Box.getCorners()`, `Box.to_frac`, `Box.to_cart` | `Box.h()`, `Box.corners()` (Rust `SimBox::corners`, was `get_corners`), `Box.toFrac`, `Box.toCart` |
-| `NDArray.is_empty`, `NDArray.write_from` | `NDArray.isEmpty`, `NDArray.writeFrom` |
+| `NDArray.is_empty`, `NDArray.write_from` | `NDArray.isEmpty`, `NDArray.copyFrom` |
 | `Mesh` | `TriMesh` |
 | `schemaJson` | removed: `schemaDocument` |
 | `mrecSections(files)` | `sectionNames(source)` |
@@ -2301,8 +2304,8 @@ now counts spheres (it returned 3). The crate's modules mirror molrs:
 | `frame_meta_entries`, `frame_set_meta_entry` | `frame_meta_keys` + `frame_get_meta(fref, key)` (a missing key throws), `frame_set_meta` |
 | `frame_box`, `frame_set_box` | `frame_box_h`, `frame_set_box_h` |
 | `frame_column_u32`, `frame_set_column_u32` (they moved u64) | `frame_column_u64`, `frame_set_column_u64` |
-| `xyz_read_first_frame` | `read_xyz_frame` |
-| `write_frame_xyz_typed` | `write_xyz_frame` |
+| `xyz_read_first_frame` | `read_xyz` |
+| `write_frame_xyz_typed` | `write_xyz` |
 | `write_frame`, `read_first_frame` (a one-frame `*.mrec`) | `write_mrec_frame`, `read_mrec_frame` (core `io::write_mrec_frame` / `read_mrec_frame`: the record's `frame` section) |
 | — | `read_mrec_trajectory_frame(path, index)`: a frame of what an `MrecWriterRef` wrote |
 | `TrajectoryWriterRef`, `trajectory_writer_*`, `CXX_CAP_TRAJECTORY_WRITER` | `MrecWriterRef`, `mrec_writer_*`, `CXX_CAP_MREC_WRITER` (same bit) |
@@ -2373,7 +2376,7 @@ units, as LAMMPS does (micro 1.380649·10⁻⁸, 8.9875518·10⁶; nano
 | Earlier 0.16 builds | 0.16 |
 |---|---|
 | `stream::{read_msgpack_frame_bytes, write_msgpack_frame_bytes, read_json_frame_str, write_json_frame_str}` → `Result<_, StreamError>` | `io::` the same names → `std::io::Result` (`InvalidData` on a bad payload); feature `stream` |
-| — (Python only) | `io::{read_gromacs_top_forcefield, read_gromacs_top_system}(path, &GromacsTopReadOptions)`, `io::{write_gromacs_top_forcefield, write_gromacs_top_system}(path, …, precision)`, `io::read_amber_prmtop_system`, `io::{read_lammps_forcefield, read_lammps_forcefield_str}`, `io::{write_lammps_forcefield, write_lammps_forcefield_str, write_lammps_data_coeffs, write_lammps_cmap_forcefield}(…, frame, LammpsForcefieldWriteOptions)`, `io::{read_lammps_data_coeffs, read_lammps_cmap_forcefield}` |
+| — (Python only) | `io::{read_gromacs_top_forcefield, read_gromacs_top_system}(path, &GromacsTopReadOptions)`, `io::{write_gromacs_top_forcefield, write_gromacs_top_system}(path, …, precision)`, `io::read_amber_prmtop_system`, `io::{read_lammps_forcefield, read_lammps_forcefield_str}`, `io::{write_lammps_forcefield, write_lammps_forcefield_str, write_lammps_data_coeffs_str, write_lammps_cmap_forcefield}(…, frame, LammpsForcefieldWriteOptions)`, `io::{read_lammps_data_coeffs, read_lammps_data_coeffs_str, read_lammps_cmap_forcefield}` |
 | `io::{read_lammps_trajectory, write_lammps_trajectory}` | `io::{read_lammps_dump_trajectory, write_lammps_dump_trajectory}` |
 | `io::mrec::validation::read_version` | `io::mrec::validation::molrec_version_of` |
 | `io::mrec::StyleEntry` | `io::mrec::SectionStyle` |

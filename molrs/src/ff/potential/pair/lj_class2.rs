@@ -3,7 +3,7 @@
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::atom_type_index;
@@ -516,9 +516,10 @@ mod tests {
     /// absent `sixthpower` — LAMMPS's rule for `lj/class2` — at both doors.
     #[test]
     fn an_unlike_pair_mixes_sixthpower_by_default() {
-        use crate::ff::forcefield::combining_rule::CombiningRule;
-        use crate::ff::forcefield::{ForceField, Params};
-        use crate::ff::potential::PotentialCompiler;
+        use crate::ff::compile::PotentialCompiler;
+        use crate::ff::forcefield::ForceField;
+        use crate::ff::ir::CombiningRule;
+        use crate::ff::ir::Params;
         use molrs::core::Block;
         use molrs::op::Idx;
         use ndarray::Array1;

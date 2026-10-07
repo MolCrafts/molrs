@@ -24,7 +24,7 @@ ATOM_TYPES = ["A", "B", "C", "D"]
 TERMS = [("t", ("A", "B", "C"), 20.0, 2.45), ("u", ("B", "C", "D"), 11.0, 2.2)]
 
 # The public registration path: the process-wide registry gains the category.
-molrs.ff.ir.register_category("urey_bradley", 3)
+molrs.ff.style_registry.register_category("urey_bradley", 3)
 
 
 def _chain(kind: str) -> molrs.core.Atomistic:
@@ -66,7 +66,7 @@ class _Chain(Typifier):
 def _energy_forces(typifier: Typifier, kind: str) -> tuple[float, np.ndarray, molrs.core.Frame]:
     frame = typifier.typify(_chain(kind)).to_frame()
     ff = typifier.forcefield()
-    e, f = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     return e, f, frame
 
 

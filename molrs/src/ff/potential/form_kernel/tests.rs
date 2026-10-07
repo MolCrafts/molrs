@@ -11,15 +11,17 @@ use std::sync::Arc;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
 use crate::ff::ir::{
-    Kernel, ParamCombination, ParamDimension, ParamSource, ParamSpec, Registry, SpecialClass,
-    StyleSpec,
+    ParamCombination, ParamDimension, ParamSource, ParamSpec, SpecialClass, StyleSpec,
 };
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle};
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use crate::ff::potential::pair::fixtures::{assert_virial_matches_forces, table_over};
-use crate::ff::potential::{ForceTerm, Potential, PotentialCompiler, Potentials};
+use crate::ff::potential::{ForceTerm, Potential, Potentials};
+use crate::ff::style_registry::{Kernel, Registry};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};

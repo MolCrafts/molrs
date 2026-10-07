@@ -4,8 +4,8 @@ use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::{Block, DType, MolRsError, UnitPreset};
-use crate::ff::forcefield::combining_rule::COMBINING_RULES;
-use crate::ff::forcefield::one_four::ONE_FOUR_VALUES;
+use crate::ff::ir::COMBINING_RULES;
+use crate::ff::ir::ONE_FOUR_VALUES;
 use crate::ff::ir::{
     ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, category_arity, is_parameter_column,
 };

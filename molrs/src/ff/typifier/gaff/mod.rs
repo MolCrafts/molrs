@@ -12,7 +12,8 @@ use molrs::core::{Atomistic, NodeId};
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::{
     GAFF, GAFF2, PARMCHK, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow,
     ParmNonbondedRow, ParmTable, ParmType,
@@ -371,7 +372,8 @@ impl std::error::Error for GaffError {}
 ///
 /// ```
 /// use molrs::core::Atomistic;
-/// use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+/// use molrs::ff::compile::PotentialCompiler;
+/// use molrs::ff::potential::intramolecular_pairs;
 /// use molrs::ff::typifier::Typing;
 /// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 /// use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
@@ -1028,7 +1030,8 @@ mod tests {
     use super::{
         GaffParameterSet, GaffTypifier, angle_params, bond_params, try_candidate_forcefield,
     };
-    use crate::ff::forcefield::{ForceField, SpecialBonds};
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::SpecialBonds;
     use crate::ff::typifier::Typing;
 
     // -- fixtures ----------------------------------------------------------------
@@ -1312,10 +1315,7 @@ mod tests {
     }
 
     /// The params of every `category` type of `ff`, by name.
-    fn params_of(
-        ff: &ForceField,
-        category: &str,
-    ) -> BTreeMap<String, crate::ff::forcefield::Params> {
+    fn params_of(ff: &ForceField, category: &str) -> BTreeMap<String, crate::ff::ir::Params> {
         ff.get_styles(category)
             .into_iter()
             .flat_map(|s| s.defs().collect_type_params())

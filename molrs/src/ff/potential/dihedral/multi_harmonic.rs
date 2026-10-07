@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
@@ -285,8 +285,9 @@ mod tests {
 
 #[cfg(test)]
 mod nharmonic_tests {
-    use crate::ff::forcefield::{ForceField, Params};
-    use crate::ff::potential::PotentialCompiler;
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::op::{F, Idx};

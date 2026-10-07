@@ -9,7 +9,7 @@
 //! relative to the centroid, eigen-decompose it, and read the top `dim`
 //! eigenpairs as coordinates. ETKDG embeds in `dim = 4`; the fourth dimension
 //! is later squeezed out by `FourthDimContribs` during minimization (see
-//! `etmin`). Negative eigenvalues are replaced with small random jitter when
+//! `distgeom::ViolationEnergy`). Negative eigenvalues are replaced with small random jitter when
 //! `rand_neg_eig` is set (RDKit `randNegEig`), matching `computeInitialCoords`.
 
 use rand::RngExt;

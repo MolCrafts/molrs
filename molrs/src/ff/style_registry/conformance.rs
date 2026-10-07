@@ -33,14 +33,15 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::ir::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 use crate::ff::ir::{
-    Arity, CategorySpec, ConformanceSample, Coordinate, IrError, Kernel, ParamCombination,
-    ParamDimension, ParamKind, StyleSpec,
+    Arity, CategorySpec, ConformanceSample, Coordinate, IrError, ParamCombination, ParamDimension,
+    ParamKind, StyleSpec,
 };
-use crate::ff::ir::{ExpressionCompiler, ExpressionForm};
-use crate::ff::potential::form_kernel::{CompoundForm, ScalarForm, TermParams, columns};
+use crate::ff::potential::form_kernel::{CompoundForm, Probe, ScalarForm, TermParams, columns};
+use crate::ff::style_registry::Kernel;
+use crate::ff::style_registry::{ExpressionCompiler, ExpressionForm};
 use molrs::op::F;
 
 /// `dE/dq` against a central difference.
@@ -393,25 +394,7 @@ impl Rng {
     }
 }
 
-/// The points a numeric check evaluates a form at: terms' inputs, and their
-/// coordinates (`q`, scalar forms) or positions (`x`, compound forms).
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Probe {
-    pub params: TermParams,
-    pub q: Vec<F>,
-    pub x: Vec<[F; 3]>,
-    pub arity: usize,
-}
-
 impl Probe {
-    fn n(&self) -> usize {
-        if self.x.is_empty() {
-            self.q.len()
-        } else {
-            self.x.len() / self.arity.max(1)
-        }
-    }
-
     /// [`SAMPLE_POINTS`] seeded points of one registration sample.
     fn seeded(
         category: &CategorySpec,

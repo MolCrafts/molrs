@@ -4,7 +4,7 @@
 //! ([`param_columns`]). Force-field files are `molrs.io`'s
 //! (`molrs::io`).
 //!
-//! The Python `dict` ↔ [`Params`](molrs::ff::forcefield::Params) conversions
+//! The Python `dict` ↔ [`Params`](molrs::ff::ir::Params) conversions
 //! every force-field binding uses ([`params_from_dict`], [`params_to_dict`],
 //! [`array_param`]) live here, beside the type they convert.
 
@@ -64,14 +64,14 @@ pub(crate) fn array_param(value: &Bound<'_, PyAny>) -> PyResult<Option<ndarray::
 }
 
 /// Convert an optional Python ``dict[str, float | str | array]`` of parameters
-/// into [`Params`](molrs::ff::forcefield::Params). A ``str`` value goes to the
+/// into [`Params`](molrs::ff::ir::Params). A ``str`` value goes to the
 /// string side, a number to the numeric side, an array (a numpy array or a
 /// nested list / tuple of numbers, stored as float64) to the array side;
 /// anything else raises ``TypeError``. A missing dict yields no params.
 pub(crate) fn params_from_dict(
     params: Option<&Bound<'_, PyDict>>,
-) -> PyResult<molrs::ff::forcefield::Params> {
-    let mut out = molrs::ff::forcefield::Params::new();
+) -> PyResult<molrs::ff::ir::Params> {
+    let mut out = molrs::ff::ir::Params::new();
     let Some(d) = params else {
         return Ok(out);
     };
@@ -194,7 +194,7 @@ impl PyForceField {
             inner.set_units(&units);
         }
         if let Some((lj, coul)) = special_bonds {
-            inner.set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
+            inner.set_special_bonds(molrs::ff::ir::SpecialBonds { lj, coul });
         }
         for (category, arity, style_name, params, types) in styles {
             // The arity travels with the style: a category no registry of
@@ -222,7 +222,7 @@ impl PyForceField {
 /// arrays.
 pub(crate) fn params_to_dict<'py>(
     py: Python<'py>,
-    params: &molrs::ff::forcefield::Params,
+    params: &molrs::ff::ir::Params,
 ) -> PyResult<Bound<'py, PyDict>> {
     let out = PyDict::new(py);
     for (key, value) in params.iter() {
@@ -305,7 +305,7 @@ impl PyForceField {
     /// is by omitting pairs from the neighbour list).
     fn set_special_bonds(&mut self, lj: [f64; 3], coul: [f64; 3]) {
         self.inner
-            .set_special_bonds(molrs::ff::forcefield::SpecialBonds { lj, coul });
+            .set_special_bonds(molrs::ff::ir::SpecialBonds { lj, coul });
     }
 
     /// Write this force field's 1-4 pricing of ``frame``'s 1-4 pairs as

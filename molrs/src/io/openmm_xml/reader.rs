@@ -7,10 +7,11 @@ use roxmltree::Node;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::torsion::rb_polynomial;
+use crate::ff::ir::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
 

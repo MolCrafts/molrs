@@ -16,7 +16,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::core::constants::{OPLS_COULOMB_14, OPLS_LJ_14, VACUUM_DIELECTRIC};
-use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::OPLSAA_TYPING;
 use crate::ff::params::{
     OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS, OPLSAA_MIXING, OPLSAA_NAME,

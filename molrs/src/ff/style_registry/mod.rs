@@ -1,20 +1,77 @@
-//! The registry of the force-field IR: categories, styles and the kernels
-//! that price them — one table, open to any caller that conforms.
+//! The style registry: which kernel prices each style of the force-field IR
+//! ([`crate::ff::ir`]) — categories, styles, the kernels that price them,
+//! their form codecs and engine forms, in one table open to any caller that
+//! conforms.
+//!
+//! The IR states the shape of a category and a style as data; this module
+//! binds that shape to the kernels of [`crate::ff::potential`], so it sits
+//! above both, and the force field ([`crate::ff::forcefield`]) and the
+//! compiler ([`crate::ff::compile`]) read it:
+//!
+//! * a style is registered as a [`StyleSpec`] and a [`Kernel`] in one of
+//!   three tiers: an expression ([`ExpressionKernel`]), a batch form of one
+//!   coordinate or of the atoms' positions
+//!   ([`ScalarForm`], [`CompoundForm`], built
+//!   into the form kernels of [`crate::ff::potential::form_kernel`]), or a
+//!   constructor that builds a whole kernel (every built-in kernel; `dihedral
+//!   rb` is a built-in priced by its expression alone);
+//! * the [`Registry`] refuses anything that does not conform
+//!   ([`conformance`], [`IrError`]) and seals the built-ins;
+//! * [`compile_expression`] compiles a style's Lepton `expression` (the
+//!   engine of [`crate::ff::ir::expression`]) into its kernel, with exact
+//!   derivatives — installed in every registry [`Registry::builtin`] makes.
+//!
+//! ```
+//! use std::sync::Arc;
+//! use molrs::ff::ir::{ParamDimension, ParamSpec, StyleSpec};
+//! use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
+//! use molrs::ff::style_registry::{Kernel, Registry};
+//!
+//! /// LAMMPS `bond_style harmonic`, as a third party would write it.
+//! struct Harmonic;
+//! impl ScalarForm for Harmonic {
+//!     fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
+//!         let (k, r0) = (p.get("k").unwrap(), p.get("r0").unwrap());
+//!         for t in 0..r.len() {
+//!             e[t] = k[t] * (r[t] - r0[t]).powi(2);
+//!             de_dr[t] = 2.0 * k[t] * (r[t] - r0[t]);
+//!         }
+//!     }
+//! }
+//!
+//! let mut registry = Registry::builtin();
+//! let spec = StyleSpec::new("bond", "my_harmonic").params(vec![
+//!     ParamSpec::new("k", "E/L^2".parse().unwrap()),
+//!     ParamSpec::new("r0", ParamDimension::LENGTH),
+//! ]);
+//! registry
+//!     .register_style(spec, Some(Kernel::Scalar(Arc::new(Harmonic))))
+//!     .unwrap();
+//! ```
+
+#[cfg(test)]
+mod builtin_conformance;
+mod builtin_kernels;
+mod compiled_expression;
+pub mod conformance;
+
+pub(crate) use builtin_kernels::BuiltinKernels;
+pub(crate) use compiled_expression::fallback_spec;
+pub use compiled_expression::{CompiledExpression, compile_expression};
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::ff::forcefield::Params;
-use crate::ff::ir::FormCodec;
-use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
+use crate::ff::ir::torsion::{FAMILY, FourierSeries, canonical_series};
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
 use crate::ff::ir::{Engine, LammpsCodec, LammpsForm};
-use crate::ff::potential::BuiltinKernels;
+use crate::ff::ir::{FormCodec, ParamSource, Params, SpecialClass, TypeParams};
 use crate::ff::potential::ForceTerm;
 use crate::ff::potential::form_kernel::{
-    CompoundForm, CompoundTerms, ScalarBonded, ScalarForm, ScalarPair,
+    CompoundForm, CompoundTerms, Probe, ScalarBonded, ScalarForm, ScalarPair,
 };
+use conformance::{PROBE_TERMS, form_id};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -52,37 +109,6 @@ pub enum RowSource {
     CategoryBlock,
     /// The atoms, or rows the kernel finds for itself. Nothing gates it.
     Atoms,
-}
-
-/// Where a kernel's parameters come from — the question the empty-type-params
-/// guard must ask before it rejects a style with no type rows.
-///
-/// A kernel constructor that binds its type-params as `_tp` (i.e. resolves
-/// nothing from them) **is not a table-driven style**, and must say so by being
-/// registered [`PerInstance`](ParamSource::PerInstance).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParamSource {
-    /// Parameters come from the style's type-definition rows (the `tp` slice).
-    /// A style with no rows resolves nothing, and is an error.
-    TypeRows,
-    /// Parameters are resolved per interaction by the typifier and baked into
-    /// [`Frame`] columns; `tp` is ignored and may legitimately be empty.
-    PerInstance,
-}
-
-/// Which of a force field's special-bonds weight sets scales a pair style.
-///
-/// A force field may scale close van-der-Waals and electrostatic neighbours
-/// differently — Amber uses `1/2` and `1/1.2` — and in molrs those are
-/// separate kernels, so each has to say which set is its own. Declared at
-/// registration rather than guessed from the style's name: a name is a label,
-/// and this is a fact about the physics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpecialClass {
-    /// Scaled by the force field's van-der-Waals weights.
-    Vdw,
-    /// Scaled by its electrostatic weights.
-    Coulomb,
 }
 
 /// A style's energy written as an expression, compiled.
@@ -255,7 +281,7 @@ impl RegisteredStyle {
         expressions: Option<ExpressionCompiler>,
     ) -> Option<Result<RegisteredStyle, IrError>> {
         let expression = style.get_str("expression")?;
-        let spec = crate::ff::ir::expression::fallback_spec(category, name, style, tp, expression);
+        let spec = fallback_spec(category, name, style, tp, expression);
         let Some(compile) = expressions else {
             return Some(Err(IrError::NoKernel {
                 category: category.name.to_string(),
@@ -520,12 +546,12 @@ struct RegisteredForm {
 /// else under a taken name is [`IrError::Conflict`], mirroring the force
 /// field's own conflict rule.
 ///
-/// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) reads the
+/// [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) reads the
 /// process-wide registry ([`register_style`], [`with_global_registry`], …) unless it
 /// is handed one ([`PotentialCompiler::with_registry`]), which is how a test
 /// extends the IR without touching anything another test sees.
 ///
-/// [`PotentialCompiler::with_registry`]: crate::ff::potential::PotentialCompiler::with_registry
+/// [`PotentialCompiler::with_registry`]: crate::ff::compile::PotentialCompiler::with_registry
 #[derive(Clone, Default)]
 pub struct Registry {
     categories: BTreeMap<String, RegisteredCategory>,
@@ -559,7 +585,7 @@ impl Registry {
     /// names.
     pub fn builtin() -> Self {
         let mut r = Self::new();
-        r.set_expression_compiler(Some(crate::ff::ir::compile_expression));
+        r.set_expression_compiler(Some(compile_expression));
         // The built-in categories are molrec's table, which the custom rules
         // (`register_category`) are not: `atom` and `virtual_site` name no
         // endpoints, a pair's block is its atoms.
@@ -990,4 +1016,53 @@ pub fn set_expression_compiler(compiler: Option<ExpressionCompiler>) {
 /// must not register anything.
 pub fn with_global_registry<R>(f: impl FnOnce(&Registry) -> R) -> R {
     f(&global().read().unwrap())
+}
+
+/// The exact series of a row of any style of the `torsion` family, through
+/// its registered form codec (a built-in's, or a third party's): the row
+/// embedded in the canonical `dihedral periodic` parameters, summed.
+///
+/// # Errors
+///
+/// The style registers no form of the `torsion` family, or its embedding
+/// refuses the row (a charmm `w ≠ 0`, a non-integer periodicity, …).
+pub fn torsion_series(
+    category: &str,
+    style: &str,
+    style_params: &Params,
+    row: &Params,
+) -> std::result::Result<FourierSeries, String> {
+    let what = format!("{category} {style}");
+    let canonical = with_global_registry(|r| {
+        let codec = r
+            .form(category, style)
+            .filter(|c| c.family == FAMILY)
+            .ok_or_else(|| format!("{what} has no form of the `{FAMILY}` family"))?;
+        (codec.embed)(&TypeParams {
+            style: style_params.clone(),
+            row: row.clone(),
+        })
+        .map_err(|e| format!("{what}: {e}"))
+    })?;
+    canonical_series(&canonical).map_err(|e| format!("{what}: {e}"))
+}
+
+/// The refusal of a style this engine's writer has no form for, among
+/// the formats that hold built-in styles only (GROMACS, AMBER): a
+/// built-in without one, or any style that is not built in.
+pub fn refuse_style(engine: Engine, category: &str, style: &str) -> IrError {
+    let builtin = with_global_registry(|r| r.is_sealed(category, style));
+    let reason = if builtin {
+        format!(
+            "a built-in style no {} directive or section holds",
+            engine.name()
+        )
+    } else {
+        format!(
+            "it is not a built-in style: {} holds the built-in styles it has directives \
+             for, and a style registered at run time (or an expression's) has none",
+            engine.name()
+        )
+    };
+    engine.refuse(category, style, reason)
 }

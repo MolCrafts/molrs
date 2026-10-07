@@ -1,6 +1,7 @@
 //! The MMFF parameter-set XML, as `scripts/mmff_to_xml.py` writes it.
 
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::mmff::MmffProp;
 use crate::ff::params::mmff::encode_da;
 use crate::ff::typifier::mmff::MmffAtomProperties;
