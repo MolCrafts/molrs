@@ -104,9 +104,9 @@ macro_rules! mmff_front_door {
             ///
             /// `params` is the typing metadata and `ff` the force field it
             /// prices with; reading both out of an MMFF XML file is
-            /// [`read_mmff_params_xml_str`](crate::io::forcefield::xml::read_mmff_params_xml_str)
+            /// [`read_mmff_xml_params_str`](crate::io::read_mmff_xml_params_str)
             /// and
-            /// [`read_forcefield_xml_str`](crate::io::forcefield::xml::read_forcefield_xml_str).
+            /// [`read_mmff_xml_forcefield_str`](crate::io::read_mmff_xml_forcefield_str).
             /// The variant is pinned by *this type* — it is never an argument.
             pub fn from_parts(params: MMFFParams, ff: ForceField) -> Self {
                 Self(MmffEngine::from_parts($variant, params, ff))

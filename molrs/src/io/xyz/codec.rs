@@ -1,0 +1,2146 @@
+//! The XYZ / extended XYZ codec: the comment-line grammar, the reader and
+//! writer classes, the path doors.
+
+use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajectoryReader};
+use crate::io::writer::{FrameWriter, Writer};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::FrameAccess;
+use molrs::core::MetaValue;
+use molrs::core::SimBox;
+use molrs::op::types::{F, I, Idx};
+use ndarray::{Array1, Array2, ArrayD};
+use std::collections::HashMap;
+use std::io::{BufRead, Seek, SeekFrom, Write};
+use std::sync::OnceLock;
+
+// XYZ now produces a core::Frame consisting of blocks of NdArray columns
+
+/// Primitive value in extended XYZ comment
+#[derive(Debug, Clone, PartialEq)]
+enum Primitive {
+    Str(String),
+    Int(i64),
+    Real(f64),
+    Logical(bool),
+}
+
+/// Extended value (nested arrays)
+#[derive(Debug, Clone, PartialEq)]
+enum ExtValue {
+    Primitive(Primitive),
+    Array1(Vec<Primitive>),
+    Array2(Vec<Vec<Primitive>>),
+}
+
+/// Property type (S=string, I=int, R=real, L=logical)
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum PropType {
+    S,
+    I,
+    R,
+    L,
+}
+
+/// Property specification: name, type and multiplicity
+#[derive(Debug, Clone, PartialEq)]
+struct PropertySpec {
+    /// Property name
+    pub name: String,
+    /// Property type
+    pub ty: PropType,
+    /// Multiplicity (1 for scalar)
+    pub m: usize,
+}
+
+/// Parsed XYZ comment line with optional extended fields
+#[derive(Debug, Clone, PartialEq)]
+struct XYZComment {
+    /// Key-value pairs
+    pub kv: HashMap<String, ExtValue>,
+    /// Parsed properties (from key "Properties"), if present
+    pub properties: Option<Vec<PropertySpec>>, // parsed from key "Properties" if present
+    /// Original comment line when treated as extxyz
+    pub comment: Option<String>, // original comment line when treated as extxyz
+    /// True if treated as plain XYZ
+    pub is_plain_xyz: bool,
+}
+
+fn parse_logical_token(tok: &str) -> Option<bool> {
+    match tok.to_ascii_lowercase().as_str() {
+        "t" | "true" => Some(true),
+        "f" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_primitive_token(tok: &str) -> Primitive {
+    if let Some(b) = parse_logical_token(tok) {
+        Primitive::Logical(b)
+    } else if tok.contains('.') || tok.contains('e') || tok.contains('E') {
+        match tok.parse::<f64>() {
+            Ok(v) => Primitive::Real(v),
+            Err(_) => Primitive::Str(tok.to_string()),
+        }
+    } else {
+        match tok.parse::<i64>() {
+            Ok(v) => Primitive::Int(v),
+            Err(_) => Primitive::Str(tok.to_string()),
+        }
+    }
+}
+
+fn parse_array_from_quoted(s: &str) -> ExtValue {
+    // Try 2D using row separators ';' or '|' or comma between rows
+    let has_row_sep = s.contains(';') || s.contains('|') || s.contains('\n');
+    if has_row_sep {
+        let rows: Vec<Vec<Primitive>> = s
+            .split([';', '|', '\n'])
+            .filter(|row| !row.trim().is_empty())
+            .map(|row| row.split_whitespace().map(parse_primitive_token).collect())
+            .collect();
+        return ExtValue::Array2(rows);
+    }
+
+    // Try comma-separated values or whitespace-separated
+    let elements: Vec<&str> = if s.contains(',') {
+        s.split(',').collect()
+    } else {
+        s.split_whitespace().collect()
+    };
+    if elements.len() > 1 {
+        let values: Vec<Primitive> = elements
+            .into_iter()
+            .map(|t| parse_primitive_token(t.trim()))
+            .collect();
+        if values
+            .iter()
+            .all(|value| matches!(value, Primitive::Str(_)))
+        {
+            ExtValue::Primitive(Primitive::Str(s.to_string()))
+        } else {
+            ExtValue::Array1(values)
+        }
+    } else {
+        ExtValue::Primitive(Primitive::Str(s.to_string()))
+    }
+}
+
+fn parse_properties(spec: &str) -> Option<Vec<PropertySpec>> {
+    // Expect a colon-separated stream of triplets: name:T:m: name2:T:m: ...
+    let parts: Vec<&str> = spec.split(':').filter(|s| !s.is_empty()).collect();
+    if parts.len() < 3 || !parts.len().is_multiple_of(3) {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 2 < parts.len() {
+        let name = parts[i].to_string();
+        let ty = match parts[i + 1] {
+            "S" => PropType::S,
+            "I" => PropType::I,
+            "R" => PropType::R,
+            "L" => PropType::L,
+            other => {
+                // try tolerate lower-case
+                match other.to_ascii_uppercase().as_str() {
+                    "S" => PropType::S,
+                    "I" => PropType::I,
+                    "R" => PropType::R,
+                    "L" => PropType::L,
+                    _ => return None,
+                }
+            }
+        };
+        let m = match parts[i + 2].parse::<usize>() {
+            Ok(v) if v > 0 => v,
+            _ => return None,
+        };
+        out.push(PropertySpec { name, ty, m });
+        i += 3;
+    }
+    Some(out)
+}
+
+fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
+    let original = line.to_string();
+    let input = line.trim();
+
+    // Quick check: if no '=' present, treat as plain xyz comment
+    if !input.contains('=') {
+        let mut kv = HashMap::new();
+        kv.insert(
+            "comment".to_string(),
+            ExtValue::Primitive(Primitive::Str(original)),
+        );
+        return Ok(XYZComment {
+            kv,
+            properties: None,
+            comment: None,
+            is_plain_xyz: true,
+        });
+    }
+
+    let bytes = input.as_bytes();
+    let mut idx = 0usize;
+    let len = bytes.len();
+    let mut kv: HashMap<String, ExtValue> = HashMap::new();
+    let mut properties: Option<Vec<PropertySpec>> = None;
+
+    let skip_ws = |pos: &mut usize| {
+        while *pos < len && bytes[*pos].is_ascii_whitespace() {
+            *pos += 1;
+        }
+    };
+
+    while idx < len {
+        skip_ws(&mut idx);
+        if idx >= len {
+            break;
+        }
+
+        let key = if bytes[idx] == b'"' {
+            idx += 1;
+            let start = idx;
+            while idx < len && bytes[idx] != b'"' {
+                idx += 1;
+            }
+            if idx >= len {
+                return Err("unterminated quoted key".to_string());
+            }
+            let key = input[start..idx].to_string();
+            idx += 1;
+            key
+        } else {
+            let start = idx;
+            while idx < len && !bytes[idx].is_ascii_whitespace() && bytes[idx] != b'=' {
+                idx += 1;
+            }
+            if start == idx {
+                return Err("missing key".to_string());
+            }
+            input[start..idx].to_string()
+        };
+
+        skip_ws(&mut idx);
+        if idx >= len || bytes[idx] != b'=' {
+            // Bare boolean key (no '=' follows) — valid EXTXYZ, treat as true.
+            kv.insert(key, ExtValue::Primitive(Primitive::Logical(true)));
+            continue;
+        }
+        idx += 1;
+        skip_ws(&mut idx);
+        if idx >= len {
+            return Err(format!("missing value for key '{key}'"));
+        }
+
+        let value = if bytes[idx] == b'"' {
+            idx += 1;
+            let start = idx;
+            while idx < len && bytes[idx] != b'"' {
+                idx += 1;
+            }
+            if idx >= len {
+                return Err(format!("unterminated quoted value for key '{key}'"));
+            }
+            let value_str = &input[start..idx];
+            idx += 1;
+            parse_array_from_quoted(value_str)
+        } else {
+            let start = idx;
+            while idx < len && !bytes[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+            let token = &input[start..idx];
+            ExtValue::Primitive(parse_primitive_token(token))
+        };
+
+        if key.eq_ignore_ascii_case("properties") {
+            let spec_str = match &value {
+                ExtValue::Primitive(Primitive::Str(s)) => s.clone(),
+                ExtValue::Array1(vs) => vs
+                    .iter()
+                    .map(|p| match p {
+                        Primitive::Str(s) => s.clone(),
+                        _ => "".into(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                _ => String::new(),
+            };
+            properties = parse_properties(&spec_str);
+        }
+        kv.insert(key, value);
+    }
+
+    if properties.is_none() {
+        kv.insert(
+            "comment".to_string(),
+            ExtValue::Primitive(Primitive::Str(original)),
+        );
+        Ok(XYZComment {
+            kv,
+            properties: None,
+            comment: None,
+            is_plain_xyz: true,
+        })
+    } else {
+        Ok(XYZComment {
+            kv,
+            properties,
+            comment: Some(original),
+            is_plain_xyz: false,
+        })
+    }
+}
+
+/// The extxyz property name of the canonical `res_name` column (ASE's
+/// spelling), mapped at the I/O boundary in both directions.
+const EXTXYZ_RESNAME: &str = "resname";
+
+/// The extxyz property name of the canonical `element` column; the writer
+/// always declares it first (`species:S:1`).
+const EXTXYZ_SPECIES: &str = "species";
+
+/// The extxyz property a frame column is written as.
+fn extxyz_property_name(column: &str) -> &str {
+    if column == molrs::core::keys::RES_NAME {
+        EXTXYZ_RESNAME
+    } else {
+        column
+    }
+}
+
+/// One frame column an extxyz `Properties` entry becomes: its name, the
+/// property type, and how many values per row it holds.
+struct XyzColumn {
+    name: String,
+    ty: PropType,
+    width: usize,
+}
+
+/// The frame columns of a `Properties` declaration, in declaration order.
+///
+/// Canonical names cross the boundary here, in one place:
+///
+/// - `pos:R:3` becomes the three columns `x`, `y`, `z`;
+/// - `species:S:1` becomes `element` (unless the file also declares an
+///   `element` property, which then keeps its own name);
+/// - `type:I:1` becomes `type_id` (an ExtXYZ integer type is an ordinal);
+/// - `resname` becomes `res_name`;
+/// - any other `name:T:m` with `m > 1` is **one** `(N, m)` column `name` — the
+///   shape the writer writes back as `name:T:m`.
+fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
+    use molrs::core::schema::consts;
+    let declares_element = props.iter().any(|p| p.name == consts::ELEMENT);
+    let mut cols = Vec::new();
+    for p in props {
+        if p.m == 3 && p.ty == PropType::R && p.name.eq_ignore_ascii_case("pos") {
+            for axis in [consts::X, consts::Y, consts::Z] {
+                cols.push(XyzColumn {
+                    name: axis.to_string(),
+                    ty: PropType::R,
+                    width: 1,
+                });
+            }
+            continue;
+        }
+        let name = if p.m != 1 {
+            p.name.clone()
+        } else if p.name.eq_ignore_ascii_case("type") && p.ty == PropType::I {
+            consts::TYPE_ID.to_string()
+        } else if p.name == EXTXYZ_RESNAME {
+            consts::RES_NAME.to_string()
+        } else if p.name == EXTXYZ_SPECIES && p.ty == PropType::S && !declares_element {
+            consts::ELEMENT.to_string()
+        } else {
+            p.name.clone()
+        };
+        cols.push(XyzColumn {
+            name,
+            ty: p.ty,
+            width: p.m.max(1),
+        });
+    }
+    cols
+}
+
+fn parse_bool_token(tok: &str) -> Option<bool> {
+    match tok.to_ascii_lowercase().as_str() {
+        "t" | "true" => Some(true),
+        "f" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn line_to_tokens(line: &str) -> Vec<&str> {
+    line.split_whitespace().collect()
+}
+
+/// Build schema from parsed properties
+fn build_complete_schema(ec: &XYZComment) -> Vec<PropertySpec> {
+    // If no Properties key, return plain XYZ schema (4 columns: element, x, y, z)
+    // Otherwise, return the properties as-is
+    ec.properties.clone().unwrap_or_else(|| {
+        vec![
+            PropertySpec {
+                name: "element".into(),
+                ty: PropType::S,
+                m: 1,
+            },
+            PropertySpec {
+                name: "x".into(),
+                ty: PropType::R,
+                m: 1,
+            },
+            PropertySpec {
+                name: "y".into(),
+                ty: PropType::R,
+                m: 1,
+            },
+            PropertySpec {
+                name: "z".into(),
+                ty: PropType::R,
+                m: 1,
+            },
+        ]
+    })
+}
+
+fn build_block_from_props(
+    n: usize,
+    lines: &[String],
+    props: &[PropertySpec],
+) -> Result<Block, String> {
+    let cols = property_columns(props);
+    let m_total: usize = cols.iter().map(|c| c.width).sum();
+    if lines.len() != n {
+        return Err("insufficient atom lines".into());
+    }
+
+    // One buffer per column, `width` values per row, row-major.
+    enum ColBuf {
+        S(Vec<String>),
+        I(Vec<I>),
+        R(Vec<F>),
+        L(Vec<bool>),
+    }
+    let mut buffers: Vec<ColBuf> = cols
+        .iter()
+        .map(|c| match c.ty {
+            PropType::S => ColBuf::S(Vec::with_capacity(n * c.width)),
+            PropType::I => ColBuf::I(Vec::with_capacity(n * c.width)),
+            PropType::R => ColBuf::R(Vec::with_capacity(n * c.width)),
+            PropType::L => ColBuf::L(Vec::with_capacity(n * c.width)),
+        })
+        .collect();
+
+    for (row_i, line) in lines.iter().enumerate() {
+        let toks = line_to_tokens(line);
+        if toks.len() < m_total {
+            return Err(format!(
+                "line {}: expected at least {} tokens, got {}",
+                row_i,
+                m_total,
+                toks.len()
+            ));
+        }
+        let mut tok_idx = 0;
+        for (col, buf) in cols.iter().zip(buffers.iter_mut()) {
+            for _ in 0..col.width {
+                let tok = toks[tok_idx];
+                match buf {
+                    ColBuf::S(v) => v.push(tok.to_string()),
+                    ColBuf::I(v) => v.push(tok.parse::<I>().map_err(|_| {
+                        format!("line {} col {}: invalid int '{}", row_i, tok_idx, tok)
+                    })?),
+                    ColBuf::R(v) => v.push(tok.parse::<F>().map_err(|_| {
+                        format!("line {} col {}: invalid float '{}", row_i, tok_idx, tok)
+                    })?),
+                    ColBuf::L(v) => v.push(parse_bool_token(tok).ok_or_else(|| {
+                        format!("line {} col {}: invalid bool '{}", row_i, tok_idx, tok)
+                    })?),
+                }
+                tok_idx += 1;
+            }
+        }
+    }
+
+    /// `(n,)` for a one-value column, `(n, width)` for a wider one.
+    fn shaped<T>(values: Vec<T>, n: usize, width: usize) -> Result<ArrayD<T>, String> {
+        if width == 1 {
+            Ok(Array1::from_vec(values).into_dyn())
+        } else {
+            Array2::from_shape_vec((n, width), values)
+                .map(|a| a.into_dyn())
+                .map_err(|e| e.to_string())
+        }
+    }
+
+    let mut block = Block::new();
+    for (XyzColumn { name, width, .. }, buf) in cols.into_iter().zip(buffers) {
+        match buf {
+            ColBuf::I(v) => {
+                // Extended-XYZ declares `I` for any integral column, but a
+                // canonical key's dtype is fixed by the vocabulary — `id` is
+                // unsigned there, and an Int column under that name would be
+                // invisible to every consumer reading it as unsigned.
+                if molrs::core::schema::column(&name).map(|c| c.dtype)
+                    == Some(molrs::core::DType::UInt)
+                {
+                    let unsigned: Vec<molrs::op::types::Idx> = v
+                        .iter()
+                        .map(|&x| {
+                            Idx::try_from(x).map_err(|_| {
+                                format!("column '{name}' is unsigned in the Frame schema, got {x}")
+                            })
+                        })
+                        .collect::<Result<_, String>>()?;
+                    let arr = shaped(unsigned, n, width)?;
+                    block.insert(name, arr).map_err(|e| e.to_string())?;
+                } else {
+                    let arr = shaped(v, n, width)?;
+                    block.insert(name, arr).map_err(|e| e.to_string())?;
+                }
+            }
+            ColBuf::R(v) => {
+                let arr = shaped(v, n, width)?;
+                block.insert(name, arr).map_err(|e| e.to_string())?;
+            }
+            ColBuf::L(v) => {
+                let arr = shaped(v, n, width)?;
+                block.insert(name, arr).map_err(|e| e.to_string())?;
+            }
+            ColBuf::S(v) => {
+                let arr = shaped(v, n, width)?;
+                block.insert(name, arr).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    Ok(block)
+}
+
+/// Parse 9 floats from an ExtValue into a 3×3 H matrix.
+fn parse_lattice_values(v: &ExtValue) -> Option<Vec<F>> {
+    let values: Vec<F> = match v {
+        ExtValue::Array1(vals) => vals
+            .iter()
+            .filter_map(|p| match p {
+                Primitive::Real(r) => Some(*r as F),
+                Primitive::Int(i) => Some(*i as F),
+                _ => None,
+            })
+            .collect(),
+        ExtValue::Primitive(Primitive::Str(s)) => s
+            .split_whitespace()
+            .filter_map(|tok| tok.parse::<F>().ok())
+            .collect(),
+        _ => return None,
+    };
+    if values.len() == 9 {
+        Some(values)
+    } else {
+        None
+    }
+}
+
+/// Parse 3 floats from an Origin ExtValue.
+fn parse_origin_values(v: &ExtValue) -> Option<[F; 3]> {
+    let values: Vec<F> = match v {
+        ExtValue::Array1(vals) => vals
+            .iter()
+            .filter_map(|p| match p {
+                Primitive::Real(r) => Some(*r as F),
+                Primitive::Int(i) => Some(*i as F),
+                _ => None,
+            })
+            .collect(),
+        ExtValue::Primitive(Primitive::Str(s)) => s
+            .split_whitespace()
+            .filter_map(|tok| tok.parse::<F>().ok())
+            .collect(),
+        _ => return None,
+    };
+    if values.len() == 3 {
+        Some([values[0], values[1], values[2]])
+    } else {
+        None
+    }
+}
+
+/// Parse the MolCrafts `Connct` XYZ comment extension.
+///
+/// The value is a flat, zero-based list of atom-index pairs, for example
+/// `Connct="[0,1,0,2]"` describes bonds 0-1 and 0-2. Bond order is implicitly
+/// one. Brackets are required by the public convention but are accepted
+/// leniently here so older hand-written inputs remain readable.
+fn parse_connct(value: &ExtValue, n_atoms: usize) -> Result<Vec<(Idx, Idx)>, String> {
+    fn append_primitive(raw: &mut String, value: &Primitive) -> Result<(), String> {
+        if !raw.is_empty() {
+            raw.push(',');
+        }
+        match value {
+            Primitive::Int(value) => raw.push_str(&value.to_string()),
+            Primitive::Str(value) => raw.push_str(value),
+            Primitive::Real(_) | Primitive::Logical(_) => {
+                return Err("Connct accepts integer atom indices only".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    let mut raw = String::new();
+    match value {
+        ExtValue::Primitive(value) => append_primitive(&mut raw, value)?,
+        ExtValue::Array1(values) => {
+            for value in values {
+                append_primitive(&mut raw, value)?;
+            }
+        }
+        ExtValue::Array2(_) => return Err("Connct must be a flat list of atom indices".to_string()),
+    }
+
+    let indices = raw
+        .split(|ch: char| ch == '[' || ch == ']' || ch == ',' || ch.is_whitespace())
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            token
+                .parse::<Idx>()
+                .map_err(|_| format!("Connct contains invalid atom index '{token}'"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !indices.len().is_multiple_of(2) {
+        return Err(format!(
+            "Connct requires atom-index pairs, but received {} indices",
+            indices.len()
+        ));
+    }
+
+    let mut pairs = Vec::with_capacity(indices.len() / 2);
+    for pair in indices.as_chunks::<2>().0 {
+        let (atomi, atomj) = (pair[0], pair[1]);
+        if atomi as usize >= n_atoms || atomj as usize >= n_atoms {
+            return Err(format!(
+                "Connct bond {atomi}-{atomj} is out of range for {n_atoms} atoms"
+            ));
+        }
+        pairs.push((atomi, atomj));
+    }
+    Ok(pairs)
+}
+
+fn connct_block(value: &ExtValue, n_atoms: usize) -> Result<Option<Block>, String> {
+    let pairs = parse_connct(value, n_atoms)?;
+    if pairs.is_empty() {
+        return Ok(None);
+    }
+
+    let (atomi, atomj): (Vec<Idx>, Vec<Idx>) = pairs.into_iter().unzip();
+    let mut block = Block::new();
+    block
+        .insert("atomi", Array1::from_vec(atomi).into_dyn())
+        .map_err(|error| error.to_string())?;
+    block
+        .insert("atomj", Array1::from_vec(atomj).into_dyn())
+        .map_err(|error| error.to_string())?;
+    Ok(Some(block))
+}
+
+/// Build a SimBox from Lattice + optional Origin ExtValues.
+///
+/// `Origin` defaults to `[0, 0, 0]` when absent, matching the extxyz convention.
+fn parse_simbox(lattice: &ExtValue, origin: Option<&ExtValue>) -> Option<SimBox> {
+    let h_vals = parse_lattice_values(lattice)?;
+    // extxyz lists the three lattice vectors one after another (R1 R2 R3);
+    // `SimBox` keeps them as the *columns* of H, so the row-major reshape is
+    // transposed.
+    let h = Array2::from_shape_vec((3, 3), h_vals).ok()?.t().to_owned();
+    let origin_arr = origin
+        .and_then(parse_origin_values)
+        .map(|o| ndarray::array![o[0], o[1], o[2]])
+        .unwrap_or_else(|| ndarray::array![0.0 as F, 0.0, 0.0]);
+    SimBox::new(h, origin_arr, [true, true, true]).ok()
+}
+
+/// Read one XYZ/EXTXYZ frame from the current position of a buffered reader.
+/// Returns Ok(None) on EOF before the first line.
+fn read_frame_from<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Frame>> {
+    // Read first non-empty line as atom count
+    let mut line = String::new();
+    let n = loop {
+        line.clear();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Ok(None); // EOF
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match trimmed.parse::<usize>() {
+            Ok(v) => break v,
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid atom count line: {}", trimmed),
+                ));
+            }
+        }
+    };
+
+    // Read comment line (can be empty)
+    line.clear();
+    let _ = reader.read_line(&mut line)?; // if EOF after count, it's malformed but we allow empty
+    let comment = line.trim_end_matches(['\r', '\n']);
+
+    // Parse comment to metadata and properties
+    let ec = parse_comment_line(comment)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let mut kv_meta: HashMap<String, ExtValue> = HashMap::new();
+    let mut lattice_value: Option<ExtValue> = None;
+    let mut origin_value: Option<ExtValue> = None;
+    let mut connct_value: Option<ExtValue> = None;
+    for (k, v) in ec.kv.iter() {
+        if k.eq_ignore_ascii_case("Properties") {
+            continue;
+        }
+        if k.eq_ignore_ascii_case("Lattice") {
+            lattice_value = Some(v.clone());
+            continue;
+        }
+        if k.eq_ignore_ascii_case("Origin") {
+            origin_value = Some(v.clone());
+            continue;
+        }
+        if k.eq_ignore_ascii_case("Connct") {
+            connct_value = Some(v.clone());
+            continue;
+        }
+        kv_meta.insert(k.clone(), v.clone());
+    }
+
+    // Read N atom lines
+    let mut atom_lines: Vec<String> = Vec::with_capacity(n);
+    for _ in 0..n {
+        line.clear();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "unexpected EOF in atom lines",
+            ));
+        }
+        atom_lines.push(line.trim_end_matches(['\r', '\n']).to_string());
+    }
+
+    // Build complete schema (base properties + derived columns)
+    let schema = build_complete_schema(&ec);
+
+    // Parse columns according to schema -> atoms block
+    let atoms_block = build_block_from_props(n, &atom_lines, &schema)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+    let mut frame = Frame::new();
+    frame.insert("atoms", atoms_block);
+    if let Some(ref connct) = connct_value
+        && let Some(bonds) = connct_block(connct, n)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+    {
+        frame.insert("bonds", bonds);
+    }
+    for (k, v) in kv_meta.into_iter() {
+        frame.meta.insert(
+            k,
+            ext_value_to_meta(v)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+        );
+    }
+
+    // Build SimBox from Lattice + optional Origin
+    if let Some(ref lat) = lattice_value
+        && let Some(simbox) = parse_simbox(lat, origin_value.as_ref())
+    {
+        frame.simbox = Some(simbox);
+    }
+
+    Ok(Some(frame))
+}
+
+/// One frame of XYZ text through the stream parser — the tests' shorthand.
+#[cfg(test)]
+fn parse_frame_str(s: &str) -> std::result::Result<Frame, String> {
+    read_frame_from(&mut s.as_bytes())
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "no frame in the text".to_owned())
+}
+
+fn ext_value_to_meta(value: ExtValue) -> std::result::Result<MetaValue, String> {
+    match value {
+        ExtValue::Primitive(Primitive::Str(value)) => Ok(MetaValue::String(value)),
+        ExtValue::Primitive(Primitive::Int(value)) => Ok(MetaValue::I64(value)),
+        ExtValue::Primitive(Primitive::Real(value)) => Ok(MetaValue::F64(value)),
+        ExtValue::Primitive(Primitive::Logical(value)) => Ok(MetaValue::Bool(value)),
+        ExtValue::Array2(rows) => ext_array_to_meta(rows.into_iter().flatten().collect()),
+        ExtValue::Array1(values) => ext_array_to_meta(values),
+    }
+}
+
+fn ext_array_to_meta(values: Vec<Primitive>) -> std::result::Result<MetaValue, String> {
+    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Logical(_))) {
+        let values: Vec<bool> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Logical(v) => v,
+                _ => unreachable!(),
+            })
+            .collect();
+        return Ok(MetaValue::Bool3(values.try_into().unwrap()));
+    }
+    if values.len() == 3 && values.iter().all(|v| matches!(v, Primitive::Int(_))) {
+        let values: Vec<i64> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Int(v) => v,
+                _ => unreachable!(),
+            })
+            .collect();
+        return Ok(MetaValue::I64x3(values.try_into().unwrap()));
+    }
+    if matches!(values.len(), 3 | 6 | 9) && values.iter().all(|v| matches!(v, Primitive::Real(_))) {
+        let values: Vec<f64> = values
+            .into_iter()
+            .map(|v| match v {
+                Primitive::Real(v) => v,
+                _ => unreachable!(),
+            })
+            .collect();
+        return Ok(match values.len() {
+            3 => MetaValue::F64x3(values.try_into().unwrap()),
+            6 => MetaValue::F64x6(values.try_into().unwrap()),
+            9 => MetaValue::F64x9(values.try_into().unwrap()),
+            _ => unreachable!(),
+        });
+    }
+    Err(format!(
+        "extended XYZ metadata array has unsupported type/length {}; expected a homogeneous numeric vector of length 3, 6, or 9, or bool[3]",
+        values.len()
+    ))
+}
+
+fn meta_to_extxyz(value: &MetaValue) -> String {
+    macro_rules! joined {
+        ($values:expr) => {
+            $values
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+    }
+    let raw = match value {
+        MetaValue::Bool(v) => v.to_string(),
+        MetaValue::I32(v) => v.to_string(),
+        MetaValue::I64(v) => v.to_string(),
+        MetaValue::U32(v) => v.to_string(),
+        MetaValue::U64(v) => v.to_string(),
+        MetaValue::F64(v) => v.to_string(),
+        MetaValue::String(v) => v.clone(),
+        MetaValue::Bool3(v) => joined!(v),
+        MetaValue::I32x3(v) => joined!(v),
+        MetaValue::I64x3(v) => joined!(v),
+        MetaValue::U32x3(v) => joined!(v),
+        MetaValue::U64x3(v) => joined!(v),
+        MetaValue::F64x3(v) => joined!(v),
+        MetaValue::F64x6(v) => joined!(v),
+        MetaValue::F64x9(v) => joined!(v),
+        MetaValue::Json(v) => v.to_string(),
+    };
+    if raw.contains(char::is_whitespace) {
+        format!("\"{raw}\"")
+    } else {
+        raw
+    }
+}
+
+// =============== XyzReader ===============
+
+/// Unified XYZ/ExtXYZ reader treating all files as trajectories
+///
+/// Single-frame files are treated as 1-step trajectories. This reader
+/// implements lazy indexing: the first `read_step(0)` call reads immediately
+/// without scanning the file, while accessing later frames triggers index
+/// building for efficient random access.
+///
+/// # Examples
+///
+/// ```no_run
+/// use molrs::io::xyz::XyzReader;
+/// use molrs::io::reader::TrajectoryReader;
+/// use std::io::BufReader;
+/// use std::fs::File;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let file = File::open("trajectory.xyz")?;
+/// let mut reader = XyzReader::new(BufReader::new(file));
+///
+/// // Read first frame (no indexing)
+/// if let Some(frame) = reader.read_step(0)? {
+///     println!("First frame loaded");
+/// }
+///
+/// // Read frame 5 (triggers indexing)
+/// if let Some(frame) = reader.read_step(5)? {
+///     println!("Frame 5 loaded");
+/// }
+///
+/// // Iterate all frames
+/// for result in reader.iter() {
+///     let frame = result?;
+///     // Process frame
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub struct XyzReader<R: BufRead> {
+    reader: R,
+    index: OnceLock<FrameIndex>,
+}
+
+impl XyzReader<Box<dyn crate::io::reader::ReadSeek>> {
+    /// Open an XYZ file for random access by frame.
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Self> {
+        Ok(Self::new(crate::io::reader::open_seekable(path)?))
+    }
+}
+
+impl<R: BufRead + Seek> XyzReader<R> {
+    /// Create a new XYZ reader from a buffered reader
+    pub fn new(reader: R) -> Self {
+        Self {
+            reader,
+            index: OnceLock::new(),
+        }
+    }
+
+    /// Build frame index by scanning the entire file
+    fn build_index(&mut self) -> std::io::Result<()> {
+        if self.index.get().is_some() {
+            return Ok(()); // Already built
+        }
+
+        let mut frame_index = FrameIndex::new();
+
+        // Try to seek to beginning if seekable
+        let start_pos = if let Ok(pos) = self.reader.stream_position() {
+            // Seekable stream - record starting position
+            self.reader.seek(SeekFrom::Start(0))?;
+            Some(pos)
+        } else {
+            // Non-seekable stream (e.g., gzip) - can only scan forward
+            None
+        };
+
+        let mut current_pos: u64 = 0;
+        let mut line = String::new();
+
+        'frames: loop {
+            // Locate the next atom-count line. Blank lines between frames
+            // (and trailing blanks at EOF) are skipped — same rule as
+            // `read_frame_from` and `XyzIndexBuilder` in the
+            // AwaitingNatoms state. Recording a frame only after a valid
+            // count avoids the old "invalid atom count: " crash on `\n`.
+            let n = loop {
+                let frame_start = current_pos;
+                line.clear();
+                let bytes = self.reader.read_line(&mut line)?;
+                if bytes == 0 {
+                    break 'frames; // EOF while searching for a frame
+                }
+                current_pos += bytes as u64;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match trimmed.parse::<usize>() {
+                    Ok(v) => {
+                        frame_index.add_frame(frame_start);
+                        break v;
+                    }
+                    Err(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("invalid atom count: {}", trimmed),
+                        ));
+                    }
+                }
+            };
+
+            // Skip comment line
+            line.clear();
+            let bytes = self.reader.read_line(&mut line)?;
+            if bytes == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "unexpected EOF after atom count (missing comment line)",
+                ));
+            }
+            current_pos += bytes as u64;
+
+            // Skip N atom lines
+            for _ in 0..n {
+                line.clear();
+                let bytes = self.reader.read_line(&mut line)?;
+                if bytes == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "unexpected EOF in atom lines",
+                    ));
+                }
+                current_pos += bytes as u64;
+            }
+        }
+
+        // Restore original position if seekable
+        if let Some(pos) = start_pos {
+            self.reader.seek(SeekFrom::Start(pos))?;
+        }
+
+        self.index
+            .set(frame_index)
+            .map_err(|_| std::io::Error::other("failed to set index"))?;
+
+        Ok(())
+    }
+
+    /// Read frame at specific offset
+    fn read_at_offset(&mut self, offset: u64) -> std::io::Result<Option<Frame>> {
+        self.reader.seek(SeekFrom::Start(offset))?;
+        read_frame_from(&mut self.reader)
+    }
+}
+
+impl<R: BufRead + Seek> Reader for XyzReader<R> {
+    type R = R;
+
+    fn new(reader: Self::R) -> Self {
+        Self {
+            reader,
+            index: OnceLock::new(),
+        }
+    }
+}
+
+impl<R: BufRead + Seek> FrameReader for XyzReader<R> {
+    fn read(&mut self) -> std::io::Result<Option<Frame>> {
+        // Validate on the way out: a frame that violates the vocabulary
+        // is a malformed file or a reader bug, not a result to return.
+        crate::io::reader::check_read_frame(
+            // Always read the first frame from the current stream position.
+            read_frame_from(&mut self.reader)?,
+        )
+    }
+}
+
+impl<R: BufRead + Seek> TrajectoryReader for XyzReader<R> {
+    fn build_index(&mut self) -> std::io::Result<()> {
+        self.build_index()
+    }
+
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
+        // Fast path for first frame: read immediately without indexing
+        if step == 0
+            && self.index.get().is_none()
+            && let Ok(start_pos) = self.reader.stream_position()
+        {
+            let frame = read_frame_from(&mut self.reader)?;
+            self.reader.seek(SeekFrom::Start(start_pos))?;
+            return Ok(frame);
+        }
+
+        if self.index.get().is_none() {
+            self.build_index()?;
+        }
+
+        let index = self.index.get().unwrap();
+        if step >= index.len() {
+            return Ok(None);
+        }
+
+        let offset = index.get(step).unwrap();
+        self.read_at_offset(offset)
+    }
+
+    fn len(&mut self) -> std::io::Result<usize> {
+        if self.index.get().is_none() {
+            self.build_index()?;
+        }
+        Ok(self.index.get().unwrap().len())
+    }
+}
+
+/// Read a single frame from an XYZ file
+///
+/// # Examples
+///
+/// ```no_run
+/// use molrs::io::read_xyz;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let frame = read_xyz("water.xyz")?;
+/// println!("Loaded {} atoms", frame.get("atoms").map(|b| b.nrows().unwrap_or(0)).unwrap_or(0));
+/// # Ok(())
+/// # }
+/// ```
+pub fn read_xyz<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Frame> {
+    use crate::io::reader::open_seekable;
+    let reader = open_seekable(path)?;
+    let mut xyz_reader = XyzReader::new(reader);
+    xyz_reader
+        .read_step(0)?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty file"))
+}
+
+/// Read all frames from an XYZ trajectory file
+///
+/// # Examples
+///
+/// ```no_run
+/// use molrs::io::read_xyz_trajectory;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let frames = read_xyz_trajectory("md_run.xyz")?;
+/// println!("Loaded {} frames", frames.len());
+/// # Ok(())
+/// # }
+/// ```
+pub fn read_xyz_trajectory<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Vec<Frame>> {
+    use crate::io::reader::open_seekable;
+    let reader = open_seekable(path)?;
+    let mut xyz_reader = XyzReader::new(reader);
+    xyz_reader.iter().collect()
+}
+
+// ============================================================================
+// Streaming
+// ============================================================================
+
+/// Write one frame as an (extended) XYZ file.
+pub fn write_xyz<P: AsRef<std::path::Path>>(
+    path: P,
+    frame: &impl FrameAccess,
+) -> std::io::Result<()> {
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    write_frame_to(&mut out, frame)?;
+    out.flush()
+}
+
+/// Write frames as one multi-frame extended XYZ file — the inverse of
+/// [`read_xyz_trajectory`].
+pub fn write_xyz_trajectory<P: AsRef<std::path::Path>, FA: FrameAccess>(
+    path: P,
+    frames: &[FA],
+) -> std::io::Result<()> {
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    write_trajectory_to(&mut out, frames)?;
+    out.flush()
+}
+
+use crate::io::frame_index::{FrameIndexBuilder, FrameOffset, LineAccumulator};
+use std::io::Cursor;
+
+/// Parse exactly one XYZ / Extended-XYZ frame from a tightly-bounded byte
+/// slice. The slice must be a `[byte_offset, byte_offset + byte_len)` window
+/// produced by [`XyzIndexBuilder`].
+pub fn read_xyz_bytes(bytes: &[u8]) -> std::io::Result<Frame> {
+    let mut cursor = Cursor::new(bytes);
+    read_frame_from(&mut cursor)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "XYZ frame slice is empty",
+        )
+    })
+}
+
+/// Phase of the XYZ indexer state machine.
+#[derive(Debug, Clone, Copy)]
+enum XyzPhase {
+    /// Looking for the natoms count line.
+    AwaitingNatoms,
+    /// natoms parsed; the next line is the comment line.
+    AwaitingComment { natoms: usize },
+    /// Consuming `remaining` atom lines.
+    ConsumingAtoms { remaining: usize },
+}
+
+/// Streaming frame indexer for XYZ / Extended-XYZ files.
+///
+/// State machine: `AwaitingNatoms` → `AwaitingComment` → `ConsumingAtoms` →
+/// emit and reset to `AwaitingNatoms`. Blank or non-integer lines in
+/// `AwaitingNatoms` are skipped (matching the lenient
+/// `read_frame_from` behavior).
+pub struct XyzIndexBuilder {
+    lines: LineAccumulator,
+    phase: XyzPhase,
+    pending_frame_start: Option<u64>,
+    pending_entries: Vec<FrameOffset>,
+    /// Total bytes scanned so far (line offset + line len of the most
+    /// recently completed atom line) — needed to compute byte_len on
+    /// frame completion.
+    last_line_end: u64,
+}
+
+impl Default for XyzIndexBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl XyzIndexBuilder {
+    pub fn new() -> Self {
+        Self {
+            lines: LineAccumulator::new(),
+            phase: XyzPhase::AwaitingNatoms,
+            pending_frame_start: None,
+            pending_entries: Vec::new(),
+            last_line_end: 0,
+        }
+    }
+
+    fn process_line(&mut self, line: &str, line_offset: u64, line_len: u32) -> std::io::Result<()> {
+        let line_end = line_offset + line_len as u64;
+        self.last_line_end = line_end;
+        match self.phase {
+            XyzPhase::AwaitingNatoms => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    // Blank line — skip in the AwaitingNatoms state, matching
+                    // the legacy `read_frame_from` semantics.
+                    return Ok(());
+                }
+                let n = match trimmed.parse::<usize>() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        // Garbage line in AwaitingNatoms is also skipped per
+                        // spec ("blank/garbage lines in AwaitingNatoms state
+                        // are skipped not crashed").
+                        return Ok(());
+                    }
+                };
+                self.pending_frame_start = Some(line_offset);
+                self.phase = XyzPhase::AwaitingComment { natoms: n };
+                Ok(())
+            }
+            XyzPhase::AwaitingComment { natoms } => {
+                if natoms == 0 {
+                    // 0-atom frame — emit now, spanning the count + comment.
+                    let start = self.pending_frame_start.take().unwrap_or(line_offset);
+                    let span = line_end - start;
+                    self.push_entry(start, span)?;
+                    self.phase = XyzPhase::AwaitingNatoms;
+                } else {
+                    self.phase = XyzPhase::ConsumingAtoms { remaining: natoms };
+                }
+                Ok(())
+            }
+            XyzPhase::ConsumingAtoms { remaining } => {
+                let new_remaining = remaining - 1;
+                if new_remaining == 0 {
+                    let start = self.pending_frame_start.take().unwrap_or(line_offset);
+                    let span = line_end - start;
+                    self.push_entry(start, span)?;
+                    self.phase = XyzPhase::AwaitingNatoms;
+                } else {
+                    self.phase = XyzPhase::ConsumingAtoms {
+                        remaining: new_remaining,
+                    };
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn push_entry(&mut self, byte_offset: u64, span: u64) -> std::io::Result<()> {
+        if span > u32::MAX as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "XYZ frame size exceeds 4 GiB",
+            ));
+        }
+        self.pending_entries.push(FrameOffset {
+            byte_offset,
+            byte_len: span as u32,
+        });
+        Ok(())
+    }
+}
+
+impl FrameIndexBuilder for XyzIndexBuilder {
+    fn feed(&mut self, chunk: &[u8], global_offset: u64) {
+        // Drain into a buffer first, then process — the closure can't borrow
+        // self mutably and call self.process_line. Collect pending lines and
+        // process post-loop.
+        let mut staged: Vec<(String, u64, u32)> = Vec::new();
+        self.lines
+            .feed(chunk, global_offset, |line, line_offset, line_len| {
+                staged.push((line.to_string(), line_offset, line_len));
+            });
+        for (line, off, len) in staged {
+            // Errors during streaming index building are silently ignored —
+            // the legacy reader's strict-error behavior surfaces when
+            // parse_frame_bytes is later called on the resulting slice.
+            // For oversized frames we still surface via finish().
+            let _ = self.process_line(&line, off, len);
+        }
+    }
+
+    fn drain(&mut self) -> Vec<FrameOffset> {
+        std::mem::take(&mut self.pending_entries)
+    }
+
+    fn finish(mut self: Box<Self>) -> std::io::Result<Vec<FrameOffset>> {
+        self.lines.check_line_budget()?;
+        let mut staged: Vec<(String, u64, u32)> = Vec::new();
+        self.lines.finish(|line, line_offset, line_len| {
+            staged.push((line.to_string(), line_offset, line_len));
+        });
+        for (line, off, len) in staged {
+            self.process_line(&line, off, len)?;
+        }
+        // Trailing partial frame: if pending_frame_start is still Some,
+        // we have an incomplete frame at EOF. The spec for XYZ says
+        // ConsumingAtoms must reach zero before emit; an incomplete final
+        // frame is malformed. Be lenient: drop it (legacy reader would
+        // error at parse time on this slice).
+        Ok(std::mem::take(&mut self.pending_entries))
+    }
+
+    fn bytes_seen(&self) -> u64 {
+        self.lines.bytes_seen()
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+
+    /// extxyz `Lattice="R1 R2 R3"` lists the vectors in sequence; `SimBox`
+    /// keeps them as the columns of H.
+    #[test]
+    fn lattice_vectors_become_the_box_columns() {
+        let frame = parse_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let simbox = frame.simbox.as_ref().expect("Lattice sets the box");
+        assert_eq!(simbox.lattice(0).to_vec(), vec![10.0, 0.0, 0.0]);
+        assert_eq!(simbox.lattice(1).to_vec(), vec![2.0, 11.0, 0.0]);
+        assert_eq!(simbox.lattice(2).to_vec(), vec![3.0, 4.0, 12.0]);
+    }
+
+    /// ExtXYZ `type:I:1` is a numeric ordinal; the Frame schema stores those
+    /// in `type_id`. `type` is reserved for string labels.
+    #[test]
+    fn extxyz_integer_type_column_lands_as_type_id() {
+        let frame =
+            parse_frame_str("1\nProperties=species:S:1:pos:R:3:type:I:1\nC 0.0 0.0 0.0 3\n")
+                .expect("parse XYZ");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms
+                .get("type_id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[3_u64]
+        );
+        assert!(atoms.get("type").and_then(|c| c.as_string()).is_none());
+        assert!(!atoms.contains_key("type"));
+    }
+
+    /// ExtXYZ `type:S:1` is already a label; it stays `type`.
+    #[test]
+    fn extxyz_string_type_column_stays_type() {
+        let frame =
+            parse_frame_str("1\nProperties=species:S:1:pos:R:3:type:S:1\nC 0.0 0.0 0.0 C_3\n")
+                .expect("parse XYZ");
+        let atoms = frame.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms
+                .get("type")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &["C_3".to_string()]
+        );
+        assert!(atoms.get("type_id").and_then(|c| c.as_uint()).is_none());
+        assert!(!atoms.contains_key("type_id"));
+    }
+
+    #[test]
+    fn writer_lists_the_lattice_vectors_in_sequence() {
+        let mut frame = parse_frame_str(
+            "1\nLattice=\"10 0 0 2 11 0 3 4 12\" Properties=species:S:1:pos:R:3\nH 0 0 0\n",
+        )
+        .expect("parse XYZ");
+        let h = ndarray::array![[10.0, 2.0, 3.0], [0.0, 11.0, 4.0], [0.0, 0.0, 12.0]];
+        frame.simbox =
+            Some(SimBox::new(h, ndarray::array![0.0, 0.0, 0.0], [true, true, true]).expect("cell"));
+        let mut output = Vec::new();
+        write_frame_to(&mut output, &frame).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+        assert!(
+            output.contains("Lattice=\"10 0 0 2 11 0 3 4 12\""),
+            "comment line: {output}"
+        );
+    }
+
+    #[test]
+    fn parse_properties_triplets() {
+        let line = "Properties=species:S:1:pos:R:3:mass:R:1";
+        let ec = parse_comment_line(line).expect("parse");
+        assert!(ec.properties.is_some());
+        let props = ec.properties.unwrap();
+        assert_eq!(props.len(), 3);
+        assert_eq!(
+            props[0],
+            PropertySpec {
+                name: "species".into(),
+                ty: PropType::S,
+                m: 1
+            }
+        );
+        assert_eq!(
+            props[1],
+            PropertySpec {
+                name: "pos".into(),
+                ty: PropType::R,
+                m: 3
+            }
+        );
+        assert_eq!(
+            props[2],
+            PropertySpec {
+                name: "mass".into(),
+                ty: PropType::R,
+                m: 1
+            }
+        );
+        assert!(!ec.is_plain_xyz);
+    }
+
+    #[test]
+    fn parse_comment_with_properties() {
+        let line = r#"Lattice="8.43116035 0.0 0.0 0.158219155128 14.5042431863 0.0 1.16980663624 4.4685149855 14.9100096405" Properties=species:S:1:pos:R:3:CS:R:2 ENERGY=-2069.84934116 Natoms=192 NAME=COBHUW"#;
+        let ec = parse_comment_line(line).expect("parse");
+        assert!(ec.properties.is_some());
+        assert!(!ec.is_plain_xyz);
+        // Lattice
+        match ec.kv.get("Lattice").unwrap() {
+            ExtValue::Array1(v) => {
+                assert_eq!(v.len(), 9);
+                assert!(matches!(v[0], Primitive::Real(_)) || matches!(v[0], Primitive::Int(_)));
+            }
+            other => panic!("unexpected Lattice value: {other:?}"),
+        }
+        // energy
+        match ec.kv.get("ENERGY").unwrap() {
+            ExtValue::Primitive(Primitive::Real(x)) => assert!((x - -2069.84934116).abs() < 1e-6),
+            other => panic!("unexpected energy value: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn quoted_metadata_with_spaces_stays_a_string() {
+        let data = b"1\ntitle=\"Water box\" Properties=species:S:1:pos:R:3\nH 0 0 0\n";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let frame = read_frame_from(&mut cursor)
+            .expect("read XYZ")
+            .expect("one frame");
+
+        assert_eq!(
+            frame.meta.get("title").and_then(MetaValue::as_str),
+            Some("Water box")
+        );
+    }
+
+    #[test]
+    fn connct_comment_builds_zero_based_bonds() {
+        let data = b"3\nname=water Connct=\"[0,1,0,2]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let frame = read_frame_from(&mut cursor)
+            .expect("read XYZ")
+            .expect("one frame");
+        let bonds = frame.get("bonds").expect("Connct creates bonds block");
+
+        assert_eq!(
+            bonds
+                .get("atomi")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[0, 0]
+        );
+        assert_eq!(
+            bonds
+                .get("atomj")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1, 2]
+        );
+        assert!(!frame.meta.contains_key("Connct"));
+    }
+
+    #[test]
+    fn xyz_writer_preserves_connct_bonds() {
+        let frame =
+            parse_frame_str("3\nname=water Connct=\"[0,1,0,2]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n")
+                .expect("parse XYZ");
+        let mut output = Vec::new();
+
+        write_frame_to(&mut output, &frame).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        assert!(
+            output
+                .lines()
+                .nth(1)
+                .unwrap()
+                .contains("Connct=\"[0,1,0,2]\"")
+        );
+        let round_trip = parse_frame_str(&output).expect("read written XYZ");
+        assert_eq!(
+            round_trip
+                .get("bonds")
+                .unwrap()
+                .get("atomj")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1, 2]
+        );
+    }
+
+    #[test]
+    fn connct_comment_rejects_invalid_pairs() {
+        let odd = "3\nConnct=\"[0,1,0]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        assert!(
+            parse_frame_str(odd)
+                .unwrap_err()
+                .contains("atom-index pairs")
+        );
+
+        let out_of_range = "3\nConnct=\"[0,3]\"\nO 0 0 0\nH 1 0 0\nH 0 1 0\n";
+        assert!(
+            parse_frame_str(out_of_range)
+                .unwrap_err()
+                .contains("out of range")
+        );
+    }
+
+    /// A frame shaped like what the GRO reader produces: no `element`, an `id`
+    /// column, and extra string/int columns that sort *before* `id`.
+    fn gro_shaped_frame() -> Frame {
+        use molrs::core::Block;
+        use ndarray::Array1;
+
+        let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let uints = |v: [u64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
+        let strings = |v: [&str; 3]| {
+            Array1::from_vec(v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>()).into_dyn()
+        };
+
+        let mut atoms = Block::new();
+        atoms.insert("x", floats([0.0, 1.0, 0.0])).unwrap();
+        atoms.insert("y", floats([0.0, 0.0, 1.0])).unwrap();
+        atoms.insert("z", floats([0.0, 0.0, 0.0])).unwrap();
+        atoms.insert("id", uints([1, 2, 3])).unwrap();
+        atoms.insert("name", strings(["OW", "HW1", "HW2"])).unwrap();
+        atoms.insert("res_id", uints([1, 1, 1])).unwrap();
+        atoms
+            .insert("res_name", strings(["WAT", "WAT", "WAT"]))
+            .unwrap();
+
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame
+    }
+
+    /// Two frames written as one trajectory read back as two frames, in
+    /// order, each with its own coordinates.
+    #[test]
+    fn write_xyz_traj_round_trips_every_frame() {
+        let first = gro_shaped_frame();
+        let mut second = gro_shaped_frame();
+        second
+            .get_mut("atoms")
+            .unwrap()
+            .insert(
+                "x",
+                ndarray::Array1::from_vec(vec![5.0, 6.0, 7.0]).into_dyn(),
+            )
+            .unwrap();
+        let mut out = Vec::new();
+        write_trajectory_to(&mut out, &[first, second]).expect("write XYZ trajectory");
+
+        let frames: Vec<Frame> = XyzReader::new(std::io::Cursor::new(out))
+            .iter()
+            .collect::<std::io::Result<_>>()
+            .expect("read XYZ trajectory");
+        assert_eq!(frames.len(), 2);
+        let x1 = frames[1]
+            .get("atoms")
+            .unwrap()
+            .get("x")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        assert_eq!(x1[[0]], 5.0);
+        assert_eq!(x1[[2]], 7.0);
+    }
+
+    #[test]
+    fn write_xyz_traj_of_no_frames_writes_nothing() {
+        let mut out = Vec::new();
+        write_trajectory_to::<_, Frame>(&mut out, &[]).expect("write nothing");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn xyz_writer_row_order_matches_the_properties_header() {
+        // The Properties header and the data rows are two views of one column
+        // order. `id` is written before the alphabetically-earlier `name`
+        // in the header, so the rows must do the same — or every consumer reads
+        // an atom name where the header promised an integer id.
+        let mut output = Vec::new();
+        write_frame_to(&mut output, &gro_shaped_frame()).expect("write XYZ");
+        let output = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        let comment = output.lines().nth(1).expect("comment line");
+        let props = comment
+            .split_whitespace()
+            .find_map(|tok| tok.strip_prefix("Properties="))
+            .expect("Properties in comment");
+        let declared: Vec<&str> = props.split(':').step_by(3).collect();
+        assert_eq!(
+            declared,
+            ["species", "pos", "id", "name", "res_id", "resname"]
+        );
+
+        // species + 3 coordinates, then one field per remaining declared column.
+        let first_row: Vec<&str> = output
+            .lines()
+            .nth(2)
+            .expect("first atom line")
+            .split_whitespace()
+            .collect();
+        assert_eq!(first_row.len(), 8, "row: {first_row:?}");
+        assert_eq!(
+            &first_row[4..],
+            ["1", "OW", "1", "WAT"],
+            "row: {first_row:?}"
+        );
+    }
+
+    #[test]
+    fn xyz_writer_round_trips_every_declared_column() {
+        // The header/row contract, stated as the thing a reader actually needs:
+        // each column comes back carrying its own values, not its neighbour's.
+        let mut output = Vec::new();
+        write_frame_to(&mut output, &gro_shaped_frame()).expect("write XYZ");
+        let text = String::from_utf8(output).expect("UTF-8 XYZ");
+
+        let back = parse_frame_str(&text).expect("read written XYZ");
+        let atoms = back.get("atoms").expect("atoms block");
+        assert_eq!(
+            atoms
+                .get("name")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &["OW".to_string(), "HW1".to_string(), "HW2".to_string()]
+        );
+        assert_eq!(
+            atoms
+                .get("res_name")
+                .and_then(|c| c.as_string())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &["WAT".to_string(), "WAT".to_string(), "WAT".to_string()]
+        );
+        assert_eq!(
+            atoms
+                .get("id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1_u64, 2, 3]
+        );
+        assert_eq!(
+            atoms
+                .get("res_id")
+                .and_then(|c| c.as_uint())
+                .unwrap()
+                .as_slice()
+                .unwrap(),
+            &[1_u64, 1, 1]
+        );
+    }
+
+    #[test]
+    fn test_xyz_invalid_atom_count() {
+        use std::io::Cursor;
+
+        let data = b"abc\nComment\nH 0 0 0\n";
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_frame_from(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    // -----------------------------------------------------------------
+    // Streaming index tests
+    // -----------------------------------------------------------------
+
+    fn xyz_build_chunked(bytes: &[u8], chunk_size: usize) -> Vec<FrameOffset> {
+        let mut builder = Box::new(XyzIndexBuilder::new());
+        let mut offset: u64 = 0;
+        let mut out: Vec<FrameOffset> = Vec::new();
+        for piece in bytes.chunks(chunk_size.max(1)) {
+            builder.feed(piece, offset);
+            offset += piece.len() as u64;
+            out.extend(builder.drain());
+        }
+        out.extend(builder.finish().expect("finish"));
+        out
+    }
+
+    const TWO_FRAME_XYZ: &str =
+        "2\nframe 0\nH 0 0 0\nH 1 0 0\n3\nframe 1\nO 0 0 0\nH 1 0 0\nH -1 0 0\n";
+
+    #[test]
+    fn xyz_streaming_single_shot_matches_chunks() {
+        let bytes = TWO_FRAME_XYZ.as_bytes();
+        let one_shot = xyz_build_chunked(bytes, bytes.len());
+        assert_eq!(one_shot.len(), 2);
+        for cs in [1usize, 3, 7, 13, 31, 64, 1024] {
+            let chunked = xyz_build_chunked(bytes, cs);
+            assert_eq!(
+                one_shot, chunked,
+                "chunk size {} produced different index",
+                cs
+            );
+        }
+
+        // Each entry slice must be parseable.
+        for entry in &one_shot {
+            let lo = entry.byte_offset as usize;
+            let hi = lo + entry.byte_len as usize;
+            read_xyz_bytes(&bytes[lo..hi]).expect("parse_frame_bytes");
+        }
+    }
+
+    /// Edge: chunk boundary inside the natoms count line.
+    #[test]
+    fn xyz_streaming_boundary_inside_natoms_count() {
+        // Multi-digit count.
+        let s = "12\nframe\n".to_string()
+            + &(0..12).map(|i| format!("H 0 0 {i}\n")).collect::<String>()
+            + "8\nframe2\n"
+            + &(0..8).map(|i| format!("H 0 0 {i}\n")).collect::<String>();
+        let bytes = s.as_bytes();
+        // Split at byte 1 — middle of "12".
+        let mut builder = Box::new(XyzIndexBuilder::new());
+        builder.feed(&bytes[..1], 0);
+        builder.feed(&bytes[1..], 1);
+        let mut got = builder.drain();
+        got.extend(builder.finish().expect("finish"));
+        let one_shot = xyz_build_chunked(bytes, bytes.len());
+        assert_eq!(one_shot.len(), 2);
+        assert_eq!(got, one_shot);
+    }
+
+    /// Edge: blank/garbage lines in `AwaitingNatoms` are skipped, not crashed.
+    #[test]
+    fn xyz_streaming_skips_blanks_in_awaiting_natoms() {
+        let s = "\n\n  \n2\nframe 0\nH 0 0 0\nH 1 0 0\n";
+        let bytes = s.as_bytes();
+        let entries = xyz_build_chunked(bytes, bytes.len());
+        assert_eq!(entries.len(), 1);
+        // Frame must start at the "2\n" line, not at byte 0.
+        let lo = entries[0].byte_offset as usize;
+        assert!(bytes[lo..].starts_with(b"2\n"));
+        let hi = lo + entries[0].byte_len as usize;
+        let frame = read_xyz_bytes(&bytes[lo..hi]).expect("parse");
+        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+
+    /// Legacy `XyzReader::build_index` (used by `len()` / random-access
+    /// `read_step`) must tolerate blank lines between frames and trailing
+    /// blanks — the same AwaitingNatoms rule as the streaming index.
+    /// Regression: blank lines used to surface as
+    /// `XYZ len error: invalid atom count:` through the wasm binding.
+    #[test]
+    fn xyz_legacy_index_skips_inter_frame_and_trailing_blanks() {
+        use crate::io::reader::TrajectoryReader;
+        use std::io::{BufReader, Cursor};
+
+        let s = "\
+2
+frame 0
+H 0 0 0
+H 1 0 0
+
+2
+frame 1
+H 0 0 1
+H 1 0 1
+
+";
+        let mut reader = XyzReader::new(BufReader::new(Cursor::new(s.as_bytes())));
+        assert_eq!(reader.len().expect("len"), 2);
+
+        let f0 = reader.read_step(0).expect("step0").expect("some");
+        let f1 = reader.read_step(1).expect("step1").expect("some");
+        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(f1.get("atoms").unwrap().nrows().unwrap(), 2);
+        let z0 = f0
+            .get("atoms")
+            .unwrap()
+            .get("z")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        let z1 = f1
+            .get("atoms")
+            .unwrap()
+            .get("z")
+            .and_then(|c| c.as_float())
+            .unwrap();
+        assert!((z0[0] - 0.0).abs() < 1e-12);
+        assert!((z1[0] - 1.0).abs() < 1e-12);
+    }
+
+    /// Leading blanks before the first frame must not confuse the legacy index.
+    #[test]
+    fn xyz_legacy_index_skips_leading_blanks() {
+        use crate::io::reader::TrajectoryReader;
+        use std::io::{BufReader, Cursor};
+
+        let s = "\n\n  \n2\nframe 0\nH 0 0 0\nH 1 0 0\n";
+        let mut reader = XyzReader::new(BufReader::new(Cursor::new(s.as_bytes())));
+        assert_eq!(reader.len().expect("len"), 1);
+        let f0 = reader.read_step(0).expect("step0").expect("some");
+        assert_eq!(f0.get("atoms").unwrap().nrows().unwrap(), 2);
+    }
+}
+
+// =============== XyzWriter ===============
+
+/// A writer of (extended) XYZ frames over any byte sink.
+pub struct XyzWriter<W: Write> {
+    writer: W,
+}
+
+impl<W: Write> Writer for XyzWriter<W> {
+    type W = W;
+
+    fn new(writer: Self::W) -> Self {
+        Self { writer }
+    }
+}
+
+impl<W: Write> FrameWriter for XyzWriter<W> {
+    fn write(&mut self, frame: &Frame) -> std::io::Result<()> {
+        // Refuse to emit a frame that violates the vocabulary: a bad file
+        // looks fine and is found wrong later, by whatever reads it.
+        crate::io::writer::check_write_frame(frame)?;
+        write_frame_to(&mut self.writer, frame)
+    }
+}
+
+/// Write `frames` to `writer` as one multi-frame Extended XYZ trajectory,
+/// one [`write_frame_to`] block after another — the inverse of
+/// [`read_xyz_trajectory`]. An empty slice writes nothing.
+fn write_trajectory_to<W: Write, FA: FrameAccess>(
+    writer: &mut W,
+    frames: &[FA],
+) -> std::io::Result<()> {
+    for frame in frames {
+        write_frame_to(writer, frame)?;
+    }
+    Ok(())
+}
+
+/// Write a single frame to the writer in Extended XYZ format.
+///
+/// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
+/// [`FrameView`](molrs::core::FrameView). Existing callers passing `&Frame`
+/// continue to work without changes.
+fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
+    use molrs::core::DType;
+
+    // 1. Build per-atom data from the atoms block via visit_block.
+    //    We collect everything we need into owned data structures inside the closure,
+    //    then write outside it.
+    struct AtomBlockData {
+        n: usize,
+        properties_str: String,
+        elements: Vec<String>,
+        /// Per-row, per-column values (excluding element). Outer = rows, inner = values.
+        row_values: Vec<Vec<String>>,
+    }
+
+    let atom_data: Option<AtomBlockData> = frame.visit_block("atoms", |atoms| {
+        let n = atoms.nrows().unwrap_or(0);
+
+        // Collect and sort keys
+        let mut keys = atoms.column_keys();
+        keys.sort_by(|a, b| {
+            let rank = |s: &str| match s {
+                "x" => 0,
+                "y" => 1,
+                "z" => 2,
+                _ => 3,
+            };
+            let ra = rank(a);
+            let rb = rank(b);
+            if ra != rb { ra.cmp(&rb) } else { a.cmp(b) }
+        });
+
+        let has_xyz = keys.contains(&"x") && keys.contains(&"y") && keys.contains(&"z");
+        let priority_keys = ["id", "mol"];
+        let is_pos = |k: &str| has_xyz && matches!(k, "x" | "y" | "z");
+
+        // ONE ordered column list drives both the Properties header and every
+        // data row. Building them from two independent walks is how the header
+        // came to hoist `id` / `mol` to the front while the rows kept them in
+        // alphabetical position: a GRO-shaped frame then declared
+        // `…:pos:R:3:id:I:1:atom_name:S:1` and wrote `… 0 0 0 OW 1 …`, handing
+        // every reader an atom name where an integer was promised.
+        //
+        // Columns the block cannot describe are dropped here rather than inside
+        // each loop, so there is no per-loop condition left to disagree on.
+        let mut columns: Vec<&str> = Vec::new();
+        if has_xyz {
+            columns.extend(["x", "y", "z"]);
+        }
+        columns.extend(priority_keys.iter().copied().filter(|pk| keys.contains(pk)));
+        columns.extend(
+            keys.iter()
+                .copied()
+                .filter(|k| *k != "element" && !priority_keys.contains(k) && !is_pos(k)),
+        );
+        columns.retain(|k| atoms.column_dtype(k).is_some() && atoms.column_shape(k).is_some());
+
+        let dtype_to_char = |dt: DType| -> &'static str {
+            match dt {
+                DType::Float | DType::Complex64 | DType::Complex128 => "R",
+                DType::Int
+                | DType::Int8
+                | DType::Int16
+                | DType::Int64
+                | DType::UInt
+                | DType::U8
+                | DType::UInt16
+                | DType::UInt32 => "I",
+                DType::Bool => "L",
+                DType::String => "S",
+            }
+        };
+
+        // Build the Properties string from that list. The x/y/z triple is
+        // declared once as `pos:R:3`; every other column declares itself.
+        let mut props_parts = vec!["species:S:1".to_string()];
+        if has_xyz {
+            props_parts.push("pos:R:3".to_string());
+        }
+        for k in &columns {
+            if is_pos(k) {
+                continue;
+            }
+            let (dt, shape) = (
+                atoms.column_dtype(k).expect("retained above"),
+                atoms.column_shape(k).expect("retained above"),
+            );
+            let m: usize = shape.iter().skip(1).product();
+            let m = if m == 0 { 1 } else { m };
+            props_parts.push(format!(
+                "{}:{}:{}",
+                extxyz_property_name(k),
+                dtype_to_char(dt),
+                m
+            ));
+        }
+        let properties_str = props_parts.join(":");
+
+        // Read element symbols
+        let elements: Vec<String> = atoms
+            .column("element")
+            .and_then(|c| c.as_string())
+            .and_then(|arr| arr.as_slice().map(|s| s.to_vec()))
+            .unwrap_or_else(|| vec!["X".to_string(); n]);
+
+        // Build per-row values — same list, same order, no second policy.
+        let mut row_values: Vec<Vec<String>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut line_parts = Vec::new();
+            for k in &columns {
+                if let Some(tokens) = atoms.xyz_row_tokens(k, i) {
+                    line_parts.extend(tokens);
+                }
+            }
+            row_values.push(line_parts);
+        }
+
+        AtomBlockData {
+            n,
+            properties_str,
+            elements,
+            row_values,
+        }
+    });
+
+    let atom_data = match atom_data {
+        Some(d) => d,
+        None => {
+            writeln!(writer, "0")?;
+            writeln!(writer)?;
+            return Ok(());
+        }
+    };
+
+    writeln!(writer, "{}", atom_data.n)?;
+
+    // 2. Construct comment line using FrameAccess for simbox and meta
+    let mut comment_parts = Vec::new();
+    if let Some(simbox) = frame.simbox_ref() {
+        let h = simbox.h_view();
+        let mut lattice_values = Vec::with_capacity(9);
+        // Column k of H is lattice vector k; extxyz writes R1 R2 R3 in sequence.
+        for k in 0..3 {
+            for j in 0..3 {
+                lattice_values.push(format!("{}", h[[j, k]]));
+            }
+        }
+        comment_parts.push(format!("Lattice=\"{}\"", lattice_values.join(" ")));
+
+        let o = simbox.origin_view();
+        if o[0] != 0.0 || o[1] != 0.0 || o[2] != 0.0 {
+            comment_parts.push(format!("Origin=\"{} {} {}\"", o[0], o[1], o[2]));
+        }
+    }
+    for (k, v) in frame.meta_ref() {
+        if k == "Lattice"
+            || k == "Origin"
+            || k == "Properties"
+            || k == "comment"
+            || k == "elements"
+            || k.eq_ignore_ascii_case("Connct")
+        {
+            continue;
+        }
+        let val_str = meta_to_extxyz(v);
+        comment_parts.push(format!("{}={}", k, val_str));
+    }
+    if let (Some(atomi), Some(atomj)) = (
+        frame.column("bonds", "atomi").and_then(|c| c.as_uint()),
+        frame.column("bonds", "atomj").and_then(|c| c.as_uint()),
+    ) && atomi.len() == atomj.len()
+        && !atomi.is_empty()
+    {
+        let indices = atomi
+            .iter()
+            .zip(atomj.iter())
+            .flat_map(|(atomi, atomj)| [atomi.to_string(), atomj.to_string()])
+            .collect::<Vec<_>>()
+            .join(",");
+        comment_parts.push(format!("Connct=\"[{indices}]\""));
+    }
+    comment_parts.push(format!("Properties={}", atom_data.properties_str));
+    writeln!(writer, "{}", comment_parts.join(" "))?;
+
+    // 3. Write atom lines
+    for i in 0..atom_data.n {
+        let species = atom_data
+            .elements
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| "X".to_string());
+        let mut line_parts = vec![species];
+        line_parts.extend(atom_data.row_values[i].iter().cloned());
+        writeln!(writer, "{}", line_parts.join(" "))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod canonical_column_tests {
+    use super::*;
+
+    const WIDE: &str = "2\nProperties=species:S:1:pos:R:3:forces:R:3:tags:I:2\n\
+                        O 0 0 0 0.1 0.2 0.3 1 2\nH 1 0 0 -0.1 -0.2 -0.3 3 4\n";
+
+    #[test]
+    fn species_reads_as_element() {
+        let frame = parse_frame_str(WIDE).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert!(!atoms.contains_key("species"));
+        let el = atoms.get("element").and_then(|c| c.as_string()).unwrap();
+        assert_eq!((el[[0]].as_str(), el[[1]].as_str()), ("O", "H"));
+    }
+
+    #[test]
+    fn a_wide_property_is_one_column_of_that_width() {
+        let frame = parse_frame_str(WIDE).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        let forces = atoms.get("forces").and_then(|c| c.as_float()).unwrap();
+        assert_eq!(forces.shape(), &[2, 3]);
+        assert_eq!(forces[[1, 2]], -0.3);
+        let tags = atoms.get("tags").and_then(|c| c.as_int()).unwrap();
+        assert_eq!(tags.shape(), &[2, 2]);
+        assert_eq!(tags[[1, 0]], 3);
+        assert!(!atoms.contains_key("forces_1"));
+    }
+
+    #[test]
+    fn wide_columns_and_element_round_trip_through_the_writer() {
+        let frame = parse_frame_str(WIDE).unwrap();
+        let mut out = Vec::new();
+        write_frame_to(&mut out, &frame).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("forces:R:3"), "{text}");
+        let back = parse_frame_str(&text).unwrap();
+        let atoms = back.get("atoms").unwrap();
+        assert_eq!(
+            atoms
+                .get("forces")
+                .and_then(|c| c.as_float())
+                .unwrap()
+                .shape(),
+            &[2, 3]
+        );
+        assert!(atoms.contains_key("element"));
+    }
+
+    #[test]
+    fn a_declared_element_property_keeps_species_apart() {
+        let text = "1\nProperties=species:S:1:pos:R:3:element:S:1\nX 0 0 0 C\n";
+        let frame = parse_frame_str(text).unwrap();
+        let atoms = frame.get("atoms").unwrap();
+        assert_eq!(
+            atoms.get("element").and_then(|c| c.as_string()).unwrap()[[0]],
+            "C"
+        );
+        assert!(atoms.contains_key("species"));
+    }
+}

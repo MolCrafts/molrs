@@ -32,12 +32,10 @@ use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::conformance::{Rng, SEED};
 use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
 use crate::ff::potential::{Member, PotentialCompiler};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::lammps::LammpsFfReader;
-use crate::io::forcefield::writers::ForceFieldWriter;
-use crate::io::{
-    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
-};
+use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
+use crate::io::reader::ForceFieldReader;
+use crate::io::writer::ForceFieldWriter;
+use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -859,12 +857,12 @@ fn style_cases() -> Vec<(String, String)> {
                 frame.insert(format!("{category}s"), b);
             }
             let labels = TypeLabels::from_frame(&frame).unwrap();
-            let options = LammpsWriteOptions {
+            let options = LammpsForcefieldWriteOptions {
                 precision: 17,
                 units,
-                ..LammpsWriteOptions::default()
+                ..LammpsForcefieldWriteOptions::default()
             };
-            let text = LammpsFfWriter::with_options(&labels, options)
+            let text = LammpsForcefieldWriter::with_options(&labels, options)
                 .write_str(&ff)
                 .unwrap_or_else(|e| panic!("{category} {name} in {units}: {e}"));
             let case = format!("style_{category}_{}_{units}", name.replace('/', "_"));
@@ -883,16 +881,16 @@ fn positional_cases() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let hand = [(
         "hand_lammps",
-        LammpsFfReader::new().read_str(LAMMPS_FF).unwrap(),
+        LammpsForcefieldReader::new().read_str(LAMMPS_FF).unwrap(),
     )];
     for (name, ff) in hand {
         let frame = hand_frame(&ff);
         let labels = TypeLabels::from_frame(&frame).unwrap();
-        let options = LammpsWriteOptions {
+        let options = LammpsForcefieldWriteOptions {
             precision: 17,
-            ..LammpsWriteOptions::default()
+            ..LammpsForcefieldWriteOptions::default()
         };
-        let text = LammpsFfWriter::with_options(&labels, options)
+        let text = LammpsForcefieldWriter::with_options(&labels, options)
             .write_str(&ff)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         out.push((name.to_owned(), text.to_string()));

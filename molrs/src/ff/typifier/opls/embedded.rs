@@ -9,7 +9,7 @@
 //! name.
 //!
 //! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is still read —
-//! by `molrs::io::forcefield` — and handed to
+//! by `molrs::io` — and handed to
 //! [`OPLSAATypifier::new`](super::OPLSAATypifier::new). What is gone is molrs
 //! re-parsing *its own* parameter set at runtime.
 

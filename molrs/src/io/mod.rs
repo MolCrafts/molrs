@@ -1,50 +1,165 @@
-//! File I/O for molecular data, organized by content kind:
+//! File I/O, one module per file format.
 //!
-//! - [`data`] — single-structure formats (PDB, XYZ, GRO, mol2, SDF, CIF,
-//!   LAMMPS data, XSF, CHGCAR/POSCAR, Cube, AMBER inpcrd / prmtop structure)
-//! - [`trajectory`] — multi-frame formats (DCD, LAMMPS dump)
-//! - [`forcefield`] — force-field files (LAMMPS, GROMACS, AMBER, OPLS /
-//!   OpenMM XML, molrs XML): read into and written from a
-//!   [`ForceField`](crate::ff::forcefield::ForceField) (feature `ff`)
-//! - [`mesh`] — surface meshes (STL); reads into a
-//!   [`TriMesh`](crate::core::TriMesh), not a [`Frame`](crate::core::Frame)
-//! - [`mrec`] / [`csv`] — serialization of the store types themselves, as
-//!   opposed to [`data`] and [`trajectory`], which read molecular file
-//!   formats. [`mrec`] writes and reads a [`crate::core::Frame`] or
-//!   [`crate::core::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
-//!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
-//! - [`read_frame`] / [`write_frame`] ([`FrameFormat`]), the one door that picks a
-//!   structure format from a file name (or format name) and hands off to it
-//! - [`reader`] / [`writer`] / [`streaming`] — shared traits and the
-//!   chunk-based frame-indexing infrastructure
-//! - [`smiles`] — SMILES/SMARTS and CGsmiles notation parsing (feature
-//!   `smiles`)
+//! Every reader and writer of a format has one of two shapes:
+//!
+//! - a function at the top of this module, `read_<fmt>[_<what>]` /
+//!   `write_<fmt>[_<what>]` — a path; `read_<fmt>_str` / `write_<fmt>_str` for
+//!   text in memory and `read_<fmt>_bytes` for bytes; `read_<fmt>_trajectory`
+//!   / `write_<fmt>_trajectory` for every frame of a multi-frame file;
+//! - a class of the format's own module, `io::<fmt>::<Fmt>Reader` /
+//!   `<Fmt>Writer`, over any byte stream (a trajectory reader's `open(path)`
+//!   opens a file for random access), with the format's other records.
+//!
+//! No door picks a format for the caller: every door names its format.
+//!
+//! | module | format |
+//! |---|---|
+//! | [`pdb`], [`xyz`], [`gro`], [`sdf`], [`mol2`], [`cif`] | structure files (PDB, XYZ / extended XYZ, GRO, MDL SDF, Tripos MOL2, CIF) |
+//! | XSF, Gaussian cube, STL | functions only: `read_xsf` …, `read_cube` …, `read_stl` … |
+//! | [`vasp`] | POSCAR / CONTCAR, CHGCAR |
+//! | [`dcd`], [`trr`], [`xtc`] | binary trajectories (CHARMM/NAMD DCD, GROMACS TRR and XTC) |
+//! | [`lammps`] | LAMMPS data, molecule, dump, log, `fix bond/react`, force-field `*.ff`, `fix cmap` |
+//! | [`amber`] | AMBER prmtop, inpcrd, antechamber `.ac`, prep, frcmod |
+//! | [`gromacs`] | GROMACS `.top` / `.itp` |
+//! | [`openmm_xml`] | OpenMM force-field XML (with the OPLS-AA typing annotations) |
+//! | molrs force-field XML, MMFF parameter-set XML | functions only: `read_molrs_xml_forcefield` …, `read_mmff_xml_forcefield` … |
+//! | [`clpol`] | CL&Pol `alpha.ff` |
+//! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations |
+//! | [`mrec`] | MolRec scientific records (`*.mrec`) |
+//! | CSV | functions only: `read_csv_block` … |
+//!
+//! [`reader`] and [`writer`] hold the contracts the classes implement
+//! ([`FrameReader`](reader::FrameReader), [`TrajectoryReader`](reader::TrajectoryReader),
+//! [`FrameWriter`](writer::FrameWriter), [`ForceFieldReader`](reader::ForceFieldReader),
+//! [`ForceFieldWriter`](writer::ForceFieldWriter)); [`frame_index`] the chunked
+//! frame indexing the `*IndexBuilder` classes and `read_<fmt>_bytes` doors
+//! share.
+//!
+//! Force-field files map a file onto a [`ForceField`](crate::ff::forcefield::ForceField),
+//! the data model `ff` owns (feature `ff`): a reader owns the translation from
+//! its format — names, **and unit and factor normalization** — into the
+//! force-field IR (adopts the LAMMPS standard), its writer the inverse, so unit
+//! conversion stays at one boundary pair.
 
-pub mod csv;
-pub mod data;
-#[cfg(feature = "ff")]
-pub mod forcefield;
-mod format;
-/// Shared LAMMPS primitives (atom_style layouts, box bounds, helpers).
-/// Used by both the data-file and dump trajectory readers.
-pub(crate) mod lammps;
-// Log-file parsers (LAMMPS run output / thermo diagnostics).
-pub mod log;
-pub mod mesh;
-pub mod trajectory;
-
+pub mod frame_index;
 pub mod reader;
-pub mod streaming;
 pub mod writer;
+pub(crate) mod xdr;
 
+pub mod amber;
+pub mod cif;
+#[cfg(feature = "ff")]
+pub mod clpol;
+mod csv;
+mod cube;
+pub mod dcd;
+pub mod gro;
+#[cfg(feature = "ff")]
+pub mod gromacs;
+pub mod lammps;
+#[cfg(feature = "ff")]
+mod mmff_xml;
+pub mod mol2;
+#[cfg(feature = "ff")]
+mod molrs_xml;
+#[cfg(feature = "ff")]
+pub mod openmm_xml;
+pub mod pdb;
+pub mod sdf;
+mod stl;
+pub mod trr;
+pub mod vasp;
+#[cfg(feature = "ff")]
+mod xml_attribute;
+mod xsf;
+pub mod xtc;
+pub mod xyz;
+
+#[cfg(feature = "smiles")]
+pub mod cgsmiles;
 #[cfg(feature = "zarr")]
 pub mod mrec;
 #[cfg(feature = "smiles")]
 pub mod smiles;
-#[cfg(feature = "zarr")]
-pub(crate) mod zarr;
 
-pub use format::{FrameFormat, read_frame, write_frame};
+pub use amber::ac::{read_amber_ac, read_amber_ac_str};
+pub use amber::inpcrd::{read_amber_inpcrd, read_amber_inpcrd_str};
+pub use amber::prep::{
+    read_amber_prep, read_amber_prep_str, write_amber_prep, write_amber_prep_str,
+};
+pub use amber::prmtop::{read_amber_prmtop, read_amber_prmtop_str};
+#[cfg(feature = "ff")]
+pub use amber::{
+    frcmod::{write_amber_frcmod, write_amber_frcmod_str},
+    prmtop_forcefield::read_amber_prmtop_forcefield,
+};
+pub use cif::codec::{read_cif, read_cif_trajectory, write_cif};
+#[cfg(feature = "ff")]
+pub use clpol::codec::{read_clpol_alpha, read_clpol_alpha_str};
+pub use csv::{read_csv_block, read_csv_block_str, write_csv_block, write_csv_block_str};
+pub use cube::{read_cube, read_cube_str, read_cube_trajectory, write_cube, write_cube_str};
+pub use dcd::codec::{read_dcd_bytes, read_dcd_trajectory, write_dcd_trajectory};
+pub use gro::codec::{read_gro, read_gro_trajectory, write_gro, write_gro_trajectory};
+pub use lammps::bond_react::{write_lammps_bond_react_map, write_lammps_bond_react_system};
+pub use lammps::data::{read_lammps_data, read_lammps_data_bytes, write_lammps_data};
+pub use lammps::dump::{
+    read_lammps_dump_bytes, read_lammps_trajectory, write_lammps_dump_local,
+    write_lammps_trajectory,
+};
+pub use lammps::log::{read_lammps_log, read_lammps_log_str};
+pub use lammps::molecule::{
+    read_lammps_molecule, read_lammps_molecule_json, write_lammps_molecule,
+    write_lammps_molecule_json,
+};
+#[cfg(feature = "ff")]
+pub use lammps::{
+    forcefield_reader::read_lammps_cmap_str, forcefield_writer::write_lammps_cmap_str,
+};
+#[cfg(feature = "ff")]
+pub use mmff_xml::{
+    read_mmff_xml_forcefield, read_mmff_xml_forcefield_str, read_mmff_xml_params_str,
+};
+pub use mol2::codec::{read_mol2, read_mol2_trajectory, write_mol2};
+#[cfg(feature = "ff")]
+pub use molrs_xml::{
+    read_molrs_xml_forcefield, read_molrs_xml_forcefield_str, write_molrs_xml_forcefield,
+    write_molrs_xml_forcefield_str,
+};
+#[cfg(feature = "ff")]
+pub use openmm_xml::{
+    opls_typing::read_openmm_xml_opls_typing_str,
+    reader::{read_openmm_xml_forcefield, read_openmm_xml_forcefield_str},
+    writer::{write_openmm_xml_forcefield, write_openmm_xml_forcefield_str},
+};
+pub use pdb::codec::{
+    read_pdb, read_pdb_bytes, read_pdb_trajectory, write_pdb, write_pdb_trajectory,
+};
+pub use sdf::codec::{read_sdf, read_sdf_bytes, read_sdf_trajectory};
+pub use stl::{read_stl, read_stl_bytes};
+pub use trr::codec::{read_trr_bytes, read_trr_trajectory, write_trr_trajectory};
+pub use vasp::chgcar::{read_vasp_chgcar, read_vasp_chgcar_str};
+pub use vasp::poscar::{
+    read_vasp_poscar, read_vasp_poscar_str, write_vasp_poscar, write_vasp_poscar_str,
+};
+pub use xsf::{read_xsf, read_xsf_str, write_xsf, write_xsf_str};
+pub use xtc::codec::{read_xtc_bytes, read_xtc_trajectory, write_xtc_trajectory};
+pub use xyz::codec::{
+    read_xyz, read_xyz_bytes, read_xyz_trajectory, write_xyz, write_xyz_trajectory,
+};
+
+#[cfg(feature = "smiles")]
+pub use cgsmiles::read_cgsmiles_str;
+#[cfg(feature = "smiles")]
+pub use smiles::{ir_from_atomistic::write_smiles_str, ir_to_atomistic::read_smiles_str};
+
+#[cfg(feature = "filesystem")]
+pub use mrec::zarr_storage::{
+    read_mrec, read_mrec_forcefield, read_mrec_frame, read_mrec_meta, read_mrec_system,
+    read_mrec_trajectory, write_mrec, write_mrec_forcefield, write_mrec_frame, write_mrec_system,
+    write_mrec_trajectory,
+};
+#[cfg(feature = "zarr")]
+pub use mrec::zarr_storage::{read_mrec_frame_storage, read_mrec_storage, write_mrec_storage};
 
 /// The one `InvalidData` error of the io readers and writers: a parse or
 /// shape failure carrying `e`'s message.

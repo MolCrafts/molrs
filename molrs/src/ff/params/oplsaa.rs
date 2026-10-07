@@ -24,7 +24,7 @@
 //!
 //! # Conversions
 //!
-//! Every number is converted by `GromacsTopFfReader`, the one GROMACS parser
+//! Every number is converted by `GromacsTopForcefieldReader`, the one GROMACS parser
 //! in molrs; the generator only writes its result.
 //!
 //! | GROMACS | molrs |

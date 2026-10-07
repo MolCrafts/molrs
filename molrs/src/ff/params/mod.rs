@@ -805,7 +805,7 @@ impl ParmTable {
 // The rows of [`oplsaa`], in **molrs's convention** (LAMMPS `real`: Å,
 // kcal/mol, degrees, e; un-halved `K`) — what the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
 // Ryckaert–Bellemans torsions; the conversion happens once, in the generator
-// (through `GromacsTopFfReader`), and its result is what is committed. The two
+// (through `GromacsTopForcefieldReader`), and its result is what is committed. The two
 // vocabularies of the source survive intact: bonded rows key on the GROMACS
 // `bond_type` (the **class**, `CT`, `HC`), atoms and pairs on the **type**
 // (`opls_NNN`). The typing rules are not GROMACS's and live apart, in

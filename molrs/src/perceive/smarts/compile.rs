@@ -1,7 +1,7 @@
 //! SMARTS syntax → matcher query graph.
 //!
-//! There is one SMARTS parser, [`crate::io::smiles::parse_smarts`]; this module
-//! compiles its [`SmilesIR`] into the [`QueryGraph`] the matcher walks:
+//! The SMARTS text is parsed by the crate's one line-notation grammar; this
+//! module compiles its [`SmilesIR`] into the [`QueryGraph`] the matcher walks:
 //! element symbols resolve to atomic numbers, `$(...)` subpatterns compile to
 //! their own graphs, ring closures become bonds and an unwritten bond becomes
 //! "single or aromatic".
@@ -14,17 +14,18 @@
 use std::collections::HashMap;
 
 use crate::core::MolRsError;
-use crate::io::smiles::{
-    AtomNode, AtomPrimitive as SynPrimitive, AtomQuery as SynQuery, AtomSpec, BondKind,
-    BondQuery as SynBond, BracketSymbol, Chain, ChainElement, SmilesIR, parse_smarts,
+use crate::line_notation::ast::{
+    AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BracketSymbol, Chain,
+    ChainElement, SmilesIR,
 };
+use crate::line_notation::parser::parse_smarts;
 
-use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
+use super::predicate::{AtomPredicate, AtomTest, BondPredicate, BondTest};
 
 /// A compiled query atom: its query tree + optional atom-map label (`:n`).
 #[derive(Debug, Clone)]
 pub struct QueryAtom {
-    pub query: AtomQuery,
+    pub query: AtomTest,
     pub map_label: Option<u32>,
 }
 
@@ -33,7 +34,7 @@ pub struct QueryAtom {
 pub struct QueryBond {
     pub a: usize,
     pub b: usize,
-    pub query: BondQuery,
+    pub query: BondTest,
 }
 
 /// The whole compiled query graph. Atoms are numbered in the order the
@@ -43,7 +44,7 @@ pub struct QueryBond {
 pub struct QueryGraph {
     pub atoms: Vec<QueryAtom>,
     pub bonds: Vec<QueryBond>,
-    /// Compiled recursive subpatterns, addressed by `AtomQuery::Recursive(i)`.
+    /// Compiled recursive subpatterns, addressed by `AtomTest::Recursive(i)`.
     pub recursives: Vec<QueryGraph>,
 }
 
@@ -128,7 +129,7 @@ struct Compiler<'s> {
 }
 
 /// An open ring closure: the atom that opened it and the bond written there.
-type OpenRing<'ir> = (usize, Option<&'ir SynBond>);
+type OpenRing<'ir> = (usize, Option<&'ir BondQuery>);
 
 impl Compiler<'_> {
     fn err(&self, msg: impl std::fmt::Display) -> MolRsError {
@@ -155,7 +156,7 @@ impl Compiler<'_> {
         &self,
         g: &mut QueryGraph,
         chain: &'ir Chain,
-        parent: Option<(usize, Option<&'ir SynBond>)>,
+        parent: Option<(usize, Option<&'ir BondQuery>)>,
         rings: &mut HashMap<u16, OpenRing<'ir>>,
     ) -> Result<(), MolRsError> {
         let head = self.atom(g, &chain.head)?;
@@ -195,38 +196,38 @@ impl Compiler<'_> {
         g: &mut QueryGraph,
         a: usize,
         b: usize,
-        bond: Option<&SynBond>,
+        bond: Option<&BondQuery>,
     ) -> Result<(), MolRsError> {
         let query = match bond {
-            None => BondQuery::Prim(BondPrimitive::SingleOrAromatic),
+            None => BondTest::Prim(BondPredicate::SingleOrAromatic),
             Some(q) => self.bond_query(q)?,
         };
         g.bonds.push(QueryBond { a, b, query });
         Ok(())
     }
 
-    fn bond_query(&self, q: &SynBond) -> Result<BondQuery, MolRsError> {
+    fn bond_query(&self, q: &BondQuery) -> Result<BondTest, MolRsError> {
         Ok(match q {
-            SynBond::Kind(kind) => BondQuery::Prim(match kind {
-                BondKind::Single => BondPrimitive::Single,
-                BondKind::Double => BondPrimitive::Double,
-                BondKind::Triple => BondPrimitive::Triple,
-                BondKind::Aromatic => BondPrimitive::Aromatic,
-                BondKind::Any => BondPrimitive::Any,
-                BondKind::Ring => BondPrimitive::InRing,
+            BondQuery::Kind(kind) => BondTest::Prim(match kind {
+                BondKind::Single => BondPredicate::Single,
+                BondKind::Double => BondPredicate::Double,
+                BondKind::Triple => BondPredicate::Triple,
+                BondKind::Aromatic => BondPredicate::Aromatic,
+                BondKind::Any => BondPredicate::Any,
+                BondKind::Ring => BondPredicate::InRing,
                 BondKind::Quadruple | BondKind::Up | BondKind::Down => {
                     return Err(
                         self.err(format!("the {kind:?} bond is not supported by the matcher"))
                     );
                 }
             }),
-            SynBond::Not(inner) => BondQuery::Not(Box::new(self.bond_query(inner)?)),
-            SynBond::And(parts) => BondQuery::And(self.bond_queries(parts)?),
-            SynBond::Or(parts) => BondQuery::Or(self.bond_queries(parts)?),
+            BondQuery::Not(inner) => BondTest::Not(Box::new(self.bond_query(inner)?)),
+            BondQuery::And(parts) => BondTest::And(self.bond_queries(parts)?),
+            BondQuery::Or(parts) => BondTest::Or(self.bond_queries(parts)?),
         })
     }
 
-    fn bond_queries(&self, parts: &[SynBond]) -> Result<Vec<BondQuery>, MolRsError> {
+    fn bond_queries(&self, parts: &[BondQuery]) -> Result<Vec<BondTest>, MolRsError> {
         parts.iter().map(|p| self.bond_query(p)).collect()
     }
 
@@ -235,7 +236,7 @@ impl Compiler<'_> {
         let mut map_label = None;
         let query = match &node.spec {
             AtomSpec::Organic { symbol, aromatic } => self.element(symbol, *aromatic)?,
-            AtomSpec::Wildcard => AtomQuery::Prim(AtomPrimitive::Any),
+            AtomSpec::Wildcard => AtomTest::Prim(AtomPredicate::Any),
             AtomSpec::Bracket {
                 isotope: None,
                 symbol,
@@ -245,9 +246,9 @@ impl Compiler<'_> {
                 atom_class: None,
             } => match symbol {
                 BracketSymbol::Element { symbol, aromatic } => self.element(symbol, *aromatic)?,
-                BracketSymbol::Any => AtomQuery::Prim(AtomPrimitive::Any),
-                BracketSymbol::Aliphatic => AtomQuery::Prim(AtomPrimitive::AnyAliphatic),
-                BracketSymbol::Aromatic => AtomQuery::Prim(AtomPrimitive::AnyAromatic),
+                BracketSymbol::Any => AtomTest::Prim(AtomPredicate::Any),
+                BracketSymbol::Aliphatic => AtomTest::Prim(AtomPredicate::AnyAliphatic),
+                BracketSymbol::Aromatic => AtomTest::Prim(AtomPredicate::AnyAromatic),
             },
             AtomSpec::Bracket { .. } => {
                 return Err(self.err("a SMILES bracket atom is not a SMARTS query"));
@@ -258,39 +259,39 @@ impl Compiler<'_> {
         Ok(g.atoms.len() - 1)
     }
 
-    fn element(&self, symbol: &str, aromatic: bool) -> Result<AtomQuery, MolRsError> {
+    fn element(&self, symbol: &str, aromatic: bool) -> Result<AtomTest, MolRsError> {
         let z = molrs::core::Element::by_symbol(symbol)
             .ok_or_else(|| self.err(format!("unknown element '{symbol}'")))?
             .z();
-        Ok(AtomQuery::Prim(if aromatic {
-            AtomPrimitive::AromaticElement(z)
+        Ok(AtomTest::Prim(if aromatic {
+            AtomPredicate::AromaticElement(z)
         } else {
-            AtomPrimitive::AliphaticElement(z)
+            AtomPredicate::AliphaticElement(z)
         }))
     }
 
     fn atom_query(
         &self,
         g: &mut QueryGraph,
-        q: &SynQuery,
+        q: &AtomQuery,
         map_label: &mut Option<u32>,
-    ) -> Result<AtomQuery, MolRsError> {
+    ) -> Result<AtomTest, MolRsError> {
         Ok(match q {
-            SynQuery::Primitive(p) => self.primitive(g, p, map_label)?,
-            SynQuery::Not(inner) => AtomQuery::Not(Box::new(self.atom_query(g, inner, map_label)?)),
-            SynQuery::And(parts) | SynQuery::LowAnd(parts) => {
-                AtomQuery::And(self.atom_queries(g, parts, map_label)?)
+            AtomQuery::Primitive(p) => self.primitive(g, p, map_label)?,
+            AtomQuery::Not(inner) => AtomTest::Not(Box::new(self.atom_query(g, inner, map_label)?)),
+            AtomQuery::And(parts) | AtomQuery::LowAnd(parts) => {
+                AtomTest::And(self.atom_queries(g, parts, map_label)?)
             }
-            SynQuery::Or(parts) => AtomQuery::Or(self.atom_queries(g, parts, map_label)?),
+            AtomQuery::Or(parts) => AtomTest::Or(self.atom_queries(g, parts, map_label)?),
         })
     }
 
     fn atom_queries(
         &self,
         g: &mut QueryGraph,
-        parts: &[SynQuery],
+        parts: &[AtomQuery],
         map_label: &mut Option<u32>,
-    ) -> Result<Vec<AtomQuery>, MolRsError> {
+    ) -> Result<Vec<AtomTest>, MolRsError> {
         parts
             .iter()
             .map(|p| self.atom_query(g, p, map_label))
@@ -300,48 +301,48 @@ impl Compiler<'_> {
     fn primitive(
         &self,
         g: &mut QueryGraph,
-        p: &SynPrimitive,
+        p: &AtomPrimitive,
         map_label: &mut Option<u32>,
-    ) -> Result<AtomQuery, MolRsError> {
+    ) -> Result<AtomTest, MolRsError> {
         let prim = match p {
-            SynPrimitive::Element { symbol, aromatic } => return self.element(symbol, *aromatic),
-            SynPrimitive::AtomicNumber(z) => AtomPrimitive::AtomicNum(*z),
-            SynPrimitive::Wildcard => AtomPrimitive::Any,
-            SynPrimitive::Aliphatic => AtomPrimitive::AnyAliphatic,
-            SynPrimitive::Aromatic => AtomPrimitive::AnyAromatic,
-            SynPrimitive::Degree(n) => AtomPrimitive::Degree(u32::from(*n)),
-            SynPrimitive::TotalConnections(n) => AtomPrimitive::TotalConnections(u32::from(*n)),
-            SynPrimitive::HCount(n) => AtomPrimitive::TotalH(u32::from(*n)),
-            SynPrimitive::RingMembership(n) => AtomPrimitive::RingMembership(n.map(u32::from)),
-            SynPrimitive::RingSize(n) => AtomPrimitive::RingSize(Some(u32::from(*n))),
-            SynPrimitive::RingSizeRange { lo, hi } => AtomPrimitive::RingSizeRange {
+            AtomPrimitive::Element { symbol, aromatic } => return self.element(symbol, *aromatic),
+            AtomPrimitive::AtomicNumber(z) => AtomPredicate::AtomicNum(*z),
+            AtomPrimitive::Wildcard => AtomPredicate::Any,
+            AtomPrimitive::Aliphatic => AtomPredicate::AnyAliphatic,
+            AtomPrimitive::Aromatic => AtomPredicate::AnyAromatic,
+            AtomPrimitive::Degree(n) => AtomPredicate::Degree(u32::from(*n)),
+            AtomPrimitive::TotalConnections(n) => AtomPredicate::TotalConnections(u32::from(*n)),
+            AtomPrimitive::HCount(n) => AtomPredicate::TotalH(u32::from(*n)),
+            AtomPrimitive::RingMembership(n) => AtomPredicate::RingMembership(n.map(u32::from)),
+            AtomPrimitive::RingSize(n) => AtomPredicate::RingSize(Some(u32::from(*n))),
+            AtomPrimitive::RingSizeRange { lo, hi } => AtomPredicate::RingSizeRange {
                 lo: u32::from(*lo),
                 hi: hi.map(u32::from),
             },
-            SynPrimitive::RingBondCount(n) => AtomPrimitive::RingBondCount(u32::from(*n)),
-            SynPrimitive::Charge(c) => AtomPrimitive::Charge(i32::from(*c)),
-            SynPrimitive::ContextLabel(label) => AtomPrimitive::HasContextLabel(label.clone()),
-            SynPrimitive::AtomClass(n) => {
+            AtomPrimitive::RingBondCount(n) => AtomPredicate::RingBondCount(u32::from(*n)),
+            AtomPrimitive::Charge(c) => AtomPredicate::Charge(i32::from(*c)),
+            AtomPrimitive::ContextLabel(label) => AtomPredicate::HasContextLabel(label.clone()),
+            AtomPrimitive::AtomClass(n) => {
                 // A map label constrains nothing: it labels the atom, and
                 // stands in the tree as "any atom" so it composes under AND.
                 *map_label = Some(u32::from(*n));
-                AtomPrimitive::Any
+                AtomPredicate::Any
             }
-            SynPrimitive::Recursive(ir) => {
+            AtomPrimitive::Recursive(ir) => {
                 let sub = self.graph(ir)?;
                 g.recursives.push(sub);
-                return Ok(AtomQuery::Recursive(g.recursives.len() - 1));
+                return Ok(AtomTest::Recursive(g.recursives.len() - 1));
             }
-            SynPrimitive::ImplicitH(_)
-            | SynPrimitive::Valence(_)
-            | SynPrimitive::Isotope(_)
-            | SynPrimitive::Chirality(_) => {
+            AtomPrimitive::ImplicitH(_)
+            | AtomPrimitive::Valence(_)
+            | AtomPrimitive::Isotope(_)
+            | AtomPrimitive::Chirality(_) => {
                 return Err(self.err(format!(
                     "the primitive {p:?} is not supported by the matcher"
                 )));
             }
         };
-        Ok(AtomQuery::Prim(prim))
+        Ok(AtomTest::Prim(prim))
     }
 }
 

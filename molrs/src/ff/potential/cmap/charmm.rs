@@ -474,7 +474,7 @@ pub(crate) mod tests {
     use crate::ff::forcefield::ForceField;
     use crate::ff::potential::PotentialCompiler;
     use crate::ff::potential::geometry::compute_dihedral;
-    use crate::io::forcefield::readers::lammps::read_lammps_cmap_str;
+    use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
     use molrs::core::Block;
     use molrs::op::types::Idx;
     use ndarray::Array1;

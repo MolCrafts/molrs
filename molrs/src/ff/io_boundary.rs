@@ -1,6 +1,6 @@
 //! `ff` reads no file: the force-field data model, kernels, typifiers and
 //! parameter tables never name [`crate::io`]. Every file reader and writer —
-//! force-field files included — is `io`'s ([`crate::io::forcefield`]), and
+//! force-field files included — is `io`'s ([`crate::io`]), and
 //! `io` depends on `ff`, never the reverse.
 //!
 //! Only test code may cross: a `#[cfg(test)]` module file (the engine

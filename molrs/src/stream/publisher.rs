@@ -22,7 +22,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
 use crate::core::Frame;
-use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
+use crate::stream::{MessageFormat, StreamError, encode_frame};
 
 use super::message::ControlCommand;
 
@@ -314,7 +314,7 @@ impl Publisher {
     /// Never blocks on network I/O. If the internal buffer is full, the oldest
     /// pending frame is dropped so this call returns promptly.
     pub fn send(&self, frame: &Frame) -> Result<(), SendError> {
-        let bytes = frame_to_bytes(frame, self.shared.format)?;
+        let bytes = encode_frame(frame, self.shared.format)?;
         self.send_bytes(Bytes::from(bytes))
     }
 
@@ -660,7 +660,7 @@ mod tests {
     use super::*;
     use crate::core::Block;
     use crate::op::types::{F, I};
-    use crate::stream::bytes_to_frame;
+    use crate::stream::read_msgpack_frame_bytes;
     use futures_util::{SinkExt, StreamExt};
     use ndarray::Array1;
     use tokio_tungstenite::connect_async;
@@ -744,7 +744,7 @@ mod tests {
             Message::Text(t) => t.as_bytes().to_vec(),
             other => panic!("unexpected message: {other:?}"),
         };
-        let decoded = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        let decoded = read_msgpack_frame_bytes(&bytes).expect("decode");
         assert!(decoded.contains_key("atoms"));
         let x = decoded["atoms"]
             .get("x")
@@ -828,7 +828,7 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
                 Ok(Some(Ok(Message::Binary(b)))) => {
-                    if let Ok(decoded) = bytes_to_frame(b.as_ref(), MessageFormat::MessagePack)
+                    if let Ok(decoded) = read_msgpack_frame_bytes(b.as_ref())
                         && let Some(x) = decoded
                             .get("atoms")
                             .and_then(|a| a.get("x").and_then(|c| c.as_float()))
@@ -876,7 +876,7 @@ mod tests {
         server.send(&sample_frame(7)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
     }
@@ -935,7 +935,7 @@ mod tests {
 
         server.send(&sample_frame(3)).expect("send");
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
     }
@@ -969,7 +969,7 @@ mod tests {
         publisher.send(&sample_frame(11)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 11.0).abs() < 1e-12);
 
@@ -1036,7 +1036,7 @@ mod tests {
             .expect("no frame after reconnect")
             .expect("frame")
             .expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = read_msgpack_frame_bytes(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 5.0).abs() < 1e-12);
 

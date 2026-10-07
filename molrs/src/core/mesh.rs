@@ -3,7 +3,7 @@
 //! Sits beside [`region`](super::region) because that is what consumes it:
 //! molpack's `StlRegion` is a watertight [`TriMesh`] plus a containment rule,
 //! and molvis paints the same mesh as the container a trajectory plays inside.
-//! Reading one out of a file is `crate::io::mesh`'s job (feature `io`); this
+//! Reading one out of a file is `crate::io::stl`'s job (feature `io`); this
 //! is the geometry it hands back.
 //!
 //! Coordinates carry no units of their own — they are whatever the file said.

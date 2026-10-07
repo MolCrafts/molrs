@@ -74,8 +74,8 @@ use typing::typify_atoms;
 /// [`oplsaa`](Self::oplsaa) is the shipped set; [`new`](Self::new) takes a
 /// caller's typing metadata ([`OplsTypingMeta`]) and potential parameters
 /// ([`ForceField`]) — read from one OPLS-AA XML file by
-/// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
-/// and [`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader) —
+/// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
+/// and [`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader) —
 /// and precomputes the bonded candidate tables once.
 pub struct OPLSAATypifier {
     meta: OplsTypingMeta,
@@ -161,7 +161,7 @@ impl OPLSAATypifier {
     /// matching). The bonded candidate tables are built once from `ff`.
     ///
     /// `meta` is taken as valid ([`OplsTypingMeta::validate`]); the XML reader
-    /// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
+    /// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
     /// refuses a table that is not.
     pub fn new(meta: OplsTypingMeta, ff: ForceField) -> Self {
         let tables = CandidateTables::build(&ff, &meta);
@@ -360,13 +360,14 @@ mod tests {
     /// the attribute builds.
     #[test]
     fn a_dangling_override_refuses_the_typing_table() {
-        use crate::io::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
-        use crate::io::forcefield::xml::read_opls_typing_xml_str;
+        use crate::io::read_openmm_xml_opls_typing_str;
+        use crate::io::{openmm_xml::OpenmmXmlReader, reader::ForceFieldReader};
         let xml = one_type_xml(None);
-        let meta = read_opls_typing_xml_str(&xml).expect("the XML without the override reads");
-        let ff = OplsXmlReader::new().read_str(&xml).unwrap();
+        let meta =
+            read_openmm_xml_opls_typing_str(&xml).expect("the XML without the override reads");
+        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
         let _ = OPLSAATypifier::new(meta, ff);
-        let Err(e) = read_opls_typing_xml_str(&one_type_xml(Some("opls_missing"))) else {
+        let Err(e) = read_openmm_xml_opls_typing_str(&one_type_xml(Some("opls_missing"))) else {
             panic!("a dangling override must refuse the table");
         };
         assert!(e.contains("opls_a"), "err names the overriding type: {e}");

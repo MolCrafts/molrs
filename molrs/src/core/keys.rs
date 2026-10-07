@@ -65,7 +65,7 @@ meta_keys! {
     /// caller stated none.
     ///
     /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
-    /// (`io::data::lammps_molecule`); molrs converts no frame between presets.
+    /// (`io::lammps::molecule`); molrs converts no frame between presets.
     pub const UNITS: &str = "units";
 }
 
@@ -120,7 +120,7 @@ named_keys! {
      slice.";
     /// Frame meta key: every `* Coeffs` section of a LAMMPS data file,
     /// verbatim (`PairIJ` and the class2 cross terms included), which
-    /// `io::forcefield::readers::lammps::LammpsFfReader::read_data_coeffs`
+    /// `io::lammps::forcefield_reader::LammpsForcefieldReader::read_data_coeffs`
     /// reads with the type labels the `* Type Labels` sections declared.
     pub const LAMMPS_COEFFS_TEXT: &str = "lammps_coeffs_text";
     /// Frame meta key: the unit style a LAMMPS `write_data` title line stated

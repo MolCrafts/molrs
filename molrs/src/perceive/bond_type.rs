@@ -1197,7 +1197,7 @@ fn valence_penalty(z: u8, degree: usize, valence: i32) -> u32 {
 #[cfg(all(test, feature = "smiles"))]
 mod tests {
     use super::*;
-    use crate::io::smiles::{parse_smiles, to_atomistic};
+    use crate::io::smiles::SmilesIR;
 
     /// Imidazole exactly as the antechamber oracle states it (case `imidazole`,
     /// SMILES `c1cnc[nH]1`): ring C0 C1 N2 C3 N4 with **implicit** hydrogens —
@@ -1206,7 +1206,9 @@ mod tests {
     /// The hydrogens must stay implicit: drawn explicitly, `total_degree` and
     /// `degree` agree and the tie-break under test cannot be reached.
     fn imidazole() -> Atomistic {
-        to_atomistic(&parse_smiles("c1cnc[nH]1").expect("parse")).expect("to_atomistic")
+        (SmilesIR::parse("c1cnc[nH]1").expect("parse"))
+            .to_atomistic()
+            .expect("to_atomistic")
     }
 
     /// Ring bonds as `((i, j), is_double)`, endpoints low-high, sorted.
@@ -1315,8 +1317,9 @@ mod tests {
         // No aromatic bond, so nothing to assign: the call succeeds and every
         // localized number -- single, double and triple alike -- is the one
         // the input stated.
-        let mut mol =
-            to_atomistic(&parse_smiles("C=CC#CCCCC").expect("parse")).expect("to_atomistic");
+        let mut mol = (SmilesIR::parse("C=CC#CCCCC").expect("parse"))
+            .to_atomistic()
+            .expect("to_atomistic");
         let numbers = |m: &Atomistic| -> Vec<BondNumber> {
             m.bonds().map(|(id, _)| m.bond_number(id)).collect()
         };

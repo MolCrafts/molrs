@@ -15,10 +15,9 @@
 //! ```
 //! # #[cfg(feature = "smiles")]
 //! # {
-//! use molrs::io::smiles::{parse_smiles, to_atomistic};
+//! use molrs::io::read_smiles_str;
 //!
-//! let ir = parse_smiles("CCO")?;
-//! let molecule = to_atomistic(&ir)?;
+//! let molecule = read_smiles_str("CCO")?;
 //! assert_eq!(molecule.n_atoms(), 3);
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -30,8 +29,8 @@
 //! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
 //!   record files need `zarr`, their path doors `filesystem`)
 //! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
-//! - `smiles`    — SMILES/SMARTS parser (lives in `io`) and the SMARTS
-//!   matcher (`perceive::smarts`) compiled from it
+//! - `smiles`    — the line notations: SMILES and CGsmiles (`io::smiles`,
+//!   `io::cgsmiles`) and SMARTS (`perceive::smarts`), over one shared grammar
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
@@ -86,10 +85,17 @@ pub mod core;
 pub mod builder;
 
 // Chemical perception: one layer above `core`, below `ff` / `conformer`.
-// Always compiled, except the SMARTS matcher (`perceive::smarts`), which
-// compiles its queries from the one SMARTS parser in `io::smiles` and so needs
-// the `smiles` feature.
+// Always compiled, except SMARTS (`perceive::smarts`), which parses its
+// patterns with the crate's line-notation grammar and so needs the `smiles`
+// feature.
 pub mod perceive;
+
+// The line notations' shared grammar (SMILES, SMARTS, SMILES fragment
+// bodies): one AST, scanner, parser, writer and error. Crate-private; its
+// public faces are `io::smiles` / `io::cgsmiles` and `perceive::smarts`, so
+// io and perceive build on it without depending on each other.
+#[cfg(feature = "smiles")]
+pub(crate) mod line_notation;
 
 #[cfg(feature = "io")]
 pub mod io;

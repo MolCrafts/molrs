@@ -836,7 +836,7 @@ impl LammpsCodec for CoulCharmm {
 pub(crate) struct FixCmap;
 codec!(
     /// `cmap charmm` is LAMMPS's `fix cmap`: a grid file the include names,
-    /// written by `LammpsFfWriter::write_cmap_str`, not a coefficient line.
+    /// written by `LammpsForcefieldWriter::write_cmap_str`, not a coefficient line.
     FIX_CMAP = FixCmap,
     Some("cmap")
 );
@@ -844,7 +844,7 @@ codec!(
 impl LammpsCodec for FixCmap {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(format!(
-            "{}: LAMMPS's fix cmap reads a grid file (LammpsFfWriter::write_cmap_str), not a \
+            "{}: LAMMPS's fix cmap reads a grid file (LammpsForcefieldWriter::write_cmap_str), not a \
              coefficient line",
             what(spec)
         ))

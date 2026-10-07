@@ -6,7 +6,7 @@
 //!
 //! A tool, not a test, and not published (`exclude = ["examples/"]`). It
 //! checks the three input files against the SHA-256s pinned below, reads them
-//! with molrs's own [`GromacsTopFfReader`] — the only GROMACS parser in the
+//! with molrs's own [`GromacsTopForcefieldReader`] — the only GROMACS parser in the
 //! repository, which does every unit conversion — and writes the typed table.
 //! The same pinned inputs always produce the same bytes.
 //!
@@ -23,9 +23,7 @@ use molrs::core::constants::COULOMB_REAL;
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::forcefield::torsion::{MultiHarmonic, Opls};
 use molrs::ff::forcefield::{Params, StyleDefs};
-use molrs::io::{
-    forcefield::readers::ForceFieldReader, forcefield::readers::gromacs::GromacsTopFfReader,
-};
+use molrs::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
 use sha2::{Digest, Sha256};
 
 /// The pinned GROMACS release.
@@ -88,7 +86,7 @@ fn run() -> Result<String, String> {
     let dir = gromacs_dir()?;
     let digests = verify_pinned(&dir)?;
     let counts = SourceCount::of(&dir)?;
-    let ff = GromacsTopFfReader::new()
+    let ff = GromacsTopForcefieldReader::new()
         .with_include(true)
         .with_skipped_directive("constrainttypes")
         .read(&dir.join("forcefield.itp").display().to_string())?;
@@ -567,7 +565,7 @@ impl Table {
 //!
 //! # Conversions
 //!
-//! Every number is converted by `GromacsTopFfReader`, the one GROMACS parser
+//! Every number is converted by `GromacsTopForcefieldReader`, the one GROMACS parser
 //! in molrs; the generator only writes its result.
 //!
 //! | GROMACS | molrs |

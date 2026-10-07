@@ -31,17 +31,17 @@ use crate::ff::ir::{
     SpecialClass, StyleSpec, Value,
 };
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::io::forcefield::lammps_units::LammpsFfUnits;
-use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::lammps::units::LammpsUnitConverter;
+use crate::io::writer::ForceFieldWriter;
 use crate::io::{
-    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
-    forcefield::writers::xml::XmlForceFieldWriter,
+    lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter,
+    openmm_xml::OpenmmXmlWriter,
 };
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
-use molrs::io::data::lammps_data::write_lammps_data;
+use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::types::{F, Idx};
 
 fn dim(s: &str) -> Dim {
@@ -578,7 +578,7 @@ pub(crate) fn molrs_terms(case: &Case, reg: &Registry, k: usize) -> BTreeMap<&'s
     let to_file = if case.units == "real" {
         1.0
     } else {
-        LammpsFfUnits::canonical()
+        LammpsUnitConverter::canonical()
             .unwrap()
             .energy(1.0, "real", case.units)
             .unwrap()
@@ -644,12 +644,12 @@ fn write_case(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
     match case.engine {
         "lammps" => {
             let labels = TypeLabels::from_frame(&case.frame).unwrap();
-            let options = LammpsWriteOptions {
+            let options = LammpsForcefieldWriteOptions {
                 precision: 17,
                 units: case.units,
-                ..LammpsWriteOptions::default()
+                ..LammpsForcefieldWriteOptions::default()
             };
-            let text = LammpsFfWriter::with_options(&labels, options)
+            let text = LammpsForcefieldWriter::with_options(&labels, options)
                 .with_registry(reg.clone())
                 .write_str(&case.ff)
                 .unwrap();
@@ -665,7 +665,7 @@ fn write_case(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
             }
         }
         "openmm" => {
-            let xml = XmlForceFieldWriter::new()
+            let xml = OpenmmXmlWriter::new()
                 .with_registry(reg.clone())
                 .write_str(&case.ff)
                 .unwrap();
@@ -779,10 +779,10 @@ mod codecs {
     use super::*;
     use crate::ff::ir::expr::{Binding, Geometry, compile};
     use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
-    use crate::io::forcefield::readers::ForceFieldReader;
-    use crate::io::forcefield::readers::lammps::LammpsFfReader;
-    use crate::io::forcefield::writers::frcmod::write_amber_frcmod_str;
-    use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
+    use crate::io::amber::frcmod::write_amber_frcmod_str;
+    use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
+    use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
+    use crate::io::reader::ForceFieldReader;
 
     /// A row of `spec` a LAMMPS line holds: each parameter a value of its
     /// kind, the multiplicities and signs integers.
@@ -956,11 +956,11 @@ mod codecs {
 
     fn include(ff: &ForceField, frame: &Frame) -> String {
         let labels = TypeLabels::from_frame(frame).unwrap();
-        let options = LammpsWriteOptions {
+        let options = LammpsForcefieldWriteOptions {
             precision: 17,
-            ..LammpsWriteOptions::default()
+            ..LammpsForcefieldWriteOptions::default()
         };
-        LammpsFfWriter::with_options(&labels, options)
+        LammpsForcefieldWriter::with_options(&labels, options)
             .write_str(ff)
             .unwrap()
     }
@@ -979,7 +979,7 @@ mod codecs {
             }
             let (ff, frame) = one_style(&spec);
             let text = include(&ff, &frame);
-            let back = LammpsFfReader::new()
+            let back = LammpsForcefieldReader::new()
                 .read_str(&text)
                 .unwrap_or_else(|e| panic!("{what}: {e}\n{text}"));
             assert_eq!(include(&back, &frame), text, "{what}");
@@ -1059,11 +1059,13 @@ mod codecs {
                 &format!("{} 3.5 ", keywords[0]),
                 1,
             );
-            let err = LammpsFfReader::new().read_str(&nonzero).unwrap_err();
+            let err = LammpsForcefieldReader::new()
+                .read_str(&nonzero)
+                .unwrap_err();
             assert!(err.contains("cross term"), "{err}");
             // The data file: the cross-term sections, read back.
             let labels = TypeLabels::from_frame(&frame).unwrap();
-            let data = LammpsFfWriter::new(&labels)
+            let data = LammpsForcefieldWriter::new(&labels)
                 .write_data_coeffs_str(&ff)
                 .unwrap();
             let heading = if name == "angle" {
@@ -1072,7 +1074,7 @@ mod codecs {
                 "MiddleBondTorsion Coeffs"
             };
             assert!(data.contains(heading), "{data}");
-            let back = LammpsFfReader::new()
+            let back = LammpsForcefieldReader::new()
                 .read_data_sections(&data, &Default::default(), "real")
                 .unwrap();
             assert!(back.get_style(name, "class2").is_some(), "{data}");
@@ -1083,7 +1085,7 @@ mod codecs {
     /// inverses; an angle value and a per-radian constant are unchanged.
     #[test]
     fn units_convert_per_dimension() {
-        let sys = LammpsFfUnits::canonical().unwrap();
+        let sys = LammpsUnitConverter::canonical().unwrap();
         let scale = sys.scale("real", "metal").unwrap();
         let fe = sys.energy(1.0, "real", "metal").unwrap();
         let close = |a: F, b: F| assert!((a - b).abs() <= 1e-15 * b.abs(), "{a} != {b}");
@@ -1111,7 +1113,7 @@ mod codecs {
         let reg = registry();
         let case = cases(&reg).into_iter().find(|c| c.name == "fene").unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
-        let text = LammpsFfWriter::new(&labels)
+        let text = LammpsForcefieldWriter::new(&labels)
             .with_registry(reg.clone())
             .write_str(&case.ff)
             .unwrap();
@@ -1120,7 +1122,7 @@ mod codecs {
             text.contains("bond_coeff A-A 30.000000 1.500000 1.000000 1.000000\n"),
             "{text}"
         );
-        let back = LammpsFfReader::new()
+        let back = LammpsForcefieldReader::new()
             .with_registry(reg.clone())
             .read_str(&text)
             .unwrap();
@@ -1134,9 +1136,9 @@ mod codecs {
                     .unwrap()
             )
         );
-        let err = LammpsFfReader::new().read_str(&text).unwrap_err();
+        let err = LammpsForcefieldReader::new().read_str(&text).unwrap_err();
         assert!(err.contains("unsupported bond_style `fene`"), "{err}");
-        let err = LammpsFfWriter::new(&labels)
+        let err = LammpsForcefieldWriter::new(&labels)
             .write_str(&case.ff)
             .unwrap_err();
         assert!(err.contains("LAMMPS has no form for bond `fene`"), "{err}");
@@ -1156,7 +1158,7 @@ mod codecs {
             .find(|c| c.name == "fene")
             .unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
-        let err = LammpsFfWriter::new(&labels)
+        let err = LammpsForcefieldWriter::new(&labels)
             .with_registry(reg.clone())
             .write_str(&case.ff)
             .unwrap_err();
@@ -1220,7 +1222,9 @@ mod codecs {
                 Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
-        let err = GromacsTopFfWriter::new().write_str(&ff).unwrap_err();
+        let err = GromacsTopForcefieldWriter::new()
+            .write_str(&ff)
+            .unwrap_err();
         assert!(
             err.contains("GROMACS has no form for bond `quartic_custom`")
                 && err.contains("not a built-in style"),
@@ -1239,7 +1243,7 @@ mod codecs {
             .find(|c| c.name == "openmm")
             .unwrap();
         let labels = TypeLabels::from_frame(&case.frame).unwrap();
-        let err = LammpsFfWriter::new(&labels)
+        let err = LammpsForcefieldWriter::new(&labels)
             .with_registry(reg)
             .write_str(&case.ff)
             .unwrap_err();
@@ -1249,7 +1253,7 @@ mod codecs {
             "{err}"
         );
         // OpenMM: an unregistered expression style is its Custom*Force.
-        let xml = XmlForceFieldWriter::new().write_str(&ff).unwrap();
+        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
         assert!(
             xml.contains("<CustomBondForce energy=\"4.184*(k*(10*r-r0)^4)\">"),
             "{xml}"
@@ -1265,7 +1269,7 @@ mod codecs {
             .into_iter()
             .find(|c| c.name == "openmm")
             .unwrap();
-        let xml = XmlForceFieldWriter::new()
+        let xml = OpenmmXmlWriter::new()
             .with_registry(reg.clone())
             .write_str(&case.ff)
             .unwrap();
@@ -1311,7 +1315,7 @@ mod codecs {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 0.5],
         });
-        let err = XmlForceFieldWriter::new()
+        let err = OpenmmXmlWriter::new()
             .with_registry(reg.clone())
             .write_str(&case.ff)
             .unwrap_err();
@@ -1341,7 +1345,7 @@ mod codecs {
                 Params::from_pairs(&[("k", 1.0)]),
             )
             .unwrap();
-        let err = XmlForceFieldWriter::new()
+        let err = OpenmmXmlWriter::new()
             .with_registry(Arc::new(r))
             .write_str(&ff)
             .unwrap_err();

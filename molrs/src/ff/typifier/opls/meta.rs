@@ -8,9 +8,9 @@
 //! joined from the molrs-owned rules of
 //! [`crate::ff::params::oplsaa_typing`]; for a caller's own OPLS / CL&P XML, the
 //! potential reader
-//! ([`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader))
+//! ([`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader))
 //! drops the `def` / `overrides` / `priority` / `layer` attributes and
-//! [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
+//! [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
 //! reads them into the [`OplsTypingMeta`] table here.
 //!
 //! # How the fields rank candidates
@@ -38,7 +38,7 @@ use std::collections::HashMap;
 /// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking `class`
 /// from the matching [`OplsAtomRow`](crate::ff::params::OplsAtomRow) and
 /// `layer` 0, while
-/// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
+/// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
 /// builds them from XML attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OplsTypeRow {

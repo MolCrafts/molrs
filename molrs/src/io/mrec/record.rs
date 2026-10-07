@@ -234,7 +234,7 @@ mod tests {
     ///
     /// Contract: `../molrec/docs/spec/overview.md` lists `trajectory`
     /// alongside `frame`, `system` and `status`. While the validator did not
-    /// say so, `write_trajectory_file` had to duplicate frame 0 into `frame` to
+    /// say so, `write_mrec_trajectory` had to duplicate frame 0 into `frame` to
     /// get a trajectory past this gate; it no longer does, and this test is
     /// what keeps that workaround from being needed again.
     #[test]

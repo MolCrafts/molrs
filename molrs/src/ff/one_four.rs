@@ -22,8 +22,8 @@ use ndarray::Array1;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::lammps::LammpsFfReader;
+use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
+use crate::io::reader::ForceFieldReader;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
@@ -91,7 +91,7 @@ dihedral_coeff CT2-CT2-OH1-H 0.14 3 0 {w}
 }
 
 fn read(special: &str, w: &str) -> ForceField {
-    LammpsFfReader::new()
+    LammpsForcefieldReader::new()
         .read_str(&ff_text(special, w))
         .unwrap()
 }
@@ -340,7 +340,7 @@ fn global_weights_with_lj_charmm_match_lammps() {
 #[test]
 fn a_dihedral_weight_prices_its_pair_beyond_every_cutoff_as_lammps() {
     let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "2.0 2.4");
-    let ff = LammpsFfReader::new().read_str(&text).unwrap();
+    let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
     let frame = frame(ff.special_bonds(), false);
     // The pair styles price nothing: every pair they see is past 2.4 Å.
     let lj = only(&ff, "pair", "lj/charmm");
@@ -399,7 +399,7 @@ pair_coeff CT3 OH1 0.12 3.3
 /// the Lennard-Jones by the scaled offset.
 #[test]
 fn special_1_4_pairs_are_truncated_at_the_pair_cutoff_as_in_lammps() {
-    let ff = LammpsFfReader::new().read_str(&cut_text()).unwrap();
+    let ff = LammpsForcefieldReader::new().read_str(&cut_text()).unwrap();
     assert_eq!(
         ff.get_style("pair", "lj/cut")
             .unwrap()
@@ -535,7 +535,7 @@ fn plain(special: &str) -> ForceField {
         )
         .replace(" 0.01 3.385\n", "\n")
         .replace("OH1 0.12 3.3 0.08 3.2", "OH1 0.12 3.3");
-    LammpsFfReader::new().read_str(&text).unwrap()
+    LammpsForcefieldReader::new().read_str(&text).unwrap()
 }
 
 /// The three ways to say "half": `special_bonds` ½, per-pair scales ½ on
@@ -719,7 +719,7 @@ fn an_override_cell_is_priced_only_by_its_own_style() {
 #[test]
 fn forces_are_the_gradient_inside_the_switches() {
     let text = ff_text(CHARMM, "1.0").replace("3.5 4.2 3.0 5.0", "12.0 14.0");
-    let ff = LammpsFfReader::new().read_str(&text).unwrap();
+    let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
     let pots = PotentialCompiler::new(&ff)
         .compile(&frame(ff.special_bonds(), false))
         .unwrap();
@@ -773,7 +773,7 @@ fn compile_equals_compile_typed() {
         (AMBER_LIKE, "0.0, lj/cut/coul/cut 3.0", cut_text()),
     ];
     for (special, w, text) in cases {
-        let ff = LammpsFfReader::new().read_str(&text).unwrap();
+        let ff = LammpsForcefieldReader::new().read_str(&text).unwrap();
         let frame = frame(ff.special_bonds(), false);
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(&frame)
@@ -791,7 +791,7 @@ fn compile_equals_compile_typed() {
 /// something else cannot hand them a pair.
 #[test]
 fn an_override_beside_a_non_lj_style_is_refused() {
-    let ff = LammpsFfReader::new()
+    let ff = LammpsForcefieldReader::new()
         .read_str(&ff_text(CHARMM, "0.0"))
         .unwrap();
     let mut buck = ff.empty_like();
@@ -813,14 +813,14 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 /// the LAMMPS reader and writer are the identity on `lj/charmm/coul/charmm`.
 #[test]
 fn lammps_round_trip_and_override_refusal() {
-    use crate::io::forcefield::writers::ForceFieldWriter;
-    use crate::io::forcefield::writers::lammps::{LammpsFfWriter, refuse_pair_overrides};
+    use crate::io::lammps::forcefield_writer::{LammpsForcefieldWriter, refuse_pair_overrides};
+    use crate::io::writer::ForceFieldWriter;
     use molrs::core::TypeLabels;
 
     let ff = read(CHARMM, "0.5");
     let frame = frame(ff.special_bonds(), false);
     let labels = TypeLabels::from_frame(&frame).unwrap();
-    let text = LammpsFfWriter::new(&labels).write_str(&ff).unwrap();
+    let text = LammpsForcefieldWriter::new(&labels).write_str(&ff).unwrap();
     assert!(
         text.contains("pair_style lj/charmm/coul/charmm 3.500000 4.200000 3.000000 5.000000"),
         "{text}"
@@ -838,7 +838,7 @@ fn lammps_round_trip_and_override_refusal() {
         text.contains("dihedral_coeff CT3-CT2-CT2-OH1 0.300000 1 180 0.500000"),
         "{text}"
     );
-    let back = LammpsFfReader::new().read_str(&text).unwrap();
+    let back = LammpsForcefieldReader::new().read_str(&text).unwrap();
     for (category, name) in [
         ("pair", "lj/charmm"),
         ("pair", "coul/charmm"),
@@ -874,7 +874,7 @@ fn lammps_round_trip_and_override_refusal() {
         .unwrap();
     over.insert("atoms", atoms);
     let err = molrs::io::writer::FrameWriter::write(
-        &mut molrs::io::data::lammps_data::LAMMPSDataWriter::new(&mut data),
+        &mut molrs::io::lammps::data::LammpsDataWriter::new(&mut data),
         &over,
     )
     .unwrap_err();

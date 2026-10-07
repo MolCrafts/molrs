@@ -478,8 +478,8 @@ mod tests {
     /// the energy to LAMMPS's `pe` (= `eangle`) at 1e-10 relative and the
     /// forces to its `fx fy fz` at 1e-10 of the largest component.
     fn agrees_with_lammps(include: &str, frame: &Frame, pe: F, forces: &[[F; 3]]) {
-        use crate::io::forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader};
-        let ff = LammpsFfReader::new().read_str(include).unwrap();
+        use crate::io::{lammps::LammpsForcefieldReader, reader::ForceFieldReader};
+        let ff = LammpsForcefieldReader::new().read_str(include).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(frame)

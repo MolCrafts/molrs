@@ -21,15 +21,13 @@ use super::charmm::tests::{alanine, chain, place};
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::typifier::cmap::assign_cmaps;
-use crate::io::forcefield::writers::ForceFieldWriter;
-use crate::io::{
-    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
-};
+use crate::io::writer::ForceFieldWriter;
+use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
-use molrs::io::data::lammps_data::write_lammps_data;
+use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::types::{F, Idx};
 
 const TYPES: [&str; 8] = ["C", "NH1", "CT1", "C", "NH1", "CT1", "C", "NH1"];
@@ -131,12 +129,12 @@ fn write_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
     lammps.remove("dihedrals");
     write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
     let labels = TypeLabels::from_frame(&lammps).unwrap();
-    let options = LammpsWriteOptions {
+    let options = LammpsForcefieldWriteOptions {
         skip_pair_style: true,
         cmap_file: Some("charmm.cmap".into()),
-        ..LammpsWriteOptions::default()
+        ..LammpsForcefieldWriteOptions::default()
     };
-    let writer = LammpsFfWriter::with_options(&labels, options);
+    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     std::fs::write(dir.join("charmm.cmap"), writer.write_cmap_str(ff).unwrap()).unwrap();
     std::fs::write(dir.join("system.ff"), writer.write_str(ff).unwrap()).unwrap();
 }

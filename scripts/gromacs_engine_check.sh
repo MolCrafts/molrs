@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # GROMACS-read force fields against GROMACS and LAMMPS, term by term
-# (molrs/src/io/forcefield/readers/gromacs/engine_check.rs pins what this
+# (molrs/src/io/gromacs/top_reader/engine_check.rs pins what this
 # prints).
 #
 # The fixtures are an ACE-ALA-ALA-NME dipeptide built by `gmx pdb2gmx` under
@@ -30,7 +30,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 GMX=${GMX:-gmx_d}
 LMP=${LMP:-lmp}
 PYTHON=${PYTHON:-python3}
-data=molrs/src/io/forcefield/readers/gromacs/testdata
+data=molrs/src/io/gromacs/testdata
 work=$(mktemp -d)
 # KEEP=1 leaves the inputs and logs behind for a look.
 [[ -n ${KEEP:-} ]] && echo "work directory: $work" || trap 'rm -rf "$work"' EXIT

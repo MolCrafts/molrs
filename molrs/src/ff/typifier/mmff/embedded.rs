@@ -8,7 +8,7 @@
 //! [`MmffVariant`] their front door pins. Nothing
 //! here is a number: every value comes from the table.
 //!
-//! A caller's own parameter set still comes from XML — `molrs::io::forcefield::xml`
+//! A caller's own parameter set still comes from XML — `molrs::io::read_mmff_xml_forcefield`
 //! reads it and [`MMFF94Typifier::from_parts`] takes it — but the *shipped*
 //! set is no longer text.
 

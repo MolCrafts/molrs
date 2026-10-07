@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # molrs's AMBER prmtop readers against sander and LAMMPS, term by term
-# (molrs/src/io/forcefield/readers/prmtop_check.rs).
+# (molrs/src/io/amber/prmtop_check.rs).
 #
 #   scripts/prmtop_check.sh            # LAMMPS on the committed fixtures
 #   scripts/prmtop_check.sh --rebuild  # also rebuild the fixtures + sander
@@ -8,7 +8,7 @@
 # --rebuild needs AmberTools (tleap, antechamber, parmchk2, ParmEd, pysander:
 # `module load buildtool-easybuild/5.2.1-hpca3ef7d197 GCC/14.3.0 MPICH/4.3.2
 # AmberTools/26.1`); it rewrites the fixtures under
-# molrs/src/io/forcefield/readers/testdata/prmtop and prints sander's terms,
+# molrs/src/io/amber/testdata/prmtop and prints sander's terms,
 # the `SANDER_*` numbers the test pins. Then the test runs with
 # MOLRS_PRMTOP_LAMMPS_DIR set, so molrs prints its own terms and writes each
 # case's LAMMPS data file and include; `lmp` (or $LMP, built with MOLECULE
@@ -31,7 +31,7 @@
 # is linear in it.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-fixtures=molrs/src/io/forcefield/readers/testdata/prmtop
+fixtures=molrs/src/io/amber/testdata/prmtop
 dir=${PRMTOP_CHECK_DIR:-$(mktemp -d)}
 [ -n "${PRMTOP_CHECK_DIR:-}" ] || trap 'rm -rf "$dir"' EXIT
 

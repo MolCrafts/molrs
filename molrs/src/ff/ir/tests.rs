@@ -1440,12 +1440,8 @@ fn custom_styles_persist_to_a_fresh_process() {
     let mut expected = serde_json::Map::new();
     for (name, ff, frame) in persist_cases(&r) {
         let section = ForceFieldSection::from_forcefield_in(&ff, &r).unwrap();
-        molrs::io::mrec::write_forcefield_file(
-            dir.path().join(format!("{name}.mrec")),
-            &section,
-            None,
-        )
-        .unwrap();
+        molrs::io::write_mrec_forcefield(dir.path().join(format!("{name}.mrec")), &section, None)
+            .unwrap();
         let (e, f) = PotentialCompiler::with_registry(&ff, &r)
             .compile(&frame)
             .unwrap()
@@ -1491,7 +1487,7 @@ fn fresh_process_reads_custom_styles() {
         && g.style("bond", "fene").is_none()
         && g.style("dihedral", "table/linear").is_none()));
     let read = |name: &str| {
-        let section = molrs::io::mrec::read_forcefield_file(dir.join(format!("{name}.mrec")))
+        let section = molrs::io::read_mrec_forcefield(dir.join(format!("{name}.mrec")))
             .unwrap()
             .unwrap();
         section.to_forcefield().unwrap()

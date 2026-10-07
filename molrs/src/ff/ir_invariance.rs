@@ -33,10 +33,10 @@ use ndarray::Array1;
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::gromacs::GromacsTopFfReader;
-use crate::io::forcefield::readers::lammps::LammpsFfReader;
-use crate::io::forcefield::readers::opls::OplsXmlReader;
+use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
+use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
+use crate::io::openmm_xml::reader::OpenmmXmlReader;
+use crate::io::reader::ForceFieldReader;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
@@ -410,7 +410,9 @@ improper_coeff N-C-H-CT 10.5 12.0
 /// and the next test).
 #[test]
 fn file_read_fields_price_as_in_0_15() {
-    let gmx = GromacsTopFfReader::new().read_str(GROMACS_FF).unwrap();
+    let gmx = GromacsTopForcefieldReader::new()
+        .read_str(GROMACS_FF)
+        .unwrap();
     let mut gmx_energies = per_style(&gmx, &hand_frame(&gmx));
     // 0.16 prices a GROMACS-read field with GROMACS's own Coulomb constant
     // (its ONE_4PI_EPS0, CODATA 2018); 0.15.1 stated LAMMPS real's. The
@@ -435,7 +437,7 @@ fn file_read_fields_price_as_in_0_15() {
             ("pair/lj/cut", 1.264689101097666),
         ],
     );
-    let omm = OplsXmlReader::new().read_str(OPENMM_FF).unwrap();
+    let omm = OpenmmXmlReader::new().read_str(OPENMM_FF).unwrap();
     let mut omm_energies = per_style(&omm, &hand_frame(&omm));
     // 0.15.1: 0.0013423609738289378 — the dihedral of the wrong atom order.
     let improper = omm_energies.remove("improper/periodic").unwrap();
@@ -460,7 +462,7 @@ fn file_read_fields_price_as_in_0_15() {
         ],
     );
     assert!(improper > 0.0013423609738289378 * 2.0, "{improper}");
-    let lmp = LammpsFfReader::new().read_str(LAMMPS_FF).unwrap();
+    let lmp = LammpsForcefieldReader::new().read_str(LAMMPS_FF).unwrap();
     assert_energies(
         "LAMMPS",
         &per_style(&lmp, &hand_frame(&lmp)),
@@ -483,8 +485,10 @@ fn file_read_fields_price_as_in_0_15() {
 /// OpenMM row over N-C-H-CT, 0.40× the energy here.
 #[test]
 fn an_openmm_improper_prices_as_gromacs_and_openmm_do() {
-    let gmx = GromacsTopFfReader::new().read_str(GROMACS_FF).unwrap();
-    let omm = OplsXmlReader::new().read_str(OPENMM_FF).unwrap();
+    let gmx = GromacsTopForcefieldReader::new()
+        .read_str(GROMACS_FF)
+        .unwrap();
+    let omm = OpenmmXmlReader::new().read_str(OPENMM_FF).unwrap();
     let e_gmx = per_style(&gmx, &hand_frame(&gmx))["improper/periodic"];
     let e_omm = per_style(&omm, &hand_frame(&omm))["improper/periodic"];
     let coords: Vec<F> = XYZ.iter().flatten().copied().collect();
@@ -543,10 +547,14 @@ const ACETANILIDE_XYZ: [[f64; 3]; 19] = [
 ];
 
 fn acetanilide() -> molrs::core::Atomistic {
-    use crate::io::smiles::{parse_smiles, to_atomistic};
+    use crate::io::smiles::SmilesIR;
     use crate::perceive::hydrogens::add_hydrogens;
-    let mut mol =
-        add_hydrogens(&to_atomistic(&parse_smiles("CC(=O)Nc1ccccc1").unwrap()).unwrap()).unwrap();
+    let mut mol = add_hydrogens(
+        &(SmilesIR::parse("CC(=O)Nc1ccccc1").unwrap())
+            .to_atomistic()
+            .unwrap(),
+    )
+    .unwrap();
     let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
     assert_eq!(ids.len(), ACETANILIDE_XYZ.len());
     for (id, xyz) in ids.into_iter().zip(ACETANILIDE_XYZ) {

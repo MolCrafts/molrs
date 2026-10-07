@@ -7,7 +7,7 @@
 //! polarisabilities, also summed per fragment for [`CLPOL_FRAGMENTS`]).
 //! [`CLPOL_POLARIZABILITY`] is `alpha.ff` version 2024/06/05 transcribed row
 //! for row; a caller's own `alpha.ff` is read by
-//! [`crate::io::forcefield::readers::clpol::read_alpha_ff`].
+//! [`crate::io::clpol::codec::read_clpol_alpha`].
 
 /// `(name, q, mu, alpha, polarizable)` rows used by CL&Pol scaleLJ.
 pub const CLPOL_FRAGMENTS: &[(&str, f64, f64, f64, bool)] = &[

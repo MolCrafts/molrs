@@ -16,7 +16,7 @@
 //!
 //! No file format is here. Every file reader and writer — structure,
 //! trajectory, and force-field files alike — is [`crate::io`]'s
-//! ([`crate::io::forcefield`] maps force-field files to and from a
+//! ([`crate::io`] maps force-field files to and from a
 //! [`ForceField`](forcefield::ForceField)). `ff` never depends on `io`
 //! outside its `#[cfg(test)]` checks, which read engine files to compare
 //! against.

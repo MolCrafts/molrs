@@ -1,5 +1,5 @@
 //! The [`ForceField`] data model. Force-field files are mapped to and from it
-//! by [`crate::io::forcefield`]; no file format is here.
+//! by [`crate::io`]; no file format is here.
 //!
 //! Provides a declarative layer for defining atom types, bond types, pair types,
 //! etc. with their parameters. A [`ForceField`] holds [`Style`]s, each of which
