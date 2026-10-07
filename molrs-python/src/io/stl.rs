@@ -1,5 +1,5 @@
-//! Triangle-mesh formats (`molrs::io::mesh`): STL into a
-//! `molrs.core.TriMesh`.
+//! STL, stereolithography triangle meshes, into a `molrs.core.TriMesh`
+//! (`molrs.io.read_stl`).
 
 use crate::core::mesh::PyTriMesh;
 use crate::error::io_error_to_pyerr;
@@ -14,7 +14,7 @@ use std::path::PathBuf;
 #[pyfunction]
 pub fn read_stl(path: PathBuf) -> PyResult<PyTriMesh> {
     let path = path_str(&path)?;
-    let mesh = molrs::io::mesh::read_stl(path).map_err(io_error_to_pyerr)?;
+    let mesh = molrs::io::read_stl(path).map_err(io_error_to_pyerr)?;
     Ok(PyTriMesh { inner: mesh })
 }
 

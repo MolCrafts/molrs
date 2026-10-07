@@ -16,28 +16,31 @@
 //!
 //! | JS class | Format | Multi-frame? | Produces |
 //! |----------|--------|-------------|----------|
-//! | `CIFReader` | Crystallographic Information File | Yes (per `data_` block) | `"atoms"` block + box from unit cell |
+//! | `CifReader` | Crystallographic Information File | Yes (per `data_` block) | `"atoms"` block + box from unit cell |
 //! | `CubeReader` | Gaussian Cube | No (step=0 only) | `"atoms"` + `"grid"` block + box (Å) |
-//! | `CHGCARReader` | VASP CHGCAR | No (step=0 only) | `"atoms"` + `"grid"` block + box (Å) |
-//! | `GROReader` | GROMACS GRO | Yes | `"atoms"` block + box (**nm→Å on read**) |
-//! | `MOL2Reader` | Tripos MOL2 | Yes (per molecule) | `"atoms"` + optional `"bonds"` block (Å) |
-//! | `POSCARReader` | VASP POSCAR / CONTCAR | No (step=0 only) | `"atoms"` block + box (Cartesian Å) |
-//! | `XSFReader` | XCrySDen XSF | No (step=0 only) | `"atoms"` block + box (Å) |
+//! | `VaspChgcarReader` | VASP CHGCAR | No (step=0 only) | `"atoms"` + `"grid"` block + box (Å) |
+//! | `GroReader` | GROMACS GRO | Yes | `"atoms"` block + box (**nm→Å on read**) |
+//! | `Mol2Reader` | Tripos MOL2 | Yes (per molecule) | `"atoms"` + optional `"bonds"` block (Å) |
+//! | `VaspPoscarReader` | VASP POSCAR / CONTCAR | No (step=0 only) | `"atoms"` block + box (Cartesian Å) |
+//! | `XsfReader` | XCrySDen XSF | No (step=0 only) | `"atoms"` block + box (Å) |
 //! | `AmberInpcrdReader` | AMBER inpcrd / restrt | No (step=0 only) | `"atoms"` block + optional box |
-//! | `AcReader` | Antechamber AC | No (step=0 only) | `"atoms"` + optional `"bonds"` |
+//! | `AmberAcReader` | Antechamber AC | No (step=0 only) | `"atoms"` + optional `"bonds"` |
 
 use crate::core::frame::Frame;
-use molrs::io::data::ac::parse_ac;
-use molrs::io::data::chgcar::read_chgcar_from_reader;
-use molrs::io::data::cif::CifReader as RsCifReader;
-use molrs::io::data::cube::read_cube_from_reader;
-use molrs::io::data::gro::GroReader as RsGroReader;
-use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
-use molrs::io::data::mol2::Mol2Reader as RsMol2Reader;
-use molrs::io::data::poscar::read_poscar_from_reader;
-use molrs::io::data::xsf::read_xsf_from_reader;
+use molrs::io::cif::CifReader as RsCifReader;
+use molrs::io::gro::GroReader as RsGroReader;
+use molrs::io::mol2::Mol2Reader as RsMol2Reader;
 use molrs::io::reader::{FrameReader, Reader};
-use std::io::{BufReader, Cursor};
+use molrs::io::{
+    read_amber_ac_str, read_amber_inpcrd_str, read_cube_str, read_vasp_chgcar_str,
+    read_vasp_poscar_str, read_xsf_str,
+};
+use std::io::Cursor;
+
+/// The text a reader was built from (it was a JS string, so it is UTF-8).
+fn text(content: &[u8]) -> Result<&str, JsValue> {
+    std::str::from_utf8(content).map_err(|e| JsValue::from_str(&format!("UTF-8 error: {e}")))
+}
 use wasm_bindgen::prelude::*;
 
 /// Crystallographic Information File (CIF / mmCIF) reader.
@@ -64,18 +67,18 @@ use wasm_bindgen::prelude::*;
 ///
 /// ```js
 /// const content = await file.text();
-/// const reader = new CIFReader(content);
+/// const reader = new CifReader(content);
 /// const frame  = reader.read(0);
 /// const atoms  = frame.get("atoms");
 /// const box    = frame.simbox;        // populated from the unit cell
 /// ```
-#[wasm_bindgen(js_name = CIFReader)]
+#[wasm_bindgen(js_name = CifReader)]
 pub struct CifReader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = CIFReader)]
+#[wasm_bindgen(js_class = CifReader)]
 impl CifReader {
     /// Create a new CIF reader from a string containing the file content.
     ///
@@ -86,7 +89,7 @@ impl CifReader {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const reader = new CIFReader(cifString);
+    /// const reader = new CifReader(cifString);
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new(content: &str) -> CifReader {
@@ -202,8 +205,7 @@ impl CubeReader {
         if step > 0 {
             return Ok(None);
         }
-        let reader = BufReader::new(Cursor::new(self.content.as_slice()));
-        let rs_frame = read_cube_from_reader(reader)
+        let rs_frame = read_cube_str(text(&self.content)?)
             .map_err(|e| JsValue::from_str(&format!("Cube read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -240,23 +242,23 @@ impl CubeReader {
 ///
 /// ```js
 /// const content = await file.text();
-/// const reader  = new CHGCARReader(content);
+/// const reader  = new VaspChgcarReader(content);
 /// const frame   = reader.read(0);
 /// const grid    = frame.get("grid");
 /// const total   = grid.get("total");
 /// ```
-#[wasm_bindgen(js_name = CHGCARReader)]
-pub struct ChgcarReader {
+#[wasm_bindgen(js_name = VaspChgcarReader)]
+pub struct VaspChgcarReader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = CHGCARReader)]
-impl ChgcarReader {
+#[wasm_bindgen(js_class = VaspChgcarReader)]
+impl VaspChgcarReader {
     /// Create a new CHGCAR reader from the file's text content.
     #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> ChgcarReader {
-        ChgcarReader {
+    pub fn new(content: &str) -> VaspChgcarReader {
+        VaspChgcarReader {
             content: content.as_bytes().to_vec(),
             cached_len: None,
         }
@@ -272,8 +274,7 @@ impl ChgcarReader {
         if step > 0 {
             return Ok(None);
         }
-        let reader = BufReader::new(Cursor::new(self.content.as_slice()));
-        let rs_frame = read_chgcar_from_reader(reader)
+        let rs_frame = read_vasp_chgcar_str(text(&self.content)?)
             .map_err(|e| JsValue::from_str(&format!("CHGCAR read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -303,13 +304,13 @@ impl ChgcarReader {
 /// so this binder scales nothing. Each frame produces an `"atoms"` block
 /// (`res_id`, `res_name`, `name`, `element`, `id`, `x`/`y`/`z`, optional
 /// `vx`/`vy`/`vz`) and a `box` from the box-vector line.
-#[wasm_bindgen(js_name = GROReader)]
+#[wasm_bindgen(js_name = GroReader)]
 pub struct GroReader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = GROReader)]
+#[wasm_bindgen(js_class = GroReader)]
 impl GroReader {
     /// Create a new GRO reader from a string containing the file content.
     #[wasm_bindgen(constructor)]
@@ -374,13 +375,13 @@ impl GroReader {
 /// `name`, `x`/`y`/`z`, `atom_type`, optional `subst_id`/`subst_name`/
 /// `charge`) and, when present, a `"bonds"` block (`atomi`/`atomj` 0-based,
 /// `bond_type`).
-#[wasm_bindgen(js_name = MOL2Reader)]
+#[wasm_bindgen(js_name = Mol2Reader)]
 pub struct Mol2Reader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = MOL2Reader)]
+#[wasm_bindgen(js_class = Mol2Reader)]
 impl Mol2Reader {
     /// Create a new MOL2 reader from a string containing the file content.
     #[wasm_bindgen(constructor)]
@@ -441,18 +442,18 @@ impl Mol2Reader {
 /// Produces an `"atoms"` block (`x`/`y`/`z`, optional `symbol`,
 /// selective-dynamics flags, velocities) and a periodic `box`.
 /// Single-frame: any `step != 0` returns `undefined`.
-#[wasm_bindgen(js_name = POSCARReader)]
-pub struct PoscarReader {
+#[wasm_bindgen(js_name = VaspPoscarReader)]
+pub struct VaspPoscarReader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = POSCARReader)]
-impl PoscarReader {
+#[wasm_bindgen(js_class = VaspPoscarReader)]
+impl VaspPoscarReader {
     /// Create a new POSCAR reader from a string containing the file content.
     #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> PoscarReader {
-        PoscarReader {
+    pub fn new(content: &str) -> VaspPoscarReader {
+        VaspPoscarReader {
             content: content.as_bytes().to_vec(),
             cached_len: None,
         }
@@ -465,7 +466,7 @@ impl PoscarReader {
         if step > 0 {
             return Ok(None);
         }
-        let rs_frame = read_poscar_from_reader(Cursor::new(self.content.as_slice()))
+        let rs_frame = read_vasp_poscar_str(text(&self.content)?)
             .map_err(|e| JsValue::from_str(&format!("POSCAR read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -489,13 +490,13 @@ impl PoscarReader {
 }
 
 /// XCrySDen XSF structure reader.
-#[wasm_bindgen(js_name = XSFReader)]
+#[wasm_bindgen(js_name = XsfReader)]
 pub struct XsfReader {
     content: Vec<u8>,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = XSFReader)]
+#[wasm_bindgen(js_class = XsfReader)]
 impl XsfReader {
     #[wasm_bindgen(constructor)]
     pub fn new(content: &str) -> XsfReader {
@@ -510,7 +511,7 @@ impl XsfReader {
         if step > 0 {
             return Ok(None);
         }
-        let rs_frame = read_xsf_from_reader(BufReader::new(Cursor::new(self.content.as_slice())))
+        let rs_frame = read_xsf_str(text(&self.content)?)
             .map_err(|e| JsValue::from_str(&format!("XSF read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -553,9 +554,8 @@ impl AmberInpcrdReader {
         if step > 0 {
             return Ok(None);
         }
-        let rs_frame =
-            read_amber_inpcrd_from_reader(BufReader::new(Cursor::new(self.content.as_slice())))
-                .map_err(|e| JsValue::from_str(&format!("AMBER inpcrd read error: {}", e)))?;
+        let rs_frame = read_amber_inpcrd_str(text(&self.content)?)
+            .map_err(|e| JsValue::from_str(&format!("AMBER inpcrd read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
 
@@ -576,17 +576,17 @@ impl AmberInpcrdReader {
 }
 
 /// Antechamber `.ac` structure reader.
-#[wasm_bindgen(js_name = AcReader)]
-pub struct AcReader {
+#[wasm_bindgen(js_name = AmberAcReader)]
+pub struct AmberAcReader {
     content: String,
     cached_len: Option<usize>,
 }
 
-#[wasm_bindgen(js_class = AcReader)]
-impl AcReader {
+#[wasm_bindgen(js_class = AmberAcReader)]
+impl AmberAcReader {
     #[wasm_bindgen(constructor)]
-    pub fn new(content: &str) -> AcReader {
-        AcReader {
+    pub fn new(content: &str) -> AmberAcReader {
+        AmberAcReader {
             content: content.to_string(),
             cached_len: None,
         }
@@ -597,7 +597,7 @@ impl AcReader {
         if step > 0 {
             return Ok(None);
         }
-        let rs_frame = parse_ac(&self.content)
+        let rs_frame = read_amber_ac_str(&self.content)
             .map_err(|e| JsValue::from_str(&format!("AC read error: {}", e)))?;
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
@@ -618,44 +618,33 @@ impl AcReader {
     }
 }
 
-/// Rebuild a [`Frame`] from `molrs::stream` wire bytes.
-///
-/// This is what a `molrs::stream::FramePublisher` puts on the socket, so a page
-/// subscribed to a live run decodes payloads with this and never re-derives
-/// the layout in JavaScript. The inverse is
-/// [`writeFrameBytes`](super::writer::write_frame_bytes_export) with the same
-/// format string.
-///
-/// `Frame` deliberately has no `fromBytes` constructor of its own: turning
-/// bytes into a container is a reader's job, and a container that parses its
-/// own wire formats grows one entry point per format.
-///
-/// # Errors
-///
-/// Throws a `JsValue` string when `format` is not `"msgpack"` / `"json"`, or
-/// when the payload does not decode into a valid frame.
+/// Rebuild a [`Frame`] from `molrs::stream` MessagePack wire bytes — what a
+/// publisher puts on the socket, so a page subscribed to a live run decodes
+/// payloads with this and never re-derives the layout in JavaScript. The
+/// inverse of `writeMsgpackFrameBytes`.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
 /// socket.onmessage = (ev) => {
-///   const frame = readFrameBytes(new Uint8Array(ev.data), "msgpack");
+///   const frame = readMsgpackFrameBytes(new Uint8Array(ev.data));
 /// };
 /// ```
 #[cfg(feature = "stream")]
-#[wasm_bindgen(js_name = readFrameBytes)]
-pub fn read_frame_bytes_export(data: &[u8], format: &str) -> Result<Frame, JsValue> {
-    let fmt = match format.to_lowercase().as_str() {
-        "msgpack" => molrs::stream::MessageFormat::MessagePack,
-        "json" => molrs::stream::MessageFormat::Json,
-        other => {
-            return Err(JsValue::from_str(&format!(
-                "unsupported stream format: {other} (expected \"msgpack\" or \"json\")"
-            )));
-        }
-    };
+#[wasm_bindgen(js_name = readMsgpackFrameBytes)]
+pub fn read_msgpack_frame_bytes(data: &[u8]) -> Result<Frame, JsValue> {
+    let rs_frame = molrs::stream::read_msgpack_frame_bytes(data)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Frame::from_rs(rs_frame)
+}
+
+/// Rebuild a [`Frame`] from `molrs::stream` JSON wire text. The inverse of
+/// `writeJsonFrameStr`.
+#[cfg(feature = "stream")]
+#[wasm_bindgen(js_name = readJsonFrameStr)]
+pub fn read_json_frame_str(text: &str) -> Result<Frame, JsValue> {
     let rs_frame =
-        molrs::stream::bytes_to_frame(data, fmt).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        molrs::stream::read_json_frame_str(text).map_err(|e| JsValue::from_str(&e.to_string()))?;
     Frame::from_rs(rs_frame)
 }
 
@@ -673,7 +662,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn stream_bytes_round_trip_through_io() {
         use crate::core::types::JsFloatArray;
-        use crate::io::writer::write_frame_bytes_export;
+        use crate::io::writer::{write_json_frame_str, write_msgpack_frame_bytes};
 
         let frame = Frame::new();
         let mut atoms = frame.create_block("atoms").expect("atoms block");
@@ -686,27 +675,16 @@ mod tests {
             )
             .expect("x");
 
-        for fmt in ["msgpack", "json"] {
-            let bytes = write_frame_bytes_export(&frame, fmt).expect("encode");
-            let back = read_frame_bytes_export(&bytes, fmt).expect("decode");
+        let from_msgpack =
+            read_msgpack_frame_bytes(&write_msgpack_frame_bytes(&frame).expect("encode"))
+                .expect("decode");
+        let from_json =
+            read_json_frame_str(&write_json_frame_str(&frame).expect("encode")).expect("decode");
+        for back in [from_msgpack, from_json] {
             let x = float_col(&back.get("atoms").expect("atoms"), "x");
             assert_eq!(x.length(), 2);
             assert_eq!(x.get_index(0), 1.0);
             assert_eq!(x.get_index(1), 4.0);
         }
-    }
-
-    #[cfg(feature = "stream")]
-    #[wasm_bindgen_test]
-    fn unknown_stream_format_is_named_not_guessed() {
-        let err = match read_frame_bytes_export(b"", "messagepack") {
-            Err(e) => e,
-            Ok(_) => panic!("an unknown format must not decode"),
-        };
-        let text = err.as_string().unwrap_or_default();
-        assert!(
-            text.contains("messagepack"),
-            "error must name the input: {text}"
-        );
     }
 }

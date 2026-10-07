@@ -134,8 +134,8 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
     assert list(two["cmaps"]["atomm"]) == [4, 5, 10, 11]
 
     path = tmp_path / "cmaps.mrec"
-    molrs.io.write_mrec(path, frame)
-    back = molrs.io.read_mrec(path)
+    molrs.io.write_mrec_frame(path, frame)
+    back = molrs.io.read_mrec_frame(path)
     assert list(back["cmaps"]["atomm"]) == [4, 5]
 
 

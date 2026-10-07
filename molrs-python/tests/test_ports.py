@@ -9,7 +9,7 @@ the notation glyph.
 
 They re-derive no chemistry and no geometry: every claim about ports,
 embedding and ``frag_id`` propagation is owned by the Rust unit tests in
-``molrs/src/core/port.rs``, ``molrs/src/io/smiles/cgsmiles/`` and
+``molrs/src/core/port.rs``, ``molrs/src/io/cgsmiles/`` and
 ``molrs/src/conformer/``, and is reused here only to show Python sees the same
 answer. Fixtures are built in process; no third-party scientific software runs.
 """
@@ -200,7 +200,7 @@ def test_templates_returns_named_ported_templates() -> None:
     descriptors and ``#OH=[$]O`` writes one, so the fragments they build carry
     two and one port respectively. No third-party tool produced these numbers.
     """
-    fragments = molrs.io.smiles.CGSmilesIR(F2).templates()
+    fragments = molrs.io.cgsmiles.CGSmilesIR(F2).templates()
 
     assert isinstance(fragments, dict)
     assert set(fragments) == {"OH", "PEO"}
@@ -217,7 +217,7 @@ def test_from_fragment_to_template_builds_one_unit() -> None:
     unit = molrs.io.smiles.SmilesIR.from_fragment("[<]OCC[>]").to_template()
     assert type(unit) is molrs.core.Atomistic
     assert (unit.n_atoms, unit.n_bonds, unit.n_ports) == (5, 4, 2)
-    from_table = molrs.io.smiles.CGSmilesIR("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]
+    from_table = molrs.io.cgsmiles.CGSmilesIR("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]
     assert (from_table.n_atoms, from_table.n_ports) == (5, 2)
 
 

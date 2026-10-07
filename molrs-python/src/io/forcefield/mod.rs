@@ -1,4 +1,4 @@
-//! Python bindings for `molrs::io::forcefield`: force-field files read into
+//! The force-field file doors of `molrs.io`: force-field files read into
 //! and written from a `molrs.ff.forcefield.ForceField`, every function flat on
 //! `molrs.io` as `read_<fmt>_…` / `write_<fmt>_…`.
 

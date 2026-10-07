@@ -1,5 +1,6 @@
-//! `CGsmiles` coarse-graph intermediate representation, exposed to Python as
-//! classes under `molrs.io`.
+//! `CGsmiles` (`molrs::io::cgsmiles`): the coarse-graph intermediate
+//! representation, its classes under `molrs.io.cgsmiles`, and the
+//! `molrs.io.read_cgsmiles_str` door.
 //!
 //! *Coarse-graining* is standing one particle — a **bead** — in for a whole
 //! group of atoms, so a polymer can be written and simulated without naming
@@ -10,7 +11,7 @@
 //! is ordinary atomistic SMILES. Reference: Grünewald et al., *J. Chem. Inf.
 //! Model.* (2025), DOI 10.1021/acs.jcim.5c00064.
 //!
-//! [`PyCGSmilesIR`] is the single front door: `molrs.io.smiles.CGSmilesIR(text)`
+//! [`PyCGSmilesIR`] is the single front door: `molrs.io.cgsmiles.CGSmilesIR(text)`
 //! parses, and every other class here is a read-only view over one record of
 //! the value it returns — a resolution level, a node, an edge, a fragment
 //! definition, a resolved descriptor pair, one end of such a pair, or a
@@ -18,16 +19,15 @@
 //! none of them has a constructor on the Python side.
 //!
 //! There is deliberately **no** `CGSmilesReader`: in this binding "Reader"
-//! means a lazy, path-backed trajectory cursor (`molrs.io.trajectory.TrajectoryReader`),
-//! and a text-in / IR-out parser is not that object. The
-//! reader-shaped API belongs to molpy, wrapping this class the way its
-//! `SmilesReader` wraps `molrs.io.smiles.SmilesIR`.
+//! means a lazy, path-backed trajectory cursor (`molrs.io.pdb.PdbReader`, …),
+//! and a text-in / IR-out parser is not that object; the one-shot door is
+//! `molrs.io.read_cgsmiles_str`.
 //!
 //! # Values at the boundary
 //!
 //! An enum that *is* a count crosses as the count: [`PyCGEdge::multiplicity`]
 //! is `CGBondOrder` read through
-//! [`CGBondOrder::multiplicity`](molrs::io::smiles::CGBondOrder::multiplicity),
+//! [`CGBondOrder::multiplicity`](molrs::io::cgsmiles::CGBondOrder::multiplicity),
 //! a dimensionless `1..=4`. Every other enum crosses as a *name*, never as
 //! the small integer `core` stores such a value as (`BondOrder::code`: 0
 //! unknown, 1 single, 2 double, 3 triple, 4 aromatic). The storage codes are
@@ -56,10 +56,11 @@
 //! which does: no input can panic across the seam, and a new variant upstream
 //! is a compile error rather than a runtime one.
 
-use molrs::io::smiles::{
-    BondKind, BondingDescriptor, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR,
-    DescriptorKind, EdgeOrigin, FragmentBody, PairEnd, ResolvedPair, parse_cgsmiles,
+use molrs::io::cgsmiles::{
+    CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody, PairEnd,
+    ResolvedPair,
 };
+use molrs::io::smiles::{BondKind, BondingDescriptor, DescriptorKind};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -211,7 +212,7 @@ impl PyBondingDescriptor {
 ///     instantiated from; ``None`` in ``levels[0]`` and in every fragment
 ///     body, which is a template rather than an instance.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "CGNode",
     frozen,
     skip_from_py_object
@@ -292,7 +293,7 @@ impl PyCGNode {
 ///     resolved pair is one bond, so a coarse edge of multiplicity *n*
 ///     induces *n* separate derived edges rather than one multiple edge.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "CGEdge",
     frozen,
     skip_from_py_object
@@ -358,7 +359,7 @@ impl PyCGEdge {
 /// edges : list of CGEdge
 ///     The bonds between them, each naming two indices into ``nodes``.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "CGGraph",
     frozen,
     skip_from_py_object
@@ -427,7 +428,7 @@ impl PyCGGraph {
 ///     ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES,
 ///     because the entry's span is the text the IR records.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "CGFragmentDef",
     frozen,
     skip_from_py_object
@@ -514,7 +515,7 @@ impl PyCGFragmentDef {
 ///     that map; the index is what :meth:`CGSmilesIR.to_atomistic` resolves
 ///     against the converted body.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "PairEnd",
     frozen,
     skip_from_py_object
@@ -592,7 +593,7 @@ impl PyPairEnd {
 ///     neither wrote one and both port atoms are written aromatic, and
 ///     ``"single"`` otherwise.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "ResolvedPair",
     frozen,
     skip_from_py_object
@@ -683,12 +684,12 @@ impl PyResolvedPair {
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+/// >>> ir = molrs.io.cgsmiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
 /// >>> len(ir.levels[0].nodes)
 /// 5
 /// >>> ir.to_atomistic().n_atoms
 /// 11
-#[pyclass(module = "molrs.io.smiles", name = "CGSmilesIR")]
+#[pyclass(module = "molrs.io.cgsmiles", name = "CGSmilesIR")]
 pub struct PyCGSmilesIR {
     inner: CGSmilesIR,
     /// The string that was parsed, kept for `__repr__` and for slicing a
@@ -721,11 +722,11 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.io.smiles.CGSmilesIR("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
+    /// >>> molrs.io.cgsmiles.CGSmilesIR("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
     /// 2
     #[new]
     fn new(text: &str) -> PyResult<Self> {
-        let inner = parse_cgsmiles(text).map_err(smiles_error_to_pyerr)?;
+        let inner = CGSmilesIR::parse(text).map_err(smiles_error_to_pyerr)?;
         Ok(Self {
             inner,
             input: text.to_owned(),
@@ -854,7 +855,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> ir.to_atomistic().n_atoms
     /// 11
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -890,7 +891,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> sorted(ir.templates())
     /// ['OH', 'PEO']
     /// >>> ir.templates()["PEO"].n_ports
@@ -935,7 +936,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> cg = molrs.io.smiles.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+    /// >>> cg = molrs.io.cgsmiles.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
     /// >>> cg.n_beads
     /// 4
     fn to_coarsegrain(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
@@ -953,8 +954,40 @@ impl PyCGSmilesIR {
     }
 }
 
+/// Read the molecule a CGsmiles string states: its lowest resolution expanded
+/// into atoms (``CGSmilesIR(text).to_atomistic()``).
+///
+/// Topology only — atoms, bonds and the per-atom ``frag_id`` saying which
+/// bead each atom came from; no coordinates, no added hydrogens.
+///
+/// Parameters
+/// ----------
+/// text : str
+///     A CGsmiles string, every resolution block it writes.
+///
+/// Returns
+/// -------
+/// Atomistic
+///
+/// Raises
+/// ------
+/// SmilesError
+///     A :class:`ValueError`: the string does not parse, or its lowest level
+///     does not expand.
+///
+/// Examples
+/// --------
+/// >>> molrs.io.read_cgsmiles_str("{[#A][#B]}.{#A=[$]C,#B=[$]O}").n_atoms
+/// 2
+#[pyfunction]
+pub fn read_cgsmiles_str(py: Python<'_>, text: &str) -> PyResult<Py<PyAtomistic>> {
+    let mol = molrs::io::read_cgsmiles_str(text).map_err(smiles_error_to_pyerr)?;
+    PyAtomistic::from_core(py, mol)
+}
+
 /// Register the CGsmiles front door and the read-only records it hands out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_cgsmiles_str, m)?)?;
     m.add_class::<PyCGSmilesIR>()?;
     m.add_class::<PyCGGraph>()?;
     m.add_class::<PyCGNode>()?;

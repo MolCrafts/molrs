@@ -347,7 +347,7 @@ impl Block {
     /// the producer wrote there, typically `0` or `""`), so a consumer that
     /// must tell "no value" from "zero" reads this mask beside the column.
     /// Masks travel with the block through
-    /// [`readFrameBytes`](crate::io::reader::read_frame_bytes_export).
+    /// [`readMsgpackFrameBytes`](crate::io::reader::read_msgpack_frame_bytes).
     ///
     /// # Returns
     ///

@@ -1,28 +1,31 @@
-//! Structured LAMMPS log, exposed to Python as classes under `molrs.io`.
+//! The LAMMPS log doors (`molrs.io.read_lammps_log[_str]`) and the records
+//! they hand out (`molrs.io.lammps.LammpsLog`, …).
 //!
 //! Each class is a read-only view over the corresponding
-//! `molrs::io::log::lammps` struct; nested values are handed out as the
+//! `molrs::io::lammps` struct; nested values are handed out as the
 //! matching Python class, thermo tables as NumPy arrays.
 
 use crate::path::path_str;
-use molrs::io::log::{
+use molrs::io::lammps::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning, read_lammps_log_str as read_lammps_log_str_rs,
-    read_lammps_log_with_style as read_lammps_log_rs,
+    LammpsTimingRow, LammpsWarning,
+};
+use molrs::io::{
+    read_lammps_log as read_lammps_log_rs, read_lammps_log_str as read_lammps_log_str_rs,
 };
 use numpy::{PyArray1, PyArray2};
 use pyo3::exceptions::{PyFileNotFoundError, PyIOError, PyKeyError, PyValueError};
 use pyo3::prelude::*;
 
-use super::json::json_object_to_pydict;
+use super::json_to_py::json_object_to_pydict;
 use pyo3::types::PyDict;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
 
 /// Header lines that precede the first run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsLogHeader",
     frozen,
     skip_from_py_object
@@ -52,7 +55,7 @@ impl PyLammpsLogHeader {
 
 /// The ``Per MPI rank memory allocation`` line of a run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsMemoryUsage",
     frozen,
     skip_from_py_object
@@ -95,7 +98,7 @@ impl PyLammpsMemoryUsage {
 /// One run's thermo table: ``columns`` names the fields, ``rows`` is the
 /// ``(n_rows, n_columns)`` float64 array, and ``thermo["Step"]`` is a column.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsThermo",
     frozen,
     skip_from_py_object
@@ -167,7 +170,7 @@ impl PyLammpsThermo {
 
 /// The ``Loop time of ...`` line of a run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsLoopTime",
     frozen,
     skip_from_py_object
@@ -209,7 +212,7 @@ impl PyLammpsLoopTime {
 
 /// The ``Performance: ...`` line of a run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsPerformance",
     frozen,
     skip_from_py_object
@@ -255,7 +258,7 @@ impl PyLammpsPerformance {
 
 /// The ``... % CPU use with N MPI tasks x M OpenMP threads`` line of a run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsCpuUse",
     frozen,
     skip_from_py_object
@@ -293,7 +296,7 @@ impl PyLammpsCpuUse {
 
 /// One row of an MPI-task or thread timing breakdown.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsTimingRow",
     frozen,
     skip_from_py_object
@@ -343,7 +346,7 @@ impl PyLammpsTimingRow {
 
 /// A timing breakdown table (``MPI task timing breakdown`` or thread timing).
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsTimingBreakdown",
     frozen,
     skip_from_py_object
@@ -385,7 +388,7 @@ impl PyLammpsTimingBreakdown {
 
 /// One ``Nlocal`` / ``Nghost`` / ``Neighs`` load-balance block.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsLoadBalance",
     frozen,
     skip_from_py_object
@@ -431,7 +434,7 @@ impl PyLammpsLoadBalance {
 
 /// The neighbor-list statistics block of a run.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsNeighborStatistics",
     frozen,
     skip_from_py_object
@@ -479,7 +482,7 @@ impl PyLammpsNeighborStatistics {
 
 /// A ``WARNING:`` line, with where it appeared.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsWarning",
     frozen,
     skip_from_py_object
@@ -517,7 +520,7 @@ impl PyLammpsWarning {
 
 /// One ``run`` command: its setup lines, thermo table, timing and warnings.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsRun",
     frozen,
     skip_from_py_object
@@ -634,7 +637,7 @@ impl PyLammpsRun {
 
 /// A parsed LAMMPS log: header, one `LammpsRun` per ``run``, and warnings.
 #[pyclass(
-    module = "molrs.io.log",
+    module = "molrs.io.lammps",
     name = "LammpsLog",
     frozen,
     skip_from_py_object
@@ -787,7 +790,7 @@ fn lammps_log_io_error(e: std::io::Error) -> PyErr {
 
 pub(crate) fn lammps_log_to_pydict<'py>(
     py: Python<'py>,
-    log: &molrs::io::log::LammpsLog,
+    log: &molrs::io::lammps::LammpsLog,
 ) -> PyResult<Bound<'py, PyDict>> {
     let value = serde_json::to_value(log)
         .map_err(|e| PyValueError::new_err(format!("failed to serialize LAMMPS log: {e}")))?;

@@ -28,16 +28,16 @@ Total wall time: 0:00:01
 
 def test_parse_returns_the_structured_classes():
     log = molrs.io.read_lammps_log_str(_LOG)
-    assert isinstance(log, molrs.io.log.LammpsLog)
+    assert isinstance(log, molrs.io.lammps.LammpsLog)
     assert log.version == "LAMMPS (1 Jan 2026)"
     assert len(log) == len(log.runs) == 1
     run = log.runs[0]
-    assert isinstance(run, molrs.io.log.LammpsRun)
-    assert isinstance(run.thermo, molrs.io.log.LammpsThermo)
-    assert isinstance(run.loop_time, molrs.io.log.LammpsLoopTime)
-    assert isinstance(run.performance, molrs.io.log.LammpsPerformance)
-    assert isinstance(run.memory, molrs.io.log.LammpsMemoryUsage)
-    assert isinstance(log.header, molrs.io.log.LammpsLogHeader)
+    assert isinstance(run, molrs.io.lammps.LammpsRun)
+    assert isinstance(run.thermo, molrs.io.lammps.LammpsThermo)
+    assert isinstance(run.loop_time, molrs.io.lammps.LammpsLoopTime)
+    assert isinstance(run.performance, molrs.io.lammps.LammpsPerformance)
+    assert isinstance(run.memory, molrs.io.lammps.LammpsMemoryUsage)
+    assert isinstance(log.header, molrs.io.lammps.LammpsLogHeader)
 
 
 def test_thermo_columns_cross_as_float64_arrays():
@@ -61,7 +61,7 @@ def test_scalars_and_optionals_cross_as_python_types():
     assert run.load_balance == []
     # The log lists every warning; the run lists the ones raised inside it.
     assert len(log.warnings) == 1 and len(run.warnings) == 1
-    assert isinstance(run.warnings[0], molrs.io.log.LammpsWarning)
+    assert isinstance(run.warnings[0], molrs.io.lammps.LammpsWarning)
     assert run.warnings[0].message == log.warnings[0].message
     assert run.warnings[0].message.startswith("test warning")
 

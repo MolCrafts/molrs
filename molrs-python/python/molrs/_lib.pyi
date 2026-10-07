@@ -1887,6 +1887,29 @@ class SmartsPattern:
     def max_bond_depth(self) -> int: ...
     @property
     def ring_primitives(self) -> list[tuple[str, int | None]]: ...
+    @classmethod
+    def from_environment(
+        cls,
+        mol: Atomistic,
+        center: int,
+        *,
+        reach: int = 1,
+        atomic_number: bool = True,
+        include_degree: bool = True,
+        include_h_count: bool = True,
+        include_charge: bool = True,
+        include_aromatic: bool = True,
+        include_ring_membership: bool = False,
+        include_ring_size: bool = False,
+        include_explicit_h_atoms: bool = False,
+        include_bond_orders: bool = True,
+        neighbor_style: Literal["chain", "recursive"] = "chain",
+        canonical_neighbor_order: bool = True,
+    ) -> SmartsPattern:
+        """The pattern that states the local environment of ``center`` in
+        ``mol`` out to ``reach`` bonds; it matches ``mol`` at ``center``."""
+    def __str__(self) -> str:
+        """The pattern's SMARTS text."""
 
 class Reaction:
     """Compiled Daylight reaction SMARTS (SMIRKS) transform.
@@ -2269,7 +2292,8 @@ class schema:
 # ---------------------------------------------------------------------------
 
 class SmilesIR:
-    """Intermediate representation of a parsed SMILES or SMARTS string.
+    """Intermediate representation of a parsed SMILES string (or SMILES
+    fragment body).
 
     ``to_atomistic()`` is the plain conversion: it refuses SMARTS query atoms
     and, since it will not drop them silently, any node carrying a bonding
@@ -2293,8 +2317,6 @@ class SmilesIR:
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic: ...
     def components(self) -> list[Atomistic]: ...
-    def write_smiles(self) -> str: ...
-    def write_smarts(self) -> str: ...
     @classmethod
     def from_atomistic(
         cls,
@@ -2496,37 +2518,33 @@ class CGSmilesIR:
         """
 
 # ---------------------------------------------------------------------------
-# I/O — readers and writers
+# I/O — readers and writers (molrs.io: one function per door; each format's
+# classes in its submodule)
 # ---------------------------------------------------------------------------
 
-def read_block_csv(
+def csv_block_from_text(
     text: str, delimiter: str = ",", header: list[str] | None = None
-) -> Block: ...
-def write_block_csv(block: Block, delimiter: str = ",", header: bool = True) -> str: ...
-def read_frame_bytes(
-    data: bytes, format: Literal["msgpack", "json"] = "msgpack"
-) -> Frame: ...
-def write_frame_bytes(
-    frame: Frame, format: Literal["msgpack", "json"] = "msgpack"
-) -> bytes: ...
+) -> Block:
+    """Native half of ``molrs.io.read_csv_block_str``."""
+def csv_block_to_text(block: Block, delimiter: str = ",", header: bool = True) -> str:
+    """Native half of ``molrs.io.write_csv_block_str``."""
+def read_msgpack_frame_bytes(data: bytes) -> Frame: ...
+def write_msgpack_frame_bytes(frame: Frame) -> bytes: ...
+def read_json_frame_str(text: str) -> Frame: ...
+def write_json_frame_str(frame: Frame) -> str: ...
 def read_pdb(path: PathInput) -> Frame: ...
-def read_pdb_trajectory(path: PathInput) -> list[Frame]:
-    """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL)."""
-
 def read_xyz(path: PathInput) -> Frame: ...
+def read_sdf(path: PathInput) -> Frame:
+    """The first record of an MDL SDF / molfile (V2000)."""
+def read_cif(path: PathInput) -> Frame:
+    """The first ``data_`` block of a CIF file."""
+def write_cif(path: PathInput, frame: Frame) -> None: ...
+def read_vasp_poscar(path: PathInput) -> Frame: ...
+def write_vasp_poscar(path: PathInput, frame: Frame) -> None: ...
 def read_lammps_data(path: PathInput, atom_style: str | None = None) -> Frame:
     """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
     ``type`` (the file's type label, or the id as a label); ``atom_style``
     fixes the ``Atoms`` layout as LAMMPS's ``atom_style`` does."""
-def read_frame(path: PathInput, format: str | None = None) -> Frame:
-    """Read one structure, picking the format from the file name (or
-    ``format``: a name or extension such as ``"xyz"`` / ``"lammpstrj"``).
-    A multi-structure file gives its first structure. Raises ``OSError``
-    when the format cannot be told or the file does not read."""
-
-def write_frame(path: PathInput, frame: Frame, format: str | None = None) -> None:
-    """Write ``frame``, picking the format from the file name (or
-    ``format``). ``sdf`` and ``inpcrd`` are read-only. Raises ``OSError``."""
 
 class BondReactTemplate:
     """One ``fix bond/react`` reaction: ``pre`` / ``post`` templates
@@ -2550,7 +2568,7 @@ class BondReactTemplate:
         """The map file's text. Raises ``ValueError`` for a malformed
         template."""
 
-def write_bond_react_map(template: BondReactTemplate, base_path: PathInput) -> None:
+def write_lammps_bond_react_map(template: BondReactTemplate, base_path: PathInput) -> None:
     """Write ``{base_path}.map``. Raises ``ValueError`` for a malformed
     template."""
 
@@ -2567,7 +2585,6 @@ def write_lammps_bond_react_system(
 
 def read_stl(path: PathInput) -> TriMesh: ...
 def read_gro(path: PathInput) -> Frame: ...
-def read_gro_trajectory(path: PathInput) -> list[Frame]: ...
 def read_xsf(path: PathInput) -> Frame: ...
 def read_amber_inpcrd(path: PathInput, frame: Frame | None = None) -> Frame:
     """Read an AMBER ASCII inpcrd / restart file. With ``frame``, its
@@ -2576,19 +2593,17 @@ def read_amber_inpcrd(path: PathInput, frame: Frame | None = None) -> Frame:
     Raises ``OSError`` on an atom-count mismatch (``frame`` unchanged)."""
 def read_amber_prmtop(path: PathInput) -> Frame: ...
 
-class LAMMPSTrajReader:
-    """Lazy, indexed reader for LAMMPS dump trajectory files.
+class PdbReader:
+    """Lazy, indexed reader of PDB files — ``molrs.io.pdb.PdbReader``.
 
-    Frames are parsed on demand via byte-offset seeks; the index of
-    ``ITEM: TIMESTEP`` markers is built on the first ``len()`` /
-    ``__getitem__`` / ``read_frame`` call (or eagerly via ``build_index()``).
-
-    Supports the molpy ``BaseTrajectoryReader`` surface: ``read_frame``,
-    ``read_frames``, ``read_range``, ``read_all``, ``n_frames``, slicing,
-    ``close()``, and use as a context manager.
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2604,24 +2619,25 @@ class LAMMPSTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> LAMMPSTrajReader: ...
+    def __iter__(self) -> PdbReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-class DCDTrajReader:
-    """Lazy, indexed reader for DCD trajectory files.
+def read_pdb_trajectory(paths: PathInput | Sequence[PathInput]) -> PdbReader:
+    """Open one PDB trajectory, or several whose frames are concatenated."""
 
-    Frames are parsed on demand via byte-offset seeks computed from the DCD
-    header; the header is parsed on the first ``len()`` / ``__getitem__`` /
-    ``read_step`` call (or eagerly via ``build_index()``).
+class XyzReader:
+    """Lazy, indexed reader of XYZ files — ``molrs.io.xyz.XyzReader``.
 
-    Supports the molpy ``BaseTrajectoryReader`` surface: ``read_frame``,
-    ``read_frames``, ``read_range``, ``read_all``, ``n_frames``, slicing,
-    ``close()``, and use as a context manager.
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2637,22 +2653,25 @@ class DCDTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> DCDTrajReader: ...
+    def __iter__(self) -> XyzReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-class XYZTrajReader:
-    """Lazy, indexed reader for multi-frame XYZ trajectory files.
+def read_xyz_trajectory(paths: PathInput | Sequence[PathInput]) -> XyzReader:
+    """Open one XYZ trajectory, or several whose frames are concatenated."""
 
-    The molrs-native counterpart to :func:`read_xyz_trajectory` (which eagerly
-    returns ``list[Frame]``). Exposes the same molpy ``BaseTrajectoryReader``
-    surface as :class:`DCDTrajReader`: ``read_frame``, ``read_frames``,
-    ``read_range``, ``read_all``, ``n_frames``, slicing, ``close()``, and use
-    as a context manager.
+class GroReader:
+    """Lazy, indexed reader of GRO files — ``molrs.io.gro.GroReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2668,12 +2687,151 @@ class XYZTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> XYZTrajReader: ...
+    def __iter__(self) -> GroReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-def read_chgcar(path: PathInput) -> Frame: ...
+def read_gro_trajectory(paths: PathInput | Sequence[PathInput]) -> GroReader:
+    """Open one GRO trajectory, or several whose frames are concatenated."""
+
+class LammpsDumpReader:
+    """Lazy, indexed reader of LAMMPS dump files — ``molrs.io.lammps.LammpsDumpReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> LammpsDumpReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_lammps_trajectory(paths: PathInput | Sequence[PathInput]) -> LammpsDumpReader:
+    """Open one LAMMPS dump trajectory, or several whose frames are concatenated."""
+
+class DcdReader:
+    """Lazy, indexed reader of DCD files — ``molrs.io.dcd.DcdReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> DcdReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_dcd_trajectory(paths: PathInput | Sequence[PathInput]) -> DcdReader:
+    """Open one DCD trajectory, or several whose frames are concatenated."""
+
+class TrrReader:
+    """Lazy, indexed reader of GROMACS TRR files — ``molrs.io.trr.TrrReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> TrrReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_trr_trajectory(paths: PathInput | Sequence[PathInput]) -> TrrReader:
+    """Open one GROMACS TRR trajectory, or several whose frames are concatenated."""
+
+class XtcReader:
+    """Lazy, indexed reader of GROMACS XTC files — ``molrs.io.xtc.XtcReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> XtcReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_xtc_trajectory(paths: PathInput | Sequence[PathInput]) -> XtcReader:
+    """Open one GROMACS XTC trajectory, or several whose frames are concatenated."""
+
+def read_vasp_chgcar(path: PathInput) -> Frame: ...
 def read_cube(path: PathInput) -> Frame: ...
 def write_cube(path: PathInput, frame: Frame) -> None: ...
 def write_pdb(path: PathInput, frame: Frame) -> None: ...
@@ -2699,6 +2857,9 @@ def write_dcd_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_gro(path: PathInput, frame: Frame) -> None: ...
 def write_gro_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_xsf(path: PathInput, frame: Frame) -> None: ...
+def read_cgsmiles_str(text: str) -> Atomistic:
+    """The molecule a CGsmiles string states, its lowest level expanded into
+    atoms (topology only)."""
 
 # ---------------------------------------------------------------------------
 # Signal processing
@@ -3683,8 +3844,13 @@ class GasteigerModel:
     def needs_equivalencing(self) -> bool: ...
     def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
 
-def read_forcefield_xml(path: PathInput) -> ForceField: ...
-def read_opls_xml(path: PathInput) -> ForceField: ...
+def read_molrs_xml_forcefield(path: PathInput) -> ForceField:
+    """Read a molrs force-field XML file (one element per style)."""
+def write_molrs_xml_forcefield(path: PathInput, forcefield: ForceField) -> None:
+    """Write a force field as molrs force-field XML — the inverse of
+    :func:`read_molrs_xml_forcefield`."""
+def read_openmm_xml_forcefield(path: PathInput) -> ForceField:
+    """Read an OpenMM force-field XML file into the force-field IR."""
 def read_lammps_forcefield(path: PathInput) -> ForceField: ...
 def write_gromacs_system(
     path: PathInput, forcefield: ForceField, frame: Frame, *, precision: int = 6
@@ -3973,13 +4139,13 @@ class mrec:
         def __exit__(self, *exc: object) -> bool: ...
 
     @staticmethod
-    def pack(path: PathInput) -> str: ...
+    def pack_mrec_zip(path: PathInput) -> str: ...
 
     MOLREC_VERSION: int
     RESERVED_META_KEYS: tuple[str, ...]
 
-    class schema:
-        """``molrs.io.mrec.schema``: the record contract's runtime checks."""
+    class validation:
+        """``molrs.io.mrec.validation``: the record contract's runtime checks."""
 
         @staticmethod
         def validate_path(path: PathInput) -> None: ...
@@ -4000,7 +4166,7 @@ class mrec:
 
 # --- *.mrec whole-record doors (molrs.io) ---------------------------------
 
-def write_mrec(
+def write_mrec_frame(
     path: PathInput,
     frame: Frame,
     system: Frame | None = None,
@@ -4021,7 +4187,7 @@ def write_mrec_forcefield(
 def write_mrec_trajectory(
     path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
 ) -> None: ...
-def read_mrec(path: PathInput) -> Frame: ...
+def read_mrec_frame(path: PathInput) -> Frame: ...
 def read_mrec_system(path: PathInput) -> Frame: ...
 def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
 def read_mrec_forcefield(path: PathInput) -> mrec.ForceFieldSection | None: ...
@@ -5225,24 +5391,6 @@ class RingInfo:
     def rings(self, /): ...
     def smallest_ring_containing_atom(self, /, atom): ...
 
-class TRRTrajReader:
-    """
-    Lazy, indexed reader for GROMACS TRR trajectory files.
-
-    Builds a per-frame byte-offset index on first random access (or eagerly via
-    ``build_index()``); subsequent ``reader[i]`` / ``read_step(i)`` is an O(1)
-    seek plus one frame parse. Exposes the same surface as
-    :class:`DCDTrajReader`.
-    """
-    def __init__(self, path) -> None: ...
-    def build_index(self, /): ...
-    def close(self, /): ...
-    n_frames: Any
-    def read_all(self, /): ...
-    def read_frame(self, /, index): ...
-    def read_frames(self, /, indices): ...
-    def read_range(self, /, start=0, stop=None, step=1): ...
-
 class VACF:
     """
     Raw unnormalized velocity autocorrelation function (the VDOS /
@@ -5252,23 +5400,6 @@ class VACF:
     """
     def __init__(self) -> None: ...
     def compute(self, /, velocities, dt, resolution): ...
-
-class XTCTrajReader:
-    """
-    Lazy, indexed reader for GROMACS XTC trajectory files.
-
-    Like :class:`TRRTrajReader` but for the compressed XTC format. Frame sizes
-    vary (compression), so the byte-offset index is built by a single scan;
-    random access is O(1) thereafter.
-    """
-    def __init__(self, path) -> None: ...
-    def build_index(self, /): ...
-    def close(self, /): ...
-    n_frames: Any
-    def read_all(self, /): ...
-    def read_frame(self, /, index): ...
-    def read_frames(self, /, indices): ...
-    def read_range(self, /, start=0, stop=None, step=1): ...
 
 def conductivity_sum_rule(
     frequency, conductivity, current_sq_mean, volume: float, temperature: float
@@ -5299,10 +5430,10 @@ def read_lammps_log_str(
 ) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
 
-def read_ac(path: PathInput):
+def read_amber_ac(path: PathInput) -> Frame:
     """Read an Antechamber ``.ac`` file into a Frame."""
 
-def read_amber_prmtop_ff(path: PathInput) -> ForceField:
+def read_amber_prmtop_forcefield(path: PathInput) -> ForceField:
     """Read AMBER prmtop force-field parameter tables into a :class:`ForceField`."""
 
 def read_amber_prmtop_system(path: PathInput) -> tuple[ForceField, Frame]:
@@ -5314,7 +5445,7 @@ def read_amber_prmtop_system(path: PathInput) -> tuple[ForceField, Frame]:
     when every 1-4 pair agrees.
     """
 
-def read_gromacs_top_ff(
+def read_gromacs_top_forcefield(
     path: PathInput,
     include: bool = False,
     *,
@@ -5350,15 +5481,18 @@ def read_gromacs_system(
 def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
     """Read a LAMMPS log file into a structured ``LammpsLog``."""
 
-def read_lammps_molecule(path: PathInput):
-    """Read a LAMMPS molecule template (native ``.mol`` or JSON)."""
+def read_lammps_molecule(path: PathInput) -> Frame:
+    """Read a LAMMPS molecule template (the native text format)."""
+
+def read_lammps_molecule_json(path: PathInput) -> Frame:
+    """Read a LAMMPS molecule template in its JSON format."""
 
 def read_mol2(path: PathInput) -> Frame:
     """Read a Tripos MOL2 file and return the first molecule as a Frame, in
     canonical column names (``type``, ``res_id``, ``res_name`` on atoms; the
     SYBYL bond token as ``type`` on bonds)."""
 
-def read_prep(path: PathInput):
+def read_amber_prep(path: PathInput) -> dict[str, Any]:
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
 
 class Onsager:
@@ -5385,10 +5519,11 @@ class Persist:
         exclude_self: bool = False,
     ) -> dict[str, ArrayF]: ...
 
-def write_forcefield_xml(
+def write_openmm_xml_forcefield(
     path: PathInput, forcefield: ForceField, precision: int | None = None
 ) -> None:
-    """Write a ForceField to OpenMM force-field XML."""
+    """Write a ForceField to OpenMM force-field XML — the inverse of
+    :func:`read_openmm_xml_forcefield`."""
 
 
 def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
@@ -5397,7 +5532,7 @@ def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
     A style or parameter a frcmod cannot express raises ``ValueError``.
     """
 
-def write_gromacs_top_ff(
+def write_gromacs_top_forcefield(
     path: PathInput, forcefield: ForceField, precision: int = 6
 ) -> None:
     """Write a ForceField as GROMACS force-field directives (no molecule sections).
@@ -5405,39 +5540,38 @@ def write_gromacs_top_ff(
     A style or parameter the directives cannot express raises ``ValueError``.
     """
 
-def write_lammps_molecule(path: PathInput, frame, format: str = "native"):
-    """Write a Frame as a LAMMPS molecule template."""
+def write_lammps_molecule(path: PathInput, frame: Frame) -> None:
+    """Write a Frame as a LAMMPS molecule template (the native text format)."""
+
+def write_lammps_molecule_json(path: PathInput, frame: Frame) -> None:
+    """Write a Frame as a LAMMPS molecule template in its JSON format."""
 
 def write_mol2(path: PathInput, frame: Frame) -> None:
     """Write a Frame to a Tripos MOL2 file, reading the canonical columns
     :func:`read_mol2` produces."""
 
-def write_prep(path: PathInput, residue: dict[str, Any]):
+def write_amber_prep(path: PathInput, residue: dict[str, Any]) -> None:
     """Write an Amber prep residue from a nested dict."""
 
-def read_smiles(smiles: str) -> Atomistic:
+def read_smiles_str(smiles: str) -> Atomistic:
     """One molecule from a SMILES string: connectivity only, no implicit H, no
     coordinates. A ``'.'``-separated set raises ``SmilesError`` (a
     ``ValueError``) naming ``SmilesIR(s).components()``."""
 
-def write_smarts(
-    mol,
-    center,
+def write_smiles_str(
+    mol: Atomistic,
     *,
-    reach=1,
-    atomic_number=True,
-    include_degree=True,
-    include_h_count=True,
-    include_charge=True,
-    include_aromatic=True,
-    include_ring_membership=False,
-    include_ring_size=False,
-    include_explicit_h_atoms=False,
-    include_bond_orders=True,
-    neighbor_style="chain",
-    canonical_neighbor_order=True,
-):
-    """Encode the local topology around ``center`` as a SMARTS string."""
+    canonical: bool = True,
+    root: int | None = None,
+    aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+    hydrogens: Literal["organic_subset", "explicit_all", "as_stored"] = "organic_subset",
+    include_stereo: bool = False,
+    multi_component: Literal[
+        "error_if_multiple", "join_dot", "first_only"
+    ] = "error_if_multiple",
+    organic_subset: bool = True,
+) -> str:
+    """A molecule as SMILES text — the inverse of :func:`read_smiles_str`."""
 
 def write_trr_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS TRR trajectory file (single precision)."""

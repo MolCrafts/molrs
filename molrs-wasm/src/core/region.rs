@@ -286,7 +286,7 @@ impl Ellipsoid {
 
 region_surface!(Ellipsoid);
 
-/// Solid bounded by a watertight triangle mesh — what `readSTL` reads.
+/// Solid bounded by a watertight triangle mesh — what `readStlBytes` reads.
 #[wasm_bindgen]
 pub struct Polyhedron {
     inner: Shared,

@@ -62,8 +62,8 @@ pub fn clpol_polarizability(
             })
             .collect()),
         Some(path) => {
-            let rows = molrs::io::forcefield::readers::clpol::read_alpha_ff(path_str(&path)?)
-                .map_err(PyValueError::new_err)?;
+            let rows =
+                molrs::io::read_clpol_alpha(path_str(&path)?).map_err(PyValueError::new_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| {

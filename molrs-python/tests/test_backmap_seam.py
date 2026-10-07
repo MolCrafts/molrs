@@ -42,7 +42,7 @@ import numpy as np
 from molrs.core import CoarseGrain
 from molrs.builder import Assembler, AxisOrienter, SitePlacer
 from molrs.ff.typifier import ElementTypifier
-from molrs.io.smiles import CGSmilesIR
+from molrs.io.cgsmiles import CGSmilesIR
 from molrs.builder import Coarsener
 from molrs.perceive import SubgraphMatcher
 

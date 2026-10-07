@@ -1,4 +1,6 @@
-"""Python surface for SMILES / local-SMARTS emit (smiles-emit-04)."""
+"""Python surface for SMILES emit (``molrs.io.write_smiles_str``) and the
+SMARTS pattern of an atom's environment
+(``molrs.perceive.SmartsPattern.from_environment``)."""
 
 from __future__ import annotations
 
@@ -6,25 +8,26 @@ import molrs
 import pytest
 
 
-def test_write_smiles_round_trip():
-    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
-    ir2 = molrs.io.smiles.SmilesIR.from_atomistic(mol, canonical=True)
-    s = ir2.write_smiles()
+def test_write_smiles_str_round_trip():
+    mol = molrs.io.read_smiles_str("CCO")
+    s = molrs.io.write_smiles_str(mol, canonical=True)
     assert isinstance(s, str) and s
-    molrs.io.smiles.SmilesIR(s)  # re-parse
+    assert molrs.io.read_smiles_str(s).n_atoms == 3
 
 
-def test_write_smiles_has_one_spelling():
-    # Emitting is `SmilesIR.from_atomistic(mol, ...).write_smiles()`; the
-    # module-level alias of it is gone.
+def test_write_smiles_str_is_the_one_spelling():
+    # Writing SMILES text is `molrs.io.write_smiles_str`; neither an IR method
+    # nor a module-level `write_smiles` writes it.
     assert not hasattr(molrs.io, "write_smiles")
-    mol = molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic()
-    s = molrs.io.smiles.SmilesIR.from_atomistic(mol, canonical=True).write_smiles()
+    assert not hasattr(molrs.io.smiles.SmilesIR, "write_smiles")
+    assert not hasattr(molrs.io.smiles.SmilesIR, "write_smarts")
+    mol = molrs.io.read_smiles_str("c1ccccc1")
+    s = molrs.io.write_smiles_str(mol, canonical=True)
     assert s
     molrs.io.smiles.SmilesIR(s)
 
 
-def test_write_smarts_matches():
+def test_environment_pattern_matches():
     mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     # first heavy atom handle from atoms iteration
     atoms = list(mol.atoms) if hasattr(mol, "atoms") else []
@@ -33,13 +36,15 @@ def test_write_smarts_matches():
     else:
         # fallback: structural handles via canonical_order
         center = mol.canonical_order()[0]
-    s = molrs.io.write_smarts(mol, center, reach=1, atomic_number=True)
-    assert isinstance(s, str) and s
-    assert not hasattr(molrs.io, "write_local_smarts")
     from molrs.perceive import SmartsPattern
 
-    pat = SmartsPattern(s)
-    assert pat.has_match(mol)
+    env = SmartsPattern.from_environment(mol, center, reach=1, atomic_number=True)
+    s = str(env)
+    assert isinstance(s, str) and s
+    assert not hasattr(molrs.io, "write_smarts")
+    assert not hasattr(molrs.io, "write_local_smarts")
+    assert env.has_match(mol)
+    assert SmartsPattern(s).has_match(mol)
 
 
 def test_atomistic_has_no_to_smiles():
@@ -60,4 +65,4 @@ def test_bad_neighbor_style():
     mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     center = mol.canonical_order()[0]
     with pytest.raises((ValueError, TypeError)):
-        molrs.io.write_smarts(mol, center, neighbor_style="x")
+        molrs.perceive.SmartsPattern.from_environment(mol, center, neighbor_style="x")

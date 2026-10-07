@@ -1,0 +1,49 @@
+"""CGsmiles notation — ``molrs::io::cgsmiles``.
+
+CGsmiles writes a molecule at one or more *coarse-grained* resolutions — a
+resolution at which one particle, a *bead*, stands in for a whole group of
+atoms. Its door is a function of :mod:`molrs.io`:
+:func:`~molrs.io.read_cgsmiles_str` reads the molecule a string states, its
+lowest level expanded into atoms.
+
+:class:`CGSmilesIR` is the parsed string: one :class:`CGGraph` per resolution
+level plus the fragment tables that resolve them out; ``to_atomistic()``
+expands the lowest level into atoms (topology only — atoms, bonds and the
+per-atom ``frag_id`` saying which bead each atom came from), ``templates()``
+builds one ported template per fragment, and ``to_coarsegrain()`` reads the
+coarsest level as a bead graph. A line notation states no geometry, so
+coordinates, hydrogens and perception remain separate steps. The records it
+hands out — :class:`CGGraph`, :class:`CGNode`, :class:`CGEdge`,
+:class:`CGFragmentDef`, :class:`ResolvedPair` and :class:`PairEnd` — are
+read-only views over the parsed value, so no fact of the notation has to be
+re-parsed, decoded or unpacked from a bare tuple position on the Python side.
+
+The enums the notation does not spell out keep lowercase variant names:
+``ResolvedPair.kind`` is a bond kind (``"single"``, ``"aromatic"``, …) and
+``PairEnd.end`` is ``"sub"`` or ``"body"``. A refusal is a
+:class:`molrs.io.smiles.SmilesError` with ``notation == "cgsmiles"``.
+
+There is no ``CGSmilesReader``, deliberately: a parser of one string into
+an IR is not a path-backed cursor, and the one-shot door onto a notation is
+a ``molrs.io.read_<fmt>_str`` function, not a class.
+"""
+
+from .._lib import (
+    CGEdge,
+    CGFragmentDef,
+    CGGraph,
+    CGNode,
+    CGSmilesIR,
+    PairEnd,
+    ResolvedPair,
+)
+
+__all__ = [
+    "CGEdge",
+    "CGFragmentDef",
+    "CGGraph",
+    "CGNode",
+    "CGSmilesIR",
+    "PairEnd",
+    "ResolvedPair",
+]

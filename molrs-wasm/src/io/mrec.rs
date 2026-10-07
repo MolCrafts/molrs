@@ -7,7 +7,7 @@
 //!   resident.
 //! - **`MrecReader.fromZip(bytes)`** — one packed `*.mrec.zip`, whose
 //!   stored entries are unpacked into the same in-memory store.
-//! - **`MrecReader.fromStore(host)`** — a host object that serves keys
+//! - **`MrecReader.fromStorage(host)`** — a host object that serves keys
 //!   on demand: `get(key)`, `getRange(key, offset, length)`, `size(key)` and
 //!   `list(prefix)`. Only the chunks a frame touches ever cross into wasm, so
 //!   a multi-gigabyte run opens in a worker that reads its files (or an HTTP
@@ -15,7 +15,8 @@
 
 use crate::core::frame::Frame;
 use crate::core::simbox::Box as JsBox;
-use molrs::io::mrec::{MrecReader, read_frame_section_store, section_names_store};
+use molrs::io::mrec::{MrecReader as RsMrecReader, section_names_storage};
+use molrs::io::read_mrec_frame_storage;
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
 use std::sync::Arc;
@@ -41,12 +42,12 @@ fn js_string_err(e: impl std::fmt::Display) -> JsValue {
 /// cached. Every method takes `&self`: the cursor holds caches, not a
 /// position.
 #[wasm_bindgen(js_name = MrecReader)]
-pub struct RecordReader {
-    sequence: MrecReader,
+pub struct MrecReader {
+    sequence: RsMrecReader,
 }
 
-impl RecordReader {
-    fn open<S>(store: Arc<S>) -> Result<RecordReader, JsValue>
+impl MrecReader {
+    fn open<S>(store: Arc<S>) -> Result<MrecReader, JsValue>
     where
         S: ?Sized
             + zarrs::storage::ReadableStorageTraits
@@ -55,16 +56,16 @@ impl RecordReader {
     {
         // Index-only: the schema plus each section's step_index and offset (or
         // their hints). No frame is decoded here.
-        let sequence = MrecReader::open(store).map_err(js_string_err)?;
-        Ok(RecordReader { sequence })
+        let sequence = RsMrecReader::from_storage(store).map_err(js_string_err)?;
+        Ok(MrecReader { sequence })
     }
 }
 
 #[wasm_bindgen(js_class = MrecReader)]
-impl RecordReader {
+impl MrecReader {
     /// Open a store handed over as a `Map<path, Uint8Array>` of every file.
     #[wasm_bindgen(constructor)]
-    pub fn new(files: js_sys::Map) -> Result<RecordReader, JsValue> {
+    pub fn new(files: js_sys::Map) -> Result<MrecReader, JsValue> {
         let store = Arc::new(MemoryStore::new());
         for key_res in files.keys() {
             let key = key_res.map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
@@ -88,7 +89,7 @@ impl RecordReader {
     /// a central-directory walk plus one copy per entry into an in-memory
     /// store. A zip with compressed entries is refused by name.
     #[wasm_bindgen(js_name = fromZip)]
-    pub fn from_zip(bytes: &[u8]) -> Result<RecordReader, JsValue> {
+    pub fn from_zip(bytes: &[u8]) -> Result<MrecReader, JsValue> {
         let cursor = std::io::Cursor::new(bytes.to_vec());
         let mut archive = zip::ZipArchive::new(cursor).map_err(js_string_err)?;
         let store = Arc::new(MemoryStore::new());
@@ -125,9 +126,9 @@ impl RecordReader {
     ///
     /// Keys are store-relative paths without a leading slash
     /// (`trajectory/step/zarr.json`).
-    #[wasm_bindgen(js_name = fromStore)]
-    pub fn from_store(host: JsValue) -> Result<RecordReader, JsValue> {
-        let store = Arc::new(HostStore::new(host)?);
+    #[wasm_bindgen(js_name = fromStorage)]
+    pub fn from_storage(host: JsValue) -> Result<MrecReader, JsValue> {
+        let store = Arc::new(HostStorage::new(host)?);
         Self::open(store)
     }
 
@@ -235,7 +236,7 @@ impl RecordReader {
     }
 }
 
-impl TrajectoryReader for RecordReader {
+impl TrajectoryReader for MrecReader {
     fn build_index(&mut self) -> std::io::Result<()> {
         Ok(())
     }
@@ -259,7 +260,7 @@ impl TrajectoryReader for RecordReader {
 ///
 /// wasm32 has one thread, so the `Send`/`Sync` the store traits ask for are
 /// vacuous here; the `unsafe impl`s below say exactly that and nothing more.
-struct HostStore {
+struct HostStorage {
     host: JsValue,
     get: js_sys::Function,
     get_range: Option<js_sys::Function>,
@@ -269,8 +270,8 @@ struct HostStore {
 
 // SAFETY: wasm32-unknown-unknown is single-threaded; no JsValue ever crosses
 // a thread boundary because there is none.
-unsafe impl Send for HostStore {}
-unsafe impl Sync for HostStore {}
+unsafe impl Send for HostStorage {}
+unsafe impl Sync for HostStorage {}
 
 fn storage_err(context: &str, e: JsValue) -> StorageError {
     StorageError::Other(format!(
@@ -279,7 +280,7 @@ fn storage_err(context: &str, e: JsValue) -> StorageError {
     ))
 }
 
-impl HostStore {
+impl HostStorage {
     fn new(host: JsValue) -> Result<Self, JsValue> {
         let method = |name: &str| -> Result<Option<js_sys::Function>, JsValue> {
             let value = js_sys::Reflect::get(&host, &JsValue::from_str(name))?;
@@ -368,7 +369,7 @@ impl HostStore {
     }
 }
 
-impl ReadableStorageTraits for HostStore {
+impl ReadableStorageTraits for HostStorage {
     fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
         self.call_get(key)
     }
@@ -405,7 +406,7 @@ impl ReadableStorageTraits for HostStore {
     }
 }
 
-impl ListableStorageTraits for HostStore {
+impl ListableStorageTraits for HostStorage {
     fn list(&self) -> Result<StoreKeys, StorageError> {
         self.list_prefix(&StorePrefix::root())
     }
@@ -483,12 +484,12 @@ fn memory_store_from(files: &js_sys::Map) -> Result<ReadableWritableListableStor
 /// holding only an opaque store.
 #[wasm_bindgen(js_name = mrecSections)]
 pub fn mrec_sections(files: js_sys::Map) -> Result<Vec<String>, JsValue> {
-    section_names_store(memory_store_from(&files)?).map_err(js_string_err)
+    section_names_storage(memory_store_from(&files)?).map_err(js_string_err)
 }
 
 /// Unpack a packed `*.mrec.zip` into an in-memory store.
 ///
-/// Stored entries only, like [`RecordReader::from_zip`] — a packed record is
+/// Stored entries only, like [`MrecReader::from_zip`] — a packed record is
 /// written without compression so a reader is a container walk.
 fn memory_store_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStorage, JsValue> {
     let cursor = std::io::Cursor::new(bytes.to_vec());
@@ -517,7 +518,7 @@ fn memory_store_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStorage
 /// Throws when the bytes are not a readable packed record.
 #[wasm_bindgen(js_name = readMrecFrameFromZip)]
 pub fn read_mrec_frame_from_zip(bytes: &[u8]) -> Result<Option<Frame>, JsValue> {
-    match read_frame_section_store(memory_store_from_zip(bytes)?, "frame").map_err(js_string_err)? {
+    match read_mrec_frame_storage(memory_store_from_zip(bytes)?, "frame").map_err(js_string_err)? {
         Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
         None => Ok(None),
     }
@@ -537,7 +538,7 @@ pub fn read_mrec_frame_from_zip(bytes: &[u8]) -> Result<Option<Frame>, JsValue> 
 /// Throws when the files are not a readable record.
 #[wasm_bindgen(js_name = readMrecFrame)]
 pub fn read_mrec_frame(files: js_sys::Map) -> Result<Option<Frame>, JsValue> {
-    match read_frame_section_store(memory_store_from(&files)?, "frame").map_err(js_string_err)? {
+    match read_mrec_frame_storage(memory_store_from(&files)?, "frame").map_err(js_string_err)? {
         Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
         None => Ok(None),
     }
@@ -553,7 +554,7 @@ mod tests {
     /// precision 1e-3 and were written natively with `numcodecs.shuffle` +
     /// `zstd` (C encoder). Regenerated by molrs's ignored test
     /// `regenerate_the_wasm_precision_fixture`.
-    const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/precision.mrec.zip");
+    const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/precision.mrec.zip");
 
     /// The values the fixture's `x` columns were presented with.
     const X: [[f64; 3]; 2] = [[0.123_456_789, -1.000_488, 7.3], [0.2, 1.75, -3.062_57]];
@@ -577,7 +578,7 @@ mod tests {
     /// zstd decodes on wasm32 through the pure-Rust plugin, with no C.
     #[wasm_bindgen_test]
     fn a_precision_trajectory_written_with_zstd_reads_back() {
-        let reader = RecordReader::from_zip(FIXTURE).unwrap();
+        let reader = MrecReader::from_zip(FIXTURE).unwrap();
         assert_eq!(reader.count_frames().unwrap(), X.len());
         for (index, values) in X.iter().enumerate() {
             let frame = reader.sequence.frame(index as u64).unwrap().unwrap();
@@ -593,7 +594,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_precision_frame_written_with_zstd_reads_back() {
         let store = memory_store_from_zip(FIXTURE).unwrap();
-        let frame = read_frame_section_store(store, "frame").unwrap().unwrap();
+        let frame = read_mrec_frame_storage(store, "frame").unwrap().unwrap();
         assert_eq!(x_of(&frame), rounded(&X[0]));
         assert_eq!(frame.get("atoms").unwrap().precision("x"), Some(1e-3));
     }

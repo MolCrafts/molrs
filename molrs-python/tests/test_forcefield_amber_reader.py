@@ -17,7 +17,7 @@ import pytest
 #: The Rust prmtop fixtures (AmberTools 26.1 tleap / ParmEd chamber builds).
 FIXTURES = (
     Path(__file__).resolve().parents[2]
-    / "molrs/src/io/forcefield/readers/testdata/prmtop"
+    / "molrs/src/io/amber/testdata/prmtop"
 )
 
 

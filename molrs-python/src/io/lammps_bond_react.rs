@@ -1,18 +1,15 @@
-//! LAMMPS `fix bond/react` file sets: `molrs.io.lammps_bond_react.BondReactTemplate`,
-//! `write_bond_react_map` and `write_lammps_bond_react_system`, over
-//! `molrs::io::data::lammps_bond_react`.
+//! LAMMPS `fix bond/react` file sets: `molrs.io.lammps.BondReactTemplate`,
+//! `molrs.io.write_lammps_bond_react_map` and
+//! `write_lammps_bond_react_system`, over `molrs::io::lammps`.
 
 use std::path::PathBuf;
 
 use molrs::core::Frame;
 use molrs::core::keys::REACT_ID;
-use molrs::io::data::lammps_bond_react::{
-    BondReactTemplate, write_bond_react_map as write_map_rs,
-    write_lammps_bond_react_system as write_system_rs,
-};
-use molrs::io::forcefield::writers::{
-    ForceFieldWriter,
-    lammps::{LammpsFfWriter, LammpsWriteOptions},
+use molrs::io::lammps::{BondReactTemplate, LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
+use molrs::io::writer::ForceFieldWriter;
+use molrs::io::{
+    write_lammps_bond_react_map as write_map_rs, write_lammps_bond_react_system as write_system_rs,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -33,10 +30,10 @@ use crate::path::path_str;
 /// The objects are kept as given (nothing is copied or renumbered); the
 /// writers read them when they write.
 ///
-/// Serialized by :func:`write_bond_react_map` (``{name}.map``) and
+/// Serialized by :func:`molrs.io.write_lammps_bond_react_map` (``{name}.map``) and
 /// :func:`write_lammps_bond_react_system` (also ``{name}_pre.mol`` /
 /// ``{name}_post.mol``). https://docs.lammps.org/fix_bond_react.html
-#[pyclass(module = "molrs.io.lammps_bond_react", name = "BondReactTemplate")]
+#[pyclass(module = "molrs.io.lammps", name = "BondReactTemplate")]
 pub struct PyBondReactTemplate {
     /// Pre-reaction template.
     #[pyo3(get, set)]
@@ -83,7 +80,7 @@ impl PyBondReactTemplate {
         })
     }
 
-    /// The map file's text (what :func:`write_bond_react_map` writes).
+    /// The map file's text (what :func:`molrs.io.write_lammps_bond_react_map` writes).
     ///
     /// Raises
     /// ------
@@ -174,7 +171,7 @@ impl PyBondReactTemplate {
 /// OSError
 ///     The file cannot be written.
 #[pyfunction]
-pub fn write_bond_react_map(
+pub fn write_lammps_bond_react_map(
     py: Python<'_>,
     template: PyRef<'_, PyBondReactTemplate>,
     base_path: PathBuf,
@@ -248,11 +245,11 @@ pub fn write_lammps_bond_react_system(
     })?;
     // The include is read after `read_data` (its coefficients need the
     // box), where LAMMPS refuses a `units` line: the input states the units.
-    let options = LammpsWriteOptions {
+    let options = LammpsForcefieldWriteOptions {
         skip_units: true,
-        ..LammpsWriteOptions::default()
+        ..LammpsForcefieldWriteOptions::default()
     };
-    LammpsFfWriter::with_options(&written.labels, options)
+    LammpsForcefieldWriter::with_options(&written.labels, options)
         .write(
             &forcefield.inner,
             written
@@ -278,7 +275,11 @@ pub fn write_lammps_bond_react_system(
 /// Register the LAMMPS ``fix bond/react`` template and writers.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBondReactTemplate>()?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_bond_react_map, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(write_lammps_bond_react_map, m)?,
+    )?;
     crate::add_function(
         m,
         "molrs.io",

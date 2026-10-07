@@ -33,7 +33,7 @@ def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
 class TestFrameWireCodec:
     def test_round_trip_preserves_columns(self):
         frame = _frame()
-        back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(frame))
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(frame))
         np.testing.assert_allclose(back["atoms"]["x"], frame["atoms"]["x"])
         assert list(back["atoms"]["element"]) == ["C", "C", "C"]
 
@@ -41,31 +41,32 @@ class TestFrameWireCodec:
         # `_lib.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
-        back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(_frame()))
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(_frame()))
         assert isinstance(back, molrs.core.Frame)
 
     def test_round_trip_preserves_the_box(self):
         frame = _frame()
         frame.box = molrs.core.Box(np.eye(3) * 10.0)
-        back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(frame))
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(frame))
         assert back.box is not None
         np.testing.assert_allclose(back.box.h, frame.box.h)
 
-    @pytest.mark.parametrize("fmt", ["msgpack", "json"])
-    def test_both_formats_round_trip(self, fmt):
-        back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(_frame(), fmt), fmt)
+    def test_json_round_trip(self):
+        text = molrs.io.write_json_frame_str(_frame())
+        assert isinstance(text, str)
+        back = molrs.io.read_json_frame_str(text)
         np.testing.assert_allclose(back["atoms"]["x"], [0.0, 1.0, 2.0])
 
-    def test_decoding_with_the_wrong_format_raises(self):
+    def test_decoding_with_the_wrong_encoding_raises(self):
         # Silently reading MessagePack as JSON is how a stream turns into
         # garbage columns instead of an error.
-        payload = molrs.io.write_frame_bytes(_frame(), "msgpack")
+        payload = molrs.io.write_msgpack_frame_bytes(_frame())
         with pytest.raises(ValueError):
-            molrs.io.read_frame_bytes(payload, "json")
+            molrs.io.read_json_frame_str(payload.decode("latin-1"))
 
-    def test_unknown_format_name_raises(self):
-        with pytest.raises(ValueError, match="unknown wire format"):
-            molrs.io.write_frame_bytes(_frame(), "messagepack")
+    def test_no_door_takes_an_encoding_name(self):
+        assert not hasattr(molrs.io, "read_frame_bytes")
+        assert not hasattr(molrs.io, "write_frame_bytes")
 
 
 class TestControlCommand:

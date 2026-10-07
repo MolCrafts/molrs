@@ -1,216 +1,171 @@
-//! Molecular file writers for the WASM API.
+//! Molecular file writers for the WASM API: one export per format, as
+//! `molrs::io` has one door per format — no export picks a format from a
+//! string.
 //!
-//! Provides a single free function [`writeFrame`](write_frame_export)
-//! that serializes a [`Frame`] to a string in a supported format.
+//! | JS function | Output | Format |
+//! |---|---|---|
+//! | `writeXyzStr` | `string` | XYZ / Extended XYZ |
+//! | `writePdbStr` | `string` | Protein Data Bank |
+//! | `writeCifStr` | `string` | Crystallographic Information File |
+//! | `writeCubeStr` | `string` | Gaussian Cube (needs a `"grid"` block) |
+//! | `writeGroStr` | `string` | GROMACS GRO (Å → nm on write) |
+//! | `writeMol2Str` | `string` | Tripos MOL2 |
+//! | `writeVaspPoscarStr` | `string` | VASP POSCAR (needs a `box`) |
+//! | `writeXsfStr` | `string` | XCrySDen XSF |
+//! | `writeLammpsDataStr` | `string` | LAMMPS data file |
+//! | `writeLammpsDumpStr` | `string` | LAMMPS dump (one snapshot) |
+//! | `writeDcdBytes` | `Uint8Array` | DCD trajectory |
+//! | `writeTrrBytes` | `Uint8Array` | GROMACS TRR (Å → nm on write) |
+//! | `writeXtcBytes` | `Uint8Array` | GROMACS XTC (Å → nm on write) |
+//! | `writeMsgpackFrameBytes` | `Uint8Array` | `molrs::stream` MessagePack wire encoding (`stream` feature) |
+//! | `writeJsonFrameStr` | `string` | `molrs::stream` JSON wire encoding (`stream` feature) |
 //!
-//! # Supported output formats
-//!
-//! Text formats go through [`writeFrame`](write_frame_export) (returns a
-//! `String`); binary trajectory formats go through
-//! [`writeFrameBytes`](write_frame_bytes_export) (returns a `Uint8Array`).
-//! Every format molrs can write is covered (molrs has no SDF or CHGCAR
-//! writer, so those remain read-only).
-//!
-//! | Format string | Kind | Output |
-//! |---------------|------|--------|
-//! | `"xyz"` | text | XYZ / Extended XYZ |
-//! | `"pdb"` | text | Protein Data Bank |
-//! | `"cif"` | text | Crystallographic Information File |
-//! | `"cube"` | text | Gaussian Cube (needs a `"grid"` block) |
-//! | `"gro"` | text | GROMACS GRO (Å → nm on write) |
-//! | `"mol2"` | text | Tripos MOL2 |
-//! | `"poscar"` | text | VASP POSCAR (needs a `box`) |
-//! | `"xsf"` | text | XCrySDen XSF |
-//! | `"lammps-data"` / `"lammps"` | text | LAMMPS data file |
-//! | `"lammps-dump"` / `"lammpstrj"` | text | LAMMPS dump |
-//! | `"dcd"` | binary | DCD trajectory |
-//! | `"trr"` | binary | GROMACS TRR (Å → nm on write) |
-//! | `"xtc"` | binary | GROMACS XTC (Å → nm on write) |
-//! | `"msgpack"` / `"json"` | binary | `molrs::stream` wire encoding — what a
-//!   `FramePublisher` puts on the socket. Paired with
-//!   [`readFrameBytes`](super::reader::read_frame_bytes_export). |
+//! molrs has no SDF or CHGCAR writer, so those remain read-only.
 
 use crate::core::frame::Frame;
-use molrs::io::data::cif::write_cif_frame;
-use molrs::io::data::cube::write_cube_to_writer;
-use molrs::io::data::gro::write_gro_frame;
-use molrs::io::data::lammps_data::LAMMPSDataWriter;
-use molrs::io::data::mol2::write_mol2_frame;
-use molrs::io::data::pdb::PDBWriter;
-use molrs::io::data::poscar::write_poscar_to_writer;
-use molrs::io::data::xsf::write_xsf_frame;
-use molrs::io::data::xyz::XYZFrameWriter;
-use molrs::io::trajectory::dcd::DcdWriter;
-use molrs::io::trajectory::lammps_dump::LAMMPSDumpWriter;
-use molrs::io::trajectory::trr::TrrWriter;
-use molrs::io::trajectory::xtc::XtcWriter;
+use molrs::io::cif::CifWriter;
+use molrs::io::dcd::DcdWriter;
+use molrs::io::gro::GroWriter;
+use molrs::io::lammps::{LammpsDataWriter, LammpsDumpWriter};
+use molrs::io::mol2::Mol2Writer;
+use molrs::io::pdb::PdbWriter;
+use molrs::io::trr::TrrWriter;
 use molrs::io::writer::{FrameWriter, Writer};
+use molrs::io::xtc::XtcWriter;
+use molrs::io::xyz::XyzWriter;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
 
-/// Serialize a [`Frame`] to a string in the specified format.
-///
-/// The frame must have an `"atoms"` block with at least an element/name
-/// string column and `x`, `y`, `z` float columns (coordinates in
-/// angstrom).
-///
-/// # Arguments
-///
-/// * `frame` - The [`Frame`] to write
-/// * `format` - Output format string: `"xyz"` or `"pdb"`
-///   (case-insensitive)
-///
-/// # Returns
-///
-/// The formatted file content as a string.
-///
-/// # Errors
-///
-/// Throws a `JsValue` string if:
-/// - The format is not recognized
-/// - The frame is missing required columns
-/// - The writer encounters an error
-///
-/// # Example (JavaScript)
-///
-/// ```js
-/// const xyzStr = writeFrame(frame, "xyz");
-/// console.log(xyzStr);
-/// // 2
-/// //
-/// // H  0.000000  0.000000  0.000000
-/// // O  1.000000  0.000000  0.500000
-///
-/// const pdbStr = writeFrame(frame, "pdb");
-/// // download or display the PDB string
-/// ```
-#[wasm_bindgen(js_name = writeFrame)]
-pub fn write_frame_export(frame: &Frame, format: &str) -> Result<String, JsValue> {
-    let buffer = frame.with_frame(|rs_frame| {
-        let mut buf: Vec<u8> = Vec::new();
-        match format.to_lowercase().as_str() {
-            "xyz" => {
-                let mut writer = <XYZFrameWriter<_> as Writer>::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("XYZ writing error: {}", e)))?;
-            }
-            "pdb" => {
-                let mut writer = <PDBWriter<_> as Writer>::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("PDB writing error: {}", e)))?;
-            }
-            "lammps-data" | "lammps" => {
-                let mut writer = <LAMMPSDataWriter<_> as Writer>::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("LAMMPS data writing error: {}", e)))?;
-            }
-            "lammps-dump" | "lammpstrj" => {
-                let mut writer = <LAMMPSDumpWriter<_> as Writer>::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {}", e)))?;
-            }
-            "cif" => {
-                write_cif_frame(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("CIF writing error: {}", e)))?;
-            }
-            "cube" => {
-                write_cube_to_writer(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("Cube writing error: {:?}", e)))?;
-            }
-            "gro" => {
-                write_gro_frame(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("GRO writing error: {}", e)))?;
-            }
-            "mol2" => {
-                write_mol2_frame(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("MOL2 writing error: {}", e)))?;
-            }
-            "poscar" => {
-                write_poscar_to_writer(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("POSCAR writing error: {}", e)))?;
-            }
-            "xsf" => {
-                write_xsf_frame(&mut buf, rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("XSF writing error: {}", e)))?;
-            }
-            _ => {
-                return Err(JsValue::from_str(&format!(
-                    "unsupported format: {}",
-                    format
-                )));
-            }
-        }
-        Ok(buf)
-    })?;
-
-    String::from_utf8(buffer)
-        .map_err(|e| JsValue::from_str(&format!("UTF-8 conversion error: {}", e)))
+/// Write `frame` through a `molrs::io` writer class into memory.
+macro_rules! write_bytes {
+    ($writer:ident, $frame:expr, $what:literal) => {
+        $frame.with_frame(|rs_frame| {
+            let mut buf: Vec<u8> = Vec::new();
+            <$writer<_> as Writer>::new(&mut buf)
+                .write(rs_frame)
+                .map_err(|e| JsValue::from_str(&format!("{} writing error: {e}", $what)))?;
+            Ok(buf)
+        })
+    };
 }
 
-/// Serialize a [`Frame`] to bytes in a binary trajectory format.
-///
-/// Mirrors [`write_frame_export`] for the formats whose output is not valid
-/// UTF-8: `"dcd"`, `"trr"`, `"xtc"` (case-insensitive), plus the live-stream
-/// wire encodings `"msgpack"` / `"json"` (`stream` feature). Returns a
-/// `Uint8Array` to JavaScript. The GROMACS formats (`trr`/`xtc`) are written
-/// in nm by the molrs writers themselves — see `molrs::io` — so nothing is
-/// scaled here.
-///
-/// # Errors
-///
-/// Throws a `JsValue` string if the format is not a known binary format, the
-/// frame is missing required columns, or the writer encounters an error.
-#[wasm_bindgen(js_name = writeFrameBytes)]
-pub fn write_frame_bytes_export(frame: &Frame, format: &str) -> Result<Vec<u8>, JsValue> {
+fn utf8(bytes: Vec<u8>) -> Result<String, JsValue> {
+    String::from_utf8(bytes).map_err(|e| JsValue::from_str(&format!("UTF-8 conversion error: {e}")))
+}
+
+/// Write `frame` as (extended) XYZ text.
+#[wasm_bindgen(js_name = writeXyzStr)]
+pub fn write_xyz_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(XyzWriter, frame, "XYZ")?)
+}
+
+/// Write `frame` as PDB text.
+#[wasm_bindgen(js_name = writePdbStr)]
+pub fn write_pdb_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(PdbWriter, frame, "PDB")?)
+}
+
+/// Write `frame` as CIF text.
+#[wasm_bindgen(js_name = writeCifStr)]
+pub fn write_cif_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(CifWriter, frame, "CIF")?)
+}
+
+/// Write `frame` as GROMACS GRO text (Å → nm).
+#[wasm_bindgen(js_name = writeGroStr)]
+pub fn write_gro_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(GroWriter, frame, "GRO")?)
+}
+
+/// Write `frame` as Tripos MOL2 text.
+#[wasm_bindgen(js_name = writeMol2Str)]
+pub fn write_mol2_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(Mol2Writer, frame, "MOL2")?)
+}
+
+/// Write `frame` as a LAMMPS data file.
+#[wasm_bindgen(js_name = writeLammpsDataStr)]
+pub fn write_lammps_data_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(LammpsDataWriter, frame, "LAMMPS data")?)
+}
+
+/// Write `frame` as one LAMMPS dump snapshot.
+#[wasm_bindgen(js_name = writeLammpsDumpStr)]
+pub fn write_lammps_dump_str(frame: &Frame) -> Result<String, JsValue> {
+    utf8(write_bytes!(LammpsDumpWriter, frame, "LAMMPS dump")?)
+}
+
+/// Write `frame` as Gaussian cube text (needs a `"grid"` block).
+#[wasm_bindgen(js_name = writeCubeStr)]
+pub fn write_cube_str(frame: &Frame) -> Result<String, JsValue> {
+    frame.with_frame(|f| {
+        molrs::io::write_cube_str(f)
+            .map_err(|e| JsValue::from_str(&format!("Cube writing error: {e}")))
+    })
+}
+
+/// Write `frame` as VASP POSCAR text (needs a box).
+#[wasm_bindgen(js_name = writeVaspPoscarStr)]
+pub fn write_vasp_poscar_str(frame: &Frame) -> Result<String, JsValue> {
+    frame.with_frame(|f| {
+        molrs::io::write_vasp_poscar_str(f)
+            .map_err(|e| JsValue::from_str(&format!("POSCAR writing error: {e}")))
+    })
+}
+
+/// Write `frame` as XCrySDen XSF text.
+#[wasm_bindgen(js_name = writeXsfStr)]
+pub fn write_xsf_str(frame: &Frame) -> Result<String, JsValue> {
+    frame.with_frame(|f| {
+        molrs::io::write_xsf_str(f)
+            .map_err(|e| JsValue::from_str(&format!("XSF writing error: {e}")))
+    })
+}
+
+/// Write `frame` as a one-frame DCD trajectory.
+#[wasm_bindgen(js_name = writeDcdBytes)]
+pub fn write_dcd_bytes(frame: &Frame) -> Result<Vec<u8>, JsValue> {
     frame.with_frame(|rs_frame| {
         let mut buf: Vec<u8> = Vec::new();
-        match format.to_lowercase().as_str() {
-            "dcd" => {
-                // DcdWriter needs Write + Seek (it patches NSET after each
-                // frame); Cursor<&mut Vec<u8>> satisfies both and leaves the
-                // bytes in `buf` once the writer drops.
-                let mut writer = DcdWriter::new(Cursor::new(&mut buf));
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("DCD writing error: {}", e)))?;
-            }
-            "trr" => {
-                let mut writer = TrrWriter::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("TRR writing error: {}", e)))?;
-            }
-            "xtc" => {
-                let mut writer = XtcWriter::new(&mut buf);
-                writer
-                    .write(rs_frame)
-                    .map_err(|e| JsValue::from_str(&format!("XTC writing error: {}", e)))?;
-            }
-            // The live-stream wire encoding. Not a file format, but it is a
-            // frame going out as bytes, so it belongs to the same entry point
-            // rather than to a `Frame.toBytes` method of its own.
-            #[cfg(feature = "stream")]
-            "msgpack" | "json" => {
-                let fmt = if format.eq_ignore_ascii_case("json") {
-                    molrs::stream::MessageFormat::Json
-                } else {
-                    molrs::stream::MessageFormat::MessagePack
-                };
-                buf = molrs::stream::frame_to_bytes(rs_frame, fmt)
-                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
-            }
-            _ => {
-                return Err(JsValue::from_str(&format!(
-                    "unsupported binary format: {}",
-                    format
-                )));
-            }
-        }
+        // DcdWriter needs Write + Seek (it patches NSET after each frame);
+        // Cursor<&mut Vec<u8>> satisfies both and leaves the bytes in `buf`
+        // once the writer drops.
+        DcdWriter::new(Cursor::new(&mut buf))
+            .write(rs_frame)
+            .map_err(|e| JsValue::from_str(&format!("DCD writing error: {e}")))?;
         Ok(buf)
+    })
+}
+
+/// Write `frame` as a one-frame GROMACS TRR trajectory (Å → nm).
+#[wasm_bindgen(js_name = writeTrrBytes)]
+pub fn write_trr_bytes(frame: &Frame) -> Result<Vec<u8>, JsValue> {
+    write_bytes!(TrrWriter, frame, "TRR")
+}
+
+/// Write `frame` as a one-frame GROMACS XTC trajectory (Å → nm).
+#[wasm_bindgen(js_name = writeXtcBytes)]
+pub fn write_xtc_bytes(frame: &Frame) -> Result<Vec<u8>, JsValue> {
+    write_bytes!(XtcWriter, frame, "XTC")
+}
+
+/// Encode `frame` in the `molrs::stream` MessagePack wire encoding — what a
+/// publisher puts on the socket. The inverse of `readMsgpackFrameBytes`.
+#[cfg(feature = "stream")]
+#[wasm_bindgen(js_name = writeMsgpackFrameBytes)]
+pub fn write_msgpack_frame_bytes(frame: &Frame) -> Result<Vec<u8>, JsValue> {
+    frame.with_frame(|f| {
+        molrs::stream::write_msgpack_frame_bytes(f).map_err(|e| JsValue::from_str(&e.to_string()))
+    })
+}
+
+/// Encode `frame` in the `molrs::stream` JSON wire encoding. The inverse of
+/// `readJsonFrameStr`.
+#[cfg(feature = "stream")]
+#[wasm_bindgen(js_name = writeJsonFrameStr)]
+pub fn write_json_frame_str(frame: &Frame) -> Result<String, JsValue> {
+    frame.with_frame(|f| {
+        molrs::stream::write_json_frame_str(f).map_err(|e| JsValue::from_str(&e.to_string()))
     })
 }
 
@@ -250,10 +205,10 @@ mod tests {
             .set("element", JsValue::from(elements).unchecked_into(), None)
             .expect("element");
 
-        let xyz_output = write_frame_export(&frame, "xyz").expect("xyz output");
+        let xyz_output = write_xyz_str(&frame).expect("xyz output");
         assert!(xyz_output.lines().next().unwrap_or("").starts_with('2'));
 
-        let pdb_output = write_frame_export(&frame, "pdb").expect("pdb output");
+        let pdb_output = write_pdb_str(&frame).expect("pdb output");
         assert!(pdb_output.contains("ATOM"));
     }
 }
