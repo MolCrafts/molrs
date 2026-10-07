@@ -1412,6 +1412,7 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
 
 /// Every registered style, with a type, goes through a record section and
 /// back unchanged.
+#[cfg(feature = "zarr")]
 #[test]
 fn every_registered_style_persists_through_a_record() {
     let registry = BuiltinKernels::builtin();

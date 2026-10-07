@@ -68,6 +68,7 @@ use crate::ff::potential::intramolecular_pairs;
 use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
 use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
+#[cfg(feature = "zarr")]
 use crate::io::mrec::ForceFieldSection;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
 use crate::io::openmm_xml::writer::OpenmmXmlWriter;
@@ -1356,6 +1357,7 @@ fn same_terms(
 /// Every source's IR, and each engine's form of it, goes through a record
 /// section (molrec v2) and back to the same field: molrs prices the read-back
 /// field as the one written, term by term.
+#[cfg(feature = "zarr")]
 #[test]
 fn every_source_persists_through_a_record() {
     for source in sources() {

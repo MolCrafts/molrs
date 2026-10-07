@@ -256,7 +256,7 @@ mod plugin_tests {
         let values: Vec<f64> = (0..64).map(|i| f64::from(i) * 2f64.powi(-10)).collect();
         let raw: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
         let mut shuffled = vec![0u8; raw.len()];
-        for (element, bytes) in raw.chunks_exact(8).enumerate() {
+        for (element, bytes) in raw.as_chunks::<8>().0.iter().enumerate() {
             for (byte, value) in bytes.iter().enumerate() {
                 shuffled[byte * values.len() + element] = *value;
             }

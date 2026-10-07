@@ -19,6 +19,7 @@ use crate::ff::style_registry::BuiltinKernels;
 use crate::ff::style_registry::{
     ExpressionForm, ExpressionKernel, Kernel, Registry, RowSource, register_style,
 };
+#[cfg(feature = "zarr")]
 use crate::io::mrec::ForceFieldSection;
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -1130,6 +1131,7 @@ fn a_custom_category_checks_its_arity_and_needs_its_registration() {
 
 /// A custom category round-trips through the record's section (its arity
 /// from the endpoint columns) and prices identically afterwards.
+#[cfg(feature = "zarr")]
 #[test]
 fn a_custom_category_round_trips_through_its_section() {
     let r = ub_registry();
@@ -1164,6 +1166,7 @@ fn a_custom_category_round_trips_through_its_section() {
 /// A category nothing declares is kept from a record with the arity of its
 /// endpoint columns; with rows and no expression, compiling it is refused
 /// naming the style, and with an `expression` it is priced by it alone.
+#[cfg(feature = "zarr")]
 #[test]
 fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     let bare = ub_ff("spring", Params::new(), |ff, p| {
@@ -1218,8 +1221,10 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
 // ---------------------------------------------------------------------------
 
 /// LAMMPS `bond_style fene` (with its WCA term), as an expression.
+#[cfg(feature = "zarr")]
 const FENE: &str = "-0.5*k*r0^2*log(1-(r/r0)^2) + step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)";
 
+#[cfg(feature = "zarr")]
 fn fene_spec() -> StyleSpec {
     StyleSpec::new("bond", "fene")
         .params(vec![
@@ -1234,8 +1239,10 @@ fn fene_spec() -> StyleSpec {
 /// A tabulated torsion `E(φ)`: `table` holds `N` energies on the grid
 /// `φᵢ = −π + 2πi/N`, interpolated linearly and periodically (a Tier-2
 /// form reading an array parameter).
+#[cfg(feature = "zarr")]
 struct TableLinear;
 
+#[cfg(feature = "zarr")]
 impl TableLinear {
     fn at(table: &[F], phi: F) -> (F, F) {
         let n = table.len();
@@ -1252,6 +1259,7 @@ impl TableLinear {
     }
 }
 
+#[cfg(feature = "zarr")]
 impl ScalarForm for TableLinear {
     fn eval(&self, phi: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let table = p.array("table").unwrap();
@@ -1266,6 +1274,7 @@ impl ScalarForm for TableLinear {
     }
 }
 
+#[cfg(feature = "zarr")]
 fn table_spec() -> StyleSpec {
     StyleSpec::new("dihedral", "table/linear").params(vec![
         ParamSpec::new("table", ParamDimension::ENERGY).kind(ParamKind::Array { rank: 1 }),
@@ -1273,6 +1282,7 @@ fn table_spec() -> StyleSpec {
 }
 
 /// The table of type `t`: twelve energies, none of them round.
+#[cfg(feature = "zarr")]
 fn torsion_table() -> ndarray::ArrayD<F> {
     ndarray::ArrayD::from_shape_fn(vec![12], |ix| {
         let i = ix[0] as F;
@@ -1283,6 +1293,7 @@ fn torsion_table() -> ndarray::ArrayD<F> {
 /// A registry extended the way a third party would: `bond fene` by its
 /// expression, `urey_bradley` with an expression style and a native-only
 /// one, and the native-only `dihedral table/linear` with an array param.
+#[cfg(feature = "zarr")]
 fn persist_registry() -> Registry {
     let mut r = ub_registry();
     r.register_style(fene_spec(), None).unwrap();
@@ -1294,6 +1305,7 @@ fn persist_registry() -> Registry {
 /// The four records of the round trip, each a force field of one custom
 /// style defined against `r` with **no** expression of its own; the table
 /// record also holds a category nothing ever registers.
+#[cfg(feature = "zarr")]
 fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
     let mut fene = ForceField::new("fene");
     fene.def_style_in(r, "bond", "fene", Params::new())
@@ -1337,6 +1349,7 @@ fn persist_cases(r: &Registry) -> Vec<(&'static str, ForceField, Frame)> {
     ]
 }
 
+#[cfg(feature = "zarr")]
 fn bits(e: F, f: &[F]) -> Vec<u64> {
     std::iter::once(e)
         .chain(f.iter().copied())
@@ -1347,6 +1360,7 @@ fn bits(e: F, f: &[F]) -> Vec<u64> {
 /// D16: a registered custom style with no expression of its own is written
 /// with the registry's; a built-in style, and a native-only custom one, with
 /// none; an instance's own expression byte for byte.
+#[cfg(feature = "zarr")]
 #[test]
 fn a_section_writes_a_custom_styles_registry_expression() {
     let r = persist_registry();
@@ -1441,6 +1455,7 @@ fn an_instance_expression_must_agree_with_the_registered_kernel() {
 }
 
 /// The env var naming the directory a parent test hands a fresh process.
+#[cfg(feature = "filesystem")]
 const FRESH_DIR: &str = "MOLRS_IR_PERSIST_DIR";
 
 /// Custom styles persist in `.mrec`: a fresh process with nothing
@@ -1559,6 +1574,7 @@ fn fresh_process_reads_custom_styles() {
 
 /// The array form against a hand interpolation, and the same energy after
 /// the trip through a section with its kernel registered (D9).
+#[cfg(feature = "zarr")]
 #[test]
 fn an_array_param_style_prices_its_table_and_round_trips() {
     let r = persist_registry();

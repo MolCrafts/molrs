@@ -75,12 +75,18 @@ gate_test() {
     cargo --locked mrs-doctest
 }
 
-# Each sub-system must build on its own, without molrs's native defaults.
+# Each sub-system must build on its own, without molrs's native defaults,
+# and so must its tests: --all-targets, so a test that reaches past its
+# feature (an `ff` test naming `io::mrec`, which is `zarr`'s) fails here.
+features_clippy() {
+    cargo clippy --locked -p molcrafts-molrs --all-targets "$@" -- -D warnings
+}
+
 gate_features() {
-    cargo check --locked -p molcrafts-molrs
-    cargo check --locked -p molcrafts-molrs --no-default-features
+    features_clippy
+    features_clippy --no-default-features
     for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
-        cargo check --locked -p molcrafts-molrs --no-default-features --features "$feature"
+        features_clippy --no-default-features --features "$feature"
     done
 }
 
