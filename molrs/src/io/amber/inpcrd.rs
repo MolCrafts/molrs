@@ -1,10 +1,11 @@
 //! AMBER ASCII inpcrd / restrt coordinate reader.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::io::{BufRead, Result};
 use std::path::Path;
 
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array2, array};
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -14,33 +15,6 @@ use molrs::op::{F, Idx};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 /// Parse a line with fixed-width columns (default width 12).
 ///
@@ -257,11 +231,11 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
         ys.push(coords_flat[i * 3 + 1]);
         zs.push(coords_flat[i * 3 + 2]);
     }
-    insert_uint_col(&mut block, "id", ids)?;
-    insert_str_col(&mut block, "name", names)?;
-    insert_float_col(&mut block, "x", xs)?;
-    insert_float_col(&mut block, "y", ys)?;
-    insert_float_col(&mut block, "z", zs)?;
+    insert_column(&mut block, "id", ids)?;
+    insert_column(&mut block, "name", names)?;
+    insert_column(&mut block, "x", xs)?;
+    insert_column(&mut block, "y", ys)?;
+    insert_column(&mut block, "z", zs)?;
 
     if let Some(vel) = velocity_flat {
         let arr = Array2::from_shape_vec((n_atoms, 3), vel)
@@ -318,6 +292,7 @@ pub fn read_amber_inpcrd_str(text: &str) -> Result<Frame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::Array1;
     use std::io::Cursor;
 
     #[test]

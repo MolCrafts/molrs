@@ -1,5 +1,6 @@
 //! The Crystallographic Information File (CIF) codec — MVP subset.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Result, Write};
@@ -19,33 +20,6 @@ use crate::io::writer::{FrameWriter, Writer};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_u32_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 /// Strip a parenthesised standard-deviation suffix from a numeric token.
 /// `5.917(3)` → `5.917`. Non-numeric tokens are returned unchanged.
@@ -382,33 +356,33 @@ impl FrameInProgress {
                 ));
             };
 
-        insert_float_col(&mut atoms, "x", xs)?;
-        insert_float_col(&mut atoms, "y", ys)?;
-        insert_float_col(&mut atoms, "z", zs)?;
+        insert_column(&mut atoms, "x", xs)?;
+        insert_column(&mut atoms, "y", ys)?;
+        insert_column(&mut atoms, "z", zs)?;
 
         // Optional columns. Naming follows the PDB reader so downstream
         // molvis modifiers (element coloring, backbone ribbon, selection)
         // can consume CIF and PDB frames interchangeably.
         if let Some(ids) = column_u32(&self.atom_cols, &["_atom_site.id", "_atom_site_id"]) {
-            insert_u32_col(&mut atoms, "id", ids)?;
+            insert_column(&mut atoms, "id", ids)?;
         }
         if let Some(syms) = string_column(
             &self.atom_cols,
             &["_atom_site.type_symbol", "_atom_site_type_symbol"],
         ) {
-            insert_str_col(&mut atoms, "element", syms)?;
+            insert_column(&mut atoms, "element", syms)?;
         }
         if let Some(names) = string_column(
             &self.atom_cols,
             &["_atom_site.label_atom_id", "_atom_site_label"],
         ) {
-            insert_str_col(&mut atoms, "name", names)?;
+            insert_column(&mut atoms, "name", names)?;
         }
         if let Some(res_names) = string_column(
             &self.atom_cols,
             &["_atom_site.label_comp_id", "_atom_site.auth_comp_id"],
         ) {
-            insert_str_col(&mut atoms, "res_name", res_names)?;
+            insert_column(&mut atoms, "res_name", res_names)?;
         }
         // The canonical residue number: unsigned, so a negative one is
         // refused here at the boundary (as the PDB reader does), and the CIF
@@ -431,25 +405,25 @@ impl FrameInProgress {
             &self.atom_cols,
             &["_atom_site.label_asym_id", "_atom_site.auth_asym_id"],
         ) {
-            insert_str_col(&mut atoms, "chain", chains)?;
+            insert_column(&mut atoms, "chain", chains)?;
         }
         if let Some(icodes) = string_column(&self.atom_cols, &["_atom_site.pdbx_PDB_ins_code"]) {
-            insert_str_col(&mut atoms, "icode", placeholders_as_empty(icodes))?;
+            insert_column(&mut atoms, "icode", placeholders_as_empty(icodes))?;
         }
         if let Some(altlocs) = string_column(&self.atom_cols, &["_atom_site.label_alt_id"]) {
-            insert_str_col(&mut atoms, "altloc", placeholders_as_empty(altlocs))?;
+            insert_column(&mut atoms, "altloc", placeholders_as_empty(altlocs))?;
         }
         if let Some(occ) = column_floats(
             &self.atom_cols,
             &["_atom_site.occupancy", "_atom_site_occupancy"],
         ) {
-            insert_float_col(&mut atoms, "occupancy", occ)?;
+            insert_column(&mut atoms, "occupancy", occ)?;
         }
         if let Some(b) = column_floats(
             &self.atom_cols,
             &["_atom_site.B_iso_or_equiv", "_atom_site_B_iso_or_equiv"],
         ) {
-            insert_float_col(&mut atoms, "b_factor", b)?;
+            insert_column(&mut atoms, "b_factor", b)?;
         }
 
         frame.insert("atoms", atoms);

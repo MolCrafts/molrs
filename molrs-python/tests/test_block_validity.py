@@ -103,7 +103,7 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
     The other two atoms carry no ``h_count`` at all, so repletion derives
     theirs from valence. Crossing the frame must not turn those holes into a
     declared ``h_count = 0``, which an explicit count short-circuits
-    (``implicit_h_count``) into "already saturated".
+    (``n_implicit_hydrogens``) into "already saturated".
     """
     molecule = molrs.io.smiles.SmilesIr("CC[OH]").to_atomistic()
 

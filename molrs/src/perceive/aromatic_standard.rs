@@ -663,7 +663,7 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
                 continue;
             }
             let total =
-                valence[index[&id]] + crate::perceive::implicit_h_count(&mol, id).unwrap_or(0);
+                valence[index[&id]] + crate::perceive::n_implicit_hydrogens(&mol, id).unwrap_or(0);
             assert!(
                 total <= 3,
                 "{name}: a neutral ring nitrogen reached valence {total}"

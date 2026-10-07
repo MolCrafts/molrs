@@ -392,17 +392,6 @@ fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
         .unwrap_or(false)
 }
 
-fn formal_charge(mol: &Atomistic, id: NodeId) -> Option<i8> {
-    mol.get_atom(id).ok().and_then(|a| {
-        // `formal_charge` may be `Int` (read from a frame's `i64` column) or
-        // an integral `F64` (written by the SMILES reader).
-        a.get("formal_charge")
-            .and_then(PropValue::as_f64)
-            .or_else(|| a.get_f64("charge"))
-            .map(|v| v as i8)
-    })
-}
-
 fn h_count_prop(mol: &Atomistic, id: NodeId) -> Option<u8> {
     mol.get_atom(id)
         .ok()
@@ -451,7 +440,11 @@ fn atom_node(
         .unwrap_or(sym_raw);
 
     let aromatic = matches!(opts.aromatic, AromaticEmit::AsMarked) && atom_is_aromatic(mol, id);
-    let charge = formal_charge(mol, id).filter(|&c| c != 0);
+    let charge = mol
+        .get_atom(id)
+        .ok()
+        .and_then(|a| i8::try_from(a.formal_charge()).ok())
+        .filter(|&c| c != 0);
     let isotope = isotope_prop(mol, id);
     let hcount = match opts.hydrogens {
         HydrogenEmit::OrganicSubset => None,
@@ -515,6 +508,18 @@ mod tests {
         let mol2 = (SmilesIr::parse(&s1).unwrap()).to_atomistic().unwrap();
         let s2 = write_smiles_str(&mol2, &opts).unwrap();
         assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn a_partial_charge_is_not_written_as_a_formal_charge() {
+        // `charge` is the partial charge; only `formal_charge` is written.
+        let mut mol = (SmilesIr::parse("[Na]").unwrap()).to_atomistic().unwrap();
+        let id = mol.atoms().next().unwrap().0;
+        mol.set_atom(id, "charge", 1.0).unwrap();
+        let opts = SmilesEmitOptions::default();
+        assert_eq!(write_smiles_str(&mol, &opts).unwrap(), "[Na]");
+        mol.set_atom(id, "formal_charge", 1).unwrap();
+        assert_eq!(write_smiles_str(&mol, &opts).unwrap(), "[Na+]");
     }
 
     #[test]

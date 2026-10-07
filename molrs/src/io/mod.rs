@@ -42,6 +42,7 @@
 //! force-field IR (adopts the LAMMPS standard), its writer the inverse, so unit
 //! conversion stays at one boundary pair.
 
+pub(crate) mod frame_columns;
 pub mod frame_index;
 pub mod reader;
 pub mod writer;

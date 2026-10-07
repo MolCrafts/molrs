@@ -31,7 +31,6 @@
 use std::collections::HashMap;
 
 use crate::core::Element;
-use crate::core::PropValue;
 use crate::core::{Atomistic, BondNumber, BondOrder, NodeId};
 use crate::perceive::Hybridization;
 use crate::perceive::{RingInfo, perceive_rings};
@@ -105,11 +104,7 @@ impl MmffTopology {
             let sym = atom.get_str("element").unwrap_or("");
             let el = Element::by_symbol(sym).ok_or_else(|| sym.to_string())?;
             atno[i] = el.z();
-            formal_charge[i] = match atom.get("formal_charge") {
-                Some(PropValue::F64(v)) => v.round() as i32,
-                Some(PropValue::Int(v)) => *v,
-                _ => 0,
-            };
+            formal_charge[i] = atom.formal_charge();
             for (nbr_id, bid) in mol.neighbor_bonds(id) {
                 let j = idx_of[&nbr_id];
                 // `nbr_order` is the chemical class MMFF perceives against;

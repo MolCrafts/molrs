@@ -1,11 +1,11 @@
 //! LAMMPS molecule template files (native text + JSON).
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 use std::path::Path;
 
-use ndarray::{Array1, IxDyn};
 use serde_json::{Value as JsonValue, json};
 
 use molrs::core::Block;
@@ -17,33 +17,6 @@ use molrs::op::{F, I, Idx};
 /// The LAMMPS molecule JSON field naming the unit style. It is the file's
 /// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].
 const JSON_UNITS: &str = "units";
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 // ── public path API ─────────────────────────────────────────────────────────
 
@@ -306,8 +279,8 @@ fn parse_native_atoms(
         .collect();
     let n = ids.len();
     let mut block = Block::new();
-    insert_uint_col(&mut block, "id", ids)?;
-    insert_str_col(&mut block, "type", types)?;
+    insert_column(&mut block, "id", ids)?;
+    insert_column(&mut block, "type", types)?;
 
     if let Some(lines) = sections.get("Coords") {
         let mut x = vec![0.0_f64; n];
@@ -330,9 +303,9 @@ fn parse_native_atoms(
                 }
             }
         }
-        insert_float_col(&mut block, "x", x)?;
-        insert_float_col(&mut block, "y", y)?;
-        insert_float_col(&mut block, "z", z)?;
+        insert_column(&mut block, "x", x)?;
+        insert_column(&mut block, "y", y)?;
+        insert_column(&mut block, "z", z)?;
     }
 
     for (sec, col) in [
@@ -356,7 +329,7 @@ fn parse_native_atoms(
                     }
                 }
             }
-            insert_float_col(&mut block, col, vals)?;
+            insert_column(&mut block, col, vals)?;
         }
     }
     if let Some(lines) = sections.get("Molecules") {
@@ -375,7 +348,7 @@ fn parse_native_atoms(
                 }
             }
         }
-        insert_uint_col(&mut block, "mol_id", vals)?;
+        insert_column(&mut block, "mol_id", vals)?;
     }
     Ok((block, id_to_idx))
 }
@@ -420,11 +393,11 @@ fn parse_native_connectivity(
         return Ok(None);
     }
     let mut block = Block::new();
-    insert_uint_col(&mut block, "id", ids)?;
-    insert_str_col(&mut block, "type", types)?;
+    insert_column(&mut block, "id", ids)?;
+    insert_column(&mut block, "type", types)?;
     let keys = ["atomi", "atomj", "atomk", "atoml"];
     for (k, col) in members.into_iter().enumerate() {
-        insert_uint_col(&mut block, keys[k], col)?;
+        insert_column(&mut block, keys[k], col)?;
     }
     Ok(Some(block))
 }
@@ -708,8 +681,8 @@ fn read_json(path: &Path) -> Result<Frame> {
         .collect();
     let n = ids.len();
     let mut atoms = Block::new();
-    insert_uint_col(&mut atoms, "id", ids.clone())?;
-    insert_str_col(&mut atoms, "type", types)?;
+    insert_column(&mut atoms, "id", ids.clone())?;
+    insert_column(&mut atoms, "type", types)?;
 
     if let Some(coords) = data.pointer("/coords/data").and_then(|v| v.as_array()) {
         let mut x = vec![0.0; n];
@@ -723,9 +696,9 @@ fn read_json(path: &Path) -> Result<Frame> {
             y[idx] = a[2].as_f64().ok_or_else(|| invalid_data("y"))?;
             z[idx] = a[3].as_f64().ok_or_else(|| invalid_data("z"))?;
         }
-        insert_float_col(&mut atoms, "x", x)?;
-        insert_float_col(&mut atoms, "y", y)?;
-        insert_float_col(&mut atoms, "z", z)?;
+        insert_column(&mut atoms, "x", x)?;
+        insert_column(&mut atoms, "y", y)?;
+        insert_column(&mut atoms, "z", z)?;
     }
     for (json_key, col, as_int) in [
         ("charges", "charge", false),
@@ -745,7 +718,7 @@ fn read_json(path: &Path) -> Result<Frame> {
                     let idx = *id_to_idx.get(&id).ok_or_else(|| invalid_data("id"))? as usize;
                     vals[idx] = a[1].as_i64().ok_or_else(|| invalid_data(col))? as u64;
                 }
-                insert_uint_col(&mut atoms, col, vals)?;
+                insert_column(&mut atoms, col, vals)?;
             } else {
                 let mut vals = vec![0.0_f64; n];
                 for entry in rows {
@@ -754,7 +727,7 @@ fn read_json(path: &Path) -> Result<Frame> {
                     let idx = *id_to_idx.get(&id).ok_or_else(|| invalid_data("id"))? as usize;
                     vals[idx] = a[1].as_f64().ok_or_else(|| invalid_data(col))?;
                 }
-                insert_float_col(&mut atoms, col, vals)?;
+                insert_column(&mut atoms, col, vals)?;
             }
         }
     }
@@ -796,11 +769,11 @@ fn read_json(path: &Path) -> Result<Frame> {
                 }
             }
             let mut block = Block::new();
-            insert_uint_col(&mut block, "id", cids)?;
-            insert_str_col(&mut block, "type", ctypes)?;
+            insert_column(&mut block, "id", cids)?;
+            insert_column(&mut block, "type", ctypes)?;
             let keys = ["atomi", "atomj", "atomk", "atoml"];
             for (k, col) in members.into_iter().enumerate() {
-                insert_uint_col(&mut block, keys[k], col)?;
+                insert_column(&mut block, keys[k], col)?;
             }
             frame.insert(key, block);
         }

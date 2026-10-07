@@ -1,11 +1,12 @@
 //! AMBER prmtop **structure** reader — AMBER files and the CHARMM files ParmEd's `chamber` writes in the same format (`%FLAG CTITLE`).
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::collections::HashMap;
 use std::io::{BufRead, Error, Result};
 use std::path::Path;
 
-use ndarray::{Array1, IxDyn, array};
+use ndarray::array;
 
 use molrs::core::Block;
 use molrs::core::Element;
@@ -22,42 +23,6 @@ use crate::core::constants::AMBER_CHARGE_FACTOR;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_bool_col(block: &mut Block, key: &str, vals: Vec<bool>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 /// Split whitespace-joined section lines into tokens and parse as `T`.
 fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>>
@@ -380,11 +345,11 @@ fn build_bond_block(rows: &[BondRow]) -> Result<Block> {
         type_name.push(r.type_name.clone());
         id.push((idx as Idx) + 1);
     }
-    insert_uint_col(&mut block, "type_id", type_id)?;
-    insert_uint_col(&mut block, "atomi", atomi)?;
-    insert_uint_col(&mut block, "atomj", atomj)?;
-    insert_str_col(&mut block, "type", type_name)?;
-    insert_uint_col(&mut block, "id", id)?;
+    insert_column(&mut block, "type_id", type_id)?;
+    insert_column(&mut block, "atomi", atomi)?;
+    insert_column(&mut block, "atomj", atomj)?;
+    insert_column(&mut block, "type", type_name)?;
+    insert_column(&mut block, "id", id)?;
     Ok(block)
 }
 
@@ -405,12 +370,12 @@ fn build_angle_block(rows: &[AngleRow]) -> Result<Block> {
         type_name.push(r.type_name.clone());
         id.push((idx as Idx) + 1);
     }
-    insert_uint_col(&mut block, "type_id", type_id)?;
-    insert_uint_col(&mut block, "atomi", atomi)?;
-    insert_uint_col(&mut block, "atomj", atomj)?;
-    insert_uint_col(&mut block, "atomk", atomk)?;
-    insert_str_col(&mut block, "type", type_name)?;
-    insert_uint_col(&mut block, "id", id)?;
+    insert_column(&mut block, "type_id", type_id)?;
+    insert_column(&mut block, "atomi", atomi)?;
+    insert_column(&mut block, "atomj", atomj)?;
+    insert_column(&mut block, "atomk", atomk)?;
+    insert_column(&mut block, "type", type_name)?;
+    insert_column(&mut block, "id", id)?;
     Ok(block)
 }
 
@@ -433,13 +398,13 @@ fn build_dihedral_block(rows: &[DihedralRow]) -> Result<Block> {
         id.push((idx as Idx) + 1);
         exclude_14.push(r.exclude_14);
     }
-    insert_uint_col(&mut block, "atomi", atomi)?;
-    insert_uint_col(&mut block, "atomj", atomj)?;
-    insert_uint_col(&mut block, "atomk", atomk)?;
-    insert_uint_col(&mut block, "atoml", atoml)?;
-    insert_str_col(&mut block, "type", type_name)?;
-    insert_uint_col(&mut block, "id", id)?;
-    insert_bool_col(&mut block, keys::EXCLUDE_14, exclude_14)?;
+    insert_column(&mut block, "atomi", atomi)?;
+    insert_column(&mut block, "atomj", atomj)?;
+    insert_column(&mut block, "atomk", atomk)?;
+    insert_column(&mut block, "atoml", atoml)?;
+    insert_column(&mut block, "type", type_name)?;
+    insert_column(&mut block, "id", id)?;
+    insert_column(&mut block, keys::EXCLUDE_14, exclude_14)?;
     Ok(block)
 }
 
@@ -655,8 +620,8 @@ fn build_exclusions_block(
         )));
     }
     let mut block = Block::new();
-    insert_uint_col(&mut block, keys::ATOMI, atomi)?;
-    insert_uint_col(&mut block, keys::ATOMJ, atomj)?;
+    insert_column(&mut block, keys::ATOMI, atomi)?;
+    insert_column(&mut block, keys::ATOMJ, atomj)?;
     Ok(Some(block))
 }
 
@@ -727,9 +692,9 @@ fn build_cmap_block(cmap: &prmtop_tables::CmapTerms) -> Result<Block> {
     .enumerate()
     {
         let col: Vec<Idx> = cmap.atoms.iter().map(|five| five[p] as Idx).collect();
-        insert_uint_col(&mut block, key, col)?;
+        insert_column(&mut block, key, col)?;
     }
-    insert_str_col(&mut block, keys::TYPE, cmap.names.clone())?;
+    insert_column(&mut block, keys::TYPE, cmap.names.clone())?;
     Ok(block)
 }
 
@@ -880,26 +845,26 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     // ---- atoms block ----
     let mut atoms = Block::new();
     let ids: Vec<Idx> = (1..=n_atoms as Idx).collect();
-    insert_uint_col(&mut atoms, "id", ids)?;
-    insert_str_col(&mut atoms, "name", names)?;
-    insert_str_col(&mut atoms, "type", atom_types)?;
-    insert_float_col(&mut atoms, "charge", charges)?;
-    insert_float_col(&mut atoms, "mass", masses)?;
-    insert_uint_col(&mut atoms, "res_id", res_ids)?;
+    insert_column(&mut atoms, "id", ids)?;
+    insert_column(&mut atoms, "name", names)?;
+    insert_column(&mut atoms, "type", atom_types)?;
+    insert_column(&mut atoms, "charge", charges)?;
+    insert_column(&mut atoms, "mass", masses)?;
+    insert_column(&mut atoms, "res_id", res_ids)?;
     if let Some(names) = res_name {
-        insert_str_col(&mut atoms, keys::RES_NAME, names)?;
+        insert_column(&mut atoms, keys::RES_NAME, names)?;
     }
     if let Some(ids) = mol_id {
-        insert_uint_col(&mut atoms, keys::MOL_ID, ids)?;
+        insert_column(&mut atoms, keys::MOL_ID, ids)?;
     }
     if let Some(vals) = tree {
-        insert_str_col(&mut atoms, "tree", vals)?;
+        insert_column(&mut atoms, "tree", vals)?;
     }
     if let Some(vals) = gb_radius {
-        insert_float_col(&mut atoms, "gb_radius", vals)?;
+        insert_column(&mut atoms, "gb_radius", vals)?;
     }
     if let Some(vals) = gb_screen {
-        insert_float_col(&mut atoms, "gb_screen", vals)?;
+        insert_column(&mut atoms, "gb_screen", vals)?;
     }
     if let Some(zs) = atomic_numbers {
         let elements: Vec<String> = zs
@@ -918,8 +883,8 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
                     })
             })
             .collect();
-        insert_uint_col(&mut atoms, "atomic_number", zs)?;
-        insert_str_col(&mut atoms, "element", elements)?;
+        insert_column(&mut atoms, "atomic_number", zs)?;
+        insert_column(&mut atoms, "element", elements)?;
     }
 
     let mut frame = Frame::new();
@@ -1973,7 +1938,7 @@ MOL
             (keys::Y, vec![0.0, 1.0, 0.0, 1.0, 0.0]),
             (keys::Z, vec![0.0; 5]),
         ] {
-            insert_float_col(atoms, key, vals).unwrap();
+            insert_column(atoms, key, vals).unwrap();
         }
         let mut buf = Vec::new();
         LammpsDataWriter::new(&mut buf)

@@ -157,19 +157,6 @@ fn atom_symbol(mol: &Atomistic, id: NodeId) -> String {
         .unwrap_or_default()
 }
 
-/// Read an atom's formal charge as an integer (`PropValue::Int` or `F64`).
-fn atom_charge(mol: &Atomistic, id: NodeId) -> i32 {
-    match mol
-        .get_atom(id)
-        .ok()
-        .and_then(|a| a.get("formal_charge").cloned())
-    {
-        Some(PropValue::Int(v)) => v,
-        Some(PropValue::F64(v)) => v.round() as i32,
-        _ => 0,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Atom query
 // ---------------------------------------------------------------------------
@@ -267,7 +254,7 @@ impl AtomPredicate {
                 size >= *lo && hi.is_none_or(|h| size <= h)
             }
             AtomPredicate::RingBondCount(n) => ctx.ring_bond_count(id) == *n,
-            AtomPredicate::Charge(c) => atom_charge(mol, id) == *c,
+            AtomPredicate::Charge(c) => mol.get_atom(id).map_or(0, |a| a.formal_charge()) == *c,
             AtomPredicate::HasContextLabel(label) => ctx.has_label(id, label),
         }
     }

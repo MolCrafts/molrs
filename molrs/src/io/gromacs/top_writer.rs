@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
-use crate::ff::forcefield::combining_rule::CombiningRule;
+use crate::ff::forcefield::combining_rule::{CombiningRule, same_lj};
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::torsion::nharmonic_coefficients;
@@ -14,9 +14,6 @@ use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs}
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-
-/// Two Lennard-Jones parameter pairs closer than this (relative) are one.
-const SAME_LJ: f64 = 1e-12;
 
 /// The Lennard-Jones styles, one of which carries `[ atomtypes ]` V/W.
 const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
@@ -173,11 +170,6 @@ struct Line {
     values: Vec<f64>,
     /// Index of a value printed as an integer.
     integer: Option<usize>,
-}
-
-fn same_lj(a: (f64, f64), b: (f64, f64)) -> bool {
-    let close = |x: f64, y: f64| (x - y).abs() <= SAME_LJ * x.abs().max(y.abs());
-    close(a.0, b.0) && close(a.1, b.1)
 }
 
 /// A GROMACS parameter table: directive and (funct 9 folded into 1) function

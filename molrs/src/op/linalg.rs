@@ -2,12 +2,14 @@
 // rewriting as iterators hurts readability without speeding the loop up.
 #![allow(clippy::needless_range_loop)]
 
-//! Small dense linear algebra on the stack: 3×3 determinant and inverse, and
-//! the symmetric 3×3 / 4×4 eigensolvers.
+//! Small dense linear algebra: 3×3 determinant and inverse, and the one
+//! symmetric eigensolver (cyclic Jacobi), `n × n` and fixed 3×3 / 4×4.
 
 use crate::op::{F, Mat3, Vec3};
 
-/// Maximum Jacobi sweeps; 3×3 and 4×4 typically converge in ≤ 8.
+/// Maximum Jacobi sweeps; 3×3 and 4×4 typically converge in ≤ 8, and the
+/// quadratic convergence of cyclic Jacobi keeps an `n ≈ 100` metric matrix
+/// well inside this too.
 const MAX_SWEEPS: usize = 50;
 
 /// Jacobi tolerance relative to the Frobenius norm of the input.
@@ -43,7 +45,7 @@ pub fn inv3(m: &Mat3) -> Option<Mat3> {
     let c22 = m[0][0] * m[1][1] - m[0][1] * m[1][0];
 
     let det = m[0][0] * c00 + m[0][1] * c01 + m[0][2] * c02;
-    let fro = frobenius(m);
+    let fro = frobenius(m.as_flattened());
     let threshold = SINGULAR_REL_TOL * fro * fro * fro;
     // Refuse det = 0, |det| at or below the threshold, and any NaN operand.
     if det.is_nan() || threshold.is_nan() || det.abs() <= threshold {
@@ -79,7 +81,7 @@ pub fn inv3(m: &Mat3) -> Option<Mat3> {
 /// branch. (An absolute tolerance stops early on a small-scale matrix: at
 /// 1e-8 scale the former absolute 1e-14 returned a basis rotated by 0.93 rad.)
 pub fn eigh_sym_3x3(a: &Mat3) -> (Vec3, Mat3) {
-    jacobi(a)
+    eigh_sym_fixed(a)
 }
 
 /// Full eigen-decomposition `A = V · diag(λ) · Vᵀ` of a symmetric 4×4 matrix.
@@ -91,43 +93,42 @@ pub fn eigh_sym_3x3(a: &Mat3) -> (Vec3, Mat3) {
 /// eigenpairs to tell a unique best-fit rotation from a family of equally good
 /// rotations about one axis (a "free spin").
 pub fn eigh_sym_4x4(a: &[[F; 4]; 4]) -> ([F; 4], [[F; 4]; 4]) {
-    jacobi(a)
+    eigh_sym_fixed(a)
 }
 
-/// Frobenius norm `‖A‖_F`.
-fn frobenius<const N: usize>(a: &[[F; N]; N]) -> F {
-    a.iter()
-        .flat_map(|row| row.iter())
-        .map(|x| x * x)
-        .sum::<F>()
-        .sqrt()
-}
-
-/// Cyclic Jacobi on a symmetric `N × N` matrix (upper triangle read).
-fn jacobi<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
-    let mut m = [[0.0; N]; N];
-    for p in 0..N {
-        for q in p..N {
-            m[p][q] = a[p][q];
-            m[q][p] = a[p][q];
+/// Full eigen-decomposition `A = V · diag(λ) · Vᵀ` of a symmetric `n × n`
+/// matrix `a`, stored row-major (`a[p * n + q]`, upper triangle read).
+///
+/// The one cyclic-Jacobi solver; [`eigh_sym_3x3`] and [`eigh_sym_4x4`] are
+/// this, fixed-size, and share its contract: `λ` sorted descending (a stable
+/// sort, so equal eigenvalues keep their index order), and `V` row-major with
+/// column `k` (`V[r * n + k]`) the unit eigenvector of `λ[k]`. A zero (or
+/// empty) matrix returns zero eigenvalues and the identity basis.
+pub(crate) fn eigh_sym(a: &[F], n: usize) -> (Vec<F>, Vec<F>) {
+    debug_assert_eq!(a.len(), n * n, "eigh_sym: {n}x{n} needs {} entries", n * n);
+    let mut m = vec![0.0; n * n];
+    for p in 0..n {
+        for q in p..n {
+            m[p * n + q] = a[p * n + q];
+            m[q * n + p] = a[p * n + q];
         }
     }
-    let mut v = [[0.0; N]; N];
-    for i in 0..N {
-        v[i][i] = 1.0;
+    let mut v = vec![0.0; n * n];
+    for i in 0..n {
+        v[i * n + i] = 1.0;
     }
 
     let fro = frobenius(&m);
     if fro == 0.0 {
-        return ([0.0; N], v);
+        return (vec![0.0; n], v);
     }
     let tol = JACOBI_REL_TOL * fro;
 
     for _ in 0..MAX_SWEEPS {
         let mut off: F = 0.0;
-        for p in 0..N {
-            for q in p + 1..N {
-                off += m[p][q].abs();
+        for p in 0..n {
+            for q in p + 1..n {
+                off += m[p * n + q].abs();
             }
         }
         if off <= tol {
@@ -135,15 +136,15 @@ fn jacobi<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
         }
 
         let mut rotated = false;
-        for p in 0..N {
-            for q in p + 1..N {
-                let apq = m[p][q];
+        for p in 0..n {
+            for q in p + 1..n {
+                let apq = m[p * n + q];
                 if apq.abs() <= tol {
                     continue;
                 }
                 rotated = true;
-                let app = m[p][p];
-                let aqq = m[q][q];
+                let app = m[p * n + p];
+                let aqq = m[q * n + q];
                 // tan(2θ) = 2 apq / (app − aqq)
                 let theta = if (app - aqq).abs() <= tol {
                     std::f64::consts::FRAC_PI_4 * apq.signum()
@@ -158,28 +159,28 @@ fn jacobi<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
                 //   A'[q,q] = s²·app − 2cs·apq + c²·aqq
                 //   A'[r,p] = c·A[r,p] + s·A[r,q]   (r ≠ p, q)
                 //   A'[r,q] = −s·A[r,p] + c·A[r,q]
-                m[p][p] = c * c * app + 2.0 * s * c * apq + s * s * aqq;
-                m[q][q] = s * s * app - 2.0 * s * c * apq + c * c * aqq;
-                m[p][q] = 0.0;
-                m[q][p] = 0.0;
-                for r in 0..N {
+                m[p * n + p] = c * c * app + 2.0 * s * c * apq + s * s * aqq;
+                m[q * n + q] = s * s * app - 2.0 * s * c * apq + c * c * aqq;
+                m[p * n + q] = 0.0;
+                m[q * n + p] = 0.0;
+                for r in 0..n {
                     if r != p && r != q {
-                        let arp = m[r][p];
-                        let arq = m[r][q];
+                        let arp = m[r * n + p];
+                        let arq = m[r * n + q];
                         let new_arp = c * arp + s * arq;
                         let new_arq = -s * arp + c * arq;
-                        m[r][p] = new_arp;
-                        m[p][r] = new_arp;
-                        m[r][q] = new_arq;
-                        m[q][r] = new_arq;
+                        m[r * n + p] = new_arp;
+                        m[p * n + r] = new_arp;
+                        m[r * n + q] = new_arq;
+                        m[q * n + r] = new_arq;
                     }
                 }
                 // V ← V · J
-                for r in 0..N {
-                    let vrp = v[r][p];
-                    let vrq = v[r][q];
-                    v[r][p] = c * vrp + s * vrq;
-                    v[r][q] = -s * vrp + c * vrq;
+                for r in 0..n {
+                    let vrp = v[r * n + p];
+                    let vrq = v[r * n + q];
+                    v[r * n + p] = c * vrp + s * vrq;
+                    v[r * n + q] = -s * vrp + c * vrq;
                 }
             }
         }
@@ -189,22 +190,36 @@ fn jacobi<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
         }
     }
 
-    let mut order = [0usize; N];
-    for (i, o) in order.iter_mut().enumerate() {
-        *o = i;
-    }
+    let mut order: Vec<usize> = (0..n).collect();
     // Stable sort: equal eigenvalues keep their index order.
-    order.sort_by(|&i, &j| m[j][j].total_cmp(&m[i][i]));
+    order.sort_by(|&i, &j| m[j * n + j].total_cmp(&m[i * n + i]));
 
-    let mut vals = [0.0; N];
-    let mut vecs = [[0.0; N]; N];
+    let mut vals = vec![0.0; n];
+    let mut vecs = vec![0.0; n * n];
     for (k, &i) in order.iter().enumerate() {
-        vals[k] = m[i][i];
-        for r in 0..N {
-            vecs[r][k] = v[r][i];
+        vals[k] = m[i * n + i];
+        for r in 0..n {
+            vecs[r * n + k] = v[r * n + i];
         }
     }
     (vals, vecs)
+}
+
+/// [`eigh_sym`] on a fixed-size `N × N` matrix.
+fn eigh_sym_fixed<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
+    let (vals, vecs) = eigh_sym(a.as_flattened(), N);
+    let mut out_vals = [0.0; N];
+    out_vals.copy_from_slice(&vals);
+    let mut out_vecs = [[0.0; N]; N];
+    for r in 0..N {
+        out_vecs[r].copy_from_slice(&vecs[r * N..(r + 1) * N]);
+    }
+    (out_vals, out_vecs)
+}
+
+/// Frobenius norm `‖A‖_F` of a matrix given as its entries, row-major.
+fn frobenius(entries: &[F]) -> F {
+    entries.iter().map(|x| x * x).sum::<F>().sqrt()
 }
 
 #[cfg(test)]

@@ -97,6 +97,13 @@ pub fn planar_orientation_angles(frame: &Frame) -> Result<Option<Vec<F>>, Comput
     }
 }
 
+/// An angle wrapped into `[0, 2π)` (radians), the range the orientation-bin
+/// axes of [`super::PmftXyt`] and [`super::PmftR12`] span.
+#[inline]
+pub(super) fn wrap_2pi(a: F) -> F {
+    a.rem_euclid(std::f64::consts::TAU)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

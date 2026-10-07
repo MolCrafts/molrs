@@ -1,15 +1,10 @@
 //! Wigner D-matrix elements for integer ℓ.
 
-use libm::lgamma;
 use ndarray::Array2;
 
+use super::factorial::ln_factorial;
 use crate::core::Complex;
 use crate::op::F;
-
-#[inline]
-fn lfact(n: i64) -> F {
-    lgamma(n as F + 1.0)
-}
 
 /// Small Wigner d-matrix element `d^ℓ_{m',m}(β)` (real), evaluated via the
 /// Wigner sum form (Edmonds (4.1.15)):
@@ -43,10 +38,10 @@ pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
 
     // ½ log[(ℓ+m)!(ℓ-m)!(ℓ+m')!(ℓ-m')!]
     let log_prefactor = 0.5
-        * (lfact((li + m) as i64)
-            + lfact((li - m) as i64)
-            + lfact((li + m_prime) as i64)
-            + lfact((li - m_prime) as i64));
+        * (ln_factorial((li + m) as i64)
+            + ln_factorial((li - m) as i64)
+            + ln_factorial((li + m_prime) as i64)
+            + ln_factorial((li - m_prime) as i64));
 
     let mut sum: F = 0.0;
     for s in s_min..=s_max {
@@ -54,10 +49,10 @@ pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
         let p_cos = 2 * li + m - m_prime - 2 * si;
         let p_sin = m_prime - m + 2 * si;
 
-        let log_denom = lfact((li + m - si) as i64)
-            + lfact(s)
-            + lfact((m_prime - m + si) as i64)
-            + lfact((li - m_prime - si) as i64);
+        let log_denom = ln_factorial((li + m - si) as i64)
+            + ln_factorial(s)
+            + ln_factorial((m_prime - m + si) as i64)
+            + ln_factorial((li - m_prime - si) as i64);
 
         // cos^a * sin^b — handle exact-zero base safely (0^0 = 1).
         let cos_term = if p_cos == 0 {

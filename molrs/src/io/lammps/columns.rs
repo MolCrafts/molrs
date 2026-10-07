@@ -1,58 +1,12 @@
-//! The Frame columns a LAMMPS data / dump reader builds: typed column
-//! inserts, optional columns, and the dump attribute names they map to.
+//! The Frame columns a LAMMPS data / dump reader builds: optional columns,
+//! and the dump attribute names they map to (the inserts are
+//! `io::frame_columns`'s).
 //!
 //! Column-name aliases follow the LAMMPS `dump custom` / `compute property/atom`
 //! attribute list: <https://docs.lammps.org/dump.html>,
 //! <https://docs.lammps.org/compute_property_atom.html>.
 
-use crate::io::invalid_data;
-use molrs::core::Block;
 use molrs::core::keys;
-use molrs::op::{F, I, Idx};
-use ndarray::{Array1, ArrayD, IxDyn};
-
-pub(crate) fn arr1_f(v: Vec<F>, n: usize) -> std::io::Result<ArrayD<F>> {
-    Array1::from_vec(v)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)
-        .map(|a| a.into_dyn())
-}
-
-pub(crate) fn arr1_i(v: Vec<I>, n: usize) -> std::io::Result<ArrayD<I>> {
-    Array1::from_vec(v)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)
-        .map(|a| a.into_dyn())
-}
-
-pub(crate) fn arr1_u(v: Vec<Idx>, n: usize) -> std::io::Result<ArrayD<Idx>> {
-    Array1::from_vec(v)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)
-        .map(|a| a.into_dyn())
-}
-
-pub(crate) fn insert_f(block: &mut Block, key: &str, v: Vec<F>, n: usize) -> std::io::Result<()> {
-    block.insert(key, arr1_f(v, n)?).map_err(invalid_data)
-}
-
-pub(crate) fn insert_i(block: &mut Block, key: &str, v: Vec<I>, n: usize) -> std::io::Result<()> {
-    block.insert(key, arr1_i(v, n)?).map_err(invalid_data)
-}
-
-pub(crate) fn insert_u(block: &mut Block, key: &str, v: Vec<Idx>, n: usize) -> std::io::Result<()> {
-    block.insert(key, arr1_u(v, n)?).map_err(invalid_data)
-}
-
-pub(crate) fn insert_str(
-    block: &mut Block,
-    key: &str,
-    v: Vec<String>,
-    n: usize,
-) -> std::io::Result<()> {
-    let arr = ArrayD::from_shape_vec(IxDyn(&[n]), v).map_err(invalid_data)?;
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct OptCol<T> {
