@@ -13,7 +13,10 @@ use std::sync::Arc;
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::ir::{Dim, Kernel, Mix, ParamSource, ParamSpec, Registry, SpecialClass, StyleSpec};
+use crate::ff::ir::{
+    Kernel, ParamCombination, ParamDimension, ParamSource, ParamSpec, Registry, SpecialClass,
+    StyleSpec,
+};
 use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle};
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use crate::ff::potential::pair::fixtures::{assert_virial_matches_forces, table_over};
@@ -217,7 +220,7 @@ fn molecule() -> Frame {
 }
 
 fn p(name: &'static str, dim: &str) -> ParamSpec {
-    ParamSpec::new(name, dim.parse::<Dim>().unwrap())
+    ParamSpec::new(name, dim.parse::<ParamDimension>().unwrap())
 }
 
 /// A registry holding `spec` with `kernel`, beside the built-ins.
@@ -446,10 +449,10 @@ fn compound_terms_equal_angle_charmm() {
 fn scalar_pair_equals_lj_cut_at_both_doors() {
     let spec = StyleSpec::new("pair", "lj/form")
         .params(vec![
-            p("epsilon", "E").mix(Mix::LjEpsilon {
+            p("epsilon", "E").mix(ParamCombination::LjEpsilon {
                 sigma: "sigma".into(),
             }),
-            p("sigma", "L").mix(Mix::LjSigma {
+            p("sigma", "L").mix(ParamCombination::LjSigma {
                 epsilon: "epsilon".into(),
             }),
         ])

@@ -5,8 +5,8 @@
 //! a kernel. This module lets Python register into the process-wide
 //! registry every compile reads, with nothing rebuilt:
 //!
-//! * `Param` — one parameter (`ParamSpec`), its `Dim` parsed at once;
-//! * `register_category` / `register_style` / `unregister` — the registry
+//! * `ParamSpec` — one parameter (Rust `ParamSpec`), its dimension parsed at once;
+//! * `register_category` / `register_style` / `unregister_style` — the registry
 //!   calls, refusing what does not conform with an `IrError` subclass named
 //!   after the Rust variant (D17);
 //! * Python callables as Tier-2 kernels ([`PyScalarKernel`],
@@ -35,8 +35,9 @@ use pyo3::types::{PyDict, PyList, PyString, PyTuple};
 use molrs::ff::forcefield::DefError;
 use molrs::ff::ir::ExpressionForm;
 use molrs::ff::ir::{
-    self as rir, Arity, CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, Mix,
-    ParamKind, ParamSource, ParamSpec, Registry, Sample, SpecialClass, StyleSpec, Value,
+    self as rir, Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, IrError,
+    Kernel, ParamCombination, ParamDimension, ParamKind, ParamSource, ParamSpec, ParamValue,
+    Registry, SpecialClass, StyleSpec,
 };
 use molrs::ff::potential::CompileError;
 use molrs::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
@@ -80,34 +81,34 @@ pub mod errors {
     }
 
     variants! {
-        UnknownCategory: "A style in a category neither built in nor registered.",
-        BadName: "A category or parameter name outside its pattern.",
-        Arity: "A custom category's arity outside 2..=5, or a type with the wrong number of endpoints.",
-        BlockName: "A custom category whose block is not `<name>s`.",
-        ReservedParam: "A parameter named like a structural column, a variable or a pair input.",
-        DuplicateParam: "A parameter declared twice.",
-        Dim: "An unparsable or forbidden dimension.",
-        Parse: "An expression that does not parse, or whose definitions are out of order.",
-        UnboundVariable: "A name an expression reads that is neither a variable of the category nor a declared numeric parameter.",
-        UnknownFunction: "A function an expression calls that the expression language does not have.",
-        FunctionArity: "A function called with the wrong number of arguments.",
-        Point: "A point `pk` beyond the category's arity, or any point in a pair style.",
-        CoordinateMismatch: "A kernel tier the category cannot take.",
-        Derivative: "A kernel's derivative against a central difference of its energy, beyond relative 1e-6.",
-        Disagree: "An expression against the kernel beside it, beyond relative 1e-10.",
-        Asymmetric: "A pair energy that changes when its two atoms are exchanged.",
-        Sealed: "A built-in, which cannot be overridden or removed.",
-        Conflict: "A different registration under a taken name.",
-        NoKernel: "Nothing can price the style: no kernel and no expression.",
-        NoMixing: "An unlike pair with no cross row stating a parameter that does not mix.",
-        MissingParam: "A row (or the style) without a value its kernel needs, and no default.",
-        BadValue: "A row's (or the style's) value of a declared parameter that is not of its declared kind or domain: text for a number, an array of another rank, text outside its choices.",
-        KernelShape: "A kernel's output of the wrong shape or dtype, or a Python kernel that raised (the exception is the `__cause__`).",
-        NoEngineForm: "An engine with no form for the style.",
-        FormConflict: "A form family without exactly one canonical style.",
-        NoForm: "A style that belongs to no form family.",
-        OutOfImage: "An exact form conversion refused: a row outside the image of the target style.",
-        Malformed: "A spec whose declarations contradict each other.",
+        UnknownCategoryError: "A style in a category neither built in nor registered.",
+        BadNameError: "A category or parameter name outside its pattern.",
+        ArityError: "A custom category's arity outside 2..=5, or a type with the wrong number of endpoints.",
+        BlockNameError: "A custom category whose block is not `<name>s`.",
+        ReservedParamError: "A parameter named like a structural column, a variable or a pair input.",
+        DuplicateParamError: "A parameter declared twice.",
+        DimensionError: "An unparsable or forbidden dimension.",
+        ParseError: "An expression that does not parse, or whose definitions are out of order.",
+        UnboundVariableError: "A name an expression reads that is neither a variable of the category nor a declared numeric parameter.",
+        UnknownFunctionError: "A function an expression calls that the expression language does not have.",
+        FunctionArityError: "A function called with the wrong number of arguments.",
+        PointError: "A point `pk` beyond the category's arity, or any point in a pair style.",
+        CoordinateMismatchError: "A kernel tier the category cannot take.",
+        DerivativeError: "A kernel's derivative against a central difference of its energy, beyond relative 1e-6.",
+        DisagreeError: "An expression against the kernel beside it, beyond relative 1e-10.",
+        AsymmetricError: "A pair energy that changes when its two atoms are exchanged.",
+        SealedError: "A built-in, which cannot be overridden or removed.",
+        ConflictError: "A different registration under a taken name.",
+        NoKernelError: "Nothing can price the style: no kernel and no expression.",
+        NoMixingError: "An unlike pair with no cross row stating a parameter that does not mix.",
+        MissingParamError: "A row (or the style) without a value its kernel needs, and no default.",
+        BadValueError: "A row's (or the style's) value of a declared parameter that is not of its declared kind or domain: text for a number, an array of another rank, text outside its choices.",
+        KernelShapeError: "A kernel's output of the wrong shape or dtype, or a Python kernel that raised (the exception is the `__cause__`).",
+        NoEngineFormError: "An engine with no form for the style.",
+        FormConflictError: "A form family without exactly one canonical style.",
+        NoFormError: "A style that belongs to no form family.",
+        OutOfImageError: "An exact form conversion refused: a row outside the image of the target style.",
+        MalformedError: "A spec whose declarations contradict each other.",
     }
 }
 
@@ -120,31 +121,31 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
     let f = |v: F| Field::Float(v);
     let (err, fields): (PyErr, Vec<(&str, Field)>) = match e {
         IrError::UnknownCategory { category } => (
-            x::UnknownCategory::new_err(message),
+            x::UnknownCategoryError::new_err(message),
             vec![("category", s(category))],
         ),
         IrError::BadName { what, name } => (
-            x::BadName::new_err(message),
+            x::BadNameError::new_err(message),
             vec![("what", s(what)), ("name", s(name))],
         ),
         IrError::Arity { category, arity } => (
-            x::Arity::new_err(message),
+            x::ArityError::new_err(message),
             vec![("category", s(category)), ("arity", n(*arity))],
         ),
         IrError::BlockName { category, block } => (
-            x::BlockName::new_err(message),
+            x::BlockNameError::new_err(message),
             vec![("category", s(category)), ("block", s(block))],
         ),
         IrError::ReservedParam { style, param } => (
-            x::ReservedParam::new_err(message),
+            x::ReservedParamError::new_err(message),
             vec![("style", s(style)), ("param", s(param))],
         ),
         IrError::DuplicateParam { style, param } => (
-            x::DuplicateParam::new_err(message),
+            x::DuplicateParamError::new_err(message),
             vec![("style", s(style)), ("param", s(param))],
         ),
-        IrError::Dim { param, dim, reason } => (
-            x::Dim::new_err(message),
+        IrError::Dimension { param, dim, reason } => (
+            x::DimensionError::new_err(message),
             vec![("param", s(param)), ("dim", s(dim)), ("reason", s(reason))],
         ),
         IrError::Parse {
@@ -152,7 +153,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             at,
             reason,
         } => (
-            x::Parse::new_err(message),
+            x::ParseError::new_err(message),
             vec![
                 ("expression", s(expression)),
                 ("at", n(*at)),
@@ -160,11 +161,11 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             ],
         ),
         IrError::UnboundVariable { style, name } => (
-            x::UnboundVariable::new_err(message),
+            x::UnboundVariableError::new_err(message),
             vec![("style", s(style)), ("name", s(name))],
         ),
         IrError::UnknownFunction { name } => (
-            x::UnknownFunction::new_err(message),
+            x::UnknownFunctionError::new_err(message),
             vec![("name", s(name))],
         ),
         IrError::FunctionArity {
@@ -172,7 +173,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             given,
             expected,
         } => (
-            x::FunctionArity::new_err(message),
+            x::FunctionArityError::new_err(message),
             vec![
                 ("name", s(name)),
                 ("given", n(*given)),
@@ -184,7 +185,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             point,
             arity,
         } => (
-            x::Point::new_err(message),
+            x::PointError::new_err(message),
             vec![
                 ("style", s(style)),
                 ("point", s(point)),
@@ -192,34 +193,35 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             ],
         ),
         IrError::CoordinateMismatch { category, kernel } => (
-            x::CoordinateMismatch::new_err(message),
+            x::CoordinateMismatchError::new_err(message),
             vec![("category", s(category)), ("kernel", s(kernel))],
         ),
         IrError::Derivative { style, at, rel } => (
-            x::Derivative::new_err(message),
+            x::DerivativeError::new_err(message),
             vec![("style", s(style)), ("at", s(at)), ("rel", f(*rel))],
         ),
         IrError::Disagree { style, at, rel } => (
-            x::Disagree::new_err(message),
+            x::DisagreeError::new_err(message),
             vec![("style", s(style)), ("at", s(at)), ("rel", f(*rel))],
         ),
-        IrError::Asymmetric { style } => {
-            (x::Asymmetric::new_err(message), vec![("style", s(style))])
-        }
+        IrError::Asymmetric { style } => (
+            x::AsymmetricError::new_err(message),
+            vec![("style", s(style))],
+        ),
         IrError::Sealed { category, style } => (
-            x::Sealed::new_err(message),
+            x::SealedError::new_err(message),
             vec![("category", s(category)), ("style", s(style))],
         ),
         IrError::Conflict { category, style } => (
-            x::Conflict::new_err(message),
+            x::ConflictError::new_err(message),
             vec![("category", s(category)), ("style", s(style))],
         ),
         IrError::NoKernel { category, style } => (
-            x::NoKernel::new_err(message),
+            x::NoKernelError::new_err(message),
             vec![("category", s(category)), ("style", s(style))],
         ),
         IrError::NoMixing { style, param, pair } => (
-            x::NoMixing::new_err(message),
+            x::NoMixingError::new_err(message),
             vec![("style", s(style)), ("param", s(param)), ("pair", s(pair))],
         ),
         IrError::MissingParam {
@@ -227,7 +229,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             type_,
             param,
         } => (
-            x::MissingParam::new_err(message),
+            x::MissingParamError::new_err(message),
             vec![("style", s(style)), ("type", s(type_)), ("param", s(param))],
         ),
         IrError::BadValue {
@@ -236,7 +238,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             param,
             reason,
         } => (
-            x::BadValue::new_err(message),
+            x::BadValueError::new_err(message),
             vec![
                 ("style", s(style)),
                 ("type", s(type_)),
@@ -245,7 +247,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             ],
         ),
         IrError::KernelShape { style, reason } => (
-            x::KernelShape::new_err(message),
+            x::KernelShapeError::new_err(message),
             vec![("style", s(style)), ("reason", s(reason))],
         ),
         IrError::NoEngineForm {
@@ -254,7 +256,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             style,
             reason,
         } => (
-            x::NoEngineForm::new_err(message),
+            x::NoEngineFormError::new_err(message),
             vec![
                 ("engine", s(engine)),
                 ("category", s(category)),
@@ -263,11 +265,11 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             ],
         ),
         IrError::FormConflict { family, reason } => (
-            x::FormConflict::new_err(message),
+            x::FormConflictError::new_err(message),
             vec![("family", s(family)), ("reason", s(reason))],
         ),
         IrError::NoForm { category, style } => (
-            x::NoForm::new_err(message),
+            x::NoFormError::new_err(message),
             vec![("category", s(category)), ("style", s(style))],
         ),
         IrError::OutOfImage {
@@ -276,7 +278,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             type_,
             reason,
         } => (
-            x::OutOfImage::new_err(message),
+            x::OutOfImageError::new_err(message),
             vec![
                 ("from_", s(from)),
                 ("to", s(to)),
@@ -285,7 +287,7 @@ pub(crate) fn ir_err(e: &IrError, message: String) -> PyErr {
             ],
         ),
         IrError::Malformed { style, reason } => (
-            x::Malformed::new_err(message),
+            x::MalformedError::new_err(message),
             vec![("style", s(style)), ("reason", s(reason))],
         ),
     };
@@ -654,29 +656,29 @@ fn py_kernels() -> &'static PyKernels {
 // Param
 // ---------------------------------------------------------------------------
 
-/// `text` as the [`Dim`] of parameter `param`, refused as `IrError.Dim`.
-fn parse_dim(param: &str, text: &str) -> PyResult<Dim> {
+/// `text` as the [`ParamDimension`] of parameter `param`, refused as `IrError.ParamDimension`.
+fn parse_dim(param: &str, text: &str) -> PyResult<ParamDimension> {
     let dim_err = |reason: String| {
-        refuse(IrError::Dim {
+        refuse(IrError::Dimension {
             param: param.to_owned(),
             dim: text.to_owned(),
             reason,
         })
     };
-    let dim: Dim = text.parse().map_err(dim_err)?;
+    let dim: ParamDimension = text.parse().map_err(dim_err)?;
     dim.check().map_err(dim_err)?;
     Ok(dim)
 }
 
-fn parse_mix(mix: Option<&Bound<'_, PyAny>>) -> PyResult<Mix> {
+fn parse_mix(mix: Option<&Bound<'_, PyAny>>) -> PyResult<ParamCombination> {
     let Some(mix) = mix.filter(|m| !m.is_none()) else {
-        return Ok(Mix::None);
+        return Ok(ParamCombination::None);
     };
     if let Ok(rule) = mix.extract::<String>() {
         return match rule.as_str() {
-            "none" => Ok(Mix::None),
-            "arithmetic" => Ok(Mix::Arithmetic),
-            "geometric" => Ok(Mix::Geometric),
+            "none" => Ok(ParamCombination::None),
+            "arithmetic" => Ok(ParamCombination::Arithmetic),
+            "geometric" => Ok(ParamCombination::Geometric),
             _ => Err(PyValueError::new_err(format!(
                 "mix={rule:?}: one of None, 'arithmetic', 'geometric', \
                  ('lj_epsilon', <sigma>), ('lj_sigma', <epsilon>)"
@@ -690,10 +692,10 @@ fn parse_mix(mix: Option<&Bound<'_, PyAny>>) -> PyResult<Mix> {
         )
     })?;
     match rule.as_str() {
-        "lj_epsilon" => Ok(Mix::LjEpsilon {
+        "lj_epsilon" => Ok(ParamCombination::LjEpsilon {
             sigma: partner.into(),
         }),
-        "lj_sigma" => Ok(Mix::LjSigma {
+        "lj_sigma" => Ok(ParamCombination::LjSigma {
             epsilon: partner.into(),
         }),
         _ => Err(PyValueError::new_err(format!(
@@ -702,30 +704,34 @@ fn parse_mix(mix: Option<&Bound<'_, PyAny>>) -> PyResult<Mix> {
     }
 }
 
-fn mix_to_py<'py>(py: Python<'py>, mix: &Mix) -> PyResult<Bound<'py, PyAny>> {
+fn mix_to_py<'py>(py: Python<'py>, mix: &ParamCombination) -> PyResult<Bound<'py, PyAny>> {
     Ok(match mix {
-        Mix::None => py.None().into_bound(py),
-        Mix::Arithmetic => PyString::new(py, "arithmetic").into_any(),
-        Mix::Geometric => PyString::new(py, "geometric").into_any(),
-        Mix::LjEpsilon { sigma } => ("lj_epsilon", sigma.as_ref()).into_pyobject(py)?.into_any(),
-        Mix::LjSigma { epsilon } => ("lj_sigma", epsilon.as_ref()).into_pyobject(py)?.into_any(),
+        ParamCombination::None => py.None().into_bound(py),
+        ParamCombination::Arithmetic => PyString::new(py, "arithmetic").into_any(),
+        ParamCombination::Geometric => PyString::new(py, "geometric").into_any(),
+        ParamCombination::LjEpsilon { sigma } => {
+            ("lj_epsilon", sigma.as_ref()).into_pyobject(py)?.into_any()
+        }
+        ParamCombination::LjSigma { epsilon } => {
+            ("lj_sigma", epsilon.as_ref()).into_pyobject(py)?.into_any()
+        }
     })
 }
 
-fn value_to_py<'py>(py: Python<'py>, v: &Value) -> PyResult<Bound<'py, PyAny>> {
+fn value_to_py<'py>(py: Python<'py>, v: &ParamValue) -> PyResult<Bound<'py, PyAny>> {
     Ok(match v {
-        Value::Num(x) => x.into_pyobject(py)?.into_any(),
-        Value::Text(t) => PyString::new(py, t).into_any(),
+        ParamValue::Num(x) => x.into_pyobject(py)?.into_any(),
+        ParamValue::Text(t) => PyString::new(py, t).into_any(),
     })
 }
 
-/// A number or a string, as a [`Value`].
-fn value_of(what: &str, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+/// A number or a string, as a [`ParamValue`].
+fn value_of(what: &str, obj: &Bound<'_, PyAny>) -> PyResult<ParamValue> {
     if let Ok(s) = obj.extract::<String>() {
-        return Ok(Value::Text(s.into()));
+        return Ok(ParamValue::Text(s.into()));
     }
     obj.extract::<F>()
-        .map(Value::Num)
+        .map(ParamValue::Num)
         .map_err(|_| PyTypeError::new_err(format!("{what}: a number or a string")))
 }
 
@@ -742,7 +748,7 @@ fn value_of(what: &str, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
 ///     The dimension, as exponents of ``E`` (energy), ``L`` (length), ``A``
 ///     (angle), ``Q`` (charge) and ``M`` (mass): ``"E/L^2"``, ``"E*L^6"``,
 ///     ``"A"`` (an angle value, stored in degrees), ``"E/A^2"`` (per
-///     radian), ``"1"``. Refused at once as :class:`Dim`.
+///     radian), ``"1"``. Refused at once as :class:`DimensionError`.
 /// kind : {"scalar", "array", "text"}, default "scalar"
 ///     One number per row; an ``f64`` array of ``rank`` per row (not an
 ///     expression variable); a string, one of ``choices`` when given.
@@ -762,28 +768,28 @@ fn value_of(what: &str, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
 /// Examples
 /// --------
 /// >>> from molrs.ff import ir
-/// >>> ir.Param("k", "E/L^2")
-/// Param('k', 'E/L^2')
-/// >>> ir.Param("epsilon", "E", mix=("lj_epsilon", "sigma")).mix
+/// >>> ir.ParamSpec("k", "E/L^2")
+/// ParamSpec('k', 'E/L^2')
+/// >>> ir.ParamSpec("epsilon", "E", mix=("lj_epsilon", "sigma")).mix
 /// ('lj_epsilon', 'sigma')
-/// >>> ir.Param("k", "E/L^^2")
+/// >>> ir.ParamSpec("k", "E/L^^2")
 /// Traceback (most recent call last):
 ///     ...
-/// molrs.ff.ir.Dim: parameter `k`: dimension "E/L^^2": ...
+/// molrs.ff.ir.DimensionError: parameter `k`: dimension "E/L^^2": ...
 #[pyclass(
     module = "molrs.ff.ir",
-    name = "Param",
+    name = "ParamSpec",
     frozen,
     eq,
     skip_from_py_object
 )]
 #[derive(Clone, PartialEq)]
-pub struct PyParam {
+pub struct PyParamSpec {
     inner: ParamSpec,
 }
 
 #[pymethods]
-impl PyParam {
+impl PyParamSpec {
     #[new]
     #[pyo3(signature = (name, dim="1", *, kind="scalar", rank=None, choices=None, default=None, mix=None, indexed=false))]
     #[allow(clippy::too_many_arguments)]
@@ -798,7 +804,7 @@ impl PyParam {
         indexed: bool,
     ) -> PyResult<Self> {
         let dim = parse_dim(&name, dim)?;
-        let bad = |why: String| PyValueError::new_err(format!("Param {name:?}: {why}"));
+        let bad = |why: String| PyValueError::new_err(format!("ParamSpec {name:?}: {why}"));
         let kind = match (kind, rank, &choices) {
             ("scalar", None, None) => ParamKind::Scalar,
             ("array", Some(rank @ 1..), None) => ParamKind::Array { rank },
@@ -824,8 +830,8 @@ impl PyParam {
             Some(d) => Some(value_of("default", &d)?),
         };
         match (&kind, &default) {
-            (_, None) | (ParamKind::Scalar, Some(Value::Num(_))) => {}
-            (ParamKind::Text { choices }, Some(Value::Text(t))) => {
+            (_, None) | (ParamKind::Scalar, Some(ParamValue::Num(_))) => {}
+            (ParamKind::Text { choices }, Some(ParamValue::Text(t))) => {
                 if choices.as_ref().is_some_and(|c| !c.contains(t)) {
                     return Err(bad(format!("default {t:?} is not one of its choices")));
                 }
@@ -899,7 +905,7 @@ impl PyParam {
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let mut out = format!("Param({:?}, {:?}", self.inner.name, self.dim());
+        let mut out = format!("ParamSpec({:?}, {:?}", self.inner.name, self.dim());
         match &self.inner.kind {
             ParamKind::Scalar => {}
             ParamKind::Array { rank } => out.push_str(&format!(", kind='array', rank={rank}")),
@@ -913,7 +919,7 @@ impl PyParam {
         if let Some(d) = &self.inner.default {
             out.push_str(&format!(", default={}", value_to_py(py, d)?.repr()?));
         }
-        if self.inner.mix != Mix::None {
+        if self.inner.mix != ParamCombination::None {
             out.push_str(&format!(
                 ", mix={}",
                 mix_to_py(py, &self.inner.mix)?.repr()?
@@ -927,7 +933,7 @@ impl PyParam {
     }
 }
 
-/// `params=`: a list of :class:`Param`, or a ``{name: dim}`` dict of
+/// `params=`: a list of :class:`ParamSpec`, or a ``{name: dim}`` dict of
 /// required scalars.
 fn parse_params(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ParamSpec>> {
     let Some(arg) = arg.filter(|a| !a.is_none()) else {
@@ -950,11 +956,11 @@ fn parse_params(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ParamSpec>> {
     arg.try_iter()?
         .map(|item| {
             let item = item?;
-            item.cast::<PyParam>()
+            item.cast::<PyParamSpec>()
                 .map(|p| p.get().inner.clone())
                 .map_err(|_| {
                     PyTypeError::new_err(format!(
-                        "params: a list of molrs.ff.ir.Param or a {{name: dim}} dict, got {}",
+                        "params: a list of molrs.ff.ir.ParamSpec or a {{name: dim}} dict, got {}",
                         describe(&item)
                     ))
                 })
@@ -963,7 +969,7 @@ fn parse_params(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ParamSpec>> {
 }
 
 /// `samples=`: dicts ``{"q": (lo, hi), <param>: value, …}``.
-fn parse_samples(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Sample>> {
+fn parse_samples(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<ConformanceSample>> {
     let Some(arg) = arg.filter(|a| !a.is_none()) else {
         return Ok(Vec::new());
     };
@@ -987,7 +993,7 @@ fn parse_samples(arg: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<Sample>> {
                 }
             }
             let q = q.ok_or_else(|| PyValueError::new_err("samples: every sample needs 'q'"))?;
-            Ok(Sample { params, q })
+            Ok(ConformanceSample { params, q })
         })
         .collect()
 }
@@ -1149,10 +1155,10 @@ fn python_kernel(
 ///     ``pair``, ``cmap``, …) or one from :func:`register_category`.
 /// name : str
 ///     The style name.
-/// params : list of Param or dict of {name: dim}
+/// params : list of ParamSpec or dict of {name: dim}
 ///     The per-type parameters, **ordered** (the LAMMPS ``*_coeff`` order
 ///     when a LAMMPS style of the name exists).
-/// style_params : list of Param or dict of {name: dim}
+/// style_params : list of ParamSpec or dict of {name: dim}
 ///     Style-level parameters; ``cutoff`` (``L``), ``mixing`` and
 ///     ``special`` (text) keep their reserved meanings.
 /// expression : str, optional
@@ -1167,8 +1173,8 @@ fn python_kernel(
 ///     parameter an ``ndarray[n]``. Compound (``compound=True`` or a
 ///     ``"compound"`` category): ``kernel(x, **params) -> (e, grad)``, ``x``
 ///     and ``grad`` ``ndarray[n, arity, 3]``. Outputs are float64 arrays of
-///     exactly those shapes (else :class:`KernelShape`); an exception it
-///     raises is re-raised as :class:`KernelShape` with the exception as
+///     exactly those shapes (else :class:`KernelShapeError`); an exception it
+///     raises is re-raised as :class:`KernelShapeError` with the exception as
 ///     ``__cause__``. A kernel must not call ``molrs.ff.ir`` itself.
 /// compound : bool, default False
 ///     ``kernel`` takes positions, not the category's coordinate.
@@ -1181,29 +1187,29 @@ fn python_kernel(
 ///     style's first compile.
 /// replace : bool, default False
 ///     Replace a style registered at run time under this name (a built-in
-///     is :class:`Sealed` regardless). Without it, a different registration
-///     under a taken name is :class:`Conflict`, an identical one a no-op.
+///     is :class:`SealedError` regardless). Without it, a different registration
+///     under a taken name is :class:`ConflictError`, an identical one a no-op.
 /// lammps : {"positional", "positional:<name>"}, optional
 ///     The style's LAMMPS form: ``"positional"`` writes and reads it as
 ///     ``<category>_style <name>`` with ``params`` in order on the
 ///     ``*_coeff`` line, each converted by its dimension (``pair_style
 ///     <name> <cutoff>``, ``pair_modify mix <mixing>``); ``"positional:fene"``
 ///     under the LAMMPS style ``fene``. ``None`` (the default): LAMMPS
-///     refuses it by name (:class:`NoEngineForm`; the installed LAMMPS has
+///     refuses it by name (:class:`NoEngineFormError`; the installed LAMMPS has
 ///     no LEPTON package for an expression). A positional form the spec
 ///     cannot have (a Text, Array or indexed parameter, a style parameter
-///     other than ``cutoff`` / ``mixing``) is :class:`NoEngineForm`.
+///     other than ``cutoff`` / ``mixing``) is :class:`NoEngineFormError`.
 ///
 /// Raises
 /// ------
 /// IrError
-///     The subclass naming what does not conform: :class:`UnknownCategory`,
-///     :class:`BadName`, :class:`ReservedParam`, :class:`DuplicateParam`,
-///     :class:`Dim`, :class:`Parse`, :class:`UnboundVariable`,
-///     :class:`UnknownFunction`, :class:`FunctionArity`, :class:`Point`,
-///     :class:`CoordinateMismatch`, :class:`Derivative`, :class:`Disagree`,
-///     :class:`Asymmetric`, :class:`KernelShape`, :class:`Sealed`,
-///     :class:`Conflict`, :class:`NoKernel`, :class:`Malformed`.
+///     The subclass naming what does not conform: :class:`UnknownCategoryError`,
+///     :class:`BadNameError`, :class:`ReservedParamError`, :class:`DuplicateParamError`,
+///     :class:`DimensionError`, :class:`ParseError`, :class:`UnboundVariableError`,
+///     :class:`UnknownFunctionError`, :class:`FunctionArityError`, :class:`PointError`,
+///     :class:`CoordinateMismatchError`, :class:`DerivativeError`, :class:`DisagreeError`,
+///     :class:`AsymmetricError`, :class:`KernelShapeError`, :class:`SealedError`,
+///     :class:`ConflictError`, :class:`NoKernelError`, :class:`MalformedError`.
 ///
 /// Examples
 /// --------
@@ -1211,8 +1217,8 @@ fn python_kernel(
 ///
 /// >>> ir.register_style(
 /// ...     "bond", "fene",
-/// ...     params=[ir.Param("k", "E/L^2"), ir.Param("r0", "L"),
-/// ...             ir.Param("epsilon", "E"), ir.Param("sigma", "L")],
+/// ...     params=[ir.ParamSpec("k", "E/L^2"), ir.ParamSpec("r0", "L"),
+/// ...             ir.ParamSpec("epsilon", "E"), ir.ParamSpec("sigma", "L")],
 /// ...     expression="-0.5*k*r0^2*log(1-(r/r0)^2)"
 /// ...                "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)",
 /// ... )
@@ -1250,7 +1256,7 @@ fn register_style(
         }
     };
     let compound = compound
-        || rir::with_global(|r| {
+        || rir::with_global_registry(|r| {
             r.category(&category)
                 .is_some_and(|c| c.coordinate == Coordinate::Compound)
         });
@@ -1262,7 +1268,7 @@ fn register_style(
     let key = (category.clone(), name.clone());
     // `replace=True` takes a run-time style out first, and puts it back if
     // the new one is refused.
-    let previous = rir::with_global(|r| {
+    let previous = rir::with_global_registry(|r| {
         r.style(&category, &name)
             .filter(|_| !r.is_sealed(&category, &name))
             .map(|(s, k)| (s.clone(), k.cloned()))
@@ -1307,12 +1313,12 @@ fn register_style(
 ///
 /// Raises
 /// ------
-/// Sealed
+/// SealedError
 ///     A built-in style.
-/// NoKernel
+/// NoKernelError
 ///     No style of that name is registered.
 #[pyfunction]
-fn unregister(category: &str, name: &str) -> PyResult<()> {
+fn unregister_style(category: &str, name: &str) -> PyResult<()> {
     rir::unregister_style(category, name).map_err(refuse)?;
     py_kernels()
         .lock()
@@ -1326,14 +1332,14 @@ fn unregister(category: &str, name: &str) -> PyResult<()> {
 // ---------------------------------------------------------------------------
 
 /// One category of the force-field IR, as :func:`categories` lists it.
-#[pyclass(module = "molrs.ff.ir", name = "CategoryInfo", frozen)]
-pub struct PyCategoryInfo {
+#[pyclass(module = "molrs.ff.ir", name = "CategorySpec", frozen)]
+pub struct PyCategorySpec {
     spec: CategorySpec,
     builtin: bool,
 }
 
 #[pymethods]
-impl PyCategoryInfo {
+impl PyCategorySpec {
     #[getter]
     fn name(&self) -> &str {
         &self.spec.name
@@ -1375,7 +1381,7 @@ impl PyCategoryInfo {
 
     fn __repr__(&self) -> String {
         format!(
-            "CategoryInfo('{}', arity={}, block='{}', coordinate='{}')",
+            "CategorySpec('{}', arity={}, block='{}', coordinate='{}')",
             self.spec.name,
             self.arity(),
             self.spec.block,
@@ -1385,14 +1391,14 @@ impl PyCategoryInfo {
 }
 
 /// One style of the force-field IR, as :func:`styles` lists it.
-#[pyclass(module = "molrs.ff.ir", name = "StyleInfo", frozen)]
-pub struct PyStyleInfo {
+#[pyclass(module = "molrs.ff.ir", name = "StyleSpec", frozen)]
+pub struct PyStyleSpec {
     spec: StyleSpec,
     kernel: Option<&'static str>,
     builtin: bool,
 }
 
-impl PyStyleInfo {
+impl PyStyleSpec {
     fn of(r: &Registry, spec: &StyleSpec, kernel: Option<&Kernel>) -> Self {
         let tier = match kernel {
             Some(Kernel::Expression(_)) => Some("expression"),
@@ -1410,7 +1416,7 @@ impl PyStyleInfo {
 }
 
 #[pymethods]
-impl PyStyleInfo {
+impl PyStyleSpec {
     #[getter]
     fn category(&self) -> &str {
         &self.spec.category
@@ -1423,20 +1429,20 @@ impl PyStyleInfo {
 
     /// The per-type parameters, in order.
     #[getter]
-    fn params(&self) -> Vec<PyParam> {
+    fn params(&self) -> Vec<PyParamSpec> {
         self.spec
             .params
             .iter()
-            .map(|p| PyParam { inner: p.clone() })
+            .map(|p| PyParamSpec { inner: p.clone() })
             .collect()
     }
 
     #[getter]
-    fn style_params(&self) -> Vec<PyParam> {
+    fn style_params(&self) -> Vec<PyParamSpec> {
         self.spec
             .style_params
             .iter()
-            .map(|p| PyParam { inner: p.clone() })
+            .map(|p| PyParamSpec { inner: p.clone() })
             .collect()
     }
 
@@ -1487,7 +1493,7 @@ impl PyStyleInfo {
 
     fn __repr__(&self) -> String {
         format!(
-            "StyleInfo('{}', '{}', kernel={})",
+            "StyleSpec('{}', '{}', kernel={})",
             self.spec.category,
             self.spec.name,
             self.kernel.map_or("None".into(), |k| format!("'{k}'"))
@@ -1504,24 +1510,24 @@ impl PyStyleInfo {
 /// {'constructor'}
 #[pyfunction]
 #[pyo3(signature = (category=None))]
-fn styles(category: Option<&str>) -> Vec<PyStyleInfo> {
-    rir::with_global(|r| {
+fn styles(category: Option<&str>) -> Vec<PyStyleSpec> {
+    rir::with_global_registry(|r| {
         r.styles(category)
-            .map(|(s, k)| PyStyleInfo::of(r, s, k))
+            .map(|(s, k)| PyStyleSpec::of(r, s, k))
             .collect()
     })
 }
 
 /// Every registered category, sorted by name.
 #[pyfunction]
-fn categories() -> Vec<PyCategoryInfo> {
+fn categories() -> Vec<PyCategorySpec> {
     let builtin: Vec<String> = rir::builtin_categories()
         .into_iter()
         .map(|c| c.name.into_owned())
         .collect();
-    rir::with_global(|r| {
+    rir::with_global_registry(|r| {
         r.categories()
-            .map(|c| PyCategoryInfo {
+            .map(|c| PyCategorySpec {
                 spec: c.clone(),
                 builtin: builtin.iter().any(|b| *b == c.name),
             })
@@ -1695,11 +1701,11 @@ fn inputs(
             continue;
         };
         match default {
-            Value::Num(v) => out.nums.push((p.name.to_string(), vec![*v; n])),
-            Value::Text(t) if style_level => {
+            ParamValue::Num(v) => out.nums.push((p.name.to_string(), vec![*v; n])),
+            ParamValue::Text(t) if style_level => {
                 out.style_texts.push((p.name.to_string(), t.to_string()))
             }
-            Value::Text(t) => out.texts.push((p.name.to_string(), vec![t.to_string(); n])),
+            ParamValue::Text(t) => out.texts.push((p.name.to_string(), vec![t.to_string(); n])),
         }
     }
     Ok(out)
@@ -1734,9 +1740,9 @@ fn inputs(
 ///
 /// Raises
 /// ------
-/// MissingParam
+/// MissingParamError
 ///     A parameter the form reads, not given and with no default.
-/// KernelShape
+/// KernelShapeError
 ///     A Python kernel that raised or returned the wrong shape.
 /// TypeError
 ///     An undeclared parameter, or ``q``/``x`` not the form's input.
@@ -1757,7 +1763,7 @@ fn evaluate<'py>(
     params: Option<&Bound<'py, PyDict>>,
 ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
     let who = format!("{category} `{name}`");
-    let (cat, spec, kernel, compiler) = rir::with_global(|r| {
+    let (cat, spec, kernel, compiler) = rir::with_global_registry(|r| {
         let cat = r.category(category).cloned().ok_or_else(|| {
             refuse(IrError::UnknownCategory {
                 category: category.to_owned(),
@@ -1905,12 +1911,12 @@ fn require(spec: &StyleSpec, reads: Vec<String>, inp: &mut Inputs, pair: bool) -
 /// Register the classes and functions of `molrs.ff.ir` on `m`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(m)?;
-    m.add_class::<PyParam>()?;
-    m.add_class::<PyStyleInfo>()?;
-    m.add_class::<PyCategoryInfo>()?;
+    m.add_class::<PyParamSpec>()?;
+    m.add_class::<PyStyleSpec>()?;
+    m.add_class::<PyCategorySpec>()?;
     m.add_function(wrap_pyfunction!(register_category, m)?)?;
     m.add_function(wrap_pyfunction!(register_style, m)?)?;
-    m.add_function(wrap_pyfunction!(unregister, m)?)?;
+    m.add_function(wrap_pyfunction!(unregister_style, m)?)?;
     m.add_function(wrap_pyfunction!(styles, m)?)?;
     m.add_function(wrap_pyfunction!(categories, m)?)?;
     m.add_function(wrap_pyfunction!(evaluate, m)?)?;

@@ -7,8 +7,11 @@
 use std::sync::Arc;
 
 use crate::ff::forcefield::Params;
-use crate::ff::ir::expr::{self, Binding, Compiled, ExprError, Geometry};
-use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, Mix, ParamKind, ParamSpec, StyleSpec};
+use crate::ff::ir::expression::{self, Binding, Compiled, ExpressionError, Geometry};
+use crate::ff::ir::{
+    CategorySpec, Coordinate, IrError, ParamCombination, ParamDimension, ParamKind, ParamSpec,
+    StyleSpec,
+};
 use crate::ff::ir::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
@@ -19,7 +22,7 @@ use molrs::op::types::F;
 /// one is refused at its first compile, [`IrError::MissingParam`]).
 const INDEXED_MEMBERS: usize = 16;
 
-/// A compiled [`expr::Compiled`] as the registry's [`ExpressionKernel`].
+/// A compiled [`expression::Compiled`] as the registry's [`ExpressionKernel`].
 #[derive(Clone, Debug)]
 pub struct CompiledExpression(pub Arc<Compiled>);
 
@@ -43,7 +46,7 @@ impl ExpressionKernel for CompiledExpression {
 
 /// The columns a compiled expression reads, by spelling.
 fn spellings(c: &Compiled) -> Vec<String> {
-    c.inputs().iter().map(expr::Input::spelling).collect()
+    c.inputs().iter().map(expression::Input::spelling).collect()
 }
 
 /// An expression of the category's coordinate (one dual per term).
@@ -121,27 +124,27 @@ fn numeric(params: &[ParamSpec]) -> Vec<String> {
     out
 }
 
-/// An [`ExprError`] as the [`IrError`] the protocol names for it.
-fn ir_error(spec: &StyleSpec, source: &str, e: ExprError) -> IrError {
+/// An [`ExpressionError`] as the [`IrError`] the protocol names for it.
+fn ir_error(spec: &StyleSpec, source: &str, e: ExpressionError) -> IrError {
     let style = spec.name.to_string();
-    let parse = |at: usize, e: &ExprError| IrError::Parse {
+    let parse = |at: usize, e: &ExpressionError| IrError::Parse {
         expression: source.to_owned(),
         at,
         reason: e.to_string(),
     };
     match e {
-        ExprError::UnexpectedChar { pos, .. }
-        | ExprError::UnexpectedToken { pos, .. }
-        | ExprError::BadDefinition { pos, .. } => parse(pos, &e),
-        ExprError::UnexpectedEnd { .. }
-        | ExprError::EmptyExpression
-        | ExprError::CyclicDefinition { .. }
-        | ExprError::DefinitionOrder { .. }
-        | ExprError::DuplicateDefinition { .. }
-        | ExprError::DefinitionShadows { .. }
-        | ExprError::PointAsNumber { .. } => parse(0, &e),
-        ExprError::UnknownFunction { name } => IrError::UnknownFunction { name },
-        ExprError::FunctionArity {
+        ExpressionError::UnexpectedChar { pos, .. }
+        | ExpressionError::UnexpectedToken { pos, .. }
+        | ExpressionError::BadDefinition { pos, .. } => parse(pos, &e),
+        ExpressionError::UnexpectedEnd { .. }
+        | ExpressionError::EmptyExpression
+        | ExpressionError::CyclicDefinition { .. }
+        | ExpressionError::DefinitionOrder { .. }
+        | ExpressionError::DuplicateDefinition { .. }
+        | ExpressionError::DefinitionShadows { .. }
+        | ExpressionError::PointAsNumber { .. } => parse(0, &e),
+        ExpressionError::UnknownFunction { name } => IrError::UnknownFunction { name },
+        ExpressionError::FunctionArity {
             name,
             expected,
             found,
@@ -150,17 +153,19 @@ fn ir_error(spec: &StyleSpec, source: &str, e: ExprError) -> IrError {
             given: found,
             expected,
         },
-        ExprError::UndeclaredVariable { name, .. } => IrError::UnboundVariable { style, name },
-        ExprError::NotAPoint { found, points, .. } => IrError::Point {
+        ExpressionError::UndeclaredVariable { name, .. } => {
+            IrError::UnboundVariable { style, name }
+        }
+        ExpressionError::NotAPoint { found, points, .. } => IrError::Point {
             style,
             point: found,
             arity: points,
         },
-        ExprError::BadBinding { reason } => IrError::ReservedParam {
+        ExpressionError::BadBinding { reason } => IrError::ReservedParam {
             style,
             param: reason,
         },
-        ExprError::MissingInput { input } => IrError::KernelShape {
+        ExpressionError::MissingInput { input } => IrError::KernelShape {
             style,
             reason: format!("no column for the expression's input `{input}`"),
         },
@@ -185,7 +190,7 @@ pub fn compile_expression(
     let params: Vec<&str> = params.iter().map(String::as_str).collect();
     let style_params: Vec<&str> = style_params.iter().map(String::as_str).collect();
     let binding = Binding::new(geometry(category)?, &params, &style_params);
-    let compiled = expr::compile(source, &binding).map_err(|e| ir_error(spec, source, e))?;
+    let compiled = expression::compile(source, &binding).map_err(|e| ir_error(spec, source, e))?;
     Ok(Arc::new(CompiledExpression(Arc::new(compiled))))
 }
 
@@ -215,27 +220,27 @@ pub(crate) fn fallback_spec(
         }
     }
     let pair = category.is_pair_driven();
-    let lj = |e: &str, s: &str, p: &str| -> Mix {
+    let lj = |e: &str, s: &str, p: &str| -> ParamCombination {
         let has = |n: &str| per_type.iter().any(|q| q == n);
         match p {
-            _ if !pair || !(has(e) && has(s)) => Mix::None,
-            x if x == e => Mix::LjEpsilon {
+            _ if !pair || !(has(e) && has(s)) => ParamCombination::None,
+            x if x == e => ParamCombination::LjEpsilon {
                 sigma: s.to_owned().into(),
             },
-            x if x == s => Mix::LjSigma {
+            x if x == s => ParamCombination::LjSigma {
                 epsilon: e.to_owned().into(),
             },
-            _ => Mix::None,
+            _ => ParamCombination::None,
         }
     };
     let params = per_type
         .iter()
         .map(|p| {
             let mix = match lj("epsilon", "sigma", p) {
-                Mix::None => lj("epsilon14", "sigma14", p),
+                ParamCombination::None => lj("epsilon14", "sigma14", p),
                 m => m,
             };
-            ParamSpec::new(p.clone(), Dim::NONE).mix(mix)
+            ParamSpec::new(p.clone(), ParamDimension::NONE).mix(mix)
         })
         .collect();
     let mut style_names: Vec<&str> = style
@@ -249,7 +254,7 @@ pub(crate) fn fallback_spec(
         .style_params(
             style_names
                 .into_iter()
-                .map(|k| ParamSpec::new(k.to_owned(), Dim::NONE))
+                .map(|k| ParamSpec::new(k.to_owned(), ParamDimension::NONE))
                 .collect(),
         )
         .expression(expression);

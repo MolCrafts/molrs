@@ -93,7 +93,7 @@ impl ExplicitTerms {
 
     /// The kernel, against the process-wide registry.
     pub fn compile(&self) -> Result<Potentials, CompileError> {
-        let category = ir::with_global(|r| r.category(&self.category).cloned());
+        let category = ir::with_global_registry(|r| r.category(&self.category).cloned());
         self.build(category, None)
     }
 

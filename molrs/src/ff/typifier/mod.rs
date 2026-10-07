@@ -140,7 +140,7 @@ pub struct Match {
 pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
     // `Some(_)` when registered categories own the block: the relation
     // among them, if any.
-    let owned = crate::ff::ir::with_global(|r| {
+    let owned = crate::ff::ir::with_global_registry(|r| {
         let owners: Vec<_> = r.categories().filter(|c| c.block == kind).collect();
         (!owners.is_empty()).then(|| {
             owners

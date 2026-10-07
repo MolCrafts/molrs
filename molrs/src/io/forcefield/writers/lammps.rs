@@ -61,7 +61,7 @@
 //! force field declared in those units ([`ForceField::units`]) is written
 //! number for number; one declared in another LAMMPS unit style (`real`,
 //! `metal`, `lj`) has every parameter converted by its dimension
-//! ([`Dim`](crate::ff::ir::Dim), [`UnitScale`]) through [`LammpsFfUnits`]
+//! ([`ParamDimension`](crate::ff::ir::ParamDimension), [`UnitScale`]) through [`LammpsFfUnits`]
 //! (`from → lj hub → to`) — never ad-hoc eV/kcal factors, never per style.
 //! Angle values need no conversion in any unit style.
 //!
@@ -117,8 +117,8 @@ use crate::ff::forcefield::{
     StyleDefs,
 };
 use crate::ff::ir::{
-    Engine, LammpsCodec, LammpsCoeffs, Mix, Registry, RegistryRef, StyleSpec, Token, UnitScale,
-    with_global,
+    Engine, LammpsCodec, LammpsCoeffs, ParamCombination, Registry, RegistryRef, StyleSpec, Token,
+    UnitScale, with_global_registry,
 };
 use crate::io::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::io::forcefield::readers::lammps::{
@@ -252,7 +252,7 @@ pub fn lammps_coeff_values(
     units: &str,
 ) -> Result<Vec<f64>, WriteError> {
     parse_style(units)?;
-    with_global(|reg| {
+    with_global_registry(|reg| {
         let (spec, codec) = codec_of(reg, category, style)?;
         Ok(codec
             .write(spec, params, &UnitScale::IDENTITY)?
@@ -921,7 +921,7 @@ impl<'a> LammpsFfWriter<'a> {
                 let t = 1 - c;
                 let (spec, _) = codecs[t];
                 let mixes = spec.style_param("mixing").is_some()
-                    || spec.params.iter().any(|p| p.mix != Mix::None);
+                    || spec.params.iter().any(|p| p.mix != ParamCombination::None);
                 let n = self.block_labels("atoms").len();
                 let unlike = rows.iter().filter(|r| r.ids.0 != r.ids.1).count();
                 if mixes && unlike != n * (n - 1) / 2 {

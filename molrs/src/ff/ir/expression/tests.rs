@@ -491,7 +491,7 @@ fn batch_columns_and_broadcast() {
     let err = c
         .gather(|i| (i.spelling() == "k").then_some(&k[..]))
         .unwrap_err();
-    assert_eq!(err, ExprError::MissingInput { input: "r0".into() });
+    assert_eq!(err, ExpressionError::MissingInput { input: "r0".into() });
 }
 
 fn self_param(name: &str, atom: u8) -> Input {
@@ -544,7 +544,9 @@ fn pair_self_rows_bind_x1_x2_and_bare_names_the_pair_value() {
         &Binding::new(Geometry::Bond, &["epsilon"], &[]),
     )
     .unwrap_err();
-    assert!(matches!(err, ExprError::UndeclaredVariable { ref name, .. } if name == "epsilon1"));
+    assert!(
+        matches!(err, ExpressionError::UndeclaredVariable { ref name, .. } if name == "epsilon1")
+    );
 }
 
 /// The pair-symmetry check the protocol asks for (D6, 1e-12): evaluate on
@@ -600,7 +602,7 @@ fn definitions_follow_lepton_order() {
     // One to its left is refused, naming both.
     assert_eq!(
         compile("k*x; dr=r-r0; x=dr*dr", &b).unwrap_err(),
-        ExprError::DefinitionOrder {
+        ExpressionError::DefinitionOrder {
             name: "dr".into(),
             used_in: "x".into()
         }
@@ -610,7 +612,7 @@ fn definitions_follow_lepton_order() {
     assert_eq!(u.inputs(), &[Input::Param("k".into())]);
     // ...but is still checked.
     let err = compile("k*r; unused=nope", &b).unwrap_err();
-    assert!(matches!(err, ExprError::UndeclaredVariable { ref name, .. } if name == "nope"));
+    assert!(matches!(err, ExpressionError::UndeclaredVariable { ref name, .. } if name == "nope"));
     // A definition that is a constant folds (and feeds an exponent).
     let f = compile("r^p; p=1/6", &Binding::new(Geometry::Bond, &[], &[])).unwrap();
     let (e, d) = f.eval_scalar_one(2.0, &[]);
@@ -809,7 +811,7 @@ fn points_beyond_the_coordinate_make_a_compound_form() {
     let err = compile("distance(p1,p2)", &Binding::new(Geometry::Pair, &[], &[])).unwrap_err();
     assert_eq!(
         err,
-        ExprError::NotAPoint {
+        ExpressionError::NotAPoint {
             function: "distance".into(),
             found: "p1".into(),
             points: 0
@@ -1079,7 +1081,7 @@ fn builtin_expressions_agree_with_native_kernels() {
 
 #[test]
 fn parse_errors_are_named() {
-    use ExprError::*;
+    use ExpressionError::*;
     const OPERAND: &str = "a number, a name, `(` or `-`";
     const AFTER_SEMI: &str = "a definition `name=formula` after `;`";
     let token = |pos, found: &str, expected| UnexpectedToken {
@@ -1087,7 +1089,7 @@ fn parse_errors_are_named() {
         found: found.into(),
         expected,
     };
-    let cases: Vec<(&str, ExprError)> = vec![
+    let cases: Vec<(&str, ExpressionError)> = vec![
         ("", EmptyExpression),
         ("  ; a=1", EmptyExpression),
         ("k*(r-r0", UnexpectedEnd { expected: "`)`" }),
@@ -1151,7 +1153,7 @@ fn parse_errors_are_named() {
 
 #[test]
 fn compile_errors_are_named() {
-    use ExprError::*;
+    use ExpressionError::*;
     let bond = Binding::new(Geometry::Bond, &["k", "r0"], &[]);
     let quad = Binding::new(Geometry::Compound { arity: 4 }, &["k"], &[]);
     let err = |src: &str, b: &Binding| compile(src, b).unwrap_err();
@@ -1317,7 +1319,7 @@ fn named_columns_and_variables() {
             &mut d[..1],
         )
         .unwrap_err();
-    assert_eq!(err, ExprError::MissingInput { input: "q2".into() });
+    assert_eq!(err, ExpressionError::MissingInput { input: "q2".into() });
 
     // Points are no variables; the geometric variable is.
     let u = compile(

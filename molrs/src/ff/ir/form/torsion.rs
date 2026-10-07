@@ -92,7 +92,7 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign};
 
 use super::Params;
-use crate::ff::ir::{FormCodec, Refusal, TypeParams};
+use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
 
 /// The constant term's rounding allowance, relative to the series' scale
 /// ([`FourierSeries::scale`]): `a₀` is a sum of products, so a projection
@@ -338,9 +338,9 @@ impl fmt::Display for TorsionRefusal {
 
 impl std::error::Error for TorsionRefusal {}
 
-impl From<TorsionRefusal> for Refusal {
+impl From<TorsionRefusal> for FormRefusal {
     fn from(e: TorsionRefusal) -> Self {
-        Refusal::new(e.to_string())
+        FormRefusal::new(e.to_string())
     }
 }
 
@@ -1317,7 +1317,7 @@ pub fn torsion_series(
     row: &Params,
 ) -> std::result::Result<FourierSeries, String> {
     let what = format!("{category} {style}");
-    let canonical = crate::ff::ir::with_global(|r| {
+    let canonical = crate::ff::ir::with_global_registry(|r| {
         let codec = r
             .form(category, style)
             .filter(|c| c.family == FAMILY)

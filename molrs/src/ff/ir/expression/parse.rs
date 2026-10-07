@@ -25,7 +25,7 @@
 //! number of arguments, naming the function.
 
 use super::ast::{BinOp, Definition, Expr, NEG_PRECEDENCE, Parsed};
-use super::error::ExprError;
+use super::error::ExpressionError;
 use molrs::op::types::F;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,7 +55,7 @@ impl Tok {
     }
 }
 
-fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ExprError> {
+fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ExpressionError> {
     let bytes = src.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -112,7 +112,7 @@ fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ExprError> {
                     }
                 }
                 if digits == 0 {
-                    return Err(ExprError::UnexpectedChar {
+                    return Err(ExpressionError::UnexpectedChar {
                         pos: start,
                         ch: '.',
                     });
@@ -132,7 +132,7 @@ fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ExprError> {
                     }
                 }
                 let text = &src[start..i];
-                let v: F = text.parse().map_err(|_| ExprError::UnexpectedToken {
+                let v: F = text.parse().map_err(|_| ExpressionError::UnexpectedToken {
                     pos: start,
                     found: text.to_owned(),
                     expected: "a number",
@@ -147,7 +147,7 @@ fn lex(src: &str) -> Result<Vec<(usize, Tok)>, ExprError> {
             }
             _ => {
                 let ch = src[start..].chars().next().unwrap_or('?');
-                return Err(ExprError::UnexpectedChar { pos: start, ch });
+                return Err(ExpressionError::UnexpectedChar { pos: start, ch });
             }
         }
     }
@@ -164,18 +164,18 @@ impl Parser<'_> {
         self.toks.get(self.pos).map(|(_, t)| t)
     }
 
-    fn unexpected(&self, expected: &'static str) -> ExprError {
+    fn unexpected(&self, expected: &'static str) -> ExpressionError {
         match self.toks.get(self.pos) {
-            Some((p, t)) => ExprError::UnexpectedToken {
+            Some((p, t)) => ExpressionError::UnexpectedToken {
                 pos: *p,
                 found: t.text(),
                 expected,
             },
-            None => ExprError::UnexpectedEnd { expected },
+            None => ExpressionError::UnexpectedEnd { expected },
         }
     }
 
-    fn expr(&mut self, min_prec: u8) -> Result<Expr, ExprError> {
+    fn expr(&mut self, min_prec: u8) -> Result<Expr, ExpressionError> {
         let mut lhs = self.prefix()?;
         while let Some(Tok::Op(op)) = self.peek() {
             let op = *op;
@@ -195,10 +195,10 @@ impl Parser<'_> {
         Ok(lhs)
     }
 
-    fn prefix(&mut self) -> Result<Expr, ExprError> {
+    fn prefix(&mut self) -> Result<Expr, ExpressionError> {
         const OPERAND: &str = "a number, a name, `(` or `-`";
         let Some((_, tok)) = self.toks.get(self.pos) else {
-            return Err(ExprError::UnexpectedEnd { expected: OPERAND });
+            return Err(ExpressionError::UnexpectedEnd { expected: OPERAND });
         };
         match tok {
             Tok::Op(BinOp::Sub) => {
@@ -246,7 +246,7 @@ impl Parser<'_> {
     }
 
     /// A whole segment as one expression: anything left over is an error.
-    fn segment(&mut self) -> Result<Expr, ExprError> {
+    fn segment(&mut self) -> Result<Expr, ExpressionError> {
         let e = self.expr(0)?;
         if self.pos < self.toks.len() {
             return Err(self.unexpected("an operator or the end"));
@@ -256,12 +256,12 @@ impl Parser<'_> {
 }
 
 /// Parse an expression. The result keeps `src` byte for byte.
-pub fn parse(src: &str) -> Result<Parsed, ExprError> {
+pub fn parse(src: &str) -> Result<Parsed, ExpressionError> {
     let toks = lex(src)?;
     let mut segments = toks.split(|(_, t)| *t == Tok::Semi);
     let main_toks = segments.next().unwrap_or(&[]);
     if main_toks.is_empty() {
-        return Err(ExprError::EmptyExpression);
+        return Err(ExpressionError::EmptyExpression);
     }
     let main = Parser {
         toks: main_toks,
@@ -272,7 +272,7 @@ pub fn parse(src: &str) -> Result<Parsed, ExprError> {
     let mut defs = Vec::new();
     for seg in segments {
         if seg.is_empty() {
-            return Err(ExprError::UnexpectedEnd {
+            return Err(ExpressionError::UnexpectedEnd {
                 expected: "a definition `name=formula` after `;`",
             });
         }
@@ -284,7 +284,7 @@ pub fn parse(src: &str) -> Result<Parsed, ExprError> {
                     .get(1)
                     .map(|(p, t)| p + t.text().len())
                     .unwrap_or(pos + seg[0].1.text().len());
-                return Err(ExprError::BadDefinition {
+                return Err(ExpressionError::BadDefinition {
                     pos,
                     text: src[pos..end.min(src.len())].to_owned(),
                 });
@@ -292,7 +292,7 @@ pub fn parse(src: &str) -> Result<Parsed, ExprError> {
         };
         let body = &seg[2..];
         if body.is_empty() {
-            return Err(ExprError::UnexpectedEnd {
+            return Err(ExpressionError::UnexpectedEnd {
                 expected: "the definition's expression",
             });
         }

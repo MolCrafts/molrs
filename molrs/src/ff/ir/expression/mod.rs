@@ -79,13 +79,16 @@ mod error;
 mod eval;
 mod parse;
 mod print;
+pub(crate) mod registry_kernel;
+
+pub(crate) use registry_kernel::fallback_spec;
 
 #[cfg(test)]
 mod tests;
 
 pub use ast::{BinOp, Definition, Expr, Func, Parsed};
 pub use compile::{Binding, Compiled, Geometry, Input, compile, compile_parsed, is_identifier};
-pub use error::ExprError;
+pub use error::ExpressionError;
 pub use parse::parse;
 
 use molrs::op::types::F;
@@ -109,8 +112,8 @@ pub fn compile_style(
     params: &[&str],
     style_params: &[&str],
     expression: &str,
-) -> Result<Compiled, ExprError> {
-    let geometry = Geometry::of_category(category).ok_or_else(|| ExprError::BadBinding {
+) -> Result<Compiled, ExpressionError> {
+    let geometry = Geometry::of_category(category).ok_or_else(|| ExpressionError::BadBinding {
         reason: format!(
             "category `{category}` is no category of molrec's variable table; \
              a custom one binds Geometry::Compound with its arity"

@@ -1,4 +1,4 @@
-"""``StyleSpec``, the class form of :func:`molrs.ff.ir.register_style`.
+"""``StyleDeclaration``, the class form of :func:`molrs.ff.ir.register_style`.
 
 Private: :mod:`molrs.ff.ir` is its public path.
 """
@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 from .._lib import ir as _ir
 
 
-class StyleSpec:
+class StyleDeclaration:
     """Declare a force-field IR style as a class; defining the subclass
     registers it (:func:`register_style`).
 
@@ -21,9 +21,9 @@ class StyleSpec:
         The category (built-in, or from :func:`register_category`).
     name : str
         The style name.
-    params : list of Param, or dict of {name: dim}
+    params : list of ParamSpec, or dict of {name: dim}
         The per-type parameters, in order.
-    style_params : list of Param, or dict of {name: dim}, optional
+    style_params : list of ParamSpec, or dict of {name: dim}, optional
         Style-level parameters (``cutoff``, ``mixing``, ``special`` keep their
         reserved meanings).
     expression : str, optional
@@ -49,7 +49,7 @@ class StyleSpec:
     --------
     >>> import numpy as np
     >>> from molrs.ff import ir
-    >>> class Quartic(ir.StyleSpec):
+    >>> class Quartic(ir.StyleDeclaration):
     ...     category = "bond"
     ...     name = "quartic/doc"
     ...     params = {"k": "E/L^4", "r0": "L"}
@@ -85,7 +85,7 @@ class StyleSpec:
         ]
         if missing:
             raise TypeError(
-                f"{cls.__qualname__}: a StyleSpec declares {' and '.join(missing)} (a str)"
+                f"{cls.__qualname__}: a StyleDeclaration declares {' and '.join(missing)} (a str)"
             )
         kernel: Callable[..., Any] | None = None
         if callable(getattr(cls, "kernel", None)):
@@ -113,5 +113,5 @@ class StyleSpec:
 
     @classmethod
     def unregister(cls) -> None:
-        """:func:`unregister` this style."""
-        _ir.unregister(cls.category, cls.name)
+        """:func:`unregister_style` this style."""
+        _ir.unregister_style(cls.category, cls.name)

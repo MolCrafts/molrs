@@ -4,7 +4,7 @@
 //! The tree is syntax only. A call keeps its function name as written, so an
 //! unknown function parses and is refused by the compiler with a named error;
 //! a variable is any identifier, resolved against a
-//! [`Binding`](crate::ff::ir::expr::Binding) only at compile time.
+//! [`Binding`](crate::ff::ir::expression::Binding) only at compile time.
 
 use molrs::op::types::F;
 

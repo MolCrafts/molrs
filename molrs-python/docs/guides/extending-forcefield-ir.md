@@ -68,12 +68,12 @@ pub struct StyleSpec {
     pub force_is_gradient: bool,       // false only for coul/charmm
     pub unindexed_one_term: bool,
     pub lammps: LammpsForm,            // None, Positional, Custom(codec)
-    pub samples: Vec<Sample>,          // registration check points
+    pub samples: Vec<ConformanceSample>,          // registration check points
 }
-pub struct ParamSpec { name, dim: Dim, kind: ParamKind, default: Option<Value>, mix: Mix, indexed: bool }
+pub struct ParamSpec { name, dim: ParamDimension, kind: ParamKind, default: Option<ParamValue>, mix: ParamCombination, indexed: bool }
 ```
 
-- **`Dim`** is a dimension in five exponents, energy `E`, length `L`, angle
+- **`ParamDimension`** is a dimension in five exponents, energy `E`, length `L`, angle
   `A`, charge `Q`, mass `M`, written `num ("/" factor)*` — `1`, `E`,
   `E/L^2`, `1/L`, `E*L^6`, `E*L/Q^2`, `A`, `E/A^2`, `M`. `A` alone is an
   angle **value**, stored in degrees and never converted; a negative angle
@@ -91,10 +91,10 @@ pub struct ParamSpec { name, dim: Dim, kind: ParamKind, default: Option<Value>, 
   `f64[T, S…]` column, priced by a Tier-2 or Tier-3 kernel, never an
   expression variable), `Text { choices }`. `indexed` makes a family `k1 …
   kM`, contiguous, one `M` per row shared by the style's indexed parameters.
-- **Mixing** (pair styles): a pair's value is the cross row's, else the
-  `Mix` of the two self rows — `Arithmetic`, `Geometric`, or the joint
+- **Combining rules** (pair styles): a pair's value is the cross row's, else the
+  `ParamCombination` of the two self rows — `Arithmetic`, `Geometric`, or the joint
   (ε, σ) rule the style's `mixing` names (`LjEpsilon` / `LjSigma`);
-  `Mix::None` makes an unlike pair without a cross row `NoMixing`.
+  `ParamCombination::None` makes an unlike pair without a cross row `NoMixing`.
 - **Defaults** are applied in one place (`StyleSpec::gather`) before any
   kernel sees a parameter; a missing one is `MissingParam`, a value of the
   wrong kind or outside its choices `BadValue`.
@@ -155,10 +155,10 @@ impl ScalarForm for LjSmoothLinear {
 
 let spec = StyleSpec::new("pair", "lj/smooth/linear")
     .params(vec![
-        ParamSpec::new("epsilon", Dim::ENERGY).mix(Mix::LjEpsilon { sigma: "sigma".into() }),
-        ParamSpec::new("sigma", Dim::LENGTH).mix(Mix::LjSigma { epsilon: "epsilon".into() }),
+        ParamSpec::new("epsilon", ParamDimension::ENERGY).mix(ParamCombination::LjEpsilon { sigma: "sigma".into() }),
+        ParamSpec::new("sigma", ParamDimension::LENGTH).mix(ParamCombination::LjSigma { epsilon: "epsilon".into() }),
     ])
-    .style_params(vec![ParamSpec::new("cutoff", Dim::LENGTH)])
+    .style_params(vec![ParamSpec::new("cutoff", ParamDimension::LENGTH)])
     .special(SpecialClass::Vdw)
     .lammps(LammpsForm::positional());
 registry.register_style(spec, Some(Kernel::Scalar(Arc::new(LjSmoothLinear))))?;
@@ -208,7 +208,7 @@ registry.register_category(CategorySpec::custom(
 registry.register_style(
     StyleSpec::new("urey_bradley", "harmonic").params(vec![
         ParamSpec::new("k_ub", "E/L^2".parse()?),
-        ParamSpec::new("r_ub", Dim::LENGTH),
+        ParamSpec::new("r_ub", ParamDimension::LENGTH),
     ]),
     Some(Kernel::Compound(Arc::new(UreyBradley))),
 )?;
@@ -275,13 +275,13 @@ its endpoint columns. Reading never evaluates an expression: a style with
 no expression reads whole, and compiling it is `NoKernel` — "no kernel for
 `<category>` `` `<style>` ``: register it (molrs.ff.ir.register_style) or
 give it an expression". Parameter dimensions are not persisted: a style read
-from a record has no `Dim`s until it is registered again.
+from a record has no `ParamDimension`s until it is registered again.
 
 ## Engines and refusals
 
 - **LAMMPS.** `LammpsForm::Positional` is derived from the spec:
   `<category>_style <name>`, `<category>_coeff <type> v₁ … vₙ` in `params`
-  order, each value converted by its `Dim`, `mixing` as `pair_modify mix`.
+  order, each value converted by its `ParamDimension`, `mixing` as `pair_modify mix`.
   It refuses, at registration, a Text, Array or indexed parameter, another
   style parameter than `cutoff` / `mixing`, and a category without a LAMMPS
   `*_style`. `LammpsForm::Custom(codec)` writes a line that is not
@@ -296,7 +296,7 @@ from a record has no `Dim`s until it is registered again.
 
 Every engine refusal is `IrError::NoEngineForm { engine, category, style,
 reason }`; a writer returns it typed (`WriteError::ir()` in Rust, the
-`molrs.ff.ir.NoEngineForm` class in Python). See
+`molrs.ff.ir.NoEngineFormError` class in Python). See
 [Engine codecs](forcefield-ir.md#engine-codecs).
 
 ## Conversions
@@ -304,7 +304,7 @@ reason }`; a writer returns it typed (`WriteError::ir()` in Rust, the
 A style of a form family registers a `FormCodec` — its family, whether it
 is the family's canonical style, and two exact maps, `embed` (this style →
 the canonical style's parameters) and `project` (canonical → this style,
-exact on its image, else a `Refusal` naming the condition):
+exact on its image, else a `FormRefusal` naming the condition):
 
 ```rust
 registry.register_form("dihedral", "cos3", FormCodec::new("torsion", embed, project))?;
@@ -323,8 +323,9 @@ style (or two) is `FormConflict`; a style without a codec `NoForm`. See
 
 A registration is checked before it lands; nothing is left behind by a
 refusal. Each refusal is one `IrError` variant (Python: a subclass of
-`molrs.ff.ir.IrError`, itself a `ValueError`, of the same name) naming the
-offending item.
+`molrs.ff.ir.IrError`, itself a `ValueError`, named after the variant with
+an `Error` suffix: `Sealed` is `SealedError`, `Dimension` is
+`DimensionError`) naming the offending item.
 
 | Variant | When |
 |---|---|
@@ -333,7 +334,7 @@ offending item.
 | `Arity` | a custom arity outside 2..=5; a type with the wrong number of endpoints |
 | `BlockName` | a custom category whose block is not `<name>s` |
 | `ReservedParam`, `DuplicateParam` | a reserved or repeated parameter name |
-| `Dim` | an unparsable or forbidden dimension |
+| `Dimension` | an unparsable or forbidden dimension |
 | `Parse`, `UnknownFunction`, `FunctionArity` | an expression that does not parse |
 | `UnboundVariable` | a free name that is neither a variable of the category nor a numeric parameter (`theta` in a bond) |
 | `Point` | `pk` beyond the arity, or any point in a pair |
@@ -360,18 +361,18 @@ set)`. The checks never run per evaluation.
 
 ## From molpy
 
-molpy keeps no IR of its own: `molpy.potential.StyleSpec` **is**
-`molrs.ff.ir.StyleSpec`. A user's style in a class, a typifier that types a
+molpy keeps no IR of its own: `molpy.potential.StyleDeclaration` **is**
+`molrs.ff.ir.StyleDeclaration`. A user's style in a class, a typifier that types a
 bead-spring chain with it, compiled, priced and saved — molpy's "Extending
 the force field" snippet, run as written by its
 `tests/test_potential/test_user_style.py`:
 
 ```python
 import molpy as mp
-from molpy.potential import Param, StyleSpec
+from molpy.potential import ParamSpec, StyleDeclaration
 from molpy.typifier import Match, Typifier
 
-class Fene(StyleSpec):  # LAMMPS bond_style fene, by its expression
+class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
     category, name = "bond", "fene"
     params = [Param("k", "E/L^2"), Param("r0", "L"), Param("epsilon", "E"), Param("sigma", "L")]
     expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"

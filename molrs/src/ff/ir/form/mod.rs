@@ -11,7 +11,7 @@
 //! * `embed` — this style → canonical (exact: the same energy, constant
 //!   included), refusing a row the canonical style cannot hold;
 //! * `project` — canonical → this style, exact on its image, refusing with a
-//!   [`Refusal`] that names the condition otherwise (a Fourier series with
+//!   [`FormRefusal`] that names the condition otherwise (a Fourier series with
 //!   `bₙ ≠ 0` has no RB form);
 //! * optionally `seed` — canonical → the nearest member of this style's
 //!   image by a rule of thumb, where [`fit`](Registry::fit_form) starts.
@@ -25,10 +25,10 @@
 //!   one style of it, through the canonical parameters, exactly or not at all
 //!   ([`IrError::OutOfImage`] names the type and the condition);
 //! * [`ForceField::fit_form`] is the projection that always answers: least
-//!   squares under a declared [`Metric`], using nothing but each style's
+//!   squares under a declared [`FitMetric`], using nothing but each style's
 //!   energy `E(q)` from the registry's kernels — so it works for an
 //!   expression or a Python style as for a native one — and returns the
-//!   [`Residual`] beside the parameters.
+//!   [`FitResidual`] beside the parameters.
 //!
 //! The built-in families ([`builtin_forms`]):
 //!
@@ -48,16 +48,17 @@ mod builtin;
 mod fit;
 #[cfg(test)]
 mod tests;
+pub mod torsion;
 
 use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
 pub use builtin::builtin_forms;
-pub use fit::{Metric, Residual, TypeResidual};
+pub use fit::{FitMetric, FitResidual, TypeResidual};
 
 use crate::ff::forcefield::{DefError, ForceField, Params, Style};
-use crate::ff::ir::{IrError, Registry, StyleSpec, with_global};
+use crate::ff::ir::{IrError, Registry, StyleSpec, with_global_registry};
 
 /// One type's full parameter set: its style's parameters and its own row.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -84,11 +85,11 @@ impl TypeParams {
 
 /// Why a form map refused a row: the condition, in words.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Refusal {
+pub struct FormRefusal {
     pub reason: String,
 }
 
-impl Refusal {
+impl FormRefusal {
     pub fn new(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
@@ -96,16 +97,16 @@ impl Refusal {
     }
 }
 
-impl fmt::Display for Refusal {
+impl fmt::Display for FormRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.reason)
     }
 }
 
-impl std::error::Error for Refusal {}
+impl std::error::Error for FormRefusal {}
 
 /// A map between one style's parameters and its family's canonical ones.
-pub type FormFn = Arc<dyn Fn(&TypeParams) -> Result<TypeParams, Refusal> + Send + Sync>;
+pub type FormFn = Arc<dyn Fn(&TypeParams) -> Result<TypeParams, FormRefusal> + Send + Sync>;
 
 /// A style's membership of a form family (`ff-ir-02-protocol` §9).
 #[derive(Clone)]
@@ -133,8 +134,8 @@ impl FormCodec {
     /// `embed` and `project`.
     pub fn new(
         family: impl Into<Cow<'static, str>>,
-        embed: impl Fn(&TypeParams) -> Result<TypeParams, Refusal> + Send + Sync + 'static,
-        project: impl Fn(&TypeParams) -> Result<TypeParams, Refusal> + Send + Sync + 'static,
+        embed: impl Fn(&TypeParams) -> Result<TypeParams, FormRefusal> + Send + Sync + 'static,
+        project: impl Fn(&TypeParams) -> Result<TypeParams, FormRefusal> + Send + Sync + 'static,
     ) -> Self {
         Self {
             family: family.into(),
@@ -154,7 +155,7 @@ impl FormCodec {
     /// Give the fit a starting point.
     pub fn seed(
         mut self,
-        seed: impl Fn(&TypeParams) -> Result<TypeParams, Refusal> + Send + Sync + 'static,
+        seed: impl Fn(&TypeParams) -> Result<TypeParams, FormRefusal> + Send + Sync + 'static,
     ) -> Self {
         self.seed = Some(Arc::new(seed));
         self
@@ -425,7 +426,7 @@ impl Registry {
             let from = self.form(category, source).expect("a member");
             let style_of = ff.get_style(category, source).expect("a member");
             rows.extend(convert_rows(self, style_of, |name, tp| {
-                let refused = |to: &str, e: Refusal| IrError::OutOfImage {
+                let refused = |to: &str, e: FormRefusal| IrError::OutOfImage {
                     from: named(category, source),
                     to: to.to_owned(),
                     type_: name.to_owned(),
@@ -459,7 +460,7 @@ impl ForceField {
     /// that become different rows, two styles that need different style
     /// parameters, or a family without a canonical style.
     pub fn canonical(&self) -> Result<ForceField, IrError> {
-        with_global(Registry::clone).canonical(self)
+        with_global_registry(Registry::clone).canonical(self)
     }
 
     /// The force field with every style of `category` in the form family of
@@ -473,19 +474,19 @@ impl ForceField {
     /// and the condition (`sin(2φ) coefficient … ≠ 0`, `the constant term …`);
     /// [`IrError::FormConflict`] as for [`canonical`](Self::canonical).
     pub fn to_form(&self, category: &str, style: &str) -> Result<ForceField, IrError> {
-        with_global(Registry::clone).to_form(self, category, style)
+        with_global_registry(Registry::clone).to_form(self, category, style)
     }
 
     /// The force field with every other style of `category` that holds rows
     /// fitted to `style` by least squares under `metric`, and the
-    /// [`Residual`] of each fitted row. Generic: it evaluates every style
+    /// [`FitResidual`] of each fitted row. Generic: it evaluates every style
     /// through the registry's kernels alone. See [`Registry::fit_form`].
     pub fn fit_form(
         &self,
         category: &str,
         style: &str,
-        metric: &Metric,
-    ) -> Result<(ForceField, Residual), IrError> {
-        with_global(Registry::clone).fit_form(self, category, style, metric)
+        metric: &FitMetric,
+    ) -> Result<(ForceField, FitResidual), IrError> {
+        with_global_registry(Registry::clone).fit_form(self, category, style, metric)
     }
 }

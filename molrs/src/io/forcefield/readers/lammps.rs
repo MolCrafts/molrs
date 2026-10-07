@@ -113,9 +113,9 @@
 use super::ForceFieldReader;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global};
+use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global_registry};
 use crate::io::forcefield::lammps_units::parse_style;
 use molrs::core::FrameAccess;
 use molrs::core::constants::{COULOMB_METAL, COULOMB_REAL};
@@ -423,7 +423,7 @@ impl LammpsFfReader {
                         let rule = rest.get(i + 1).ok_or_else(|| {
                             format!("{}: pair_modify mix missing a rule", where_())
                         })?;
-                        Mixing::parse(rule).map_err(|e| format!("{}: {e}", where_()))?;
+                        CombiningRule::parse(rule).map_err(|e| format!("{}: {e}", where_()))?;
                         pair_mix = Some((*rule).to_owned());
                     }
                     if let Some(i) = rest.iter().position(|t| *t == "shift") {
@@ -1496,7 +1496,7 @@ pub fn lammps_coeff_params(
         s => s,
     };
     let where_ = || format!("{category} {style}");
-    with_global(|reg| {
+    with_global_registry(|reg| {
         let (spec, codec) = lammps_style(reg, category, style, &where_)?;
         codec.read(spec, values)
     })

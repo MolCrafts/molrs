@@ -5,12 +5,12 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use molrs::ff::ir::{Metric, Residual};
+use molrs::ff::ir::{FitMetric, FitResidual};
 
 use super::PyForceField;
 use crate::ff::ir::refuse;
 
-fn residual_dict<'py>(py: Python<'py>, residual: &Residual) -> PyResult<Bound<'py, PyDict>> {
+fn residual_dict<'py>(py: Python<'py>, residual: &FitResidual) -> PyResult<Bound<'py, PyDict>> {
     let types = PyList::empty(py);
     for t in &residual.types {
         let d = PyDict::new(py);
@@ -72,7 +72,7 @@ impl PyForceField {
         kt: Option<f64>,
         offset: bool,
     ) -> PyResult<(PyForceField, Bound<'py, PyDict>)> {
-        let mut metric = Metric::new(q);
+        let mut metric = FitMetric::new(q);
         if let Some(w) = w {
             metric = metric.weights(w);
         }

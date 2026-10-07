@@ -9,7 +9,7 @@
 //! field's own conflict rule.
 //!
 //! [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) reads the
-//! process-wide registry ([`register_style`], [`with_global`], …) unless it
+//! process-wide registry ([`register_style`], [`with_global_registry`], …) unless it
 //! is handed one ([`PotentialCompiler::with_registry`]), which is how a test
 //! extends the IR without touching anything another test sees.
 //!
@@ -102,7 +102,7 @@ pub enum SpecialClass {
 /// A style's energy written as an expression, compiled.
 ///
 /// The seam between the registry and the expression engine
-/// (`ff::ir::expr`, whose `Compiled` implements it): the registry never
+/// (`ff::ir::expression`, whose `Compiled` implements it): the registry never
 /// parses an expression, it asks this trait. The registry checks it like
 /// any other kernel — its variables against the style's declarations
 /// ([`variables`](Self::variables)), its derivative against a central
@@ -235,7 +235,7 @@ impl fmt::Debug for Kernel {
 /// One registered style: its spec and its kernel (none for a style priced
 /// by its expression alone, or in a category that prices nothing).
 #[derive(Clone, Debug)]
-pub(crate) struct StyleEntry {
+pub(crate) struct RegisteredStyle {
     spec: StyleSpec,
     kernel: Option<Kernel>,
     sealed: bool,
@@ -253,7 +253,7 @@ struct Form {
     native: bool,
 }
 
-impl StyleEntry {
+impl RegisteredStyle {
     pub fn spec(&self) -> &StyleSpec {
         &self.spec
     }
@@ -267,7 +267,7 @@ impl StyleEntry {
         style: &Params,
         tp: &[(&str, &Params)],
         expressions: Option<ExpressionCompiler>,
-    ) -> Option<Result<StyleEntry, IrError>> {
+    ) -> Option<Result<RegisteredStyle, IrError>> {
         let expression = style.get_str("expression")?;
         let spec = crate::ff::ir::expression::fallback_spec(category, name, style, tp, expression);
         let Some(compile) = expressions else {
@@ -276,7 +276,7 @@ impl StyleEntry {
                 style: name.to_owned(),
             }));
         };
-        Some(compile(category, &spec).map(|x| StyleEntry {
+        Some(compile(category, &spec).map(|x| RegisteredStyle {
             spec,
             kernel: Some(Kernel::Expression(x)),
             sealed: false,
@@ -299,7 +299,7 @@ impl StyleEntry {
         category: &CategorySpec,
         instance: Option<&str>,
         expressions: Option<ExpressionCompiler>,
-    ) -> Result<std::borrow::Cow<'_, StyleEntry>, IrError> {
+    ) -> Result<std::borrow::Cow<'_, RegisteredStyle>, IrError> {
         use std::borrow::Cow;
         let Some(instance) = instance else {
             return Ok(Cow::Borrowed(self));
@@ -333,7 +333,7 @@ impl StyleEntry {
         let mut spec = self.spec.clone();
         spec.expression = Some(instance.to_owned());
         spec.samples.clear();
-        Ok(Cow::Owned(StyleEntry {
+        Ok(Cow::Owned(RegisteredStyle {
             spec,
             kernel,
             sealed: false,
@@ -511,7 +511,7 @@ fn frame_coords(frame: &Frame) -> Vec<F> {
 }
 
 #[derive(Clone, Debug)]
-struct CategoryEntry {
+struct RegisteredCategory {
     spec: CategorySpec,
     sealed: bool,
 }
@@ -528,8 +528,8 @@ struct FormEntry {
 /// ([`crate::ff::ir::FormCodec`]).
 #[derive(Clone, Default)]
 pub struct Registry {
-    categories: BTreeMap<String, CategoryEntry>,
-    styles: BTreeMap<(String, String), StyleEntry>,
+    categories: BTreeMap<String, RegisteredCategory>,
+    styles: BTreeMap<(String, String), RegisteredStyle>,
     forms: BTreeMap<(String, String), FormEntry>,
     expressions: Option<ExpressionCompiler>,
 }
@@ -566,7 +566,7 @@ impl Registry {
         for c in builtin_categories() {
             r.categories.insert(
                 c.name.to_string(),
-                CategoryEntry {
+                RegisteredCategory {
                     spec: c,
                     sealed: true,
                 },
@@ -614,7 +614,7 @@ impl Registry {
         conformance::check_category(&c)?;
         self.categories.insert(
             c.name.to_string(),
-            CategoryEntry {
+            RegisteredCategory {
                 spec: c,
                 sealed: false,
             },
@@ -662,7 +662,7 @@ impl Registry {
         spec.lammps.check_spec(&spec)?;
         self.styles.insert(
             key,
-            StyleEntry {
+            RegisteredStyle {
                 spec,
                 kernel,
                 sealed: false,
@@ -812,7 +812,7 @@ impl Registry {
         lammps: &str,
     ) -> Option<(&StyleSpec, &dyn LammpsCodec)> {
         let writes =
-            |e: &&StyleEntry| e.spec.lammps.lammps_name(&e.spec).as_deref() == Some(lammps);
+            |e: &&RegisteredStyle| e.spec.lammps.lammps_name(&e.spec).as_deref() == Some(lammps);
         let found = match self.entry(category, lammps).filter(writes) {
             Some(e) => e,
             None => {
@@ -899,7 +899,7 @@ impl Registry {
         self.entry(category, name).is_some_and(|e| e.sealed)
     }
 
-    pub(crate) fn entry(&self, category: &str, name: &str) -> Option<&StyleEntry> {
+    pub(crate) fn entry(&self, category: &str, name: &str) -> Option<&RegisteredStyle> {
         self.styles.get(&(category.to_owned(), name.to_owned()))
     }
 
@@ -910,7 +910,7 @@ impl Registry {
 
     /// Where a registered style's rows come from.
     pub fn row_source(&self, category: &str, name: &str) -> Option<RowSource> {
-        self.entry(category, name).map(StyleEntry::row_source)
+        self.entry(category, name).map(RegisteredStyle::row_source)
     }
 }
 
@@ -968,7 +968,7 @@ impl RegistryRef {
     /// itself), or the caller's.
     pub fn with<R>(&self, f: impl FnOnce(&Registry) -> R) -> R {
         match self {
-            RegistryRef::Global => f(&with_global(Registry::clone)),
+            RegistryRef::Global => f(&with_global_registry(Registry::clone)),
             RegistryRef::Own(r) => f(r),
         }
     }
@@ -986,6 +986,6 @@ pub fn set_expression_compiler(compiler: Option<ExpressionCompiler>) {
 
 /// Read the process-wide registry. The lock is held for the call, so `f`
 /// must not register anything.
-pub fn with_global<R>(f: impl FnOnce(&Registry) -> R) -> R {
+pub fn with_global_registry<R>(f: impl FnOnce(&Registry) -> R) -> R {
     f(&global().read().unwrap())
 }

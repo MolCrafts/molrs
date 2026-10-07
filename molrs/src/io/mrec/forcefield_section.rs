@@ -47,7 +47,7 @@ use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::core::{Block, DType, MolRsError, UnitPreset};
-use crate::ff::forcefield::mixing::MIXING_RULES;
+use crate::ff::forcefield::combining_rule::COMBINING_RULES;
 use crate::ff::forcefield::one_four::ONE_FOUR_VALUES;
 use crate::ff::ir::{
     ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, category_arity, is_parameter_column,
@@ -353,10 +353,10 @@ fn style_entry(value: &JsonValue) -> Result<StyleEntry<'_>, MolRsError> {
         )));
     }
     if let Some(mixing) = params.and_then(|p| p.get("mixing"))
-        && !param_str("mixing").is_some_and(|m| MIXING_RULES.contains(&m))
+        && !param_str("mixing").is_some_and(|m| COMBINING_RULES.contains(&m))
     {
         return Err(invalid(format!(
-            "params.mixing of {category}/{style} is one of {MIXING_RULES:?}, found {mixing}"
+            "params.mixing of {category}/{style} is one of {COMBINING_RULES:?}, found {mixing}"
         )));
     }
     if (category, style) == ("pair", "lj/charmm")

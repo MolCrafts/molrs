@@ -36,7 +36,7 @@ def registered() -> Iterator[list[tuple[str, str]]]:
     yield names
     for category, name in names:
         try:
-            ir.unregister(category, name)
+            ir.unregister_style(category, name)
         except ir.IrError:
             pass
 
@@ -139,7 +139,7 @@ class TestBuiltins:
 
 class TestCustomStyles:
     def test_a_style_registered_by_expression(self, registered) -> None:
-        class Quartic(ir.StyleSpec):
+        class Quartic(ir.StyleDeclaration):
             category = "bond"
             name = "quartic/kernel-test"
             params = {"k": "E/L^4", "r0": "L"}
@@ -180,11 +180,11 @@ class TestCustomStyles:
 
 class TestRefusals:
     def test_unknown_category(self) -> None:
-        with pytest.raises(ir.UnknownCategory):
+        with pytest.raises(ir.UnknownCategoryError):
             compile_explicit_terms("nope", "x", [[0, 1]])
 
     def test_a_term_of_the_wrong_arity(self) -> None:
-        with pytest.raises(ir.Arity):
+        with pytest.raises(ir.ArityError):
             compile_explicit_terms("bond", "harmonic", [[0, 1, 2]], k=1.0, r0=1.0)
 
     def test_an_undeclared_parameter(self) -> None:
@@ -192,7 +192,7 @@ class TestRefusals:
             compile_explicit_terms("bond", "harmonic", [[0, 1]], kb=1.0, r0=1.0)
 
     def test_a_missing_parameter(self) -> None:
-        with pytest.raises(ir.MissingParam) as err:
+        with pytest.raises(ir.MissingParamError) as err:
             compile_explicit_terms("bond", "harmonic", [[0, 1]], k=1.0)
         assert (err.value.style, err.value.type, err.value.param) == ("harmonic", "0", "r0")
 
@@ -213,17 +213,17 @@ class TestRefusals:
         charges = [0.5, -0.5] if category == "pair" else None
         if style == "lj/charmm":
             params = {**params, "epsilon": 0.1, "sigma": 3.0}
-        with pytest.raises(ir.MissingParam) as err:
+        with pytest.raises(ir.MissingParamError) as err:
             compile_explicit_terms(category, style, atoms, charges=charges, **params)
         assert (err.value.style, err.value.param) == (style, param)
 
     def test_a_value_outside_its_choices(self) -> None:
-        with pytest.raises(ir.BadValue) as err:
+        with pytest.raises(ir.BadValueError) as err:
             compile_explicit_terms("pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0)
         assert (err.value.style, err.value.param) == ("lj/cut", "mixing")
 
     def test_an_unregistered_style_without_expression(self) -> None:
-        with pytest.raises(ir.NoKernel):
+        with pytest.raises(ir.NoKernelError):
             compile_explicit_terms("bond", "nothing/kernel-test", [[0, 1]], k=1.0)
 
     def test_mismatched_lengths(self) -> None:

@@ -297,7 +297,7 @@ mod tests {
     }
 
     fn neighbour_cutoff_of(style: Params) -> Result<F, IrError> {
-        let gathered = crate::ff::ir::with_global(|r| {
+        let gathered = crate::ff::ir::with_global_registry(|r| {
             r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
         })?;
         super::neighbour_cutoff("lj/cut", &gathered.0)

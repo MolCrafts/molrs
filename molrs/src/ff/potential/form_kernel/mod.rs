@@ -127,9 +127,8 @@ pub(crate) fn read_by(
             .any(|r| r == &c.name || r.strip_suffix(['1', '2']) == Some(c.name.as_str()))
     };
     let partner = |c: &StyleParamColumn| match &spec.params[c.param].mix {
-        crate::ff::ir::Mix::LjEpsilon { sigma: p } | crate::ff::ir::Mix::LjSigma { epsilon: p } => {
-            Some(p.clone())
-        }
+        crate::ff::ir::ParamCombination::LjEpsilon { sigma: p }
+        | crate::ff::ir::ParamCombination::LjSigma { epsilon: p } => Some(p.clone()),
         _ => None,
     };
     let kept: Vec<bool> = cols.iter().map(read).collect();

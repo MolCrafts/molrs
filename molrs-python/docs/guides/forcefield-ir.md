@@ -482,7 +482,7 @@ every molrs kernel and LAMMPS compute:
     E(φ) = Σₙ₌₀ aₙ cos nφ + bₙ sin nφ
 
 That series is the intermediate of every conversion between forms
-(`molrs::ff::forcefield::torsion`). Each form **embeds** exactly (the series
+(`molrs::ff::ir::torsion`). Each form **embeds** exactly (the series
 is the same function of φ, constant included) and **projects** back exactly
 — every coefficient, a₀ included — or refuses, naming the condition that
 prevents it. Rows of several styles on one quadruple are one torsion: their
@@ -551,7 +551,7 @@ The familiar chains are instances:
 In Rust:
 
 ```rust
-use molrs::ff::forcefield::torsion::{
+use molrs::ff::ir::torsion::{
     FourierSeries, MultiHarmonic, Opls, TorsionRefusal, torsion_series,
 };
 
@@ -1035,7 +1035,7 @@ A `StyleSpec` carries `lammps: LammpsForm`:
   for another LAMMPS name) is derived from the spec: `<category>_style
   <name>` (`pair_style <name> <cutoff>`), `<category>_coeff <type> v₁ … vₙ`
   in `params` order, `mixing` as `pair_modify mix`. Each value is converted
-  by its `Dim` from the force field's units to the file's — `E/L^2` by
+  by its `ParamDimension` from the force field's units to the file's — `E/L^2` by
   energy/length², `E*L^6` by energy·length⁶, an angle value (exactly `A`)
   and a per-radian constant not at all — and a dimensionless integral value
   is written as an integer (LAMMPS reads multiplicities and signs with
@@ -1075,14 +1075,14 @@ registry, or the one `with_registry` gives them.
 Registering a LAMMPS form:
 
 ```rust
-use molrs::ff::ir::{Dim, LammpsForm, ParamSpec, StyleSpec, register_style};
+use molrs::ff::ir::{ParamDimension, LammpsForm, ParamSpec, StyleSpec, register_style};
 
 let fene = StyleSpec::new("bond", "fene")
     .params(vec![
         ParamSpec::new("k", "E/L^2".parse().unwrap()),
-        ParamSpec::new("r0", Dim::LENGTH),
-        ParamSpec::new("epsilon", Dim::ENERGY),
-        ParamSpec::new("sigma", Dim::LENGTH),
+        ParamSpec::new("r0", ParamDimension::LENGTH),
+        ParamSpec::new("epsilon", ParamDimension::ENERGY),
+        ParamSpec::new("sigma", ParamDimension::LENGTH),
     ])
     .expression("-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
     .lammps(LammpsForm::positional());
@@ -1403,7 +1403,7 @@ reader refuses `ordering="smirnoff"`).
   1, every `w` = ½ with one dihedral listed twice, and `special_bonds` ½ /
   ⅚ with `w` = 0. Every `evdwl`, `ecoul`, `ebond`, `eangle`, `edihed`, `pe`
   matches molrs to ≤ 2.3e-15 relative (`evdwl` and `ecoul` bit for bit), and
-  every force component to 1e-10 (`ff::one_four`). `special_bonds` ½ equals
+  every force component to 1e-10 (`ff::one_four_lammps_check`). `special_bonds` ½ equals
   per-pair scales ½ equals per-pair parameters ε/2, qᵢqⱼ/2; `w` = 1 equals
   per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`. Two more
   LAMMPS cases cut short of the 1-4 pairs: `lj/charmm/coul/charmm 2.0 2.4`

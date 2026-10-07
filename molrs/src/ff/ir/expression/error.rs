@@ -6,7 +6,7 @@ use std::fmt;
 
 /// Why an expression does not parse or does not compile.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExprError {
+pub enum ExpressionError {
     // -- syntax (parse) --
     /// A character the grammar has no token for, at byte offset `pos`.
     UnexpectedChar { pos: usize, ch: char },
@@ -65,13 +65,13 @@ pub enum ExprError {
     MissingInput { input: String },
 }
 
-impl fmt::Display for ExprError {
+impl fmt::Display for ExpressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExprError::UnexpectedChar { pos, ch } => {
+            ExpressionError::UnexpectedChar { pos, ch } => {
                 write!(f, "expression: unexpected character `{ch}` at byte {pos}")
             }
-            ExprError::UnexpectedToken {
+            ExpressionError::UnexpectedToken {
                 pos,
                 found,
                 expected,
@@ -79,21 +79,21 @@ impl fmt::Display for ExprError {
                 f,
                 "expression: unexpected `{found}` at byte {pos}, expected {expected}"
             ),
-            ExprError::UnexpectedEnd { expected } => {
+            ExpressionError::UnexpectedEnd { expected } => {
                 write!(f, "expression: unexpected end, expected {expected}")
             }
-            ExprError::EmptyExpression => write!(f, "expression: no energy expression"),
-            ExprError::BadDefinition { pos, text } => write!(
+            ExpressionError::EmptyExpression => write!(f, "expression: no energy expression"),
+            ExpressionError::BadDefinition { pos, text } => write!(
                 f,
                 "expression: `{text}` at byte {pos} is no sub-definition `name=expression`"
             ),
-            ExprError::UnknownFunction { name } => write!(
+            ExpressionError::UnknownFunction { name } => write!(
                 f,
                 "expression: unknown function `{name}` (the grammar has exp log sqrt sin cos \
                  tan asin acos atan abs min max step delta select, and distance angle \
                  dihedral over points)"
             ),
-            ExprError::FunctionArity {
+            ExpressionError::FunctionArity {
                 name,
                 expected,
                 found,
@@ -102,28 +102,28 @@ impl fmt::Display for ExprError {
                 "expression: `{name}` takes {expected} argument{}, given {found}",
                 if *expected == 1 { "" } else { "s" }
             ),
-            ExprError::UndeclaredVariable { name, allowed } => write!(
+            ExpressionError::UndeclaredVariable { name, allowed } => write!(
                 f,
                 "expression: `{name}` is no variable here (the variables are: {})",
                 allowed.join(", ")
             ),
-            ExprError::CyclicDefinition { cycle } => write!(
+            ExpressionError::CyclicDefinition { cycle } => write!(
                 f,
                 "expression: sub-definitions refer to each other in a cycle: {}",
                 cycle.join(" -> ")
             ),
-            ExprError::DuplicateDefinition { name } => {
+            ExpressionError::DuplicateDefinition { name } => {
                 write!(f, "expression: sub-definition `{name}` is defined twice")
             }
-            ExprError::DefinitionOrder { name, used_in } => write!(
+            ExpressionError::DefinitionOrder { name, used_in } => write!(
                 f,
                 "expression: sub-definition `{used_in}` uses `{name}`, defined before it \
                  (a definition sees only the definitions to its right)"
             ),
-            ExprError::DefinitionShadows { name } => {
+            ExpressionError::DefinitionShadows { name } => {
                 write!(f, "expression: sub-definition `{name}` shadows a variable")
             }
-            ExprError::NotAPoint {
+            ExpressionError::NotAPoint {
                 function,
                 found,
                 points: 0,
@@ -131,7 +131,7 @@ impl fmt::Display for ExprError {
                 f,
                 "expression: `{function}({found}, …)`: a pair style has no points"
             ),
-            ExprError::NotAPoint {
+            ExpressionError::NotAPoint {
                 function,
                 found,
                 points,
@@ -139,17 +139,17 @@ impl fmt::Display for ExprError {
                 f,
                 "expression: `{function}` takes points p1…p{points}, given `{found}`"
             ),
-            ExprError::PointAsNumber { name } => write!(
+            ExpressionError::PointAsNumber { name } => write!(
                 f,
                 "expression: point `{name}` is no number, only an argument of \
                  distance/angle/dihedral"
             ),
-            ExprError::BadBinding { reason } => write!(f, "expression binding: {reason}"),
-            ExprError::MissingInput { input } => {
+            ExpressionError::BadBinding { reason } => write!(f, "expression binding: {reason}"),
+            ExpressionError::MissingInput { input } => {
                 write!(f, "expression: no column for input `{input}`")
             }
         }
     }
 }
 
-impl std::error::Error for ExprError {}
+impl std::error::Error for ExpressionError {}

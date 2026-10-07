@@ -35,7 +35,7 @@ pub mod ir;
 #[cfg(test)]
 mod ir_invariance;
 #[cfg(test)]
-mod one_four;
+mod one_four_lammps_check;
 #[cfg(test)]
 mod openmm_check;
 pub mod params;

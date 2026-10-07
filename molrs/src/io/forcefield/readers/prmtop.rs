@@ -58,7 +58,7 @@ use super::ForceFieldReader;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_COULOMB, CHARMM_COULOMB};
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
 use crate::io::data::prmtop::{frame_from_sections, parse_flag_sections};
@@ -579,7 +579,7 @@ fn build_forcefield(sections: &HashMap<String, Vec<String>>) -> Result<ForceFiel
         // The off-diagonal entries that are no row are Lorentz–Berthelot
         // mixes, so the style states that rule rather than lean on a default.
         let mut lj = Params::new();
-        lj.set_str("mixing", Mixing::Arithmetic.name());
+        lj.set_str("mixing", CombiningRule::Arithmetic.name());
         let style = def(&mut ff, "pair", "lj/cut", lj)?;
         for (tname, (sigma, epsilon), _) in &selves {
             style
@@ -1000,7 +1000,7 @@ fn def_lj_charmm(
 ) -> Result<(), String> {
     let (selves, cross) = lj_rows(atom_types, type_index, regular, one_four);
     let mut style_params = Params::new();
-    style_params.set_str("mixing", Mixing::Arithmetic.name());
+    style_params.set_str("mixing", CombiningRule::Arithmetic.name());
     if one_four.is_some() {
         style_params.set_str("one_four", "epsilon14");
     }

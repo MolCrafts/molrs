@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::compile::gathered;
 use crate::ff::potential::intramolecular_pairs;
@@ -91,8 +91,8 @@ pub(crate) fn has_own_one_four(p: &Params) -> bool {
 /// The van-der-Waals style a 1-4 pair's parameters come from.
 enum Vdw {
     None,
-    LjCut(HashMap<String, Params>, Mixing),
-    Charmm(HashMap<String, Params>, Mixing, OneFour),
+    LjCut(HashMap<String, Params>, CombiningRule),
+    Charmm(HashMap<String, Params>, CombiningRule, OneFour),
 }
 
 fn vdw_style(ff: &ForceField) -> Result<Vdw, String> {

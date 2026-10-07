@@ -7,11 +7,9 @@
 //! into computational [`Potential`](super::potential::Potential) objects by
 //! [`PotentialCompiler`](super::potential::PotentialCompiler).
 
-pub(crate) mod lammps_codecs;
-pub mod mixing;
+pub mod combining_rule;
 pub mod one_four;
 pub mod param_columns;
-pub mod torsion;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1423,7 +1421,7 @@ impl ForceField {
         name: &str,
         params: Params,
     ) -> Result<&mut Style, DefError> {
-        let defs = crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category))?;
+        let defs = crate::ff::ir::with_global_registry(|r| self.empty_defs(Some(r), category))?;
         self.define_style(defs, name, &params)
     }
 
@@ -1457,7 +1455,7 @@ impl ForceField {
         name: &str,
         params: Params,
     ) -> Result<&mut Style, DefError> {
-        let declared = crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category));
+        let declared = crate::ff::ir::with_global_registry(|r| self.empty_defs(Some(r), category));
         let defs = match declared {
             Ok(defs) if defs.arity() == arity => defs,
             Ok(defs) => {
@@ -1555,7 +1553,7 @@ impl ForceField {
         name: &str,
         params: &Params,
     ) -> Result<(), DefError> {
-        crate::ff::ir::with_global(|r| self.empty_defs(Some(r), category))?;
+        crate::ff::ir::with_global_registry(|r| self.empty_defs(Some(r), category))?;
         match self.get_style(category, name) {
             Some(existing) if existing.params != *params => Err(DefError::StyleConflict {
                 category: category.to_owned(),

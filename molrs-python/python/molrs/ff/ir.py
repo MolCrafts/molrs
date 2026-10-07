@@ -14,11 +14,11 @@ A new bond style, LAMMPS ``bond_style fene``, by its expression::
 
     from molrs.ff import ir
 
-    class Fene(ir.StyleSpec):
+    class Fene(ir.StyleDeclaration):
         category = "bond"
         name = "fene"
-        params = [ir.Param("k", "E/L^2"), ir.Param("r0", "L"),
-                  ir.Param("epsilon", "E"), ir.Param("sigma", "L")]
+        params = [ir.ParamSpec("k", "E/L^2"), ir.ParamSpec("r0", "L"),
+                  ir.ParamSpec("epsilon", "E"), ir.ParamSpec("sigma", "L")]
         expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
                       "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
 
@@ -42,100 +42,101 @@ and its derivative (or ``∂E/∂x`` for a compound kernel, not the force). The
 pair weight, the cutoff and the chain rule onto Cartesian forces are the
 form kernels'.
 
-Refusals are :class:`IrError` (a ``ValueError``) subclasses of the same names
-as the Rust variants: :class:`Sealed`, :class:`Conflict`,
-:class:`UnboundVariable`, :class:`UnknownFunction`, :class:`KernelShape`,
-:class:`NoKernel`, :class:`MissingParam`, :class:`BadValue`,
-:class:`Derivative`, … A Python
+Refusals are :class:`IrError` (a ``ValueError``) subclasses named after the
+Rust variants with an ``Error`` suffix (``IrError::Dimension`` is
+:class:`DimensionError`): :class:`SealedError`, :class:`ConflictError`,
+:class:`UnboundVariableError`, :class:`UnknownFunctionError`, :class:`KernelShapeError`,
+:class:`NoKernelError`, :class:`MissingParamError`, :class:`BadValueError`,
+:class:`DerivativeError`, … A Python
 kernel that raises during an evaluation, a compile or a registration surfaces
-as :class:`KernelShape` with the original exception as ``__cause__``.
+as :class:`KernelShapeError` with the original exception as ``__cause__``.
 """
 
 from .._lib import ir as _ir
-from ._style_spec import StyleSpec
+from ._style_declaration import StyleDeclaration
 
 IrError = _ir.IrError
-UnknownCategory = _ir.UnknownCategory
-BadName = _ir.BadName
-Arity = _ir.Arity
-BlockName = _ir.BlockName
-ReservedParam = _ir.ReservedParam
-DuplicateParam = _ir.DuplicateParam
-Dim = _ir.Dim
-Parse = _ir.Parse
-UnboundVariable = _ir.UnboundVariable
-UnknownFunction = _ir.UnknownFunction
-FunctionArity = _ir.FunctionArity
-Point = _ir.Point
-CoordinateMismatch = _ir.CoordinateMismatch
-Derivative = _ir.Derivative
-Disagree = _ir.Disagree
-Asymmetric = _ir.Asymmetric
-Sealed = _ir.Sealed
-Conflict = _ir.Conflict
-NoKernel = _ir.NoKernel
-NoMixing = _ir.NoMixing
-MissingParam = _ir.MissingParam
-BadValue = _ir.BadValue
-KernelShape = _ir.KernelShape
-NoEngineForm = _ir.NoEngineForm
-FormConflict = _ir.FormConflict
-NoForm = _ir.NoForm
-OutOfImage = _ir.OutOfImage
-Malformed = _ir.Malformed
+UnknownCategoryError = _ir.UnknownCategoryError
+BadNameError = _ir.BadNameError
+ArityError = _ir.ArityError
+BlockNameError = _ir.BlockNameError
+ReservedParamError = _ir.ReservedParamError
+DuplicateParamError = _ir.DuplicateParamError
+DimensionError = _ir.DimensionError
+ParseError = _ir.ParseError
+UnboundVariableError = _ir.UnboundVariableError
+UnknownFunctionError = _ir.UnknownFunctionError
+FunctionArityError = _ir.FunctionArityError
+PointError = _ir.PointError
+CoordinateMismatchError = _ir.CoordinateMismatchError
+DerivativeError = _ir.DerivativeError
+DisagreeError = _ir.DisagreeError
+AsymmetricError = _ir.AsymmetricError
+SealedError = _ir.SealedError
+ConflictError = _ir.ConflictError
+NoKernelError = _ir.NoKernelError
+NoMixingError = _ir.NoMixingError
+MissingParamError = _ir.MissingParamError
+BadValueError = _ir.BadValueError
+KernelShapeError = _ir.KernelShapeError
+NoEngineFormError = _ir.NoEngineFormError
+FormConflictError = _ir.FormConflictError
+NoFormError = _ir.NoFormError
+OutOfImageError = _ir.OutOfImageError
+MalformedError = _ir.MalformedError
 
-Param = _ir.Param
-StyleInfo = _ir.StyleInfo
-CategoryInfo = _ir.CategoryInfo
+ParamSpec = _ir.ParamSpec
+StyleSpec = _ir.StyleSpec
+CategorySpec = _ir.CategorySpec
 register_category = _ir.register_category
 register_style = _ir.register_style
 register_engine_form = _ir.register_engine_form
-unregister = _ir.unregister
+unregister_style = _ir.unregister_style
 styles = _ir.styles
 categories = _ir.categories
 evaluate = _ir.evaluate
 
-StyleSpec.__module__ = __name__
+StyleDeclaration.__module__ = __name__
 
 __all__ = [
-    "Arity",
-    "Asymmetric",
-    "BadName",
-    "BlockName",
-    "CategoryInfo",
-    "Conflict",
-    "CoordinateMismatch",
-    "Derivative",
-    "Dim",
-    "Disagree",
-    "DuplicateParam",
-    "FormConflict",
-    "FunctionArity",
+    "ArityError",
+    "AsymmetricError",
+    "BadNameError",
+    "BadValueError",
+    "BlockNameError",
+    "CategorySpec",
+    "ConflictError",
+    "CoordinateMismatchError",
+    "DerivativeError",
+    "DimensionError",
+    "DisagreeError",
+    "DuplicateParamError",
+    "FormConflictError",
+    "FunctionArityError",
     "IrError",
-    "KernelShape",
-    "Malformed",
-    "MissingParam",
-    "BadValue",
-    "NoEngineForm",
-    "NoForm",
-    "NoKernel",
-    "NoMixing",
-    "OutOfImage",
-    "Param",
-    "Parse",
-    "Point",
-    "ReservedParam",
-    "Sealed",
-    "StyleInfo",
+    "KernelShapeError",
+    "MalformedError",
+    "MissingParamError",
+    "NoEngineFormError",
+    "NoFormError",
+    "NoKernelError",
+    "NoMixingError",
+    "OutOfImageError",
+    "ParamSpec",
+    "ParseError",
+    "PointError",
+    "ReservedParamError",
+    "SealedError",
+    "StyleDeclaration",
     "StyleSpec",
-    "UnboundVariable",
-    "UnknownCategory",
-    "UnknownFunction",
+    "UnboundVariableError",
+    "UnknownCategoryError",
+    "UnknownFunctionError",
     "categories",
     "evaluate",
     "register_category",
     "register_engine_form",
     "register_style",
     "styles",
-    "unregister",
+    "unregister_style",
 ]

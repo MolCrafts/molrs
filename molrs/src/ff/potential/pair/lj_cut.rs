@@ -11,7 +11,7 @@
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::IrError;
 use crate::ff::potential::flat_coords::validate_coords;
@@ -257,7 +257,7 @@ impl PairLjCut {
     pub fn typed(
         type_id: Vec<u32>,
         per_type: &[(F, F)],
-        mixing: Mixing,
+        mixing: CombiningRule,
         cutoff: F,
         n: i32,
         m: i32,
@@ -779,7 +779,7 @@ fn lj_cross_row(
 pub(crate) fn lj_pair_params(
     style: &str,
     type_map: &HashMap<&str, &Params>,
-    mixing: Mixing,
+    mixing: CombiningRule,
     a: &str,
     b: &str,
 ) -> Result<(F, F), CompileError> {
@@ -824,9 +824,9 @@ pub(crate) fn lj_table(
 
 /// The `mixing` rule of the Lennard-Jones style `style` (gathered: declared,
 /// else the spec's default).
-pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<Mixing, IrError> {
+pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<CombiningRule, IrError> {
     let name = param_reads::style_text(style, style_params, "mixing")?;
-    Mixing::parse(name).map_err(|e| param_reads::bad(style, "", "mixing", e))
+    CombiningRule::parse(name).map_err(|e| param_reads::bad(style, "", "mixing", e))
 }
 
 /// The style's exponents `(n, m)`: integers with `n > m > 0`.
@@ -1031,7 +1031,7 @@ mod tests {
         let kernel = PairLjCut::typed(
             (0..n).map(|i| (i % 2) as u32).collect(),
             &[(0.3, 3.4), (0.5, 3.0)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             6.0,
             12,
             6,
@@ -1191,7 +1191,7 @@ mod tests {
             4.0, 3.3, 1.1,
         ];
         let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
-        let mixing = Mixing::Arithmetic;
+        let mixing = CombiningRule::Arithmetic;
 
         let mut ai = Vec::new();
         let mut aj = Vec::new();
@@ -1257,7 +1257,7 @@ mod tests {
         let typed = PairLjCut::typed(
             vec![0_u32, 0],
             &[(1.0, 1.0)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             2.5,
             12,
             6,
@@ -1291,7 +1291,7 @@ mod tests {
             let typed = PairLjCut::typed(
                 vec![0_u32; 3],
                 &[(1.0, 1.0)],
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 2.5,
                 12,
                 6,
@@ -1367,9 +1367,11 @@ mod tests {
     /// `style` as a compile hands it to the kernel: the `lj/cut` spec's
     /// defaults filled in.
     fn gathered(style: Params) -> Params {
-        crate::ff::ir::with_global(|r| r.style("pair", "lj/cut").unwrap().0.gather(&style, &[]))
-            .unwrap()
-            .0
+        crate::ff::ir::with_global_registry(|r| {
+            r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
+        })
+        .unwrap()
+        .0
     }
 
     fn lj(eps: F, sigma: F, r: F) -> F {

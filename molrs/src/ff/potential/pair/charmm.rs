@@ -44,7 +44,7 @@
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::IrError;
 use crate::ff::potential::flat_coords::validate_coords;
@@ -128,13 +128,13 @@ pub(crate) fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
 }
 
 /// The mixing rule of a CHARMM style: declared, or the IR's (and
-/// LAMMPS's) default [`Mixing::UNDECLARED`], `arithmetic`.
-pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, IrError> {
+/// LAMMPS's) default [`CombiningRule::UNDECLARED`], `arithmetic`.
+pub(crate) fn charmm_mixing(style: &Params) -> Result<CombiningRule, IrError> {
     match style.get_str("mixing") {
         Some(name) => {
-            Mixing::parse(name).map_err(|e| param_reads::bad("lj/charmm", "", "mixing", e))
+            CombiningRule::parse(name).map_err(|e| param_reads::bad("lj/charmm", "", "mixing", e))
         }
-        None => Ok(Mixing::UNDECLARED),
+        None => Ok(CombiningRule::UNDECLARED),
     }
 }
 
@@ -155,7 +155,7 @@ fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, IrError> {
 /// rows mixed by `mixing` otherwise — LAMMPS's `init_one`.
 pub(crate) fn charmm_pair_params(
     rows: &HashMap<&str, &Params>,
-    mixing: Mixing,
+    mixing: CombiningRule,
     a: &str,
     b: &str,
 ) -> Result<CharmmParams, CompileError> {
@@ -851,7 +851,7 @@ mod tests {
         let mut table = Vec::new();
         for a in per {
             for b in per {
-                table.push(Mixing::Arithmetic.combine(a, b));
+                table.push(CombiningRule::Arithmetic.combine(a, b));
             }
         }
         let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3), (0, 3)];
@@ -900,11 +900,11 @@ mod tests {
         let mut rows: HashMap<&str, &Params> = HashMap::new();
         rows.insert("A", &a);
         rows.insert("B", &b);
-        let (reg, r14) = charmm_pair_params(&rows, Mixing::Arithmetic, "A", "B").unwrap();
+        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "A", "B").unwrap();
         assert_eq!(reg, ((0.1_f64 * 0.4).sqrt(), 3.3));
         assert_eq!(r14, ((0.05_f64 * 0.4).sqrt(), 0.5 * (2.8 + 3.6)));
         rows.insert(key.as_str(), &ab);
-        let (reg, r14) = charmm_pair_params(&rows, Mixing::Arithmetic, "B", "A").unwrap();
+        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "B", "A").unwrap();
         assert_eq!(reg, (0.9, 2.0));
         assert_eq!(r14, (0.9, 2.0), "a 2-number cross row is its own 1-4 row");
     }

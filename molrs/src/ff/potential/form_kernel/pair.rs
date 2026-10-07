@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::SpecialClass;
 use crate::ff::ir::conformance::Probe;
-use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
+use crate::ff::ir::{IrError, ParamCombination, ParamKind, StyleSpec};
 use crate::ff::potential::form_kernel::{
     ScalarForm, StyleParamColumn, TermParams, columns, read_by, row_num,
 };
@@ -83,7 +83,7 @@ enum Source {
 ///
 /// The form sees each per-type parameter as the pair's value — the cross
 /// row's where the style has one stating it, else the two self rows by the
-/// parameter's [`Mix`] — every numeric style parameter, `q1`, `q2` when
+/// parameter's [`ParamCombination`] — every numeric style parameter, `q1`, `q2` when
 /// the frame carries `atoms.charge`, and the self-row values `<x>1`, `<x>2`
 /// the form asks for ([`ScalarForm::inputs`]).
 pub struct ScalarPair {
@@ -97,7 +97,7 @@ struct PairRows<'a> {
     spec: &'a StyleSpec,
     cols: Vec<StyleParamColumn>,
     rows: HashMap<&'a str, &'a Params>,
-    mixing: Mixing,
+    mixing: CombiningRule,
 }
 
 impl<'a> PairRows<'a> {
@@ -117,13 +117,13 @@ impl<'a> PairRows<'a> {
             });
         }
         let mixing = match style.get_str("mixing") {
-            Some(name) => Mixing::parse(name).map_err(|reason| IrError::BadValue {
+            Some(name) => CombiningRule::parse(name).map_err(|reason| IrError::BadValue {
                 style: spec.name.to_string(),
                 type_: String::new(),
                 param: "mixing".into(),
                 reason,
             })?,
-            None => Mixing::UNDECLARED,
+            None => CombiningRule::UNDECLARED,
         };
         Ok(Self {
             spec,
@@ -178,9 +178,10 @@ impl<'a> PairRows<'a> {
     /// StyleParamColumn `c` of the unlike pair `{a, b}` by its mixing rule.
     fn mixed(&self, a: &str, b: &str, c: usize) -> Result<F, IrError> {
         Ok(match &self.spec.params[self.cols[c].param].mix {
-            Mix::Arithmetic => 0.5 * (self.own(a, c)? + self.own(b, c)?),
-            Mix::Geometric => (self.own(a, c)? * self.own(b, c)?).sqrt(),
-            Mix::LjEpsilon { sigma: other } | Mix::LjSigma { epsilon: other } => {
+            ParamCombination::Arithmetic => 0.5 * (self.own(a, c)? + self.own(b, c)?),
+            ParamCombination::Geometric => (self.own(a, c)? * self.own(b, c)?).sqrt(),
+            ParamCombination::LjEpsilon { sigma: other }
+            | ParamCombination::LjSigma { epsilon: other } => {
                 let s = self.partner(c, other).ok_or_else(|| IrError::Malformed {
                     style: self.spec.name.to_string(),
                     reason: format!(
@@ -190,7 +191,7 @@ impl<'a> PairRows<'a> {
                 })?;
                 let is_eps = matches!(
                     self.spec.params[self.cols[c].param].mix,
-                    Mix::LjEpsilon { .. }
+                    ParamCombination::LjEpsilon { .. }
                 );
                 let (e, s) = if is_eps { (c, s) } else { (s, c) };
                 let (eps, sig) = self.mixing.combine(
@@ -199,7 +200,7 @@ impl<'a> PairRows<'a> {
                 );
                 if is_eps { eps } else { sig }
             }
-            Mix::None => {
+            ParamCombination::None => {
                 return Err(IrError::NoMixing {
                     style: self.spec.name.to_string(),
                     param: self.cols[c].name.clone(),

@@ -72,7 +72,7 @@
 //! | cmaptypes 1 | CHARMM bicubic map | `cmap/charmm` {`grid`} | grid/4.184 |
 //!
 //! Every conversion is exact: RB is the polynomial `nharmonic` /
-//! `multi/harmonic` (the torsion algebra, `ff::forcefield::torsion`), so no
+//! `multi/harmonic` (the torsion algebra, `ff::ir::torsion`), so no
 //! RB row is refused for its C₅ or its ΣCₙ. ½k_ξ(ξ−ξ₀)² is signed and
 //! molrs's `improper/harmonic` is `K(χ−χ₀)²` with χ = |φ|: they agree for ξ₀ =
 //! 0° and ξ₀ = 180° and for no other ξ₀, which is refused.
@@ -214,9 +214,9 @@ use ndarray::ArrayD;
 use super::ForceFieldReader;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{ANGSTROM_PER_NM, GROMACS_COULOMB, KJ_PER_KCAL};
-use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::torsion::rb_polynomial;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::ir::torsion::rb_polynomial;
 use crate::ff::potential::cmap::charmm::GRID;
 use molrs::core::Frame;
 use molrs::core::TypeName;
@@ -717,8 +717,8 @@ impl Row {
             )));
         }
         let mixing = match comb {
-            "2" => Mixing::Arithmetic,
-            "3" => Mixing::Geometric,
+            "2" => CombiningRule::Arithmetic,
+            "3" => CombiningRule::Geometric,
             other => {
                 return Err(self.err(&format!(
                     "comb-rule {other} is not supported: only 2 (arithmetic) and 3 \
@@ -1140,7 +1140,7 @@ fn periodic_terms(terms: &[[f64; 3]]) -> Params {
 /// `[ defaults ]`.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Defaults {
-    pub(super) mixing: Mixing,
+    pub(super) mixing: CombiningRule,
     pub(super) gen_pairs: bool,
     pub(super) fudge_lj: f64,
     pub(super) fudge_qq: f64,

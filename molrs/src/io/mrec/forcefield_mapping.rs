@@ -463,7 +463,7 @@ impl ForceFieldSection {
     /// assert_eq!(back.get_bondtypes()[0].params.get("k"), Some(300.0));
     /// ```
     pub fn from_forcefield(ff: &ForceField) -> Result<ForceFieldSection, String> {
-        crate::ff::ir::with_global(|registry| Self::from_forcefield_in(ff, registry))
+        crate::ff::ir::with_global_registry(|registry| Self::from_forcefield_in(ff, registry))
     }
 
     /// [`Self::from_forcefield`] against `registry` instead of the

@@ -20,10 +20,10 @@ use std::sync::{Arc, LazyLock};
 
 use crate::ff::forcefield::Params;
 use crate::ff::forcefield::one_four::OneFour;
-use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::ir::positional::{self, number, read_named, value};
-use crate::ff::ir::{Dim, StyleSpec};
+use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::ir::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};
+use crate::ff::ir::{ParamDimension, StyleSpec};
 use molrs::op::types::F;
 
 type Codec = LazyLock<Arc<dyn LammpsCodec>>;
@@ -74,7 +74,7 @@ fn sign(spec: &StyleSpec, v: F) -> Result<Token, String> {
 }
 
 fn energy(units: &UnitScale, v: F) -> Token {
-    Token::Real(units.apply(v, Dim::ENERGY))
+    Token::Real(units.apply(v, ParamDimension::ENERGY))
 }
 
 fn no_rows(spec: &StyleSpec) -> String {
@@ -86,14 +86,14 @@ fn no_rows(spec: &StyleSpec) -> String {
 
 // ── dihedral periodic: fourier ──────────────────────────────────────────────
 
-pub(crate) struct Fourier;
+pub(crate) struct FourierCodec;
 codec!(
     /// `dihedral periodic` is LAMMPS's `fourier`, term for term.
-    FOURIER = Fourier,
+    FOURIER = FourierCodec,
     Some("fourier")
 );
 
-impl LammpsCodec for Fourier {
+impl LammpsCodec for FourierCodec {
     /// `m K1 n1 d1 [K2 n2 d2 …]` from `k<i>` / `periodicity<i>` / `phase<i>`
     /// (`phase` absent: 0°); the unindexed `k` / `periodicity` / `phase` is
     /// the one-term case.
@@ -176,14 +176,14 @@ impl LammpsCodec for Fourier {
 
 // ── dihedral nharmonic ──────────────────────────────────────────────────────
 
-pub(crate) struct Nharmonic;
+pub(crate) struct NharmonicCodec;
 codec!(
     /// `N A1 … AN`.
-    NHARMONIC = Nharmonic,
+    NHARMONIC = NharmonicCodec,
     None
 );
 
-impl LammpsCodec for Nharmonic {
+impl LammpsCodec for NharmonicCodec {
     fn write(
         &self,
         spec: &StyleSpec,
@@ -232,22 +232,22 @@ impl LammpsCodec for Nharmonic {
 
 // ── dihedral charmm ─────────────────────────────────────────────────────────
 
-pub(crate) struct DihedralCharmm;
+pub(crate) struct DihedralCharmmCodec;
 codec!(
     /// `K n d w`, `n` and `d` integers (`dihedral_charmm.cpp` reads both
     /// with `inumeric`).
-    DIHEDRAL_CHARMM = DihedralCharmm,
+    DIHEDRAL_CHARMM = DihedralCharmmCodec,
     None
 );
 
-impl LammpsCodec for DihedralCharmm {
+impl LammpsCodec for DihedralCharmmCodec {
     fn write(
         &self,
         spec: &StyleSpec,
         p: &Params,
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
-        positional::no_extra(spec, p)?;
+        positional::refuse_undeclared_params(spec, p)?;
         let get = |name: &str| value(spec, spec.param(name).expect("a charmm parameter"), p);
         let phase = get("phase")?;
         if phase.fract() != 0.0 {
@@ -274,21 +274,21 @@ impl LammpsCodec for DihedralCharmm {
 
 // ── dihedral harmonic, improper cvff: K d n ─────────────────────────────────
 
-pub(crate) struct SignedCosine;
+pub(crate) struct SignedCosineCodec;
 codec!(
     /// `K d n`: `E = K[1 + d cos(nφ)]`, `d` a sign (±1) and `n` an integer.
-    SIGNED_COSINE = SignedCosine,
+    SIGNED_COSINE = SignedCosineCodec,
     None
 );
 
-impl LammpsCodec for SignedCosine {
+impl LammpsCodec for SignedCosineCodec {
     fn write(
         &self,
         spec: &StyleSpec,
         p: &Params,
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
-        positional::no_extra(spec, p)?;
+        positional::refuse_undeclared_params(spec, p)?;
         let get = |name: &str| value(spec, spec.param(name).expect("a K d n parameter"), p);
         Ok(LammpsCoeffs {
             values: vec![
@@ -307,7 +307,7 @@ impl LammpsCodec for SignedCosine {
 
 // ── improper periodic: LAMMPS cvff ──────────────────────────────────────────
 
-pub(crate) struct PeriodicAsCvff;
+pub(crate) struct PeriodicAsCvffCodec;
 codec!(
     /// AMBER's `improper periodic`, `E = K[1 + cos(nφ − φ0)]`, is LAMMPS's
     /// `improper_style cvff`, `E = K[1 + d cos(nφ)]`, when φ0 is 0° (`d` =
@@ -315,18 +315,18 @@ codec!(
     /// I-J-K-L of the stored order. AMBER writes π as 3.1416, which a reader
     /// in degrees stores as 180.0004, hence a tolerance of 1e-3 rad; any
     /// other phase is refused, not rounded.
-    PERIODIC_AS_CVFF = PeriodicAsCvff,
+    PERIODIC_AS_CVFF = PeriodicAsCvffCodec,
     Some("cvff")
 );
 
-impl LammpsCodec for PeriodicAsCvff {
+impl LammpsCodec for PeriodicAsCvffCodec {
     fn write(
         &self,
         spec: &StyleSpec,
         p: &Params,
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
-        positional::no_extra(spec, p)?;
+        positional::refuse_undeclared_params(spec, p)?;
         let get = |name: &str| value(spec, spec.param(name).expect("a periodic parameter"), p);
         let phase = get("phase")?.rem_euclid(360.0);
         let near = |x: F| (phase - x).abs() < 1e-3_f64.to_degrees();
@@ -465,14 +465,14 @@ const DIHEDRAL_CROSS: [CrossTerm; 5] = [
     },
 ];
 
-pub(crate) struct AngleClass2;
+pub(crate) struct AngleClass2Codec;
 codec!(
     /// `theta0 K2 K3 K4`, and `bb`/`ba` lines at zero.
-    ANGLE_CLASS2 = AngleClass2,
+    ANGLE_CLASS2 = AngleClass2Codec,
     None
 );
 
-impl LammpsCodec for AngleClass2 {
+impl LammpsCodec for AngleClass2Codec {
     fn write(
         &self,
         spec: &StyleSpec,
@@ -504,15 +504,15 @@ impl LammpsCodec for AngleClass2 {
     }
 }
 
-pub(crate) struct DihedralClass2;
+pub(crate) struct DihedralClass2Codec;
 codec!(
     /// `K1 phi1 K2 phi2 K3 phi3`, and `mbt`/`ebt`/`at`/`aat`/`bb13` lines at
     /// zero.
-    DIHEDRAL_CLASS2 = DihedralClass2,
+    DIHEDRAL_CLASS2 = DihedralClass2Codec,
     None
 );
 
-impl LammpsCodec for DihedralClass2 {
+impl LammpsCodec for DihedralClass2Codec {
     fn write(
         &self,
         spec: &StyleSpec,
@@ -546,15 +546,15 @@ impl LammpsCodec for DihedralClass2 {
 
 // ── pair styles ─────────────────────────────────────────────────────────────
 
-pub(crate) struct LjCut;
+pub(crate) struct LjCutCodec;
 codec!(
     /// `epsilon sigma`; `shift` is `pair_modify shift yes`; only the 12-6
     /// (`n`, `m` at their defaults: LAMMPS's Mie form is `mie/cut`).
-    LJ_CUT = LjCut,
+    LJ_CUT = LjCutCodec,
     None
 );
 
-impl LammpsCodec for LjCut {
+impl LammpsCodec for LjCutCodec {
     fn write(
         &self,
         spec: &StyleSpec,
@@ -594,22 +594,22 @@ impl LammpsCodec for LjCut {
     }
 }
 
-pub(crate) struct LjCharmm;
+pub(crate) struct LjCharmmCodec;
 codec!(
     /// `epsilon sigma epsilon14 sigma14` (the 1-4 pair always written, the
     /// regular one when the row has none); `inner cutoff` on the style line.
-    LJ_CHARMM = LjCharmm,
+    LJ_CHARMM = LjCharmmCodec,
     Some("lj/charmm/coul/charmm")
 );
 
-impl LammpsCodec for LjCharmm {
+impl LammpsCodec for LjCharmmCodec {
     fn write(
         &self,
         spec: &StyleSpec,
         p: &Params,
         units: &UnitScale,
     ) -> Result<LammpsCoeffs, String> {
-        positional::no_extra(spec, p)?;
+        positional::refuse_undeclared_params(spec, p)?;
         let need = |key: &str| {
             p.get(key)
                 .ok_or_else(|| format!("{}: missing parameter `{key}`", what(spec)))
@@ -618,9 +618,9 @@ impl LammpsCodec for LjCharmm {
         Ok(LammpsCoeffs {
             values: vec![
                 energy(units, eps),
-                Token::Real(units.apply(sigma, Dim::LENGTH)),
+                Token::Real(units.apply(sigma, ParamDimension::LENGTH)),
                 energy(units, p.get("epsilon14").unwrap_or(eps)),
-                Token::Real(units.apply(p.get("sigma14").unwrap_or(sigma), Dim::LENGTH)),
+                Token::Real(units.apply(p.get("sigma14").unwrap_or(sigma), ParamDimension::LENGTH)),
             ],
             extra: Vec::new(),
         })
@@ -677,7 +677,7 @@ fn switch_args(spec: &StyleSpec, style: &Params, units: &UnitScale) -> Result<Ve
         .map(|key| {
             style
                 .get(key)
-                .map(|v| Token::Real(units.apply(v, Dim::LENGTH)))
+                .map(|v| Token::Real(units.apply(v, ParamDimension::LENGTH)))
                 .ok_or_else(|| {
                     format!(
                         "pair style '{}' has no '{key}': lj/charmm/coul/charmm needs its inner \
@@ -689,15 +689,15 @@ fn switch_args(spec: &StyleSpec, style: &Params, units: &UnitScale) -> Result<Ve
         .collect()
 }
 
-pub(crate) struct LjClass2;
+pub(crate) struct LjClass2Codec;
 codec!(
     /// `epsilon sigma`; LAMMPS's `lj/class2` mixes `sixthpower` whatever
     /// `pair_modify` says (`pair_lj_class2.cpp`, `init_one`).
-    LJ_CLASS2 = LjClass2,
+    LJ_CLASS2 = LjClass2Codec,
     None
 );
 
-impl LammpsCodec for LjClass2 {
+impl LammpsCodec for LjClass2Codec {
     fn write(
         &self,
         spec: &StyleSpec,
@@ -743,14 +743,14 @@ fn check_coulomb(spec: &StyleSpec, style: &Params, carried: &[&str]) -> Result<(
     positional::check_style_except(spec, style, &all)
 }
 
-pub(crate) struct CoulCut;
+pub(crate) struct CoulCutCodec;
 codec!(
     /// The `coul/cut` half of `lj/cut/coul/cut` (or a `hybrid/overlay`).
-    COUL_CUT = CoulCut,
+    COUL_CUT = CoulCutCodec,
     Some("coul/cut")
 );
 
-impl LammpsCodec for CoulCut {
+impl LammpsCodec for CoulCutCodec {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(no_rows(spec))
     }
@@ -764,16 +764,16 @@ impl LammpsCodec for CoulCut {
     }
 }
 
-pub(crate) struct CoulLong;
+pub(crate) struct CoulLongCodec;
 codec!(
     /// The real-space `coul/long` of `lj/cut/coul/long`: its Ewald
     /// parameters are the input script's `kspace_style`, an accuracy, so a
     /// field stating its own is refused.
-    COUL_LONG = CoulLong,
+    COUL_LONG = CoulLongCodec,
     Some("coul/long")
 );
 
-impl LammpsCodec for CoulLong {
+impl LammpsCodec for CoulLongCodec {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(no_rows(spec))
     }
@@ -797,14 +797,14 @@ impl LammpsCodec for CoulLong {
     }
 }
 
-pub(crate) struct CoulCharmm;
+pub(crate) struct CoulCharmmCodec;
 codec!(
     /// The `coul/charmm` half of `lj/charmm/coul/charmm`.
-    COUL_CHARMM = CoulCharmm,
+    COUL_CHARMM = CoulCharmmCodec,
     Some("coul/charmm")
 );
 
-impl LammpsCodec for CoulCharmm {
+impl LammpsCodec for CoulCharmmCodec {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(no_rows(spec))
     }
@@ -833,15 +833,15 @@ impl LammpsCodec for CoulCharmm {
 
 // ── cmap: fix cmap ──────────────────────────────────────────────────────────
 
-pub(crate) struct FixCmap;
+pub(crate) struct FixCmapCodec;
 codec!(
     /// `cmap charmm` is LAMMPS's `fix cmap`: a grid file the include names,
     /// written by `LammpsFfWriter::write_cmap_str`, not a coefficient line.
-    FIX_CMAP = FixCmap,
+    FIX_CMAP = FixCmapCodec,
     Some("cmap")
 );
 
-impl LammpsCodec for FixCmap {
+impl LammpsCodec for FixCmapCodec {
     fn write(&self, spec: &StyleSpec, _: &Params, _: &UnitScale) -> Result<LammpsCoeffs, String> {
         Err(format!(
             "{}: LAMMPS's fix cmap reads a grid file (LammpsFfWriter::write_cmap_str), not a \

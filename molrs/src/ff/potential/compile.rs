@@ -29,7 +29,7 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style, StyleDefs};
-use crate::ff::ir::registry::StyleEntry;
+use crate::ff::ir::style_registry::RegisteredStyle;
 use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
 use crate::ff::ir::{ParamSource, RowSource, SpecialClass};
 use crate::ff::potential::pair::exceptions;
@@ -95,7 +95,7 @@ impl<'a> PotentialCompiler<'a> {
     fn registry(&self) -> Cow<'a, Registry> {
         match self.registry {
             Some(r) => Cow::Borrowed(r),
-            None => Cow::Owned(ir::with_global(Registry::clone)),
+            None => Cow::Owned(ir::with_global_registry(Registry::clone)),
         }
     }
 
@@ -487,7 +487,7 @@ impl<'a> PotentialCompiler<'a> {
 /// same number there as in the kernel. An unregistered style is as stated.
 pub(crate) fn gathered(style: &Style) -> Result<(Params, Vec<(String, Params)>), CompileError> {
     let rows = style.defs().kernel_type_params()?;
-    let spec = ir::with_global(|r| {
+    let spec = ir::with_global_registry(|r| {
         r.style(style.category(), style.name())
             .map(|(spec, _)| spec.clone())
     });
@@ -507,9 +507,9 @@ fn with_fallback<'r>(
     reg: &'r Registry,
     category: &CategorySpec,
     style: &Style,
-    entry: Option<&'r StyleEntry>,
+    entry: Option<&'r RegisteredStyle>,
     tp: &[(&str, &Params)],
-) -> Result<Cow<'r, StyleEntry>, CompileError> {
+) -> Result<Cow<'r, RegisteredStyle>, CompileError> {
     if let Some(e) = entry {
         return Ok(e.with_instance_expression(
             category,
@@ -517,7 +517,7 @@ fn with_fallback<'r>(
             reg.expression_compiler(),
         )?);
     }
-    match StyleEntry::fallback(
+    match RegisteredStyle::fallback(
         category,
         style.name(),
         style.params(),

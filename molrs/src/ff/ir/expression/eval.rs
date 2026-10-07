@@ -6,7 +6,7 @@
 
 use super::compile::{Compiled, F1, Geometry, Op, Program, delta, step};
 use super::dual::{self, Dual, P3};
-use super::error::ExprError;
+use super::error::ExpressionError;
 use molrs::op::types::F;
 
 /// The value of column `c` at term `t`, a length-1 column broadcast.
@@ -89,7 +89,7 @@ impl Compiled {
         lookup: impl Fn(&str) -> Option<&'a [F]>,
         e: &mut [F],
         de_dq: &mut [F],
-    ) -> Result<(), ExprError> {
+    ) -> Result<(), ExpressionError> {
         let cols = self.gather(|i| lookup(&i.spelling()))?;
         self.eval_scalar(q, &cols, e, de_dq);
         Ok(())
@@ -103,7 +103,7 @@ impl Compiled {
         lookup: impl Fn(&str) -> Option<&'a [F]>,
         e: &mut [F],
         grad: &mut [[F; 3]],
-    ) -> Result<(), ExprError> {
+    ) -> Result<(), ExpressionError> {
         let cols = self.gather(|i| lookup(&i.spelling()))?;
         self.eval_compound(x, &cols, e, grad);
         Ok(())

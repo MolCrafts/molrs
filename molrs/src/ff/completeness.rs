@@ -70,7 +70,7 @@ const GMX_RT: &str =
     "io/forcefield/readers/gromacs/engine_check.rs::fixture_directives_survive_write_then_read";
 const GMX_SYS: &str = "io/forcefield/writers/gromacs.rs::a_system_reads_back_as_written";
 const PRMTOP: &str = "io/forcefield/readers/prmtop_check.rs::each_term_matches_sander_and_lammps";
-const SERIES: &str = "ff/forcefield/torsion.rs::registered_kernels_price_the_series";
+const SERIES: &str = "ff/ir/form/torsion.rs::registered_kernels_price_the_series";
 const NO_OMM: &str =
     "io/forcefield/writers/xml.rs::styles_without_an_openmm_form_are_refused_by_name";
 const NO_LMP: &str = "io/forcefield/writers/lammps.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
@@ -361,7 +361,7 @@ const MATRIX: &[Row] = &[
         cells: [
             Exact(&[
                 "ff/potential/dihedral/charmm.rs::a_zero_weight_compiles_to_the_lammps_energy",
-                "ff/one_four.rs::charmm_weights_of_one_match_lammps",
+                "ff/one_four_lammps_check.rs::charmm_weights_of_one_match_lammps",
             ]),
             Exact(&["io/forcefield/readers/lammps.rs::dihedral_charmm_reads_its_own_layout"]),
             Exact(&[RT_L, EQUIV]),
@@ -712,7 +712,7 @@ const MATRIX: &[Row] = &[
             ]),
             Exact(&["io/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
             Exact(&[
-                "ff/one_four.rs::lammps_round_trip_and_override_refusal",
+                "ff/one_four_lammps_check.rs::lammps_round_trip_and_override_refusal",
                 EQUIV,
             ]),
             Exact(&[
@@ -894,8 +894,8 @@ const MATRIX: &[Row] = &[
         item: "per-pair overrides (pairs epsilon, sigma, lj_scale, charge_product, coul_scale)",
         cells: [
             Exact(&[
-                "ff/one_four.rs::global_half_equals_per_pair_scales_equals_per_pair_parameters",
-                "ff/one_four.rs::an_override_cell_beats_the_weight_and_a_null_cell_keeps_it",
+                "ff/one_four_lammps_check.rs::global_half_equals_per_pair_scales_equals_per_pair_parameters",
+                "ff/one_four_lammps_check.rs::an_override_cell_beats_the_weight_and_a_null_cell_keeps_it",
             ]),
             Na("LAMMPS has no per-pair 1-4 parameters"),
             Refused(
@@ -927,7 +927,7 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair",
                 &[
-                    "ff/one_four.rs::lammps_round_trip_and_override_refusal",
+                    "ff/one_four_lammps_check.rs::lammps_round_trip_and_override_refusal",
                     EQUIV,
                 ],
             ),
@@ -996,7 +996,7 @@ const MATRIX: &[Row] = &[
     Row {
         item: "mixing sixthpower",
         cells: [
-            Exact(&["ff/forcefield/mixing.rs::sixthpower_is_the_waldman_hagler_rule"]),
+            Exact(&["ff/forcefield/combining_rule.rs::sixthpower_is_the_waldman_hagler_rule"]),
             Exact(&["io/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
             Exact(&["io/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
             Na("OpenMM mixes arithmetically"),

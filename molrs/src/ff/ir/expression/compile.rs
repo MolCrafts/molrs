@@ -3,7 +3,7 @@
 //! [`compile`] resolves every identifier of a [`Parsed`] expression against a
 //! [`Binding`] — the category's geometric variables and points, the style's
 //! numeric parameters, the sub-definitions — refusing what does not resolve
-//! with a named [`ExprError`]. What resolves is lowered to stack programs
+//! with a named [`ExpressionError`]. What resolves is lowered to stack programs
 //! over three kinds of slot:
 //!
 //! - **coordinates**, dual numbers the evaluator seeds: the scalar
@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 
 use super::ast::{BinOp, Expr, Func, Parsed};
-use super::error::ExprError;
+use super::error::ExpressionError;
 use super::parse::parse;
 use molrs::op::types::F;
 
@@ -171,11 +171,11 @@ impl Binding {
         }
     }
 
-    fn bad(reason: String) -> ExprError {
-        ExprError::BadBinding { reason }
+    fn bad(reason: String) -> ExpressionError {
+        ExpressionError::BadBinding { reason }
     }
 
-    fn validate(&self) -> Result<(), ExprError> {
+    fn validate(&self) -> Result<(), ExpressionError> {
         if let Geometry::Compound { arity } = self.geometry
             && !(2..=5).contains(&arity)
         {
@@ -484,11 +484,11 @@ impl Compiled {
     pub fn gather<'a>(
         &self,
         mut lookup: impl FnMut(&Input) -> Option<&'a [F]>,
-    ) -> Result<Vec<&'a [F]>, ExprError> {
+    ) -> Result<Vec<&'a [F]>, ExpressionError> {
         self.inputs
             .iter()
             .map(|i| {
-                lookup(i).ok_or_else(|| ExprError::MissingInput {
+                lookup(i).ok_or_else(|| ExpressionError::MissingInput {
                     input: i.spelling(),
                 })
             })
@@ -506,12 +506,12 @@ enum Mode {
 /// Why a lowering stopped: a refusal, or (scalar mode only) a point
 /// function, which means the expression has no scalar form.
 enum Stop {
-    Refused(ExprError),
+    Refused(ExpressionError),
     NeedsPoints,
 }
 
-impl From<ExprError> for Stop {
-    fn from(e: ExprError) -> Self {
+impl From<ExpressionError> for Stop {
+    fn from(e: ExpressionError) -> Self {
         Stop::Refused(e)
     }
 }
@@ -582,7 +582,7 @@ impl Lowerer<'_> {
             return Ok(self.coord(c));
         }
         if g.point(name).is_some() {
-            return Err(ExprError::PointAsNumber {
+            return Err(ExpressionError::PointAsNumber {
                 name: name.to_owned(),
             }
             .into());
@@ -602,7 +602,7 @@ impl Lowerer<'_> {
         {
             i
         } else {
-            return Err(ExprError::UndeclaredVariable {
+            return Err(ExpressionError::UndeclaredVariable {
                 name: name.to_owned(),
                 allowed: self.b.allowed(),
             }
@@ -645,7 +645,7 @@ impl Lowerer<'_> {
                     Expr::Var(v) => g.point(v),
                     _ => None,
                 };
-                *slot = p.ok_or_else(|| ExprError::NotAPoint {
+                *slot = p.ok_or_else(|| ExpressionError::NotAPoint {
                     function: name.to_owned(),
                     found: a.to_string(),
                     points: g.points(),
@@ -816,7 +816,7 @@ impl Emitter {
 }
 
 /// Check every call in a tree (function known, arity right).
-fn check_calls(e: &Expr) -> Result<(), ExprError> {
+fn check_calls(e: &Expr) -> Result<(), ExpressionError> {
     match e {
         Expr::Num(_) | Expr::Var(_) => Ok(()),
         Expr::Neg(x) => check_calls(x),
@@ -826,9 +826,9 @@ fn check_calls(e: &Expr) -> Result<(), ExprError> {
         }
         Expr::Call(name, args) => {
             let f = Func::from_name(name)
-                .ok_or_else(|| ExprError::UnknownFunction { name: name.clone() })?;
+                .ok_or_else(|| ExpressionError::UnknownFunction { name: name.clone() })?;
             if args.len() != f.arity() {
-                return Err(ExprError::FunctionArity {
+                return Err(ExpressionError::FunctionArity {
                     name: name.clone(),
                     expected: f.arity(),
                     found: args.len(),
@@ -897,7 +897,7 @@ fn find_cycle(parsed: &Parsed, deps: &[Vec<usize>]) -> Option<Vec<String>> {
 
 /// The checks before lowering: calls, definition names, cycles and
 /// Lepton's definition order.
-fn check(parsed: &Parsed, b: &Binding) -> Result<(), ExprError> {
+fn check(parsed: &Parsed, b: &Binding) -> Result<(), ExpressionError> {
     check_calls(&parsed.main)?;
     for d in &parsed.defs {
         check_calls(&d.expr)?;
@@ -905,24 +905,24 @@ fn check(parsed: &Parsed, b: &Binding) -> Result<(), ExprError> {
     let mut def_index: HashMap<&str, usize> = HashMap::new();
     for (i, d) in parsed.defs.iter().enumerate() {
         if def_index.insert(d.name.as_str(), i).is_some() {
-            return Err(ExprError::DuplicateDefinition {
+            return Err(ExpressionError::DuplicateDefinition {
                 name: d.name.clone(),
             });
         }
         if b.takes(&d.name) {
-            return Err(ExprError::DefinitionShadows {
+            return Err(ExpressionError::DefinitionShadows {
                 name: d.name.clone(),
             });
         }
     }
     let deps = def_deps(parsed, &def_index);
     if let Some(cycle) = find_cycle(parsed, &deps) {
-        return Err(ExprError::CyclicDefinition { cycle });
+        return Err(ExpressionError::CyclicDefinition { cycle });
     }
     // Lepton: a definition sees only the definitions to its right.
     for (i, ds) in deps.iter().enumerate() {
         if let Some(&j) = ds.iter().find(|&&j| j < i) {
-            return Err(ExprError::DefinitionOrder {
+            return Err(ExpressionError::DefinitionOrder {
                 name: parsed.defs[j].name.clone(),
                 used_in: parsed.defs[i].name.clone(),
             });
@@ -1025,12 +1025,12 @@ fn lower_program(
 }
 
 /// Parse and compile `src` against `binding`.
-pub fn compile(src: &str, binding: &Binding) -> Result<Compiled, ExprError> {
+pub fn compile(src: &str, binding: &Binding) -> Result<Compiled, ExpressionError> {
     compile_parsed(parse(src)?, binding)
 }
 
 /// Compile an already parsed expression (e.g. a rewritten one).
-pub fn compile_parsed(parsed: Parsed, binding: &Binding) -> Result<Compiled, ExprError> {
+pub fn compile_parsed(parsed: Parsed, binding: &Binding) -> Result<Compiled, ExpressionError> {
     binding.validate()?;
     check(&parsed, binding)?;
     let def_index: HashMap<&str, usize> = parsed

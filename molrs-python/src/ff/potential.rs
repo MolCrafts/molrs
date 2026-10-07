@@ -176,7 +176,7 @@ fn compile_explicit_terms(
     let who = format!("{category} `{style}`");
     let atoms = term_atoms(atoms)?;
     let n = atoms.len();
-    let (pair, spec): (bool, Option<StyleSpec>) = rir::with_global(|r| {
+    let (pair, spec): (bool, Option<StyleSpec>) = rir::with_global_registry(|r| {
         (
             r.category(category).is_some_and(|c| c.is_pair_driven()),
             r.style(category, style).map(|(s, _)| s.clone()),

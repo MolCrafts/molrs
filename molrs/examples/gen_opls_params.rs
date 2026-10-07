@@ -21,8 +21,8 @@ use std::process::ExitCode;
 
 use molrs::core::constants::COULOMB_REAL;
 use molrs::ff::forcefield::ForceField;
-use molrs::ff::forcefield::torsion::{MultiHarmonic, Opls};
 use molrs::ff::forcefield::{Params, StyleDefs};
+use molrs::ff::ir::torsion::{MultiHarmonic, Opls};
 use molrs::io::{
     forcefield::readers::ForceFieldReader, forcefield::readers::gromacs::GromacsTopFfReader,
 };

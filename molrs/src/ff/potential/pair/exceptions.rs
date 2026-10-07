@@ -50,7 +50,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::check_materialized;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::compile::gathered;
@@ -231,8 +231,8 @@ const COUL_SCALE: usize = 4;
 /// The van-der-Waals style an exception's default LJ comes from.
 enum Vdw<'f> {
     None,
-    LjCut(HashMap<String, Params>, Mixing),
-    Charmm(HashMap<String, Params>, Mixing),
+    LjCut(HashMap<String, Params>, CombiningRule),
+    Charmm(HashMap<String, Params>, CombiningRule),
     /// A style with no LJ 12-6 form (`buck`, `morse`, Mie `lj/cut`, …).
     Other(&'f str),
 }
@@ -331,7 +331,7 @@ pub(crate) fn plan(ff: &ForceField, frame: &Frame) -> Result<Exceptions, String>
         // Van der Waals: the cells, else the dihedral's 1-4 parameters, else
         // the style's own. A field with no Lennard-Jones style prices none of
         // the LJ cells: they belong to a style it does not have.
-        let base = |mixing: Mixing, charmm: bool| -> Result<(F, F), String> {
+        let base = |mixing: CombiningRule, charmm: bool| -> Result<(F, F), String> {
             let (a, b) = atom_type_pair(types, i, j)?;
             if charmm {
                 let (regular, one_four) =

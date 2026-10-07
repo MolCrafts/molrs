@@ -515,7 +515,7 @@ mod tests {
     /// absent `sixthpower` — LAMMPS's rule for `lj/class2` — at both doors.
     #[test]
     fn an_unlike_pair_mixes_sixthpower_by_default() {
-        use crate::ff::forcefield::mixing::Mixing;
+        use crate::ff::forcefield::combining_rule::CombiningRule;
         use crate::ff::forcefield::{ForceField, Params};
         use crate::ff::potential::PotentialCompiler;
         use molrs::core::Block;
@@ -560,7 +560,7 @@ mod tests {
         frame.insert("atoms", atoms);
         frame.insert("pairs", pairs);
 
-        let (eps, sigma) = Mixing::SixthPower.combine((0.1, 3.0), (0.4, 3.6));
+        let (eps, sigma) = CombiningRule::SixthPower.combine((0.1, 3.0), (0.4, 3.6));
         let s = sigma / 3.4;
         let want = eps * (2.0 * s.powi(9) - 3.0 * s.powi(6));
         let e = PotentialCompiler::new(&ff)

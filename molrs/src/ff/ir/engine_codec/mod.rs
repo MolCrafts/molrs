@@ -7,7 +7,7 @@
 //!   [`LammpsForm::Positional`] is derived from the spec alone:
 //!   `<category>_style <name>` (`pair_style <name> <cutoff>`) and
 //!   `<category>_coeff <type> v₁ … vₙ` in `params` order, each value
-//!   converted by its [`Dim`] ([`UnitScale`]) from the force field's units
+//!   converted by its [`ParamDimension`] ([`UnitScale`]) from the force field's units
 //!   to the file's — so a style registered with a spec reads and writes
 //!   with nothing else written. A line LAMMPS does not spell positionally
 //!   (`fourier`'s term count, `nharmonic`'s `N`, `lj/charmm`'s 1-4 pair and
@@ -25,12 +25,14 @@
 //! Every refusal is [`IrError::NoEngineForm`] naming the engine, the
 //! category, the style and why.
 
+pub(crate) mod lammps;
+
 use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
 use crate::ff::forcefield::Params;
-use crate::ff::ir::{Dim, IrError, ParamKind, ParamSpec, StyleSpec, Value};
+use crate::ff::ir::{IrError, ParamDimension, ParamKind, ParamSpec, ParamValue, StyleSpec};
 use molrs::op::types::F;
 
 /// The engine formats molrs reads or writes.
@@ -85,7 +87,7 @@ impl Engine {
     /// the formats that hold built-in styles only (GROMACS, AMBER): a
     /// built-in without one, or any style that is not built in.
     pub fn refuse_style(self, category: &str, style: &str) -> IrError {
-        let builtin = crate::ff::ir::with_global(|r| r.is_sealed(category, style));
+        let builtin = crate::ff::ir::with_global_registry(|r| r.is_sealed(category, style));
         let reason = if builtin {
             format!(
                 "a built-in style no {} directive or section holds",
@@ -148,7 +150,7 @@ impl Token {
     }
 }
 
-/// Unit conversion of a parameter by its [`Dim`]: a value of dimension
+/// Unit conversion of a parameter by its [`ParamDimension`]: a value of dimension
 /// `E^e·L^l·A^a·Q^q·M^m` is multiplied by `f_E^e · f_L^l · f_Q^q · f_M^m`
 /// (D2: an angle value — exactly `A` — converts only between `units.angle`
 /// values, the degree in every preset, so not at all; a per-radian exponent
@@ -175,7 +177,7 @@ impl UnitScale {
     }
 
     /// `value` of dimension `dim`, in the target units.
-    pub fn apply(&self, value: F, dim: Dim) -> F {
+    pub fn apply(&self, value: F, dim: ParamDimension) -> F {
         let Some([e, l, q, m]) = self.factors else {
             return value;
         };
@@ -460,7 +462,7 @@ pub mod positional {
     pub fn value(spec: &StyleSpec, p: &ParamSpec, params: &Params) -> Result<F, String> {
         params
             .get(&p.name)
-            .or_else(|| p.default.as_ref().and_then(Value::as_num))
+            .or_else(|| p.default.as_ref().and_then(ParamValue::as_num))
             .ok_or_else(|| {
                 format!(
                     "{} {}: missing parameter `{}` (it has no default)",
@@ -473,7 +475,7 @@ pub mod positional {
     /// (LAMMPS reads multiplicities and signs with `inumeric`), every other
     /// value converted by its dimension.
     pub fn token(p: &ParamSpec, v: F, units: &UnitScale) -> Token {
-        if p.dim == Dim::NONE
+        if p.dim == ParamDimension::NONE
             && let Some(t) = Token::integral(v)
         {
             return t;
@@ -483,7 +485,7 @@ pub mod positional {
 
     /// Refuse a numeric parameter of `params` the spec does not declare:
     /// writing the line would drop it.
-    pub fn no_extra(spec: &StyleSpec, params: &Params) -> Result<(), String> {
+    pub fn refuse_undeclared_params(spec: &StyleSpec, params: &Params) -> Result<(), String> {
         match params.iter().find(|(k, _)| spec.param(k).is_none()) {
             Some((key, _)) => Err(format!(
                 "{} {}: parameter `{key}` has no place on the LAMMPS coefficient line",
@@ -499,7 +501,7 @@ pub mod positional {
         params: &Params,
         units: &UnitScale,
     ) -> Result<Vec<Token>, String> {
-        no_extra(spec, params)?;
+        refuse_undeclared_params(spec, params)?;
         spec.params
             .iter()
             .map(|p| Ok(token(p, value(spec, p, params)?, units)))
@@ -566,7 +568,7 @@ pub mod positional {
             let default = spec
                 .style_param(key)
                 .and_then(|p| p.default.as_ref())
-                .and_then(Value::as_num);
+                .and_then(ParamValue::as_num);
             if default != Some(v) {
                 return Err(format!(
                     "{} {}: style parameter `{key}` = {v} has no place on a LAMMPS line",
@@ -581,7 +583,7 @@ pub mod positional {
             let default = spec
                 .style_param(key)
                 .and_then(|p| p.default.as_ref())
-                .and_then(Value::as_text);
+                .and_then(ParamValue::as_text);
             if default != Some(v) {
                 return Err(format!(
                     "{} {}: style parameter `{key}` = {v:?} has no place on a LAMMPS line",
@@ -648,7 +650,7 @@ pub mod positional {
         };
         let rule = style
             .get_str("mixing")
-            .or_else(|| p.default.as_ref().and_then(Value::as_text))
+            .or_else(|| p.default.as_ref().and_then(ParamValue::as_text))
             .unwrap_or("arithmetic");
         match fixed {
             Some(fixed) if fixed == rule => Ok(Vec::new()),

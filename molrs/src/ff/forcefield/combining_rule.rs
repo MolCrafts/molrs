@@ -19,12 +19,12 @@ use molrs::op::types::F;
 /// `sixthpower`. Reading an OPLS pack with Lorentz-Berthelot silently shifts
 /// every σ — hence the explicit knob.
 /// The combining rules' canonical spellings (LAMMPS's `pair_modify mix`
-/// names), in [`Mixing`] variant order: what a style's `mixing` param, and a
+/// names), in [`CombiningRule`] variant order: what a style's `mixing` param, and a
 /// record's `params.mixing`, may name.
-pub const MIXING_RULES: [&str; 3] = ["arithmetic", "geometric", "sixthpower"];
+pub const COMBINING_RULES: [&str; 3] = ["arithmetic", "geometric", "sixthpower"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Mixing {
+pub enum CombiningRule {
     /// `ε = √(εᵢεⱼ)`, `σ = ½(σᵢ + σⱼ)` — Lorentz-Berthelot (AMBER, CHARMM).
     Arithmetic,
     /// `ε = √(εᵢεⱼ)`, `σ = √(σᵢσⱼ)` — OPLS-AA.
@@ -33,29 +33,33 @@ pub enum Mixing {
     SixthPower,
 }
 
-impl Mixing {
+impl CombiningRule {
     /// The rule an `lj/cut` style that declares no `mixing` is evaluated
     /// under: Lorentz-Berthelot, the AMBER-family rule. Every reader whose
     /// format has a rule states it (AMBER prmtop: `arithmetic`).
-    pub(crate) const UNDECLARED: Mixing = Mixing::Arithmetic;
+    pub(crate) const UNDECLARED: CombiningRule = CombiningRule::Arithmetic;
 
-    /// The canonical spelling, the one [`Mixing::parse`] maps back to `self`.
+    /// The canonical spelling, the one [`CombiningRule::parse`] maps back to `self`.
     pub(crate) fn name(self) -> &'static str {
-        MIXING_RULES[self as usize]
+        COMBINING_RULES[self as usize]
     }
 
     /// Parse the canonical spelling (LAMMPS's `pair_modify mix` names); a
     /// reader translates its own synonyms (foyer's `lorentz`) at its door.
     pub fn parse(name: &str) -> Result<Self, String> {
-        const RULES: [Mixing; 3] = [Mixing::Arithmetic, Mixing::Geometric, Mixing::SixthPower];
-        MIXING_RULES
+        const RULES: [CombiningRule; 3] = [
+            CombiningRule::Arithmetic,
+            CombiningRule::Geometric,
+            CombiningRule::SixthPower,
+        ];
+        COMBINING_RULES
             .iter()
             .position(|rule| *rule == name)
             .map(|i| RULES[i])
             .ok_or_else(|| {
                 format!(
                     "unknown mixing rule '{name}' (expected {})",
-                    MIXING_RULES.join(" | ")
+                    COMBINING_RULES.join(" | ")
                 )
             })
     }
@@ -83,33 +87,37 @@ impl Mixing {
 mod tests {
     use super::*;
 
-    const ALL: [Mixing; 3] = [Mixing::Arithmetic, Mixing::Geometric, Mixing::SixthPower];
+    const ALL: [CombiningRule; 3] = [
+        CombiningRule::Arithmetic,
+        CombiningRule::Geometric,
+        CombiningRule::SixthPower,
+    ];
 
     #[test]
     fn name_is_the_canonical_spelling_of_every_rule() {
-        assert_eq!(Mixing::Arithmetic.name(), "arithmetic");
-        assert_eq!(Mixing::Geometric.name(), "geometric");
-        assert_eq!(Mixing::SixthPower.name(), "sixthpower");
+        assert_eq!(CombiningRule::Arithmetic.name(), "arithmetic");
+        assert_eq!(CombiningRule::Geometric.name(), "geometric");
+        assert_eq!(CombiningRule::SixthPower.name(), "sixthpower");
     }
 
     #[test]
     fn parse_inverts_name() {
         for m in ALL {
-            assert_eq!(Mixing::parse(m.name()), Ok(m), "{m:?}");
+            assert_eq!(CombiningRule::parse(m.name()), Ok(m), "{m:?}");
         }
     }
 
     /// An `lj/cut` style that declares no rule is evaluated Lorentz-Berthelot.
     #[test]
     fn undeclared_rule_is_arithmetic() {
-        assert_eq!(Mixing::UNDECLARED, Mixing::Arithmetic);
+        assert_eq!(CombiningRule::UNDECLARED, CombiningRule::Arithmetic);
     }
 
     /// The refusal names the rule and lists the choices without a run of
     /// stray spaces from a line continuation.
     #[test]
     fn unknown_rule_message_names_the_rule_without_stray_spaces() {
-        let err = Mixing::parse("bogus").expect_err("unknown rule");
+        let err = CombiningRule::parse("bogus").expect_err("unknown rule");
         assert!(err.contains("'bogus'"), "{err}");
         assert!(err.contains("arithmetic | geometric | sixthpower"), "{err}");
         assert!(!err.contains("  "), "run of spaces in: {err:?}");
@@ -119,14 +127,14 @@ mod tests {
     /// εᵢⱼ = 2√(εᵢεⱼ) σᵢ³σⱼ³/(σᵢ⁶ + σⱼ⁶) (`pair.cpp`, `mix_energy`/`mix_distance`).
     #[test]
     fn sixthpower_is_the_waldman_hagler_rule() {
-        let (eps, sigma) = Mixing::SixthPower.combine((0.2, 3.0), (0.05, 4.0));
+        let (eps, sigma) = CombiningRule::SixthPower.combine((0.2, 3.0), (0.05, 4.0));
         let want_sigma = ((3.0f64.powi(6) + 4.0f64.powi(6)) / 2.0).powf(1.0 / 6.0);
         let want_eps =
             2.0 * (0.2f64 * 0.05).sqrt() * 27.0 * 64.0 / (3.0f64.powi(6) + 4.0f64.powi(6));
         assert!((sigma - want_sigma).abs() < 1e-14);
         assert!((eps - want_eps).abs() < 1e-15);
         // A type with itself is itself.
-        let (e, s) = Mixing::SixthPower.combine((0.2, 3.0), (0.2, 3.0));
+        let (e, s) = CombiningRule::SixthPower.combine((0.2, 3.0), (0.2, 3.0));
         assert!((e - 0.2).abs() < 1e-15 && (s - 3.0).abs() < 1e-14);
     }
 }
