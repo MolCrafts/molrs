@@ -49,7 +49,7 @@
 //! invariant under a uniform rescaling of the input: a structure in nm and the
 //! same structure in Å give the same eigenvectors, and a well-conditioned
 //! matrix of small entries is never declared singular.
-mod linalg;
+pub(crate) mod linalg;
 mod numeric;
 mod random;
 mod rigid;
