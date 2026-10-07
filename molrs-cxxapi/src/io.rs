@@ -1,6 +1,6 @@
 //! File I/O for the C++ engine — the CXX face of `molrs::io`: XYZ / ExtXYZ
-//! frames, single-frame `*.mrec` stores and the streaming `*.mrec` trajectory
-//! writer.
+//! frames, `*.mrec` frame records, frames of a `*.mrec` trajectory and the
+//! streaming `*.mrec` trajectory writer.
 //!
 //! Every writer builds a transient molrs `Frame` from the caller's flat buffers
 //! (atomic numbers become `element` symbols through molrs' periodic table) and
@@ -10,16 +10,14 @@ use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
 
 use molrs::core::Element;
-use molrs::core::SimBox;
-use molrs::core::{Block, Frame, Trajectory};
+use molrs::core::Frame;
 use molrs::io::mrec::{MrecReader, MrecWriter, SequenceSchema};
-use molrs::io::write_mrec_trajectory;
 use molrs::io::writer::{FrameWriter, Writer};
 use molrs::io::xyz::XyzWriter;
-use ndarray::{Array1, Array2, ArrayD};
+use ndarray::{Array1, ArrayD};
 
 use crate::bridge;
-use crate::frame::{FrameRef, meta_from_entry};
+use crate::frame::{FrameRef, coords_frame, meta_from_keyed_value};
 
 fn symbol_for_z(z: i32) -> Result<&'static str, String> {
     let element = u8::try_from(z)
@@ -29,47 +27,36 @@ fn symbol_for_z(z: i32) -> Result<&'static str, String> {
     Ok(element.symbol())
 }
 
-/// Build a frame with `atoms.{element,x,y,z}` (+ simbox) for XYZ/Zarr writing.
-///
-/// `element` is derived from the atomic number `type_id` via [`symbol_for_z`].
+/// A frame with `atoms.{element, x, y, z}` (+ box) for the XYZ / `*.mrec`
+/// writers: [`coords_frame`] plus the `element` symbols of the atomic
+/// numbers `atomic_number`.
 fn frame_with_elements(
-    type_id: &[i32],
+    atomic_number: &[i32],
     x: &[f64],
     y: &[f64],
     z: &[f64],
-    box_mat: &[f64],
+    h: &[f64],
 ) -> Result<Frame, String> {
-    let n = type_id.len();
-    let symbols: Result<Vec<String>, String> = type_id
+    if atomic_number.len() != x.len() {
+        return Err(format!(
+            "{} atomic numbers for {} atoms",
+            atomic_number.len(),
+            x.len()
+        ));
+    }
+    let symbols = atomic_number
         .iter()
-        .map(|&z| symbol_for_z(z).map(|s| s.to_string()))
-        .collect();
-    let symbols = symbols?;
-    let mut atoms = Block::new();
-    atoms
+        .map(|&z| symbol_for_z(z).map(str::to_string))
+        .collect::<Result<Vec<String>, String>>()?;
+    let mut frame = coords_frame(x, y, z, h)?;
+    frame
+        .get_mut("atoms")
+        .expect("coords_frame always has an atoms block")
         .insert(
             "element",
             Array1::from_vec(symbols).into_dyn() as ArrayD<String>,
         )
-        .map_err(|e| format!("frame_with_elements insert element: {e}"))?;
-    atoms
-        .insert("x", Array1::from_vec(x[..n].to_vec()).into_dyn())
-        .map_err(|e| format!("frame_with_elements insert x: {e}"))?;
-    atoms
-        .insert("y", Array1::from_vec(y[..n].to_vec()).into_dyn())
-        .map_err(|e| format!("frame_with_elements insert y: {e}"))?;
-    atoms
-        .insert("z", Array1::from_vec(z[..n].to_vec()).into_dyn())
-        .map_err(|e| format!("frame_with_elements insert z: {e}"))?;
-    let mut frame = Frame::new();
-    frame.insert("atoms", atoms);
-    if box_mat.len() >= 9 {
-        let h = Array2::from_shape_vec((3, 3), box_mat[..9].to_vec())
-            .map_err(|e| format!("frame_with_elements box reshape: {e}"))?;
-        if let Ok(sb) = SimBox::new(h, Array1::zeros(3), [true, true, true]) {
-            frame.simbox = Some(sb);
-        }
-    }
+        .map_err(|e| format!("insert element: {e}"))?;
     Ok(frame)
 }
 
@@ -88,90 +75,101 @@ fn write_xyz_path(path: &str, frame: &Frame, append: bool) -> Result<(), String>
         .map_err(|err| err.to_string())
 }
 
-/// Write one frame with exact-dtype metadata.
+/// Write one frame (element + coords + box + exact-dtype metadata) to an
+/// XYZ / ExtXYZ file through molrs `XyzWriter`; `append` adds it after the
+/// frames already there, otherwise the file is truncated.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn write_frame_xyz_typed(
+pub(crate) fn write_xyz_frame(
     path: &str,
-    type_id: &[i32],
+    atomic_number: &[i32],
     x: &[f64],
     y: &[f64],
     z: &[f64],
-    box_mat: &[f64],
-    meta: Vec<bridge::ffi::MetaEntry>,
+    h: &[f64],
+    meta: Vec<bridge::ffi::KeyedMetaValue>,
     append: bool,
 ) -> Result<(), String> {
-    let mut frame = frame_with_elements(type_id, x, y, z, box_mat)?;
+    let mut frame = frame_with_elements(atomic_number, x, y, z, h)
+        .map_err(|e| format!("write_xyz_frame: {e}"))?;
     for entry in meta {
-        let (key, value) = meta_from_entry(entry)?;
+        let (key, value) = meta_from_keyed_value(entry)?;
         frame.meta.insert(key, value);
     }
     write_xyz_path(path, &frame, append)
 }
 
-/// Write one frame (+ named per-atom fields) to a single-frame Zarr store.
+/// Write one frame (+ named per-atom fields) as a `*.mrec` record whose
+/// `frame` section is that frame — molrs `io::write_mrec_frame`.
 ///
-/// Builds a transient `Frame` (element+x/y/z + simbox + one column per
-/// `field_names[i]` from `field_data` reshaped `[n_fields, n_atoms]`), wraps it
-/// as a single-frame `Trajectory`, and persists via `write_mrec_trajectory`.
-/// Replaces the old per-record Zarr writer (Atomiverse's polyethylene checkpoint).
+/// `field_data` is `[n_fields, n_atoms]` row-major, one row per
+/// `field_names[i]`; a length other than `n_fields * n_atoms` is an error.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn write_frame(
+pub(crate) fn write_mrec_frame(
     path: &str,
-    type_id: &[i32],
+    atomic_number: &[i32],
     x: &[f64],
     y: &[f64],
     z: &[f64],
-    box_mat: &[f64],
+    h: &[f64],
     field_names: Vec<String>,
     field_data: &[f64],
 ) -> Result<(), String> {
-    let n = type_id.len();
-    let mut frame = frame_with_elements(type_id, x, y, z, box_mat)?;
-    if let Some(atoms) = frame.get_mut("atoms") {
-        for (fi, name) in field_names.iter().enumerate() {
-            let base = fi * n;
-            if base + n <= field_data.len() {
-                atoms
-                    .insert(
-                        name.as_str(),
-                        Array1::from_vec(field_data[base..base + n].to_vec()).into_dyn(),
-                    )
-                    .map_err(|e| format!("write_frame insert {name}: {e}"))?;
-            }
-        }
+    let n = atomic_number.len();
+    if field_data.len() != field_names.len() * n {
+        return Err(format!(
+            "write_mrec_frame: {} field values for {} fields of {n} atoms",
+            field_data.len(),
+            field_names.len()
+        ));
     }
-    let traj = Trajectory::from_frames(vec![frame]);
-    write_mrec_trajectory(path, &traj, None).map_err(|e| format!("write_frame: {e}"))
+    let mut frame = frame_with_elements(atomic_number, x, y, z, h)
+        .map_err(|e| format!("write_mrec_frame: {e}"))?;
+    let atoms = frame
+        .get_mut("atoms")
+        .expect("frame_with_elements always has an atoms block");
+    for (name, values) in field_names.iter().zip(field_data.chunks(n.max(1))) {
+        atoms
+            .insert(name.as_str(), Array1::from_vec(values.to_vec()).into_dyn())
+            .map_err(|e| format!("write_mrec_frame: insert {name}: {e}"))?;
+    }
+    molrs::io::write_mrec_frame(path, &frame, None, None)
+        .map_err(|e| format!("write_mrec_frame: {e}"))
 }
 
-/// Read the first frame of a store into a fresh `FrameRef`.
-///
-/// Used by Atomiverse checkpoint reload (`cpu::ZarrReader`): stage 1 of a long
-/// bench writes its end-state via [`write_frame`], then later debug
-/// iterations call this to skip stage 1. Only frame 0 is decoded — the store
-/// is opened as a lazy cursor, never materialized. The returned `FrameRef` is
-/// populated via `with_mut` on a fresh standalone store — readers
-/// (`frame_column_f64`, `frame_box`, etc.) see exactly the columns and simbox
-/// that were stored.
-pub(crate) fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let sequence = MrecReader::open(path).map_err(|e| format!("read_first_frame: {e}"))?;
-    let frame = sequence
-        .frame(0)
-        .map_err(|e| format!("read_first_frame: {e}"))?
-        .ok_or_else(|| "read_first_frame: empty trajectory".to_string())?;
+/// Hand a frame read from disk to C++ as a fresh standalone [`FrameRef`].
+fn frame_ref_holding(frame: Frame, what: &str) -> Result<Box<FrameRef>, String> {
     let inner = molrs_ffi::FrameRef::new_standalone();
     inner
-        .with_mut(|f| {
-            *f = frame;
-        })
-        .map_err(|e| format!("read_first_frame: populate: {e}"))?;
+        .with_mut(|f| *f = frame)
+        .map_err(|e| format!("{what}: populate: {e}"))?;
     Ok(Box::new(FrameRef(inner)))
 }
 
-/// The engine's streaming trajectory writer: a `MrecWriter` behind
+/// Read the `frame` section of a `*.mrec` record — molrs
+/// `io::read_mrec_frame`, the inverse of [`write_mrec_frame`].
+pub(crate) fn read_mrec_frame(path: &str) -> Result<Box<FrameRef>, String> {
+    let frame = molrs::io::read_mrec_frame(path).map_err(|e| format!("read_mrec_frame: {e}"))?;
+    frame_ref_holding(frame, "read_mrec_frame")
+}
+
+/// Read frame `index` of the trajectory in a `*.mrec` record — molrs
+/// `MrecReader::open(path)?.frame(index)`. Only that frame is decoded; the
+/// trajectory is opened as a lazy cursor. Reads what an [`MrecWriterRef`]
+/// wrote.
+pub(crate) fn read_mrec_trajectory_frame(path: &str, index: u64) -> Result<Box<FrameRef>, String> {
+    let what = "read_mrec_trajectory_frame";
+    let frame = MrecReader::open(path)
+        .map_err(|e| format!("{what}: {e}"))?
+        .frame(index)
+        .map_err(|e| format!("{what}: {e}"))?
+        .ok_or_else(|| format!("{what}: the trajectory has no frame {index}"))?;
+    frame_ref_holding(frame, what)
+}
+
+/// The engine's streaming trajectory writer: a molrs `MrecWriter` behind
 /// an opaque CXX handle. `None` once closed, so a use after close is an error
 /// rather than a panic across the seam.
-pub struct TrajectoryWriterRef(Option<MrecWriter>);
+pub struct MrecWriterRef(Option<MrecWriter>);
 
 fn configure_writer(
     writer: MrecWriter,
@@ -184,25 +182,25 @@ fn configure_writer(
     }
     writer
         .with_flush_every(flush_every)
-        .map_err(|e| format!("trajectory_writer: {e}"))
+        .map_err(|e| format!("mrec_writer: {e}"))
 }
 
 /// Mint a `*.mrec` trajectory at `path`, pinned to the blocks and columns of
 /// `schema_from`.
-pub(crate) fn trajectory_writer_create(
+pub(crate) fn mrec_writer_create(
     path: &str,
     schema_from: &FrameRef,
     flush_every: u64,
     durable: bool,
-) -> Result<Box<TrajectoryWriterRef>, String> {
+) -> Result<Box<MrecWriterRef>, String> {
     let schema = schema_from
         .0
         .with(SequenceSchema::from_frame)
-        .map_err(|e| format!("trajectory_writer_create: {e}"))?
-        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+        .map_err(|e| format!("mrec_writer_create: {e}"))?
+        .map_err(|e| format!("mrec_writer_create: {e}"))?;
     let writer =
-        MrecWriter::create(path, schema).map_err(|e| format!("trajectory_writer_create: {e}"))?;
-    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+        MrecWriter::create(path, schema).map_err(|e| format!("mrec_writer_create: {e}"))?;
+    Ok(Box::new(MrecWriterRef(Some(configure_writer(
         writer,
         flush_every,
         durable,
@@ -211,13 +209,13 @@ pub(crate) fn trajectory_writer_create(
 
 /// Reattach to the trajectory at `path` and continue after its last committed
 /// frame; whatever a crash left past the commit marker is rolled back first.
-pub(crate) fn trajectory_writer_open(
+pub(crate) fn mrec_writer_open(
     path: &str,
     flush_every: u64,
     durable: bool,
-) -> Result<Box<TrajectoryWriterRef>, String> {
-    let writer = MrecWriter::open(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
-    Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
+) -> Result<Box<MrecWriterRef>, String> {
+    let writer = MrecWriter::open(path).map_err(|e| format!("mrec_writer_open: {e}"))?;
+    Ok(Box::new(MrecWriterRef(Some(configure_writer(
         writer,
         flush_every,
         durable,
@@ -225,8 +223,8 @@ pub(crate) fn trajectory_writer_open(
 }
 
 /// Buffer one frame at `step` (with `time` in fs when `has_time`).
-pub(crate) fn trajectory_writer_append(
-    writer: &mut TrajectoryWriterRef,
+pub(crate) fn mrec_writer_append(
+    writer: &mut MrecWriterRef,
     fref: &FrameRef,
     step: i64,
     time: f64,
@@ -235,44 +233,42 @@ pub(crate) fn trajectory_writer_append(
     let inner = writer
         .0
         .as_mut()
-        .ok_or_else(|| "trajectory_writer_append: writer is closed".to_string())?;
+        .ok_or_else(|| "mrec_writer_append: writer is closed".to_string())?;
     let time = has_time.then_some(time);
     fref.0
         .with(|frame| inner.append_at(frame, step, time))
-        .map_err(|e| format!("trajectory_writer_append: {e}"))?
-        .map_err(|e| format!("trajectory_writer_append: {e}"))
+        .map_err(|e| format!("mrec_writer_append: {e}"))?
+        .map_err(|e| format!("mrec_writer_append: {e}"))
 }
 
 /// Commit every buffered frame (durably, unless the writer was opened with
 /// `durable == false`).
-pub(crate) fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Result<(), String> {
+pub(crate) fn mrec_writer_flush(writer: &mut MrecWriterRef) -> Result<(), String> {
     writer
         .0
         .as_mut()
-        .ok_or_else(|| "trajectory_writer_flush: writer is closed".to_string())?
+        .ok_or_else(|| "mrec_writer_flush: writer is closed".to_string())?
         .flush()
-        .map_err(|e| format!("trajectory_writer_flush: {e}"))
+        .map_err(|e| format!("mrec_writer_flush: {e}"))
 }
 
 /// Frames committed so far (0 for a closed writer).
-pub(crate) fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64 {
+pub(crate) fn mrec_writer_committed(writer: &MrecWriterRef) -> u64 {
     writer.0.as_ref().map_or(0, MrecWriter::committed)
 }
 
 /// Commit whatever is buffered and release the writer.
-pub(crate) fn trajectory_writer_close(writer: Box<TrajectoryWriterRef>) -> Result<(), String> {
+pub(crate) fn mrec_writer_close(writer: Box<MrecWriterRef>) -> Result<(), String> {
     match writer.0 {
-        Some(inner) => inner
-            .close()
-            .map_err(|e| format!("trajectory_writer_close: {e}")),
+        Some(inner) => inner.close().map_err(|e| format!("mrec_writer_close: {e}")),
         None => Ok(()),
     }
 }
 
 /// Atomic number for a chemical symbol — inverse of [`symbol_for_z`].
 ///
-/// Delegates to molrs' canonical periodic table. No fallback: panics on an
-/// unrecognized symbol, matching Atomiverse's explicit-error convention.
+/// Delegates to molrs' canonical periodic table. No fallback: an
+/// unrecognized symbol is an error.
 fn z_for_symbol(sym: &str) -> Result<i32, String> {
     Element::by_symbol(sym)
         .map(|element| i32::from(element.z()))
@@ -281,44 +277,34 @@ fn z_for_symbol(sym: &str) -> Result<i32, String> {
 
 /// Read the first frame of an (ext)XYZ file into a materialize-ready `FrameRef`.
 ///
-/// All parsing (atom table, `Lattice="..."` -> simbox) is done by the molrs
-/// core ExtXYZ reader. The `element` column (the ExtXYZ `species` property) is
-/// consumed and replaced by `atomic_number` (a UInt column), so the result satisfies the exact schema
-/// that `cpu::materialize` requires (`atoms.{x,y,z,atomic_number}`). The
-/// external-format column does not cross that boundary.
+/// All parsing (atom table, `Lattice="..."` -> box) is molrs `io::read_xyz`.
+/// The `element` column (the ExtXYZ `species` property) is consumed and
+/// replaced by `atomic_number` (a UInt column), so the result satisfies the
+/// exact schema that `cpu::materialize` requires (`atoms.{x,y,z,atomic_number}`).
+/// The external-format column does not cross that boundary.
 ///
 /// Z lives in `atomic_number`, not `type`: `type` is the force-field label a
 /// caller owns (a String), and the vocabulary binds a key's dtype wherever it
 /// appears — so writing Z there is refused outright.
-pub(crate) fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let mut frame =
-        molrs::io::read_xyz(path).map_err(|e| format!("xyz_read_first_frame: read: {e}"))?;
+pub(crate) fn read_xyz_frame(path: &str) -> Result<Box<FrameRef>, String> {
+    let what = "read_xyz_frame";
+    let mut frame = molrs::io::read_xyz(path).map_err(|e| format!("{what}: read: {e}"))?;
     let atoms = frame
         .get_mut("atoms")
-        .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
+        .ok_or_else(|| format!("{what}: frame has no atoms block"))?;
     let species = atoms
         .get("element")
         .and_then(|c| c.as_string())
-        .ok_or_else(|| {
-            "xyz_read_first_frame: atoms block has no element (ExtXYZ species) column".to_string()
-        })?;
-    let zs: Result<Vec<u64>, String> = species
+        .ok_or_else(|| format!("{what}: atoms block has no element (ExtXYZ species) column"))?;
+    let zs = species
         .iter()
         .map(|symbol| z_for_symbol(symbol).map(|z| z as u64))
-        .collect();
-    let zs = zs?;
+        .collect::<Result<Vec<u64>, String>>()?;
     atoms
         .insert("atomic_number", Array1::from_vec(zs).into_dyn())
-        .map_err(|e| format!("xyz_read_first_frame: insert atomic_number: {e}"))?;
+        .map_err(|e| format!("{what}: insert atomic_number: {e}"))?;
     atoms.remove("element");
-
-    let inner = molrs_ffi::FrameRef::new_standalone();
-    inner
-        .with_mut(|f| {
-            *f = frame;
-        })
-        .map_err(|e| format!("xyz_read_first_frame: populate: {e}"))?;
-    Ok(Box::new(FrameRef(inner)))
+    frame_ref_holding(frame, what)
 }
 
 #[cfg(test)]
@@ -327,7 +313,7 @@ mod tests {
     use crate::frame::*;
 
     #[test]
-    fn a_trajectory_writer_minted_from_a_precise_frame_rounds_its_column() {
+    fn an_mrec_writer_minted_from_a_precise_frame_rounds_its_column() {
         let dir = std::env::temp_dir().join(format!(
             "molrs-cxxapi-precision-{}.mrec",
             std::process::id()
@@ -339,10 +325,11 @@ mod tests {
         assert!(frame_set_precision(&mut fref, "atoms", "x", 0.0).is_err());
         frame_set_precision(&mut fref, "atoms", "x", 1e-3).unwrap();
         let path = dir.to_str().unwrap();
-        let mut writer = trajectory_writer_create(path, &fref, 0, false).unwrap();
-        trajectory_writer_append(&mut writer, &fref, 0, 0.0, false).unwrap();
-        trajectory_writer_close(writer).unwrap();
-        let back = read_first_frame(path).unwrap();
+        let mut writer = mrec_writer_create(path, &fref, 0, false).unwrap();
+        mrec_writer_append(&mut writer, &fref, 0, 0.0, false).unwrap();
+        mrec_writer_close(writer).unwrap();
+        let back = read_mrec_trajectory_frame(path, 0).unwrap();
+        assert!(read_mrec_trajectory_frame(path, 1).is_err());
         let q = 2f64.powi(-10);
         assert_eq!(
             frame_column_f64(&back, "atoms", "x"),
@@ -385,7 +372,7 @@ mod tests {
         )
         .unwrap();
 
-        let frame = xyz_read_first_frame(path.to_str().unwrap()).expect("xyz_read_first_frame");
+        let frame = read_xyz_frame(path.to_str().unwrap()).expect("read_xyz_frame");
         std::fs::remove_file(path).unwrap();
         let columns = frame_block_columns(&frame, "atoms");
         assert!(columns.iter().any(|column| column == "atomic_number"));
@@ -396,7 +383,7 @@ mod tests {
             "Z is `atomic_number`; `type` is the caller's force-field label"
         );
         assert_eq!(
-            frame_column_u32(&frame, "atoms", "atomic_number"),
+            frame_column_u64(&frame, "atoms", "atomic_number"),
             [8u64, 1]
         );
     }
@@ -421,9 +408,9 @@ mod tests {
         )
         .unwrap();
 
-        let frame = xyz_read_first_frame(path.to_str().unwrap()).expect("xyz_read_first_frame");
+        let frame = read_xyz_frame(path.to_str().unwrap()).expect("read_xyz_frame");
         std::fs::remove_file(path).unwrap();
-        assert_eq!(frame_column_u32(&frame, "atoms", "atomic_number"), [1u64]);
+        assert_eq!(frame_column_u64(&frame, "atoms", "atomic_number"), [1u64]);
     }
 
     #[test]
@@ -433,11 +420,11 @@ mod tests {
             "molrs-cxxapi-typed-meta-{}.xyz",
             std::process::id()
         ));
-        let mut step = empty_meta_entry("step".into(), MetaType::I64);
+        let mut step = empty_keyed_meta_value("step".into(), MetaType::I64);
         step.i64_value = 9_007_199_254_740_993;
-        let mut energy = empty_meta_entry("energy_eV".into(), MetaType::F64);
+        let mut energy = empty_keyed_meta_value("energy_eV".into(), MetaType::F64);
         energy.f64_value = -1.25;
-        write_frame_xyz_typed(
+        write_xyz_frame(
             path.to_str().unwrap(),
             &[1],
             &[0.0],
@@ -456,5 +443,59 @@ mod tests {
         );
         assert_eq!(frame.meta.get("energy_eV").unwrap().as_f64(), Some(-1.25));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn an_mrec_frame_record_round_trips_its_fields_and_refuses_a_ragged_field() {
+        let dir = std::env::temp_dir().join(format!(
+            "molrs-cxxapi-frame-record-{}.mrec",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.to_str().unwrap();
+        let h = [10.0, 0.0, 0.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0];
+        assert!(
+            write_mrec_frame(
+                path,
+                &[8, 1],
+                &[0.0, 1.0],
+                &[0.0; 2],
+                &[0.0; 2],
+                &h,
+                vec!["q".into()],
+                &[1.0]
+            )
+            .is_err()
+        );
+        assert!(
+            write_mrec_frame(
+                path,
+                &[8, 1],
+                &[0.0, 1.0],
+                &[0.0; 2],
+                &[0.0; 2],
+                &[1.0; 4],
+                vec![],
+                &[]
+            )
+            .is_err(),
+            "a malformed H is an error, not a frame without a box"
+        );
+        write_mrec_frame(
+            path,
+            &[8, 1],
+            &[0.0, 1.0],
+            &[0.0; 2],
+            &[0.0; 2],
+            &h,
+            vec!["q".into()],
+            &[-0.8, 0.4],
+        )
+        .unwrap();
+        let back = read_mrec_frame(path).unwrap();
+        assert_eq!(frame_column_f64(&back, "atoms", "q"), vec![-0.8, 0.4]);
+        assert_eq!(frame_column_f64(&back, "atoms", "x"), vec![0.0, 1.0]);
+        assert_eq!(frame_box_h(&back), h);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -15,49 +15,37 @@ impl RegionRef {
     }
 }
 
-fn triple(v: &[f64]) -> [f64; 3] {
-    [v[0], v[1], v[2]]
+/// `v` as a 3-vector, or an error naming `what` when it is not 3 long.
+fn exact_triple(v: &[f64], what: &str) -> Result<[f64; 3], String> {
+    <[f64; 3]>::try_from(v).map_err(|_| format!("{what} must have 3 elements, got {}", v.len()))
 }
 
-/// Ball of `radius` about `center` (3 values). Empty `center` yields the
-/// origin, so a malformed call cannot silently read past the slice.
-pub(crate) fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef> {
-    let c = if center.len() == 3 {
-        triple(center)
-    } else {
-        [0.0; 3]
-    };
-    RegionRef::wrap(std::sync::Arc::new(molrs::core::Sphere::new(
-        molrs::op::F3::from_vec(c.to_vec()),
-        radius,
+/// Ball of `radius` about `center` (3 values).
+pub(crate) fn region_sphere(center: &[f64], radius: f64) -> Result<Box<RegionRef>, String> {
+    let c = exact_triple(center, "region_sphere: center")?;
+    Ok(RegionRef::wrap(std::sync::Arc::new(
+        molrs::core::Sphere::new(molrs::op::F3::from_vec(c.to_vec()), radius),
     )))
 }
 
-/// Axis-aligned box with a corner at `origin` and edge `lengths`.
-pub(crate) fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef> {
-    let o = if origin.len() == 3 {
-        triple(origin)
-    } else {
-        [0.0; 3]
-    };
-    let l = if lengths.len() == 3 {
-        triple(lengths)
-    } else {
-        [0.0; 3]
-    };
-    RegionRef::wrap(std::sync::Arc::new(molrs::core::Cuboid::new(
-        molrs::op::F3::from_vec(o.to_vec()),
-        molrs::op::F3::from_vec(l.to_vec()),
+/// Axis-aligned box with a corner at `origin` and edge `lengths` (3 values each).
+pub(crate) fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Result<Box<RegionRef>, String> {
+    let o = exact_triple(origin, "region_cuboid: origin")?;
+    let l = exact_triple(lengths, "region_cuboid: lengths")?;
+    Ok(RegionRef::wrap(std::sync::Arc::new(
+        molrs::core::Cuboid::new(
+            molrs::op::F3::from_vec(o.to_vec()),
+            molrs::op::F3::from_vec(l.to_vec()),
+        ),
     )))
 }
 
 /// Everything on the `normal` side of the plane through `point`.
-/// A degenerate normal yields an error, reported as an empty handle upstream.
+/// A degenerate normal is an error.
 pub(crate) fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<RegionRef>, String> {
-    if normal.len() != 3 || point.len() != 3 {
-        return Err("region_half_space: normal and point must each have 3 elements".into());
-    }
-    molrs::core::HalfSpace::new(triple(normal), triple(point))
+    let normal = exact_triple(normal, "region_half_space: normal")?;
+    let point = exact_triple(point, "region_half_space: point")?;
+    molrs::core::HalfSpace::new(normal, point)
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
@@ -69,10 +57,9 @@ pub(crate) fn region_cylinder(
     radius: f64,
     length: f64,
 ) -> Result<Box<RegionRef>, String> {
-    if base.len() != 3 || axis.len() != 3 {
-        return Err("region_cylinder: base and axis must each have 3 elements".into());
-    }
-    molrs::core::Cylinder::new(triple(base), triple(axis), radius, length)
+    let base = exact_triple(base, "region_cylinder: base")?;
+    let axis = exact_triple(axis, "region_cylinder: axis")?;
+    molrs::core::Cylinder::new(base, axis, radius, length)
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
@@ -82,10 +69,9 @@ pub(crate) fn region_ellipsoid(
     center: &[f64],
     semi_axes: &[f64],
 ) -> Result<Box<RegionRef>, String> {
-    if center.len() != 3 || semi_axes.len() != 3 {
-        return Err("region_ellipsoid: centre and semi-axes must each have 3 elements".into());
-    }
-    molrs::core::Ellipsoid::new(triple(center), triple(semi_axes))
+    let center = exact_triple(center, "region_ellipsoid: center")?;
+    let semi_axes = exact_triple(semi_axes, "region_ellipsoid: semi_axes")?;
+    molrs::core::Ellipsoid::new(center, semi_axes)
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
@@ -113,35 +99,32 @@ pub(crate) fn region_not(a: &RegionRef) -> Box<RegionRef> {
     )))
 }
 
-/// Signed distance of each point to the boundary: negative inside, positive
-/// outside. `points` is flat `[x, y, z, …]`; a ragged length yields empty.
-pub(crate) fn region_distance(rref: &RegionRef, points: &[f64]) -> Vec<f64> {
-    if !points.len().is_multiple_of(3) {
-        return Vec::new();
+/// `points` as `[x, y, z]` rows, or an error when its length is ragged.
+fn point_rows<'a>(points: &'a [f64], what: &str) -> Result<&'a [[f64; 3]], String> {
+    match points.as_chunks::<3>() {
+        (rows, []) => Ok(rows),
+        _ => Err(format!(
+            "{what}: points must be flat [x, y, z, ...], got {} values",
+            points.len()
+        )),
     }
-    rref.0.with_region(|r| {
-        points
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|p| r.distance(p))
-            .collect()
-    })
+}
+
+/// Signed distance of each point to the boundary: negative inside, positive
+/// outside. `points` is flat `[x, y, z, …]`; a ragged length is an error.
+pub(crate) fn region_distance(rref: &RegionRef, points: &[f64]) -> Result<Vec<f64>, String> {
+    let rows = point_rows(points, "region_distance")?;
+    Ok(rref
+        .0
+        .with_region(|r| rows.iter().map(|p| r.distance(p)).collect()))
 }
 
 /// `1` for each point inside the solid, `0` outside. cxx has no `Vec<bool>`.
-pub(crate) fn region_contains(rref: &RegionRef, points: &[f64]) -> Vec<u8> {
-    if !points.len().is_multiple_of(3) {
-        return Vec::new();
-    }
-    rref.0.with_region(|r| {
-        points
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|p| u8::from(r.contains_point(p)))
-            .collect()
-    })
+pub(crate) fn region_contains(rref: &RegionRef, points: &[f64]) -> Result<Vec<u8>, String> {
+    let rows = point_rows(points, "region_contains")?;
+    Ok(rref
+        .0
+        .with_region(|r| rows.iter().map(|p| u8::from(r.contains_point(p))).collect()))
 }
 
 /// Axis-aligned bounds as `[xmin, xmax, ymin, ymax, zmin, zmax]`.
@@ -155,21 +138,25 @@ mod tests {
 
     #[test]
     fn a_shell_is_and_of_outer_and_not_inner() {
-        let outer = region_sphere(&[0.0, 0.0, 0.0], 3.0);
-        let inner = region_sphere(&[0.0, 0.0, 0.0], 2.0);
+        let outer = region_sphere(&[0.0, 0.0, 0.0], 3.0).unwrap();
+        let inner = region_sphere(&[0.0, 0.0, 0.0], 2.0).unwrap();
         let shell = region_and(&outer, &region_not(&inner));
         // 2.5 is in the shell, 1.0 is in the hole, 4.0 is outside both.
         let pts = [2.5, 0.0, 0.0, 1.0, 0.0, 0.0, 4.0, 0.0, 0.0];
-        assert_eq!(region_contains(&shell, &pts), vec![1, 0, 0]);
-        let d = region_distance(&outer, &pts);
+        assert_eq!(region_contains(&shell, &pts).unwrap(), vec![1, 0, 0]);
+        let d = region_distance(&outer, &pts).unwrap();
         assert!((d[0] + 0.5).abs() < 1e-12, "{d:?}");
         assert_eq!(region_bounds(&outer).len(), 6);
     }
 
     #[test]
-    fn a_ragged_point_slice_yields_nothing_rather_than_reading_past_it() {
-        let ball = region_sphere(&[0.0, 0.0, 0.0], 1.0);
-        assert!(region_distance(&ball, &[0.0, 0.0]).is_empty());
-        assert!(region_contains(&ball, &[0.0, 0.0]).is_empty());
+    fn malformed_input_is_an_error_not_a_fallback() {
+        let ball = region_sphere(&[0.0, 0.0, 0.0], 1.0).unwrap();
+        assert!(region_distance(&ball, &[0.0, 0.0]).is_err());
+        assert!(region_contains(&ball, &[0.0, 0.0]).is_err());
+        assert!(region_sphere(&[], 1.0).is_err());
+        assert!(region_cuboid(&[0.0; 3], &[1.0, 1.0]).is_err());
+        assert!(region_cuboid(&[0.0; 2], &[1.0; 3]).is_err());
+        assert!(region_cuboid(&[0.0; 3], &[1.0; 3]).is_ok());
     }
 }

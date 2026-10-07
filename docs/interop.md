@@ -225,7 +225,23 @@ composition never disturbs its operands. A stale handle is reported as
 The CXX bridge carries the same surface as free functions over a
 `Box<RegionRef>` (`region_sphere`, `region_and`, `region_distance`, …), gated
 by the `CXX_CAP_REGION` capability bit so a consumer can fail loudly when it
-is linked against a bridge that predates it.
+is linked against a bridge that predates it. A vector argument that is not
+exactly three values, or a ragged point list, throws `rust::Error`; nothing
+falls back to the origin or to an empty answer.
+
+The rest of the CXX bridge (`molrs-cxxapi`, consumed by Atomiverse) names
+each item after the molrs owner it fronts:
+
+| Bridge item | molrs owner |
+|---|---|
+| `FrameRef`, `frame_new`, `frame_column_{f64,i32,u64,str}`, `frame_set_column_{f64,i32,u64,str}` | `core::Frame` via `molrs_ffi::FrameRef` (`u64` is the `UInt` / `Idx` dtype) |
+| `frame_box_h` / `frame_set_box_h` | the box's cell matrix H, 9 row-major values (`SimBox::h_view`) |
+| `frame_meta_keys`, `frame_get_meta`, `frame_set_meta`, `KeyedMetaValue` | `Frame::meta` (a key with its exact-dtype `MetaValue`) |
+| `read_xyz_frame`, `write_xyz_frame` | `io::read_xyz`, `io::xyz::XyzWriter` |
+| `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
+| `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
+| `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `RdfAccumulator`, `MsdAccumulator`, `VacfAccumulator` | `compute::` the same names |
+| `am1_bcc_assign_frame_from_base` | `ff::charge::BccModel` with `BccParameterSet::from_name` |
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
 ABI — they take Path A or Path B directly, and every one of them links molrs
