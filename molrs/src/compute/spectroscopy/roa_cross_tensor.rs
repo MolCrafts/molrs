@@ -7,10 +7,11 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
-use super::{central_diff_series, lag_times, xcorr_accumulate_into};
+use super::{central_diff_series, xcorr_accumulate_into};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
 #[derive(Debug, Clone)]

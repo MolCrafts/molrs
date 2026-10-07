@@ -441,8 +441,8 @@ fn memory_storage_from_files(
             .ok_or_else(|| JsValue::from_str("Invalid path key"))?;
         let content_value = files.get(&key);
         let content = js_sys::Uint8Array::new(&content_value).to_vec();
-        let store_path = path.strip_prefix('/').unwrap_or(&path);
-        let skey = StoreKey::new(store_path).map_err(js_string_err)?;
+        let storage_path = path.strip_prefix('/').unwrap_or(&path);
+        let skey = StoreKey::new(storage_path).map_err(js_string_err)?;
         store.set(&skey, content.into()).map_err(js_string_err)?;
     }
     Ok(store as ReadableWritableListableStorage)

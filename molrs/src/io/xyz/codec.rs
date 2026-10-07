@@ -53,7 +53,7 @@ struct PropertySpec {
 
 /// Parsed XYZ comment line with optional extended fields
 #[derive(Debug, Clone, PartialEq)]
-struct XYZComment {
+struct ExtxyzComment {
     /// Key-value pairs
     pub kv: HashMap<String, ExtxyzValue>,
     /// Parsed properties (from key "Properties"), if present
@@ -160,7 +160,7 @@ fn parse_properties(spec: &str) -> Option<Vec<PropertySpec>> {
     Some(out)
 }
 
-fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
+fn parse_comment_line(line: &str) -> std::result::Result<ExtxyzComment, String> {
     let original = line.to_string();
     let input = line.trim();
 
@@ -171,7 +171,7 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
             "comment".to_string(),
             ExtxyzValue::Scalar(ExtxyzScalar::Str(original)),
         );
-        return Ok(XYZComment {
+        return Ok(ExtxyzComment {
             kv,
             properties: None,
             comment: None,
@@ -276,14 +276,14 @@ fn parse_comment_line(line: &str) -> std::result::Result<XYZComment, String> {
             "comment".to_string(),
             ExtxyzValue::Scalar(ExtxyzScalar::Str(original)),
         );
-        Ok(XYZComment {
+        Ok(ExtxyzComment {
             kv,
             properties: None,
             comment: None,
             is_plain_xyz: true,
         })
     } else {
-        Ok(XYZComment {
+        Ok(ExtxyzComment {
             kv,
             properties,
             comment: Some(original),
@@ -379,7 +379,7 @@ fn line_to_tokens(line: &str) -> Vec<&str> {
 }
 
 /// Build schema from parsed properties
-fn build_complete_schema(ec: &XYZComment) -> Vec<PropertySpec> {
+fn build_complete_schema(ec: &ExtxyzComment) -> Vec<PropertySpec> {
     // If no Properties key, return plain XYZ schema (4 columns: element, x, y, z)
     // Otherwise, return the properties as-is
     ec.properties.clone().unwrap_or_else(|| {
@@ -1242,7 +1242,7 @@ impl XyzIndexBuilder {
                     // 0-atom frame — emit now, spanning the count + comment.
                     let start = self.pending_frame_start.take().unwrap_or(line_offset);
                     let span = line_end - start;
-                    self.push_entry(start, span)?;
+                    self.push_frame_span(start, span)?;
                     self.phase = XyzPhase::AwaitingNatoms;
                 } else {
                     self.phase = XyzPhase::ConsumingAtoms { remaining: natoms };
@@ -1254,7 +1254,7 @@ impl XyzIndexBuilder {
                 if new_remaining == 0 {
                     let start = self.pending_frame_start.take().unwrap_or(line_offset);
                     let span = line_end - start;
-                    self.push_entry(start, span)?;
+                    self.push_frame_span(start, span)?;
                     self.phase = XyzPhase::AwaitingNatoms;
                 } else {
                     self.phase = XyzPhase::ConsumingAtoms {
@@ -1266,7 +1266,7 @@ impl XyzIndexBuilder {
         }
     }
 
-    fn push_entry(&mut self, byte_offset: u64, span: u64) -> std::io::Result<()> {
+    fn push_frame_span(&mut self, byte_offset: u64, span: u64) -> std::io::Result<()> {
         if span > u32::MAX as u64 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -1899,7 +1899,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
     // 1. Build per-atom data from the atoms block via visit_block.
     //    We collect everything we need into owned data structures inside the closure,
     //    then write outside it.
-    struct AtomBlockData {
+    struct AtomRows {
         n: usize,
         properties_str: String,
         elements: Vec<String>,
@@ -1907,7 +1907,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         row_values: Vec<Vec<String>>,
     }
 
-    let atom_data: Option<AtomBlockData> = frame.visit_block("atoms", |atoms| {
+    let atom_rows: Option<AtomRows> = frame.visit_block("atoms", |atoms| {
         let n = atoms.n_rows().unwrap_or(0);
 
         // Collect and sort keys
@@ -2009,7 +2009,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
             row_values.push(line_parts);
         }
 
-        AtomBlockData {
+        AtomRows {
             n,
             properties_str,
             elements,
@@ -2017,7 +2017,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         }
     });
 
-    let atom_data = match atom_data {
+    let atom_rows = match atom_rows {
         Some(d) => d,
         None => {
             writeln!(writer, "0")?;
@@ -2026,7 +2026,7 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
         }
     };
 
-    writeln!(writer, "{}", atom_data.n)?;
+    writeln!(writer, "{}", atom_rows.n)?;
 
     // 2. Construct comment line using FrameAccess for simbox and meta
     let mut comment_parts = Vec::new();
@@ -2073,18 +2073,18 @@ fn write_frame_to<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io
             .join(",");
         comment_parts.push(format!("Connct=\"[{indices}]\""));
     }
-    comment_parts.push(format!("Properties={}", atom_data.properties_str));
+    comment_parts.push(format!("Properties={}", atom_rows.properties_str));
     writeln!(writer, "{}", comment_parts.join(" "))?;
 
     // 3. Write atom lines
-    for i in 0..atom_data.n {
-        let species = atom_data
+    for i in 0..atom_rows.n {
+        let species = atom_rows
             .elements
             .get(i)
             .cloned()
             .unwrap_or_else(|| "X".to_string());
         let mut line_parts = vec![species];
-        line_parts.extend(atom_data.row_values[i].iter().cloned());
+        line_parts.extend(atom_rows.row_values[i].iter().cloned());
         writeln!(writer, "{}", line_parts.join(" "))?;
     }
 

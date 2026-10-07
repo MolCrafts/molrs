@@ -105,7 +105,7 @@ fn utf8_string(bytes: Vec<u8>) -> Result<String, JsValue> {
 }
 
 #[cfg(test)]
-mod test_support {
+mod test_fixtures {
     use crate::core::frame::Frame;
     use crate::core::nd_array::JsFloatArray;
     use wasm_bindgen::JsCast;

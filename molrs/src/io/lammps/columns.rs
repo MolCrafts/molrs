@@ -55,21 +55,21 @@ pub(crate) fn insert_str(
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct OptCol<T> {
-    pub data: Vec<T>,
+pub(crate) struct OptionalColumn<T> {
+    pub values: Vec<T>,
     pub present: bool,
 }
 
-impl<T: Copy + Default> OptCol<T> {
+impl<T: Copy + Default> OptionalColumn<T> {
     pub(crate) fn with_capacity(n: usize) -> Self {
         Self {
-            data: Vec::with_capacity(n),
+            values: Vec::with_capacity(n),
             present: false,
         }
     }
 
     pub(crate) fn push(&mut self, v: T) {
-        self.data.push(v);
+        self.values.push(v);
         self.present = true;
     }
 }

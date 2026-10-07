@@ -181,13 +181,13 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
 
     // dtype
     MolrsDType dtype{};
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, pos_id, &dtype));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, pos_id, &dtype));
     EXPECT_EQ(dtype, MOLRS_D_TYPE_FLOAT);
 
     // shape query
     size_t col_shape[4] = {};
     size_t ndim = 4;
-    ASSERT_MOLRS_OK(molrs_block_col_shape(block, pos_id, col_shape, &ndim));
+    ASSERT_MOLRS_OK(molrs_block_column_shape(block, pos_id, col_shape, &ndim));
     EXPECT_EQ(ndim, 2u);
     EXPECT_EQ(col_shape[0], 3u);
     EXPECT_EQ(col_shape[1], 3u);
@@ -249,13 +249,13 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
 
     // verify dtypes
     MolrsDType dt{};
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, f_id, &dt));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, f_id, &dt));
     EXPECT_EQ(dt, MOLRS_D_TYPE_FLOAT);
 
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, i_id, &dt));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, i_id, &dt));
     EXPECT_EQ(dt, MOLRS_D_TYPE_INT);
 
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, u_id, &dt));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, u_id, &dt));
     EXPECT_EQ(dt, MOLRS_D_TYPE_UINT);
 
     // zero-copy read F
@@ -324,9 +324,9 @@ TEST_F(MolrsTest, BlockMutablePointer) {
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
-// ===== SimBox =============================================================
+// ===== Box =============================================================
 
-TEST_F(MolrsTest, SimBoxCube) {
+TEST_F(MolrsTest, BoxCube) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -365,7 +365,7 @@ TEST_F(MolrsTest, SimBoxCube) {
     EXPECT_NE(molrs_box_drop(sb), MOLRS_STATUS_OK);  // double drop
 }
 
-TEST_F(MolrsTest, SimBoxOrtho) {
+TEST_F(MolrsTest, BoxOrtho) {
     F lens[3] = {2, 3, 4};
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
@@ -379,7 +379,7 @@ TEST_F(MolrsTest, SimBoxOrtho) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxWrap) {
+TEST_F(MolrsTest, BoxWrap) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -397,7 +397,7 @@ TEST_F(MolrsTest, SimBoxWrap) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxShortestVector) {
+TEST_F(MolrsTest, BoxShortestVector) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -416,7 +416,7 @@ TEST_F(MolrsTest, SimBoxShortestVector) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxTriclinic) {
+TEST_F(MolrsTest, BoxTriclinic) {
     // upper-triangular cell matrix
     F h9[9] = {
         2, 1, 2,
@@ -437,9 +437,9 @@ TEST_F(MolrsTest, SimBoxTriclinic) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-// ===== Frame <-> SimBox =====================================================
+// ===== Frame <-> Box =====================================================
 
-TEST_F(MolrsTest, FrameSimBoxAssociation) {
+TEST_F(MolrsTest, FrameBoxAssociation) {
     MolrsFrameHandle frame{};
     ASSERT_MOLRS_OK(molrs_frame_new(&frame));
 

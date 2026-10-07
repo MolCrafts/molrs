@@ -144,7 +144,7 @@ impl MolRec {
 
     /// Number of frames the record carries: the trajectory length when present,
     /// otherwise one for a bare snapshot.
-    pub fn count_frames(&self) -> usize {
+    pub fn n_frames(&self) -> usize {
         match &self.trajectory {
             Some(traj) => traj.len(),
             None => usize::from(self.frame.is_some()),
@@ -280,7 +280,7 @@ mod tests {
     fn bare_snapshot_counts_one_frame() {
         let mut rec = MolRec::new();
         rec.frame = Some(Frame::new());
-        assert_eq!(rec.count_frames(), 1);
+        assert_eq!(rec.n_frames(), 1);
     }
 
     #[test]
@@ -289,12 +289,12 @@ mod tests {
         rec.frame = Some(Frame::new());
         rec.add_frame(Frame::new());
         rec.add_frame(Frame::new());
-        assert_eq!(rec.count_frames(), 2);
+        assert_eq!(rec.n_frames(), 2);
     }
 
     #[test]
     fn empty_record_counts_no_frames() {
-        assert_eq!(MolRec::new().count_frames(), 0);
+        assert_eq!(MolRec::new().n_frames(), 0);
     }
 
     #[test]

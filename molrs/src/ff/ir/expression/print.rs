@@ -23,7 +23,7 @@ fn precedence(e: &Expr) -> u8 {
     }
 }
 
-fn write_num(out: &mut String, v: F) {
+fn print_num(out: &mut String, v: F) {
     if v.is_nan() {
         out.push_str("(0/0)");
     } else if v.is_infinite() {
@@ -36,17 +36,17 @@ fn write_num(out: &mut String, v: F) {
     }
 }
 
-fn write_expr(out: &mut String, e: &Expr, min: u8) {
+fn print_expr(out: &mut String, e: &Expr, min: u8) {
     let paren = precedence(e) < min;
     if paren {
         out.push('(');
     }
     match e {
-        Expr::Num(v) => write_num(out, *v),
+        Expr::Num(v) => print_num(out, *v),
         Expr::Var(name) => out.push_str(name),
         Expr::Neg(inner) => {
             out.push('-');
-            write_expr(out, inner, NEG_PRECEDENCE);
+            print_expr(out, inner, NEG_PRECEDENCE);
         }
         Expr::Bin(op, l, r) => {
             let p = op.precedence();
@@ -57,9 +57,9 @@ fn write_expr(out: &mut String, e: &Expr, min: u8) {
             } else {
                 (p, p + 1)
             };
-            write_expr(out, l, lmin);
+            print_expr(out, l, lmin);
             out.push(op.symbol());
-            write_expr(out, r, rmin);
+            print_expr(out, r, rmin);
         }
         Expr::Call(name, args) => {
             out.push_str(name);
@@ -68,7 +68,7 @@ fn write_expr(out: &mut String, e: &Expr, min: u8) {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                write_expr(out, a, 0);
+                print_expr(out, a, 0);
             }
             out.push(')');
         }
@@ -81,7 +81,7 @@ fn write_expr(out: &mut String, e: &Expr, min: u8) {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = String::new();
-        write_expr(&mut s, self, 0);
+        print_expr(&mut s, self, 0);
         f.write_str(&s)
     }
 }

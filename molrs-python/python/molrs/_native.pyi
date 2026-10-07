@@ -3949,13 +3949,13 @@ class Trajectory:
     @property
     def time(self) -> ArrayF | None: ...
 
-type _ObservableScalarData = npt.NDArray | float | int | bool | str | list[str]
+type _ObservableScalarValue = npt.NDArray | float | int | bool | str | list[str]
 
 class ScalarObservable:
     def __init__(
         self,
         name: str,
-        values: _ObservableScalarData,
+        values: _ObservableScalarValue,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,
@@ -3989,7 +3989,7 @@ class VectorObservable:
     def __init__(
         self,
         name: str,
-        values: _ObservableScalarData,
+        values: _ObservableScalarValue,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,

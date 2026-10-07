@@ -6,7 +6,7 @@ use std::str::FromStr;
 use slotmap::Key;
 
 use crate::core::MolRsError;
-use crate::core::bond_order::write_bond_class;
+use crate::core::bond_order::stamp_bond_class;
 use crate::core::keys::{FRAG_ID, PORTS};
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
@@ -250,7 +250,7 @@ impl MolGraph {
     ) -> Result<RelationId, MolRsError> {
         let bonds = self.try_register_kind("bonds", 2)?;
         let bid = self.add_relation(bonds, &[a, b])?;
-        write_bond_class(self, bonds, bid, bond_type, bond_number)?;
+        stamp_bond_class(self, bonds, bid, bond_type, bond_number)?;
         Ok(bid)
     }
 

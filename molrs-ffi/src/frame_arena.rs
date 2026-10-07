@@ -11,8 +11,8 @@ use molrs::core::{Block, Frame};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 
-/// Entry storing a frame and its invalidation tracking.
-struct FrameEntry {
+/// A frame and its invalidation tracking.
+struct TrackedFrame {
     frame: Frame,
     /// Version counter for each block key. Increments on remove/replace.
     block_versions: HashMap<String, u64>,
@@ -20,7 +20,7 @@ struct FrameEntry {
 
 /// FrameArena owns all frames and mediates access via handles.
 pub struct FrameArena {
-    frames: SlotMap<FrameId, FrameEntry>,
+    frames: SlotMap<FrameId, TrackedFrame>,
 }
 
 impl FrameArena {
@@ -33,7 +33,7 @@ impl FrameArena {
 
     /// Creates a new frame and returns its stable ID.
     pub fn frame_new(&mut self) -> FrameId {
-        let entry = FrameEntry {
+        let entry = TrackedFrame {
             frame: Frame::new(),
             block_versions: HashMap::new(),
         };
@@ -241,11 +241,11 @@ impl FrameArena {
 
     // ---- Private helpers ----
 
-    /// Validate handle and return (&FrameEntry, &Block) in one lookup pass.
+    /// Validate handle and return (&TrackedFrame, &Block) in one lookup pass.
     fn validated_block<'a>(
         &'a self,
         handle: &BlockHandle,
-    ) -> Result<(&'a FrameEntry, &'a Block), FfiError> {
+    ) -> Result<(&'a TrackedFrame, &'a Block), FfiError> {
         let entry = self
             .frames
             .get(handle.frame_id)

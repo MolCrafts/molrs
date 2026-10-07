@@ -153,7 +153,7 @@ pub fn read_amber_prmtop_system(path: impl AsRef<Path>) -> Result<(ForceField, F
     AmberPrmtopForcefieldReader::new().read_system_str(&text)
 }
 
-fn ico_entry(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
+fn ico_lookup(n_types: usize, iac_i: usize, iac_j: usize, nb_index: &[i64]) -> Result<i64, String> {
     let index = n_types
         .saturating_mul(iac_i.saturating_sub(1))
         .saturating_add(iac_j.saturating_sub(1));
@@ -178,7 +178,7 @@ fn read_lj_table(
     bcoef: &[f64],
 ) -> Result<LjTable, String> {
     let entry = |i: usize, j: usize| -> Result<Option<Lj>, String> {
-        let nb = ico_entry(n_types, i, j, nb_index)?;
+        let nb = ico_lookup(n_types, i, j, nb_index)?;
         if nb == 0 {
             return Ok(None);
         }

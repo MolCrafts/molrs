@@ -97,7 +97,7 @@ pub(crate) fn generate_3d_impl(
 
     // --- Write coordinates back ------------------------------------------
     let mut out = work;
-    write_coords(&mut out, &coords3d)?;
+    apply_coords(&mut out, &coords3d)?;
     report.final_energy = final_energy.or(Some(embedding.coarse_energy));
     Ok((out, report))
 }
@@ -435,7 +435,7 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
 fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bool), String> {
     // Write current coords so MMFF setup that consults geometry sees them.
     let mut staged = mol.clone();
-    write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
+    apply_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
     // A fresh typing per call: its output holds exactly this molecule's types.
     // `Mmff94Typifier::new` shares the process-wide memoised MMFF94 library, so
@@ -480,7 +480,7 @@ fn place_single_atom(mol: &mut Atomistic) -> Result<(), MolRsError> {
 
 /// Write a flat `n*3` coordinate buffer back into the molecule (atom-iteration
 /// order matches `distgeom`/`MMFF` indexing).
-fn write_coords(mol: &mut Atomistic, coords: &[f64]) -> Result<(), MolRsError> {
+fn apply_coords(mol: &mut Atomistic, coords: &[f64]) -> Result<(), MolRsError> {
     let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
     for (i, id) in ids.into_iter().enumerate() {
         mol.set_atom(id, "x", coords[i * 3])?;

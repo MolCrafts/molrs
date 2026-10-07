@@ -62,7 +62,7 @@ CH  2
 """
 
 
-def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path):
+def test_read_gromacs_top_system_returns_the_force_field_and_a_typed_frame(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
     ff, frame = molrs.io.read_gromacs_top_system(path)
@@ -75,7 +75,7 @@ def test_read_gromacs_system_returns_the_force_field_and_a_typed_frame(tmp_path)
         molrs.io.read_gromacs_top_forcefield(path)
 
 
-def test_write_gromacs_system_round_trips_read_gromacs_system(tmp_path):
+def test_write_gromacs_top_system_round_trips_read_gromacs_top_system(tmp_path):
     path = tmp_path / "topol.top"
     path.write_text(_SYSTEM)
     ff, frame = molrs.io.read_gromacs_top_system(path)

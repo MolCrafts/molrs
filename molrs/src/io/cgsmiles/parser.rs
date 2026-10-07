@@ -365,8 +365,8 @@ impl<'a> CgParser<'a> {
             return Err(self.scanner.error_at(SmilesErrorKind::CgEmptyBlock, block));
         }
         let mut table = FragmentTable::new();
-        for entry in self.split_entries(interior) {
-            let def = self.parse_entry(entry, atomistic)?;
+        for entry in self.split_fragment_defs(interior) {
+            let def = self.parse_fragment_def(entry, atomistic)?;
             if let Some(previous) = table.insert(def.name.clone(), def) {
                 let kind = SmilesErrorKind::CgDuplicateFragment(previous.name);
                 return Err(self.scanner.error_at(kind, entry));
@@ -381,7 +381,7 @@ impl<'a> CgParser<'a> {
     /// The separator is `,` at bracket depth 0 (R3.0), so the comma inside
     /// `[*;s=C,0]` stays where it was written instead of splitting the entry
     /// that carries it.
-    fn split_entries(&self, interior: Span) -> Vec<Span> {
+    fn split_fragment_defs(&self, interior: Span) -> Vec<Span> {
         let interior_bytes = &self.scanner.input().as_bytes()[interior.start..interior.end];
         let mut entries = Vec::new();
         let mut depth = 0usize;
@@ -406,11 +406,15 @@ impl<'a> CgParser<'a> {
     ///
     /// The split is on the **first** `=` (R3.0): a body may carry further
     /// ones, which is how `#A=C=C` names a double bond.
-    fn parse_entry(&self, entry: Span, atomistic: bool) -> Result<CgFragmentDef, SmilesError> {
+    fn parse_fragment_def(
+        &self,
+        entry: Span,
+        atomistic: bool,
+    ) -> Result<CgFragmentDef, SmilesError> {
         let input = self.scanner.input();
         let text = &input[entry.start..entry.end];
         let malformed = || {
-            let kind = SmilesErrorKind::CgMalformedFragmentEntry;
+            let kind = SmilesErrorKind::CgMalformedFragmentDef;
             self.scanner.error_at(kind, entry)
         };
         let Some(rest) = text.strip_prefix('#') else {
@@ -2497,7 +2501,7 @@ mod tests {
     fn test_fragment_entry_without_an_equals_sign_is_refused() {
         assert!(matches!(
             kind_of("{[#A]}.{#A}"),
-            SmilesErrorKind::CgMalformedFragmentEntry
+            SmilesErrorKind::CgMalformedFragmentDef
         ));
     }
 

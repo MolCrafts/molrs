@@ -62,7 +62,7 @@ impl Msd {
         };
         let refs: Vec<&Frame> = frames.iter().collect();
         match molrs::compute::Msd::new().compute(&refs, ()) {
-            Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
+            Ok(ts) => ts.per_frame.iter().map(|r| r.mean).collect(),
             Err(_) => Vec::new(),
         }
     }

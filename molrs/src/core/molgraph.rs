@@ -250,7 +250,7 @@ fn mask(valid: &Validity) -> Vec<bool> {
 /// A [`Block`]'s columns in block order, each typed by element and paired with
 /// its validity mask — the reading counterpart of [`emit_column`].
 ///
-/// Both halves of [`MolGraph::read_frame`] need the same thing: walk a block's
+/// Both halves of [`MolGraph::extend_from_frame`] need the same thing: walk a block's
 /// columns once, then ask each row for the properties it actually carries. A
 /// masked-off cell holds the element type's default, which is a value like any
 /// other to the block, so the mask is what keeps an unset `frag_id` from
@@ -642,7 +642,7 @@ pub struct MolGraph {
     /// Arity of each kind, indexed by `KindId.0`.
     kind_arity: Vec<usize>,
     /// Registered name of each kind, indexed by `KindId.0` (used as the
-    /// [`Frame`] block name in `to_frame` / `read_frame`).
+    /// [`Frame`] block name in `to_frame` / `extend_from_frame`).
     kind_name: Vec<String>,
     /// Reverse lookup: name → KindId (resolved once, not on the hot path).
     name_to_kind: HashMap<String, KindId>,
@@ -777,7 +777,7 @@ impl MolGraph {
     /// write (see [`merge`](Self::merge)).
     pub fn add_node_with(&mut self, payload: Atom) -> Result<NodeId, MolRsError> {
         let id = self.add_node();
-        self.write_atom(id, &payload)?;
+        self.set_node_props(id, &payload)?;
         Ok(id)
     }
 
@@ -808,7 +808,7 @@ impl MolGraph {
                 return Err(MolRsError::not_found("node", format!("NodeId {:?}", id)));
             }
         }
-        let payloads = ids.iter().map(|&id| self.read_atom(id)).collect();
+        let payloads = ids.iter().map(|&id| self.materialize_atom(id)).collect();
 
         for kid in 0..self.kinds.len() {
             let doomed: Vec<RelationId> = self.kinds[kid]
@@ -839,7 +839,7 @@ impl MolGraph {
                 format!("NodeId {}", id.data().as_ffi()),
             ));
         }
-        Ok(self.read_atom(id))
+        Ok(self.materialize_atom(id))
     }
 
     /// Set a single component on a node.
@@ -864,7 +864,9 @@ impl MolGraph {
 
     /// Iterate over all `(NodeId, Atom)` pairs (each property bag materialized).
     pub fn nodes(&self) -> impl Iterator<Item = (NodeId, Atom)> + '_ {
-        self.nodes.handles().map(move |id| (id, self.read_atom(id)))
+        self.nodes
+            .handles()
+            .map(move |id| (id, self.materialize_atom(id)))
     }
 
     /// Live node handles in row order.
@@ -901,7 +903,7 @@ impl MolGraph {
     /// property is *not* written in that case, which is precisely why the
     /// error is returned rather than swallowed: a dropped property is a
     /// molecule that quietly lost a label.
-    fn write_atom(&mut self, id: NodeId, atom: &Atom) -> Result<(), MolRsError> {
+    fn set_node_props(&mut self, id: NodeId, atom: &Atom) -> Result<(), MolRsError> {
         for (key, val) in atom.iter() {
             coerce_canonical(key, val.clone()).and_then(|pv| match pv {
                 PropValue::F64(v) => self.nodes.set_f64(id, key, v),
@@ -914,7 +916,7 @@ impl MolGraph {
     }
 
     /// Materialize node `id`'s set components into an [`Atom`].
-    pub(crate) fn read_atom(&self, id: NodeId) -> Atom {
+    pub(crate) fn materialize_atom(&self, id: NodeId) -> Atom {
         let mut atom = Atom::new();
         for (key, cell) in self.nodes.row_cells(id) {
             match cell {
@@ -1007,7 +1009,7 @@ impl MolGraph {
                 format!("RelationId {}", id.data().as_ffi()),
             ));
         }
-        Ok(self.read_relation(kind, id))
+        Ok(self.materialize_relation(kind, id))
     }
 
     /// Endpoint node handles of a relation.
@@ -1079,7 +1081,7 @@ impl MolGraph {
                 format!("RelationId {:?}", id),
             ));
         }
-        let rel = self.read_relation(kind, id);
+        let rel = self.materialize_relation(kind, id);
         self.detach_relation_from_adjacency(kind, id, None);
         let k = &mut self.kinds[kind.0 as usize];
         k.props.despawn(id);
@@ -1091,7 +1093,7 @@ impl MolGraph {
     pub fn relations(&self, kind: KindId) -> impl Iterator<Item = (RelationId, Relation)> + '_ {
         let ids: Vec<RelationId> = self.kinds[kind.0 as usize].props.handles().collect();
         ids.into_iter()
-            .map(move |rid| (rid, self.read_relation(kind, rid)))
+            .map(move |rid| (rid, self.materialize_relation(kind, rid)))
     }
 
     /// Relation handles of a kind, in row order.
@@ -1112,7 +1114,7 @@ impl MolGraph {
     }
 
     /// Materialize a relation's endpoints + properties.
-    pub(crate) fn read_relation(&self, kind: KindId, id: RelationId) -> Relation {
+    pub(crate) fn materialize_relation(&self, kind: KindId, id: RelationId) -> Relation {
         let k = &self.kinds[kind.0 as usize];
         let nodes = k.endpoints.get(id).cloned().unwrap_or_default();
         let mut props = IndexMap::new();
@@ -1137,7 +1139,7 @@ impl MolGraph {
     /// not fit the dtype the Frame schema declares for a canonical key. As on
     /// the node side, the property is not written, so the error is the only
     /// thing standing between the caller and a silently dropped bond label.
-    pub(crate) fn write_relation_props(
+    pub(crate) fn set_relation_props(
         &mut self,
         kind: KindId,
         id: RelationId,
@@ -1213,7 +1215,7 @@ impl MolGraph {
     pub fn merge(&mut self, other: MolGraph) -> Result<HashMap<NodeId, NodeId>, MolRsError> {
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::new();
         for old_id in other.nodes.handles() {
-            let new_id = self.add_node_with(other.read_atom(old_id))?;
+            let new_id = self.add_node_with(other.materialize_atom(old_id))?;
             node_map.insert(old_id, new_id);
         }
 
@@ -1224,10 +1226,10 @@ impl MolGraph {
             let self_kind = self.register_kind(name, arity);
             let orids: Vec<RelationId> = other.relation_ids(okid).collect();
             for orid in orids {
-                let rel = other.read_relation(okid, orid);
+                let rel = other.materialize_relation(okid, orid);
                 let mapped: SmallVec<[NodeId; 4]> = rel.nodes.iter().map(|n| node_map[n]).collect();
                 if let Ok(rid) = self.add_relation(self_kind, &mapped) {
-                    self.write_relation_props(self_kind, rid, &rel.props)?;
+                    self.set_relation_props(self_kind, rid, &rel.props)?;
                 }
             }
         }
@@ -1547,7 +1549,7 @@ impl MolGraph {
     /// relation is added), when a column value does not fit its canonical
     /// type, when a column's dtype contradicts a component `self` already
     /// holds under that key, or when a registered kind's block is unreadable.
-    pub(crate) fn read_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
+    pub(crate) fn extend_from_frame(&mut self, frame: &Frame) -> Result<(), MolRsError> {
         let atoms_block = frame
             .get("atoms")
             .ok_or_else(|| MolRsError::parse("Frame missing 'atoms' block"))?;
@@ -1572,13 +1574,13 @@ impl MolGraph {
             }
         }
 
-        let node_ids = self.read_node_rows(atoms_block)?;
+        let node_ids = self.add_node_rows(atoms_block)?;
 
         for (kid, block_name, arity) in kind_specs {
             let Some(block) = frame.get(&block_name) else {
                 continue;
             };
-            self.read_relation_block(kid, &block_name, arity, block, &node_ids)?;
+            self.add_relation_block(kid, &block_name, arity, block, &node_ids)?;
         }
 
         Ok(())
@@ -1616,7 +1618,7 @@ impl MolGraph {
     /// [`MolRsError::Validation`] when a column value does not fit its
     /// canonical type, or when a property contradicts a component `self`
     /// already holds under that key.
-    fn read_node_rows(&mut self, atoms: &Block) -> Result<Vec<NodeId>, MolRsError> {
+    fn add_node_rows(&mut self, atoms: &Block) -> Result<Vec<NodeId>, MolRsError> {
         let nrows = atoms.n_rows().unwrap_or(0);
         let columns = MaskedColumns::of(atoms, &[]);
         let mut node_ids: Vec<NodeId> = Vec::with_capacity(nrows);
@@ -1641,7 +1643,7 @@ impl MolGraph {
     /// would hand back a graph missing relations the frame plainly stated —
     /// and when a property column's dtype contradicts the component the kind
     /// already holds under that key.
-    fn read_relation_block(
+    fn add_relation_block(
         &mut self,
         kind: KindId,
         block_name: &str,
@@ -1952,7 +1954,7 @@ mod tests {
     // ----- Frame round-trip (generic) -----
 
     #[test]
-    fn test_to_read_frame_roundtrip() {
+    fn test_to_frame_extend_from_frame_roundtrip() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
         let o = g
@@ -1975,13 +1977,13 @@ mod tests {
         // read back into a graph with the same kind registered
         let mut g2 = MolGraph::new();
         let bond2 = g2.register_kind("bonds", 2);
-        g2.read_frame(&frame).unwrap();
+        g2.extend_from_frame(&frame).unwrap();
         assert_eq!(g2.n_nodes(), 3);
         assert_eq!(g2.n_relations(bond2), 2);
     }
 
     #[test]
-    fn test_read_frame_restores_int_and_str_relation_props() {
+    fn test_extend_from_frame_restores_int_and_str_relation_props() {
         let mut g = MolGraph::new();
         let bond = g.register_kind("bonds", 2);
         let a = g
@@ -2005,7 +2007,7 @@ mod tests {
 
         let mut g2 = MolGraph::new();
         let bond2 = g2.register_kind("bonds", 2);
-        g2.read_frame(&frame).unwrap();
+        g2.extend_from_frame(&frame).unwrap();
 
         let (_, r) = g2.relations(bond2).next().expect("relation round-trips");
         assert_eq!(
@@ -2090,7 +2092,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_frame_restores_unsigned_and_bool_node_props() {
+    fn test_extend_from_frame_restores_unsigned_and_bool_node_props() {
         let mut g = MolGraph::new();
         let a = g
             .add_node_with(Atom::xyz("C", 0.0, 0.0, 0.0))
@@ -2100,7 +2102,7 @@ mod tests {
         g.set_node(a, "frozen", true).unwrap();
 
         let mut g2 = MolGraph::new();
-        g2.read_frame(&g.to_frame().expect("a schema-conforming graph converts"))
+        g2.extend_from_frame(&g.to_frame().expect("a schema-conforming graph converts"))
             .unwrap();
 
         let (_, atom) = g2.nodes().next().expect("node round-trips");
@@ -2364,12 +2366,12 @@ mod tests {
         assert_eq!(g2.n_nodes(), 2);
     }
 
-    // ----- Contract B: read_frame and the node/relation writers keep data -----
+    // ----- Contract B: extend_from_frame and the node/relation writers keep data -----
 
     /// A frame read into a graph comes back out with its columns in the
     /// order it went in, atoms and relation props alike — never sorted.
     #[test]
-    fn to_frame_keeps_the_column_order_read_frame_saw() {
+    fn to_frame_keeps_the_column_order_extend_from_frame_saw() {
         use ndarray::Array1;
 
         let mut graph = MolGraph::new();
@@ -2404,7 +2406,7 @@ mod tests {
         frame.insert("atoms", atoms);
         frame.insert("bonds", bonds);
 
-        graph.read_frame(&frame).unwrap();
+        graph.extend_from_frame(&frame).unwrap();
         let out = graph.to_frame().unwrap();
         assert_eq!(
             out["atoms"].keys().collect::<Vec<_>>(),
@@ -2420,7 +2422,7 @@ mod tests {
     /// kind already holds cannot be stored, and dropping the value hands back
     /// a graph whose bonds silently lost the label the frame carried.
     #[test]
-    fn read_frame_rejects_a_relation_prop_whose_dtype_conflicts_with_the_kind() {
+    fn extend_from_frame_rejects_a_relation_prop_whose_dtype_conflicts_with_the_kind() {
         use ndarray::Array1;
 
         let mut graph = MolGraph::new();
@@ -2457,7 +2459,7 @@ mod tests {
         frame.insert("bonds", bonds_block);
 
         let err = graph
-            .read_frame(&frame)
+            .extend_from_frame(&frame)
             .expect_err("a str 'tag' cannot enter an int 'tag' component");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
     }
@@ -2466,7 +2468,7 @@ mod tests {
     /// It is refused by name before any node is added, rather than panicking
     /// in the per-row walk.
     #[test]
-    fn read_frame_refuses_a_2d_atoms_column_before_adding_a_node() {
+    fn extend_from_frame_refuses_a_2d_atoms_column_before_adding_a_node() {
         use ndarray::{Array1, Array2};
 
         let mut atoms = Block::new();
@@ -2489,7 +2491,7 @@ mod tests {
 
         let mut graph = MolGraph::new();
         let err = graph
-            .read_frame(&frame)
+            .extend_from_frame(&frame)
             .expect_err("a (2, 3) column is not a per-row property");
         assert!(matches!(err, MolRsError::Validation { .. }), "{err:?}");
         let msg = err.to_string();

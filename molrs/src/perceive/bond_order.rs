@@ -15,10 +15,10 @@ const PSCUTOFF: i32 = 10;
 /// `APS.DAT`'s `*` — a valence the row does not allow.
 const NONE: i32 = 9999;
 
-/// Which `APS.DAT` line prefix a row carries — the context it applies in.
+/// Which `APS.DAT` line prefix a row carries — the environment it applies in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Context {
-    /// `APS`: any atom none of the special contexts claims.
+enum ApsEnvironment {
+    /// `APS`: any atom none of the special environments claims.
     Plain,
     /// `APSCO2`: a trivalent carbon with two or more terminal O/S.
     Co2,
@@ -42,7 +42,7 @@ enum Context {
     N3Plus,
     /// `APSO1-`: a terminal oxygen on a three-connected N with no other terminal O/S.
     O1Minus,
-    /// `APSS1-`: the sulfur twin of [`Context::O1Minus`].
+    /// `APSS1-`: the sulfur twin of [`ApsEnvironment::O1Minus`].
     S1Minus,
     /// `APSC1+`: a terminal carbon on a two-connected nitrogen (isonitrile).
     C1Plus,
@@ -51,15 +51,20 @@ enum Context {
 /// One `APS.DAT` row: element, connection count (`None` for `*`), and the
 /// penalty of total valence 0 … 7 ([`NONE`] for `*`).
 struct ApsRow {
-    context: Context,
+    environment: ApsEnvironment,
     z: u8,
     connections: Option<usize>,
     aps: [i32; 8],
 }
 
-const fn row(context: Context, z: u8, connections: Option<usize>, aps: [i32; 8]) -> ApsRow {
+const fn row(
+    environment: ApsEnvironment,
+    z: u8,
+    connections: Option<usize>,
+    aps: [i32; 8],
+) -> ApsRow {
     ApsRow {
-        context,
+        environment,
         z,
         connections,
         aps,
@@ -70,42 +75,42 @@ const fn row(context: Context, z: u8, connections: Option<usize>, aps: [i32; 8])
 /// applies wins, so the order is part of the table).
 #[rustfmt::skip]
 static APS: &[ApsRow] = &[
-    row(Context::Plain,   1,  None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   9,  None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   17, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   35, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   53, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   6,  Some(1), [NONE, NONE, NONE, 1, 0, 32, NONE, NONE]),
-    row(Context::C1Plus,  6,  Some(1), [NONE, NONE, NONE, 0, 1, 32, NONE, NONE]),
-    row(Context::Plain,   6,  None,    [NONE, NONE, 64, 32, 0, 32, 64, NONE]),
-    row(Context::Plain,   14, None,    [NONE, NONE, NONE, NONE, 0, NONE, NONE, NONE]),
-    row(Context::Co2,     6,  Some(3), [NONE, NONE, NONE, NONE, 32, 0, 32, NONE]),
-    row(Context::Plain,   7,  Some(1), [NONE, NONE, 3, 0, 32, NONE, NONE, NONE]),
-    row(Context::N1Minus, 7,  Some(1), [NONE, NONE, 0, 0, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   7,  Some(2), [NONE, NONE, 4, 0, 2, NONE, NONE, NONE]),
-    row(Context::N2Plus,  7,  Some(2), [NONE, NONE, NONE, 1, 0, NONE, NONE, NONE]),
-    row(Context::Plain,   7,  Some(3), [NONE, NONE, 32, 0, 1, 2, NONE, NONE]),
-    row(Context::No2,     7,  Some(3), [NONE, NONE, NONE, 64, 32, 0, 32, NONE]),
-    row(Context::N3Plus,  7,  Some(3), [NONE, NONE, NONE, 1, 0, NONE, NONE, NONE]),
-    row(Context::Plain,   7,  Some(4), [NONE, NONE, NONE, 64, 0, 64, NONE, NONE]),
-    row(Context::Plain,   8,  Some(1), [NONE, 1, 0, 64, NONE, NONE, NONE, NONE]),
-    row(Context::O1Minus, 8,  Some(1), [NONE, 0, 1, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   8,  Some(2), [NONE, 32, 0, 64, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   15, Some(1), [NONE, NONE, 2, 0, 32, NONE, NONE, NONE]),
-    row(Context::Plain,   15, Some(2), [NONE, NONE, 4, 0, 2, NONE, NONE, NONE]),
-    row(Context::Plain,   15, Some(3), [NONE, NONE, 32, 0, 1, 2, NONE, NONE]),
-    row(Context::Plain,   15, Some(4), [NONE, NONE, NONE, 64, 1, 0, 32, NONE]),
-    row(Context::Po2,     15, Some(4), [NONE, NONE, NONE, NONE, NONE, 32, 0, 32]),
-    row(Context::Po3,     15, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
-    row(Context::Plain,   16, Some(1), [NONE, 2, 0, 64, NONE, NONE, NONE, NONE]),
-    row(Context::S1Minus, 16, Some(1), [NONE, 0, 1, NONE, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   16, Some(2), [NONE, 2, 0, 64, NONE, NONE, NONE, NONE]),
-    row(Context::Plain,   16, Some(3), [NONE, NONE, NONE, 1, 0, 2, 2, NONE]),
-    row(Context::Plain,   16, Some(4), [NONE, NONE, NONE, NONE, 4, 2, 0, NONE]),
-    row(Context::So2,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 0, 32]),
-    row(Context::So3,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
-    row(Context::So4,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
-    row(Context::Plain,   28, Some(5), [NONE, NONE, NONE, NONE, NONE, 1, 0, 1]),
+    row(ApsEnvironment::Plain,   1,  None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   9,  None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   17, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   35, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   53, None,    [64, 0, 64, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   6,  Some(1), [NONE, NONE, NONE, 1, 0, 32, NONE, NONE]),
+    row(ApsEnvironment::C1Plus,  6,  Some(1), [NONE, NONE, NONE, 0, 1, 32, NONE, NONE]),
+    row(ApsEnvironment::Plain,   6,  None,    [NONE, NONE, 64, 32, 0, 32, 64, NONE]),
+    row(ApsEnvironment::Plain,   14, None,    [NONE, NONE, NONE, NONE, 0, NONE, NONE, NONE]),
+    row(ApsEnvironment::Co2,     6,  Some(3), [NONE, NONE, NONE, NONE, 32, 0, 32, NONE]),
+    row(ApsEnvironment::Plain,   7,  Some(1), [NONE, NONE, 3, 0, 32, NONE, NONE, NONE]),
+    row(ApsEnvironment::N1Minus, 7,  Some(1), [NONE, NONE, 0, 0, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   7,  Some(2), [NONE, NONE, 4, 0, 2, NONE, NONE, NONE]),
+    row(ApsEnvironment::N2Plus,  7,  Some(2), [NONE, NONE, NONE, 1, 0, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   7,  Some(3), [NONE, NONE, 32, 0, 1, 2, NONE, NONE]),
+    row(ApsEnvironment::No2,     7,  Some(3), [NONE, NONE, NONE, 64, 32, 0, 32, NONE]),
+    row(ApsEnvironment::N3Plus,  7,  Some(3), [NONE, NONE, NONE, 1, 0, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   7,  Some(4), [NONE, NONE, NONE, 64, 0, 64, NONE, NONE]),
+    row(ApsEnvironment::Plain,   8,  Some(1), [NONE, 1, 0, 64, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::O1Minus, 8,  Some(1), [NONE, 0, 1, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   8,  Some(2), [NONE, 32, 0, 64, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   15, Some(1), [NONE, NONE, 2, 0, 32, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   15, Some(2), [NONE, NONE, 4, 0, 2, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   15, Some(3), [NONE, NONE, 32, 0, 1, 2, NONE, NONE]),
+    row(ApsEnvironment::Plain,   15, Some(4), [NONE, NONE, NONE, 64, 1, 0, 32, NONE]),
+    row(ApsEnvironment::Po2,     15, Some(4), [NONE, NONE, NONE, NONE, NONE, 32, 0, 32]),
+    row(ApsEnvironment::Po3,     15, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
+    row(ApsEnvironment::Plain,   16, Some(1), [NONE, 2, 0, 64, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::S1Minus, 16, Some(1), [NONE, 0, 1, NONE, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   16, Some(2), [NONE, 2, 0, 64, NONE, NONE, NONE, NONE]),
+    row(ApsEnvironment::Plain,   16, Some(3), [NONE, NONE, NONE, 1, 0, 2, 2, NONE]),
+    row(ApsEnvironment::Plain,   16, Some(4), [NONE, NONE, NONE, NONE, 4, 2, 0, NONE]),
+    row(ApsEnvironment::So2,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 0, 32]),
+    row(ApsEnvironment::So3,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
+    row(ApsEnvironment::So4,     16, Some(4), [NONE, NONE, NONE, NONE, NONE, NONE, 32, 0]),
+    row(ApsEnvironment::Plain,   28, Some(5), [NONE, NONE, NONE, NONE, NONE, 1, 0, 1]),
 ];
 
 /// `bondtype`'s `avH`: the score of a capping hydrogen.
@@ -357,27 +362,29 @@ impl Graph {
 
         let plain =
             co2 < 2 && po < 2 && so < 2 && !n1 && !n2 && no2 < 2 && !n3 && !o1 && !s1 && !c1;
-        let applies = |context: Context| match context {
-            // Every line starts with `APS`, so with no special context every row
+        let applies = |environment: ApsEnvironment| match environment {
+            // Every line starts with `APS`, so with no special environment every row
             // is a candidate; the plain rows come first for each element.
             _ if plain => true,
-            Context::Plain => false,
-            Context::Co2 => co2 >= 2,
-            Context::Po2 => po == 2,
-            Context::Po3 => po > 2,
-            Context::So2 => so == 2,
-            Context::So3 => so == 3,
-            Context::So4 => so == 4,
-            Context::N1Minus => n1,
-            Context::N2Plus => n2,
-            Context::No2 => no2 >= 2,
-            Context::N3Plus => n3,
-            Context::O1Minus => o1,
-            Context::S1Minus => s1,
-            Context::C1Plus => c1,
+            ApsEnvironment::Plain => false,
+            ApsEnvironment::Co2 => co2 >= 2,
+            ApsEnvironment::Po2 => po == 2,
+            ApsEnvironment::Po3 => po > 2,
+            ApsEnvironment::So2 => so == 2,
+            ApsEnvironment::So3 => so == 3,
+            ApsEnvironment::So4 => so == 4,
+            ApsEnvironment::N1Minus => n1,
+            ApsEnvironment::N2Plus => n2,
+            ApsEnvironment::No2 => no2 >= 2,
+            ApsEnvironment::N3Plus => n3,
+            ApsEnvironment::O1Minus => o1,
+            ApsEnvironment::S1Minus => s1,
+            ApsEnvironment::C1Plus => c1,
         };
         APS.iter()
-            .find(|r| applies(r.context) && r.z == z && r.connections.is_none_or(|c| c == degree))
+            .find(|r| {
+                applies(r.environment) && r.z == z && r.connections.is_none_or(|c| c == degree)
+            })
             .map_or([NONE; 8], |r| r.aps)
     }
 }

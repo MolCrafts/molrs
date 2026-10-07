@@ -235,11 +235,11 @@ impl NeighborQuery {
     /// SoA sibling of [`unbounded`](Self::unbounded): build from free-boundary points
     /// held as column-major `x`/`y`/`z` slices.
     ///
-    /// Uses [`SimBox::free_columns`] to derive the same bounding box `unbounded`
+    /// Uses [`SimBox::free_from_xyz`] to derive the same bounding box `unbounded`
     /// would produce from the interleaved points, so the result is
     /// byte-identical.
     pub fn unbounded_columns(xs: &[F], ys: &[F], zs: &[F], cutoff: F) -> Self {
-        let bx = SimBox::free_columns(xs, ys, zs, cutoff)
+        let bx = SimBox::free_from_xyz(xs, ys, zs, cutoff)
             .expect("degenerate point cloud for free-boundary box");
         Self::from_columns(&bx, xs, ys, zs, cutoff)
     }

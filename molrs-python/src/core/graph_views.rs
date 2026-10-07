@@ -668,11 +668,11 @@ macro_rules! field_mapping_impl {
                         )));
                     }
                     for (name, value) in names.iter().zip(&values) {
-                        write_field(&fields, &extract_column_key(&name)?, value)?;
+                        set_or_clear_field(&fields, &extract_column_key(&name)?, value)?;
                     }
                     return Ok(());
                 }
-                write_field(&fields, &extract_column_key(key)?, value)
+                set_or_clear_field(&fields, &extract_column_key(key)?, value)
             }
 
             fn __delitem__(slf: &Bound<'_, Self>, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -775,7 +775,7 @@ macro_rules! field_mapping_impl {
                 let leaf = slf.get().leaf(py)?;
                 let fields = slf.get().fields(&leaf);
                 for (key, value) in pairs.iter() {
-                    write_field(&fields, &extract_column_key(&key)?, &value)?;
+                    set_or_clear_field(&fields, &extract_column_key(&key)?, &value)?;
                 }
                 Ok(())
             }
@@ -789,7 +789,7 @@ fn field_or_key_error(fields: &impl Fields, key: &Bound<'_, PyAny>) -> PyResult<
 }
 
 /// Write one field; ``None`` deletes it (a no-op when it is not set).
-fn write_field(fields: &impl Fields, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
+fn set_or_clear_field(fields: &impl Fields, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
     if value.is_none() {
         if fields.get(key)?.is_some() {
             fields.clear(key)?;

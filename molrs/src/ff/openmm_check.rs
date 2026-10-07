@@ -308,7 +308,7 @@ fn lammps_form(c: &Case) -> (ForceField, Frame) {
 /// Write `c`'s LAMMPS inputs into `dir`: `<case>.data`, `<case>.pre` (lines
 /// that go before `read_data`: `units`, `fix cmap`), `<case>.ff` (the rest),
 /// and `<case>.cmap`.
-fn write_lammps(dir: &Path, c: &Case) {
+fn stage_lammps_inputs(dir: &Path, c: &Case) {
     let (ff, frame) = lammps_form(c);
     let mut data = frame.clone();
     data.remove("pairs");
@@ -638,7 +638,7 @@ fn report() {
             );
         }
         if let Some(dir) = &dir {
-            write_lammps(Path::new(dir), c);
+            stage_lammps_inputs(Path::new(dir), c);
             // The molrs-written XML, for scripts/openmm_xml_check.py --written.
             let xml = OpenmmXmlWriter::new().write_str(&read(c)).unwrap();
             std::fs::write(Path::new(dir).join(format!("{}.written.xml", c.name)), xml).unwrap();

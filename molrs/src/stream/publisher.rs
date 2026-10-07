@@ -96,7 +96,8 @@ impl From<StreamError> for SendError {
     }
 }
 
-struct Shared {
+/// What the publisher handle and its background thread both hold.
+struct PublisherState {
     format: FrameEncoding,
     /// Simulation → clients (payload already encoded). A broadcast channel
     /// overwrites its oldest entry when full, which is the drop policy.
@@ -129,7 +130,7 @@ struct Shared {
 /// clone to join on exit.
 #[derive(Clone)]
 pub struct Publisher {
-    shared: Arc<Shared>,
+    state: Arc<PublisherState>,
 }
 
 impl Publisher {
@@ -206,7 +207,7 @@ impl Publisher {
             })?;
 
         Ok(Publisher {
-            shared: Arc::new(Shared {
+            state: Arc::new(PublisherState {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
@@ -286,7 +287,7 @@ impl Publisher {
             .map_err(|_| io::Error::other("frame server thread exited before bind"))??;
 
         Ok(Publisher {
-            shared: Arc::new(Shared {
+            state: Arc::new(PublisherState {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
@@ -301,12 +302,12 @@ impl Publisher {
 
     /// Local socket address the server is listening on.
     pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.shared.local_addr
+        self.state.local_addr
     }
 
     /// Number of currently connected WebSocket clients.
     pub fn n_clients(&self) -> usize {
-        self.shared.n_clients.load(Ordering::Relaxed)
+        self.state.n_clients.load(Ordering::Relaxed)
     }
 
     /// Encode `frame` and enqueue it for broadcast.
@@ -314,7 +315,7 @@ impl Publisher {
     /// Never blocks on network I/O. If the internal buffer is full, the oldest
     /// pending frame is dropped so this call returns promptly.
     pub fn send(&self, frame: &Frame) -> Result<(), SendError> {
-        let bytes = encode_frame(frame, self.shared.format)?;
+        let bytes = encode_frame(frame, self.state.format)?;
         self.send_bytes(Bytes::from(bytes))
     }
 
@@ -325,7 +326,7 @@ impl Publisher {
     /// runtime (not only the server's background runtime).
     pub async fn recv_command(&self) -> Option<ControlCommand> {
         loop {
-            let polled = match self.shared.cmd_rx.lock() {
+            let polled = match self.state.cmd_rx.lock() {
                 Ok(rx) => rx.try_recv(),
                 Err(_) => return None,
             };
@@ -333,7 +334,7 @@ impl Publisher {
                 Ok(cmd) => return Some(cmd),
                 Err(TryRecvError::Disconnected) => return None,
                 Err(TryRecvError::Empty) => {
-                    if self.shared.shutting_down.load(Ordering::Acquire) {
+                    if self.state.shutting_down.load(Ordering::Acquire) {
                         return None;
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -361,7 +362,7 @@ impl Publisher {
     ///
     /// [`send`]: Self::send
     pub fn recv_command_blocking(&self, timeout: Duration) -> Option<ControlCommand> {
-        let rx = self.shared.cmd_rx.lock().ok()?;
+        let rx = self.state.cmd_rx.lock().ok()?;
         if timeout.is_zero() {
             return rx.try_recv().ok();
         }
@@ -371,7 +372,7 @@ impl Publisher {
     /// Signal the accept loop to stop and join the background thread.
     pub fn shutdown(self) {
         self.request_shutdown();
-        if let Ok(mut guard) = self.shared.join.lock()
+        if let Ok(mut guard) = self.state.join.lock()
             && let Some(handle) = guard.take()
         {
             let _ = handle.join();
@@ -379,11 +380,11 @@ impl Publisher {
     }
 
     fn request_shutdown(&self) {
-        self.shared.shutting_down.store(true, Ordering::Release);
-        if let Ok(mut guard) = self.shared.frame_tx.lock() {
+        self.state.shutting_down.store(true, Ordering::Release);
+        if let Ok(mut guard) = self.state.frame_tx.lock() {
             *guard = None;
         }
-        if let Ok(mut guard) = self.shared.shutdown_tx.lock()
+        if let Ok(mut guard) = self.state.shutdown_tx.lock()
             && let Some(tx) = guard.take()
         {
             let _ = tx.send(());
@@ -391,7 +392,7 @@ impl Publisher {
     }
 
     fn send_bytes(&self, bytes: Bytes) -> Result<(), SendError> {
-        let tx_guard = self.shared.frame_tx.lock().map_err(|_| SendError::Closed)?;
+        let tx_guard = self.state.frame_tx.lock().map_err(|_| SendError::Closed)?;
         let tx = tx_guard.as_ref().ok_or(SendError::Closed)?;
         // A full broadcast buffer overwrites its oldest entry; a send with no
         // subscriber is simply a frame nobody was attached to receive.
@@ -403,11 +404,11 @@ impl Publisher {
 impl Drop for Publisher {
     fn drop(&mut self) {
         // Only the last Arc clone should join; earlier clones leave the server running.
-        if Arc::strong_count(&self.shared) > 1 {
+        if Arc::strong_count(&self.state) > 1 {
             return;
         }
         self.request_shutdown();
-        if let Ok(mut guard) = self.shared.join.lock()
+        if let Ok(mut guard) = self.state.join.lock()
             && let Some(handle) = guard.take()
         {
             let _ = handle.join();

@@ -18,7 +18,7 @@ const ZIP_SUFFIX: &str = ".zip";
 /// The suffix a directory store is expected to carry already.
 const MREC_SUFFIX: &str = "mrec";
 
-/// Pack the closed directory store at `store_path` into a sibling
+/// Pack the closed directory store at `storage_path` into a sibling
 /// `.mrec.zip` and remove the directory, returning the path of the archive.
 ///
 /// The archive's name is derived from the directory's: `traj.mrec` becomes
@@ -36,15 +36,15 @@ const MREC_SUFFIX: &str = "mrec";
 ///
 /// # Errors
 ///
-/// Returns a [`MolRsError::Zarr`] when `store_path`'s file name ends in
-/// `.zarr` or `.zarr.zip`. Returns a [`MolRsError::Zarr`] naming `store_path`
+/// Returns a [`MolRsError::Zarr`] when `storage_path`'s file name ends in
+/// `.zarr` or `.zarr.zip`. Returns a [`MolRsError::Zarr`] naming `storage_path`
 /// when no directory is there — which is also what a second `pack` of the same
 /// store meets, since the first one removed the directory. Nothing is created
 /// in that case, so a refused pack leaves no half-written archive behind.
 ///
 /// Every other failure is also a [`MolRsError::Zarr`], and it names the path it
 /// happened on, since neither `std::fs` nor the zip writer puts the path in its
-/// own message. `store_path` naming no directory component at all fails before
+/// own message. `storage_path` naming no directory component at all fails before
 /// anything is created. After that the archive is open, and a failure while
 /// walking the directory, reading an entry, encoding an entry's name as a store
 /// key (its path must be valid UTF-8) or writing into the archive **leaves a
@@ -80,24 +80,24 @@ const MREC_SUFFIX: &str = "mrec";
 /// # Ok(())
 /// # }
 /// ```
-pub fn pack_mrec_zip(store_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
-    let store_path = store_path.as_ref();
-    reject_retired_zarr_path(store_path)?;
-    if !store_path.is_dir() {
-        return Err(at(store_path, "pack", "no directory store is there"));
+pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
+    let storage_path = storage_path.as_ref();
+    reject_retired_zarr_path(storage_path)?;
+    if !storage_path.is_dir() {
+        return Err(at(storage_path, "pack", "no directory store is there"));
     }
-    let zip_path = packed_path(store_path)?;
+    let zip_path = packed_path(storage_path)?;
 
-    let file = std::fs::File::create(&zip_path).map_err(|e| at(store_path, "pack", e))?;
+    let file = std::fs::File::create(&zip_path).map_err(|e| at(storage_path, "pack", e))?;
     let mut writer = zip::ZipWriter::new(file);
-    for entry in sorted_files(store_path).map_err(|e| at(store_path, "pack", e))? {
+    for entry in sorted_files(storage_path).map_err(|e| at(storage_path, "pack", e))? {
         let name = entry
-            .strip_prefix(store_path)
+            .strip_prefix(storage_path)
             .map_err(zerr)?
             .to_str()
             .ok_or_else(|| {
                 at(
-                    store_path,
+                    storage_path,
                     "pack",
                     format!("{} is not a valid store key", entry.display()),
                 )
@@ -117,11 +117,11 @@ pub fn pack_mrec_zip(store_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError
             .write_all(&bytes)
             .map_err(|e| at(&entry, "pack", e))?;
     }
-    writer.finish().map_err(|e| at(store_path, "pack", e))?;
+    writer.finish().map_err(|e| at(storage_path, "pack", e))?;
 
     // The directory goes last: until the archive is closed, the store the
     // caller handed over is still the only copy of its data.
-    std::fs::remove_dir_all(store_path).map_err(|e| at(store_path, "pack", e))?;
+    std::fs::remove_dir_all(storage_path).map_err(|e| at(storage_path, "pack", e))?;
     Ok(zip_path)
 }
 
@@ -165,17 +165,17 @@ fn at(path: &Path, verb: &str, cause: impl std::fmt::Display) -> MolRsError {
 
 /// The archive name derived from a directory store's: `.mrec` gains only
 /// `.zip`, anything else gains the whole `.mrec.zip`.
-fn packed_path(store_path: &Path) -> Result<PathBuf, MolRsError> {
-    let name = store_path
+fn packed_path(storage_path: &Path) -> Result<PathBuf, MolRsError> {
+    let name = storage_path
         .file_name()
-        .ok_or_else(|| at(store_path, "pack", "it names no directory"))?;
+        .ok_or_else(|| at(storage_path, "pack", "it names no directory"))?;
     let mut packed = name.to_os_string();
     if Path::new(name).extension() == Some(OsStr::new(MREC_SUFFIX)) {
         packed.push(ZIP_SUFFIX);
     } else {
         packed.push(format!(".{MREC_SUFFIX}{ZIP_SUFFIX}"));
     }
-    Ok(store_path.with_file_name(packed))
+    Ok(storage_path.with_file_name(packed))
 }
 
 /// Every file under `root`, sorted by path.
@@ -264,7 +264,7 @@ mod tests {
     }
 
     /// Write [`trajectory`] into a fresh directory store `name` under `parent`.
-    fn write_store(parent: &Path, name: &str) -> PathBuf {
+    fn make_storage(parent: &Path, name: &str) -> PathBuf {
         let path = parent.join(name);
         write_mrec_trajectory(&path, &trajectory(), None).expect("the fixture store writes");
         path
@@ -275,9 +275,9 @@ mod tests {
     #[test]
     fn pack_produces_one_zip_and_removes_the_directory() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.mrec");
+        let storage_path = make_storage(dir.path(), "traj.mrec");
 
-        let zip_path = pack_mrec_zip(&store_path).expect("packing a closed store succeeds");
+        let zip_path = pack_mrec_zip(&storage_path).expect("packing a closed store succeeds");
 
         assert_eq!(
             zip_path,
@@ -286,7 +286,7 @@ mod tests {
         );
         assert!(zip_path.is_file(), "the packed store is a single file");
         assert!(
-            !store_path.exists(),
+            !storage_path.exists(),
             "pack removes the directory store it consumed"
         );
         let left: Vec<PathBuf> = std::fs::read_dir(dir.path())
@@ -304,9 +304,9 @@ mod tests {
     #[test]
     fn packing_a_directory_without_the_mrec_suffix_appends_the_whole_suffix() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj");
+        let storage_path = make_storage(dir.path(), "traj");
 
-        let zip_path = pack_mrec_zip(&store_path).expect("packing a closed store succeeds");
+        let zip_path = pack_mrec_zip(&storage_path).expect("packing a closed store succeeds");
 
         assert_eq!(zip_path, dir.path().join("traj.mrec.zip"));
     }
@@ -316,8 +316,8 @@ mod tests {
     #[test]
     fn every_zip_entry_is_stored_method_zero() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.mrec");
-        let zip_path = pack_mrec_zip(&store_path).expect("packing a closed store succeeds");
+        let storage_path = make_storage(dir.path(), "traj.mrec");
+        let zip_path = pack_mrec_zip(&storage_path).expect("packing a closed store succeeds");
 
         let mut archive =
             zip::ZipArchive::new(std::fs::File::open(&zip_path).unwrap()).expect("a readable zip");
@@ -339,11 +339,11 @@ mod tests {
     #[test]
     fn frames_read_back_from_the_zip_bit_exact() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.mrec");
+        let storage_path = make_storage(dir.path(), "traj.mrec");
         // The reference is taken from the directory form, before it is gone.
-        let before = read_mrec_trajectory(&store_path).expect("the directory store reads");
+        let before = read_mrec_trajectory(&storage_path).expect("the directory store reads");
 
-        let zip_path = pack_mrec_zip(&store_path).expect("packing a closed store succeeds");
+        let zip_path = pack_mrec_zip(&storage_path).expect("packing a closed store succeeds");
         let sequence = MrecReader::from_storage(open_mrec_zip(&zip_path).expect("the zip opens"))
             .expect("the packed sequence opens");
         let after = sequence.to_trajectory().expect("the packed sequence reads");
@@ -389,15 +389,15 @@ mod tests {
     #[test]
     fn packing_twice_errs_naming_the_removed_directory() {
         let dir = tempdir().unwrap();
-        let store_path = write_store(dir.path(), "traj.mrec");
-        let zip_path = pack_mrec_zip(&store_path).expect("the first pack succeeds");
+        let storage_path = make_storage(dir.path(), "traj.mrec");
+        let zip_path = pack_mrec_zip(&storage_path).expect("the first pack succeeds");
 
         let error =
-            pack_mrec_zip(&store_path).expect_err("the directory is gone after the first pack");
+            pack_mrec_zip(&storage_path).expect_err("the directory is gone after the first pack");
 
         let message = error.to_string();
         assert!(
-            message.contains(&store_path.display().to_string()),
+            message.contains(&storage_path.display().to_string()),
             "the error must name the path it could not pack: {message}"
         );
         assert!(

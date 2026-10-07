@@ -257,7 +257,7 @@ pub fn write_lammps_bond_react_system(
                 .to_str()
                 .ok_or_else(|| PyValueError::new_err("the .ff path is not valid UTF-8"))?,
         )
-        .map_err(crate::ff::ir::write_err)?;
+        .map_err(crate::ff::ir::writer_err)?;
     let warnings = py.import("warnings")?;
     for d in &written.dropped {
         warnings.call_method1(

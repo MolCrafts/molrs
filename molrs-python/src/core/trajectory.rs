@@ -402,7 +402,7 @@ impl PyScalarObservable {
         target: Option<String>,
     ) -> PyResult<Self> {
         let mut inner = ObservableRecord::scalar(name, py_any_to_column(values)?);
-        apply_common_metadata(
+        set_observable_metadata(
             &mut inner,
             description,
             unit,
@@ -429,7 +429,7 @@ impl PyVectorObservable {
         target: Option<String>,
     ) -> PyResult<Self> {
         let mut inner = ObservableRecord::vector(name, py_any_to_column(values)?);
-        apply_common_metadata(
+        set_observable_metadata(
             &mut inner,
             description,
             unit,
@@ -443,7 +443,7 @@ impl PyVectorObservable {
     }
 }
 
-fn apply_common_metadata(
+fn set_observable_metadata(
     observable: &mut ObservableRecord,
     description: &str,
     unit: Option<String>,

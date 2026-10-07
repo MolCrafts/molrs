@@ -37,7 +37,7 @@ pub(crate) struct HandleRegistry {
     /// Reverse lookup: Rust `String` to interned `key_id` (`u32`).
     pub key_to_id: HashMap<String, u32>,
 
-    /// Standalone SimBox instances, keyed by [`BoxKey`].
+    /// Standalone Box instances, keyed by [`BoxKey`].
     pub simboxes: SlotMap<BoxKey, SimBox>,
 
     /// Standalone ForceField instances, keyed by [`ForceFieldKey`].

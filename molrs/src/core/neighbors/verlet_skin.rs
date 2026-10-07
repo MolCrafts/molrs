@@ -240,7 +240,7 @@ impl VerletSkin {
             scratch_r2: Vec::new(),
             scratch_disp: Vec::new(),
         };
-        skin.write_edges();
+        skin.rebuild_edges();
         skin.hold(positions);
         Ok(skin)
     }
@@ -322,7 +322,7 @@ impl VerletSkin {
         &self.search
     }
 
-    fn write_edges(&mut self) {
+    fn rebuild_edges(&mut self) {
         let r_build_sq = self.r_build * self.r_build;
         self.edges.clear();
         self.search.for_each_pair(|pair| {
@@ -345,7 +345,7 @@ impl VerletSkin {
     fn build_at(&mut self, positions: ArrayView2<'_, F>) -> Result<(), SkinError> {
         self.require_shape(positions)?;
         self.search.build(positions, &self.simbox);
-        self.write_edges();
+        self.rebuild_edges();
         self.hold(positions);
         Ok(())
     }

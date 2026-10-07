@@ -860,7 +860,7 @@ mod tests {
         block
     }
 
-    fn base() -> ForceFieldSection {
+    fn harmonic_section() -> ForceFieldSection {
         let document = json!({
             "name": "test",
             "units": {"preset": "real"},
@@ -906,12 +906,12 @@ mod tests {
 
     #[test]
     fn a_well_formed_section_validates() {
-        base().validate().unwrap();
+        harmonic_section().validate().unwrap();
     }
 
     #[test]
     fn units_state_a_preset_or_a_quantity_and_agree_with_the_preset() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document.insert("units".into(), json!({}));
         assert!(ff.validate().is_err());
         ff.document.insert(
@@ -936,18 +936,18 @@ mod tests {
 
     #[test]
     fn each_table_rule_is_refused() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
             .push(json!({"category": "bond", "style": "harmonic"}));
         assert!(ff.validate().is_err(), "duplicate style");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.tables.shift_remove("bond.harmonic");
         assert!(ff.validate().is_err(), "missing table");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.tables["bond.harmonic"] = table(vec![
             ("name", strings(&["a", "a"])),
             ("itom", strings(&["CT", "CT"])),
@@ -955,23 +955,23 @@ mod tests {
         ]);
         assert!(ff.validate().is_err(), "duplicate type name");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.tables["bond.harmonic"] =
             table(vec![("name", strings(&["a"])), ("itom", strings(&["CT"]))]);
         assert!(ff.validate().is_err(), "wrong arity");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         let n = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3i64]).unwrap());
         ff.tables["bond.harmonic"].insert_column("n", n).unwrap();
         assert!(ff.validate().is_err(), "param dtype");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.tables["bond.harmonic"]
             .set_validity("name", vec![false])
             .unwrap();
         assert!(ff.validate().is_err(), "null name");
 
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"][1]["endpoint_key"] = json!("class");
         assert!(ff.validate().is_err(), "class key without class");
         ff.tables["atom.full"]
@@ -982,7 +982,7 @@ mod tests {
 
     #[test]
     fn style_params_are_scalars_with_reserved_meanings() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"][1]["params"] = json!({"mixing": "geometric", "cutoff": 10.0});
         ff.validate().unwrap();
         ff.document["styles"][1]["params"] = json!({"mixing": "lorentz"});
@@ -997,7 +997,7 @@ mod tests {
     /// `reject-ff-lj-charmm-one-four`); another style's `one_four` is its own.
     #[test]
     fn lj_charmm_one_four_is_regular_or_epsilon14() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[test]
     fn an_unknown_category_takes_its_endpoint_prefix_and_an_unknown_table_is_kept() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
@@ -1059,7 +1059,7 @@ mod tests {
     /// `base` with a `cmap charmm` style of two rows, whose `grid` column is
     /// `grid`.
     fn with_cmap(grid: Column) -> ForceFieldSection {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
@@ -1128,7 +1128,7 @@ mod tests {
         ff.validate().unwrap();
 
         let with_bond_column = |key: &str, column: Column| {
-            let mut ff = base();
+            let mut ff = harmonic_section();
             ff.tables["bond.harmonic"]
                 .insert_column(key, column)
                 .unwrap();
@@ -1177,7 +1177,7 @@ mod tests {
     /// `base` with a `pair lj/cut` style (category `category`) whose rows
     /// are `(name, itom, jtom, epsilon)`, `sigma` 2.0 throughout.
     fn with_pairs(category: &str, rows: &[(&str, &str, &str, f64)]) -> ForceFieldSection {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"]
             .as_array_mut()
             .unwrap()
@@ -1294,7 +1294,7 @@ mod tests {
     /// has no endpoints to compare.
     #[test]
     fn other_tables_are_not_checked() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.tables["bond.harmonic"] = table(vec![
             ("name", strings(&["CT-HC", "HC-CT"])),
             ("itom", strings(&["CT", "HC"])),
@@ -1315,7 +1315,7 @@ mod tests {
 
     #[test]
     fn a_smirks_keyed_table_has_no_endpoints() {
-        let mut ff = base();
+        let mut ff = harmonic_section();
         ff.document["styles"][1]["endpoint_key"] = json!("smirks");
         assert!(ff.validate().is_err());
         ff.tables["bond.harmonic"] = table(vec![

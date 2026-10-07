@@ -943,7 +943,7 @@ fn openmm_json(frame: &Frame, ff: &ForceField) -> Value {
 
 /// Write every engine's inputs of `source` into `dir/<source>/`, and molrs's
 /// numbers for each into `molrs.tsv` lines.
-fn write_inputs(dir: &Path, source: &Source, tsv: &mut String) {
+fn stage_inputs(dir: &Path, source: &Source, tsv: &mut String) {
     let sys = source.load();
     let root = dir.join(source.name);
     for sub in ["lammps", "openmm", "gromacs"] {
@@ -1386,7 +1386,7 @@ fn write_engine_inputs() {
     let dir = Path::new(&dir);
     let mut tsv = String::new();
     for source in sources() {
-        write_inputs(dir, &source, &mut tsv);
+        stage_inputs(dir, &source, &mut tsv);
     }
     std::fs::write(dir.join("molrs.tsv"), tsv).unwrap();
 }

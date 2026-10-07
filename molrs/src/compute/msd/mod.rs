@@ -308,8 +308,8 @@ mod tests {
         let f1 = make_frame(&[1.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
         let series = Msd::new().compute(&[&f0, &f1], ()).unwrap();
         assert_eq!(series.len(), 2);
-        assert!(series.data[0].mean.abs() < 1e-12);
-        assert!((series.data[1].mean - 1.0).abs() < 1e-12);
+        assert!(series.per_frame[0].mean.abs() < 1e-12);
+        assert!((series.per_frame[1].mean - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod tests {
         let b = msd.compute(&[&f0, &f1, &f2], ()).unwrap();
         assert_eq!(a.len(), b.len());
         for i in 0..a.len() {
-            assert!((a.data[i].mean - b.data[i].mean).abs() < 1e-12);
+            assert!((a.per_frame[i].mean - b.per_frame[i].mean).abs() < 1e-12);
         }
     }
 
@@ -337,9 +337,9 @@ mod tests {
         for i in 0..4 {
             let expected = (i as F) * (i as F);
             assert!(
-                (series.data[i].mean - expected).abs() < 1e-12,
+                (series.per_frame[i].mean - expected).abs() < 1e-12,
                 "MSD[{i}] = {}, expected {expected}",
-                series.data[i].mean
+                series.per_frame[i].mean
             );
         }
     }
@@ -427,9 +427,9 @@ mod tests {
         assert_eq!(computed.len(), 6);
         for (lag, &ref_val) in reference.iter().enumerate() {
             assert!(
-                (computed.data[lag].mean - ref_val).abs() < 1e-9,
+                (computed.per_frame[lag].mean - ref_val).abs() < 1e-9,
                 "lag {lag}: window={}, ref={ref_val}",
-                computed.data[lag].mean,
+                computed.per_frame[lag].mean,
             );
         }
     }
@@ -442,7 +442,7 @@ mod tests {
         let series = Msd::with_mode(MsdMode::Window)
             .compute(&[&f0, &f1, &f2], ())
             .unwrap();
-        assert!(series.data[0].mean.abs() < 1e-10);
+        assert!(series.per_frame[0].mean.abs() < 1e-10);
     }
 
     #[test]
@@ -462,9 +462,9 @@ mod tests {
         for lag in 0..8 {
             let expected = (lag as F) * (lag as F) * mean_v2;
             assert!(
-                (series.data[lag].mean - expected).abs() < 1e-10,
+                (series.per_frame[lag].mean - expected).abs() < 1e-10,
                 "lag {lag}: got {}, expected {expected}",
-                series.data[lag].mean,
+                series.per_frame[lag].mean,
             );
         }
     }
@@ -487,12 +487,12 @@ mod tests {
         let refs: Vec<&Frame> = frames.iter().collect();
 
         let direct = Msd::new().compute(&refs, ()).unwrap();
-        let means: Vec<F> = direct.data.iter().map(|r| r.mean).collect();
+        let means: Vec<F> = direct.per_frame.iter().map(|r| r.mean).collect();
         assert_eq!(means, vec![0.0, 1.0, 9.0]);
 
         // and the windowed estimator agrees with the nested loop in 1-D too
         let windowed = Msd::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
-        let w: Vec<F> = windowed.data.iter().map(|r| r.mean).collect();
+        let w: Vec<F> = windowed.per_frame.iter().map(|r| r.mean).collect();
         assert!((w[1] - ((1.0 + 4.0) / 2.0)).abs() < 1e-12, "{w:?}");
     }
 }

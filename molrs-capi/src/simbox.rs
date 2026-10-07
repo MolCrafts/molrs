@@ -1,6 +1,6 @@
-//! `extern "C"` functions for SimBox (simulation cell) operations.
+//! `extern "C"` functions for Box (simulation cell) operations.
 //!
-//! A **SimBox** defines a periodic simulation cell via a 3x3 cell matrix
+//! A **Box** defines a periodic simulation cell via a 3x3 cell matrix
 //! **H** (columns are lattice vectors), an origin point, and per-axis
 //! periodic boundary condition (PBC) flags.
 //!
@@ -28,7 +28,7 @@ use molrs::op::F;
 // Construction
 // ---------------------------------------------------------------------------
 
-/// Create a SimBox from a general 3x3 cell matrix.
+/// Create a Box from a general 3x3 cell matrix.
 ///
 /// # C signature
 ///
@@ -45,7 +45,7 @@ use molrs::op::F;
 ///   `h9[0..3]` is lattice vector **a**, `h9[3..6]` is **b**, `h9[6..9]` is **c**.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom (3 floats).
 /// * `pbc3` -- Per-axis periodic boundary flags `[px, py, pz]` (3 bools).
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn molrs_box_new(
     })
 }
 
-/// Create a cubic SimBox with edge length `a`.
+/// Create a cubic Box with edge length `a`.
 ///
 /// Equivalent to calling [`molrs_box_new`] with a diagonal cell
 /// matrix `diag(a, a, a)`.
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn molrs_box_new(
 /// * `a` -- Cube edge length in Angstrom.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
 /// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn molrs_box_cube(
     })
 }
 
-/// Create an orthorhombic (rectangular) SimBox from axis lengths.
+/// Create an orthorhombic (rectangular) Box from axis lengths.
 ///
 /// Equivalent to calling [`molrs_box_new`] with a diagonal cell
 /// matrix `diag(lx, ly, lz)`.
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn molrs_box_cube(
 /// * `lengths3` -- Box side lengths `[lx, ly, lz]` in Angstrom.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
 /// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn molrs_box_ortho(
     })
 }
 
-/// Destroy a SimBox and invalidate its handle.
+/// Destroy a Box and invalidate its handle.
 ///
 /// # C signature
 ///
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn molrs_box_ortho(
 ///
 /// # Arguments
 ///
-/// * `handle` -- The SimBox to destroy.
+/// * `handle` -- The Box to destroy.
 ///
 /// # Returns
 ///
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn molrs_box_drop(handle: MolrsBoxHandle) -> MolrsStatus {
 // Queries
 // ---------------------------------------------------------------------------
 
-/// Helper: get a reference to a SimBox by handle, returning error if invalid.
+/// Helper: get a reference to a Box by handle, returning error if invalid.
 macro_rules! get_simbox {
     ($registry:expr, $handle:expr) => {
         match $registry.simboxes.get(handle_to_box_key($handle)) {

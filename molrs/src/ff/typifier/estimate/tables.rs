@@ -13,7 +13,7 @@ use molrs::core::Element;
 
 use crate::ff::params::{
     EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, PARMCHK, ParmchkCorr,
-    ParmchkPenalty, ParmchkTable, ParmchkType,
+    ParmchkPenalty, ParmchkTable,
 };
 
 /// Which force field's empirical constants to use.
@@ -64,22 +64,17 @@ pub const fn substitution_table() -> ParmchkTable {
 
 /// The questions the cascade asks the substitution table.
 impl ParmchkTable {
-    /// The block declaring `atom_type`, if the table knows it.
-    pub fn entry(&self, atom_type: &str) -> Option<&'static ParmchkType> {
-        self.get(atom_type)
-    }
-
     /// Whether an atom of `atom_type` may be the CENTRE of an improper.
     ///
     /// The `improper_flag` column, and the reason benzene's `ca` carries a ring
     /// planarity term while methylamine's `n3` carries none.
     pub fn is_improper_centre(&self, atom_type: &str) -> bool {
-        self.entry(atom_type).is_some_and(|t| t.improper)
+        self.get(atom_type).is_some_and(|t| t.improper)
     }
 
     /// The atomic number `PARMCHK.DAT` records for `atom_type`.
     pub fn atomic_number(&self, atom_type: &str) -> Option<u8> {
-        self.entry(atom_type).map(|t| t.atomic_number)
+        self.get(atom_type).map(|t| t.atomic_number)
     }
 
     /// The element symbol `PARMCHK.DAT` records for `atom_type`.
@@ -93,7 +88,7 @@ impl ParmchkTable {
     /// Substituting one for the other costs nothing: `gaff2.dat`'s `ns` is `n`
     /// with a different name, so `X-c-n-X` covers an `ns` torsion exactly.
     pub fn equivalent(&self, a: &str, b: &str) -> bool {
-        let one = |x: &str, y: &str| self.entry(x).is_some_and(|t| t.equivalent.contains(&y));
+        let one = |x: &str, y: &str| self.get(x).is_some_and(|t| t.equivalent.contains(&y));
         one(a, b) || one(b, a)
     }
 
@@ -103,7 +98,7 @@ impl ParmchkTable {
     /// `c2` → `c`, and parmchk2 charges the *default* torsion penalty for the
     /// latter rather than reading the former backwards.
     pub fn correspondence(&self, from: &str, to: &str) -> Option<&'static ParmchkCorr> {
-        self.entry(from)?
+        self.get(from)?
             .corresponding
             .iter()
             .find(|row| row.to == to)
@@ -115,7 +110,7 @@ impl ParmchkTable {
     /// for anything, not even at the default penalty. That is what stops
     /// `c2-c2-ss-c3` from standing in for thiophene's `cc-cd-ss-cd`.
     pub fn substitutable(&self, atom_type: &str) -> bool {
-        self.entry(atom_type)
+        self.get(atom_type)
             .is_some_and(|t| !t.corresponding.is_empty())
     }
 

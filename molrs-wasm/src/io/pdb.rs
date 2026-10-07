@@ -26,7 +26,7 @@ pub fn write_pdb_str(frame: &Frame) -> Result<String, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::test_support::{float_col, two_atom_frame};
+    use crate::io::test_fixtures::{float_col, two_atom_frame};
     use wasm_bindgen_test::*;
 
     /// A PDB file is read through `PdbStream`, its one reader.

@@ -99,7 +99,7 @@ impl Msd {
             .compute(&refs, ())
             .map_err(|e| JsValue::from_str(&format!("Msd results: {e}")))?;
         Ok(series
-            .data
+            .per_frame
             .iter()
             .map(|r| MsdResult { inner: r.clone() })
             .collect())

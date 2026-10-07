@@ -2,7 +2,7 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `DcdStream` | `DcdIndexBuilder` + `read_dcd_bytes` (the one DCD reader; the only stream that uses `decoderContext`) |
+//! | `DcdStream` | `DcdIndexBuilder` + `read_dcd_bytes` (the one DCD reader; the only stream that uses `decoderState`) |
 //! | `writeDcdBytes` | `DcdWriter` |
 
 use molrs::io::dcd::{DcdIndexBuilder, DcdWriter};

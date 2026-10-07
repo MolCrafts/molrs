@@ -95,7 +95,7 @@ pub trait FrameIndexBuilder: Send {
     /// Opaque decoder state the matching `read_<fmt>_bytes` door needs in
     /// addition to one frame's byte range (DCD header + optional fixed-atom
     /// seed). `None` for self-describing frames (dump, XYZ, XTC, TRR).
-    fn decoder_context(&self) -> Option<Vec<u8>> {
+    fn decoder_state(&self) -> Option<Vec<u8>> {
         None
     }
 }

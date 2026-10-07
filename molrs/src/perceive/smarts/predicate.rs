@@ -13,7 +13,7 @@
 //!
 //! The tests mirror RDKit's atom/bond query trees: leaf *predicates* (element,
 //! charge, H-count, ...) combined by AND / OR / NOT nodes. Evaluation is a
-//! pure read against a [`Atomistic`] plus a precomputed [`MolContext`] that
+//! pure read against a [`Atomistic`] plus a precomputed [`SmartsTarget`] that
 //! carries ring info and the project-convention aromaticity perception.
 
 use std::collections::HashMap;
@@ -23,7 +23,8 @@ use crate::core::NodeId;
 use crate::core::PropValue;
 use crate::perceive::{RingInfo, perceive_rings};
 
-/// Precomputed, read-only context shared by every primitive evaluation.
+/// The molecule a pattern is matched against, with the facts every
+/// primitive evaluation reads, precomputed once and read-only.
 ///
 /// Holds ring info and the per-atom / per-bond aromatic perception. The
 /// project convention (documented in `CLAUDE.md`) is that aromatic atoms are
@@ -35,10 +36,10 @@ use crate::perceive::{RingInfo, perceive_rings};
 /// the [`AtomPredicate::HasContextLabel`] predicate. This is a general,
 /// domain-neutral mechanism: a caller (e.g. an iterative typifier) supplies a
 /// "current assignment" map and a `%LABEL` token matches an atom iff that map
-/// assigns it the exact label. [`MolContext::new`] leaves the map empty, so the
+/// assigns it the exact label. [`SmartsTarget::new`] leaves the map empty, so the
 /// default label-free [`SmartsPattern::find`](super::SmartsPattern::find) path
 /// behaves exactly as before.
-pub struct MolContext<'m> {
+pub struct SmartsTarget<'m> {
     pub mol: &'m Atomistic,
     pub rings: RingInfo,
     /// atom → is-aromatic (perceived once, up front).
@@ -55,19 +56,19 @@ pub struct MolContext<'m> {
 }
 
 /// Shared empty label map for the legacy (label-free) match path, so
-/// [`MolContext::new`] can borrow a `&'static HashMap` without allocating.
+/// [`SmartsTarget::new`] can borrow a `&'static HashMap` without allocating.
 static EMPTY_LABELS: std::sync::LazyLock<HashMap<NodeId, String>> =
     std::sync::LazyLock::new(HashMap::new);
 
-impl<'m> MolContext<'m> {
-    /// Build the context for `mol` (runs ring perception once), with **no**
+impl<'m> SmartsTarget<'m> {
+    /// Build the match target for `mol` (runs ring perception once), with **no**
     /// external label map — `%LABEL` predicates never match. This is the
     /// default label-free path used by [`SmartsPattern::find`](super::SmartsPattern::find).
     pub fn new(mol: &'m Atomistic) -> Self {
         Self::with_labels(mol, &EMPTY_LABELS)
     }
 
-    /// Build the context for `mol` with an external label map for `%LABEL`
+    /// Build the match target for `mol` with an external label map for `%LABEL`
     /// context predicates. `labels[atom] == "L"` makes `[...;%L]` match `atom`.
     pub fn with_labels(mol: &'m Atomistic, labels: &'m HashMap<NodeId, String>) -> Self {
         let rings = perceive_rings(mol);
@@ -210,7 +211,7 @@ pub enum AtomPredicate {
     /// `+`/`-`/`+n`/`-n` — formal charge.
     Charge(i32),
     /// `%LABEL` — context-label predicate (a general molrs extension, not part
-    /// of standard SMARTS). Matches an atom iff the [`MolContext`]'s external
+    /// of standard SMARTS). Matches an atom iff the [`SmartsTarget`]'s external
     /// label map assigns it exactly this label. Used by iterative typifiers
     /// (e.g. OPLS layered typing supplies the per-atom assigned-type map);
     /// the engine is otherwise domain-neutral about what the label means.
@@ -230,7 +231,7 @@ pub enum AtomTest {
 }
 
 impl AtomPredicate {
-    fn eval(&self, ctx: &MolContext, id: NodeId) -> bool {
+    fn eval(&self, ctx: &SmartsTarget, id: NodeId) -> bool {
         let mol = ctx.mol;
         match self {
             AtomPredicate::Any => true,
@@ -355,12 +356,12 @@ impl BondTest {
 /// Implemented by the matcher (which owns the compiled subpatterns) to avoid
 /// a hard type cycle between `ast` and `matcher`.
 pub trait RecursiveEval {
-    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: NodeId) -> bool;
+    fn eval_recursive(&self, sub_index: usize, ctx: &SmartsTarget, id: NodeId) -> bool;
 }
 
 impl AtomTest {
     /// Evaluate this atom query against atom `id`.
-    pub fn eval(&self, ctx: &MolContext, id: NodeId, rec: &dyn RecursiveEval) -> bool {
+    pub fn eval(&self, ctx: &SmartsTarget, id: NodeId, rec: &dyn RecursiveEval) -> bool {
         match self {
             AtomTest::Prim(p) => p.eval(ctx, id),
             AtomTest::Recursive(idx) => rec.eval_recursive(*idx, ctx, id),

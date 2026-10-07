@@ -50,7 +50,7 @@ pub fn read_molrs_xml_forcefield_str(xml: &str) -> Result<ForceField, String> {
     let root = forcefield_root(&doc)?;
     let mut ff = ForceField::new(root.attribute("name").unwrap_or("unnamed"));
     for child in root.children().filter(|n| n.is_element()) {
-        if !read_style_element(&mut ff, &child)? {
+        if !parse_style_element(&mut ff, &child)? {
             return Err(format!(
                 "<{}> is not an element of the molrs force-field XML (read an OpenMM \
                  force field with read_openmm_xml_forcefield, an MMFF parameter set with \
@@ -64,7 +64,7 @@ pub fn read_molrs_xml_forcefield_str(xml: &str) -> Result<ForceField, String> {
 
 /// Define the style `node` states on `ff`, when `node` is a style element of
 /// this layout; `Ok(false)` when it is not one.
-pub(crate) fn read_style_element(
+pub(crate) fn parse_style_element(
     ff: &mut ForceField,
     node: &roxmltree::Node,
 ) -> Result<bool, String> {
@@ -73,47 +73,40 @@ pub(crate) fn read_style_element(
         return Ok(false);
     };
     if *category == "pair" {
-        parse_generic_pair_style(ff, node)?;
+        parse_pair_style(ff, node)?;
     } else {
-        parse_generic_style(ff, node, category)?;
+        parse_style(ff, node, category)?;
     }
     Ok(true)
 }
 
-pub(crate) fn parse_generic_style(
-    ff: &mut ForceField,
-    node: &roxmltree::Node,
-    category: &str,
-) -> Result<(), String> {
+fn parse_style(ff: &mut ForceField, node: &roxmltree::Node, category: &str) -> Result<(), String> {
     let style_name = attr_str(node, "name")?;
     let style = ff
         .def_style(category, style_name, Params::new())
         .map_err(|e| e.to_string())?;
-    parse_generic_types(style, node)
+    parse_style_types(style, node)
 }
 
-pub(crate) fn parse_generic_pair_style(
-    ff: &mut ForceField,
-    node: &roxmltree::Node,
-) -> Result<(), String> {
+fn parse_pair_style(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(), String> {
     let style_name = attr_str(node, "name")?;
     let style_params = numeric_attrs(node, &["name"]);
     let style = ff
         .def_style("pair", style_name, Params::from_pairs(&style_params))
         .map_err(|e| e.to_string())?;
-    parse_generic_types(style, node)
+    parse_style_types(style, node)
 }
 
-/// The endpoint attributes of a generic `<Type>`, in order.
+/// The endpoint attributes of a molrs-layout `<Type>`, in order.
 const ENDPOINT_ATTRS: [&str; 4] = ["class1", "class2", "class3", "class4"];
 
-/// Define every `<Type>` child of a generic style element on `style`.
+/// Define every `<Type>` child of a molrs-layout style element on `style`.
 ///
 /// The name is the `name` attribute, stored verbatim; the endpoints are the
 /// `class1` … `class4` attributes present, in order (none for an atom style,
 /// one or two for a pair style). A name is never split into endpoints: a
 /// `<Type>` whose endpoint count does not fit the category is an error.
-fn parse_generic_types(style: &mut Style, node: &roxmltree::Node) -> Result<(), String> {
+fn parse_style_types(style: &mut Style, node: &roxmltree::Node) -> Result<(), String> {
     let mut skip = vec!["name"];
     skip.extend(ENDPOINT_ATTRS);
     for type_node in children_named(node, "Type") {

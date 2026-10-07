@@ -6,10 +6,11 @@ use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use super::{acf_accumulate_into, central_diff_series, lag_times};
+use super::{acf_accumulate_into, central_diff_series};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Weight for diagonal anisotropy components in the Raman ACF.
 pub(super) const DIAG_ANISO_WEIGHT: f64 = 0.5;

@@ -113,7 +113,7 @@ pub(crate) fn columns(
 /// ([`ScalarForm::inputs`]): a parameter it does not read is not required.
 /// A column is read by its name, or on a pair by its self-row spelling
 /// (`<x>1`, `<x>2`) or as the mixing partner of a column that is.
-pub(crate) fn read_by(
+pub(crate) fn retain_form_inputs(
     spec: &StyleSpec,
     cols: Vec<StyleParamColumn>,
     reads: &[String],
@@ -310,7 +310,7 @@ pub(crate) fn resolve_terms(
         .iter()
         .filter_map(|&(l, r)| r.map(|r| (l, r)))
         .collect();
-    let cols = read_by(spec, columns(spec, &spec.params, &present)?, reads);
+    let cols = retain_form_inputs(spec, columns(spec, &spec.params, &present)?, reads);
     let missing = |label: &str, name: &str| IrError::MissingParam {
         style: spec.name.to_string(),
         type_: label.to_owned(),

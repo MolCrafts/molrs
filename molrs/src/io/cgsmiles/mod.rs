@@ -361,7 +361,7 @@ impl CgSmilesIr {
     /// [`CgRepeatOnRingMarker`], [`CgDanglingBond`] (`{[#A]=}`),
     /// [`CgInvalidRingMarker`] (`%` with no digits after it, or a number past
     /// 65535), [`CgExpectedBlock`] (`{[#A]}.#A=CC`, `{[#A]}{#A=CC}`, or anything
-    /// after the last `}`), [`CgMalformedFragmentEntry`] (`{[#A]}.{#A}`),
+    /// after the last `}`), [`CgMalformedFragmentDef`] (`{[#A]}.{#A}`),
     /// [`CgEmptyFragmentBody`] (`{[#A]}.{#A=}`), [`CgDuplicateFragment`]
     /// (`{[#A]}.{#A=CC,#A=CCC}`), [`CgUndefinedFragment`] (`{[#A][#B]}.{#A=CC}`),
     /// [`CgSquashUnsupported`] (the squash operator `[!]` at any level, the
@@ -408,7 +408,7 @@ impl CgSmilesIr {
     ///
     /// [`CgEmptyBlock`]: crate::io::smiles::SmilesErrorKind::CgEmptyBlock
     /// [`CgExpectedBlock`]: crate::io::smiles::SmilesErrorKind::CgExpectedBlock
-    /// [`CgMalformedFragmentEntry`]: crate::io::smiles::SmilesErrorKind::CgMalformedFragmentEntry
+    /// [`CgMalformedFragmentDef`]: crate::io::smiles::SmilesErrorKind::CgMalformedFragmentDef
     /// [`CgEmptyFragmentBody`]: crate::io::smiles::SmilesErrorKind::CgEmptyFragmentBody
     /// [`CgDuplicateFragment`]: crate::io::smiles::SmilesErrorKind::CgDuplicateFragment
     /// [`CgUndefinedFragment`]: crate::io::smiles::SmilesErrorKind::CgUndefinedFragment

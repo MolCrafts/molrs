@@ -9,7 +9,7 @@ use crate::ff::ir::SpecialClass;
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, ParamCombination, ParamKind, StyleSpec};
 use crate::ff::potential::form_kernel::{
-    ScalarForm, StyleParamColumn, TermParams, columns, read_by, row_num,
+    ScalarForm, StyleParamColumn, TermParams, columns, retain_form_inputs, row_num,
 };
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::param_reads::{neighbour_cutoff, pair_cutoff};
@@ -127,7 +127,7 @@ impl<'a> PairRows<'a> {
         };
         Ok(Self {
             spec,
-            cols: read_by(spec, columns(spec, &spec.params, tp)?, reads),
+            cols: retain_form_inputs(spec, columns(spec, &spec.params, tp)?, reads),
             rows: tp.iter().copied().collect(),
             mixing,
         })

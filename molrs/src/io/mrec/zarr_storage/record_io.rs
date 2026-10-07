@@ -39,7 +39,7 @@ use crate::io::mrec::zarr_storage::frame_io::{
 #[cfg(feature = "zarr")]
 use crate::io::mrec::zarr_storage::frame_io::{node_prefix, write_column, write_frame_group};
 #[cfg(feature = "filesystem")]
-use crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore;
+use crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage;
 #[cfg(feature = "zarr")]
 use crate::io::mrec::{MrecWriter, SequenceSchema};
 use molrs::core::Column;
@@ -135,7 +135,7 @@ use molrs::io::mrec::MolRec;
 pub fn write_mrec(path: impl AsRef<Path>, record: &MolRec) -> Result<(), MolRsError> {
     let path = path.as_ref();
     validation::validate_path(path)?;
-    let store: ReadableWritableListableStorage = Arc::new(PositionalWriteStore::new(path)?);
+    let store: ReadableWritableListableStorage = Arc::new(PositionalWriteStorage::new(path)?);
     write_mrec_storage(store, record)
 }
 
@@ -511,7 +511,7 @@ fn write_observables(
 /// decode — including a legacy `trajectory/frames/` layout.
 #[cfg(feature = "filesystem")]
 pub fn read_mrec(path: impl AsRef<Path>) -> Result<MolRec, MolRsError> {
-    read_mrec_storage(open_record_store(path.as_ref())?)
+    read_mrec_storage(open_record_storage(path.as_ref())?)
 }
 
 /// Read **one** `Frame`-shaped section of a record from an open store.
@@ -1007,7 +1007,7 @@ pub fn write_mrec_forcefield(
 pub fn read_mrec_forcefield(
     path: impl AsRef<Path>,
 ) -> Result<Option<ForceFieldSection>, MolRsError> {
-    let store = open_record_store(path.as_ref())?;
+    let store = open_record_storage(path.as_ref())?;
     let meta = read_meta(&store)?;
     if !section_names_storage(store.clone())?
         .iter()
@@ -1052,13 +1052,13 @@ pub fn read_mrec_system(path: impl AsRef<Path>) -> Result<Frame, MolRsError> {
 /// [`read_mrec_frame_storage`].
 #[cfg(feature = "filesystem")]
 fn read_section_file(path: &Path, section: &str) -> Result<Frame, MolRsError> {
-    read_mrec_frame_storage(open_record_store(path)?, section)?
+    read_mrec_frame_storage(open_record_storage(path)?, section)?
         .ok_or_else(|| MolRsError::zarr(format!("record has no '{section}' section")))
 }
 
 /// Open the directory store at `path` for reading, refusing a retired suffix.
 #[cfg(feature = "filesystem")]
-fn open_record_store(path: &Path) -> Result<ReadableWritableListableStorage, MolRsError> {
+fn open_record_storage(path: &Path) -> Result<ReadableWritableListableStorage, MolRsError> {
     validation::validate_path(path)?;
     Ok(Arc::new(FilesystemStore::new(path).map_err(zerr)?))
 }
@@ -1070,7 +1070,7 @@ fn open_record_store(path: &Path) -> Result<ReadableWritableListableStorage, Mol
 /// The same path and brand errors as [`read_mrec`].
 #[cfg(feature = "filesystem")]
 pub fn read_mrec_meta(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValue>, MolRsError> {
-    read_meta(&open_record_store(path.as_ref())?)
+    read_meta(&open_record_storage(path.as_ref())?)
 }
 
 /// Child group names at the record root (`meta`, `frame`, `system`, …).
@@ -1084,7 +1084,7 @@ pub fn read_mrec_meta(path: impl AsRef<Path>) -> Result<JsonMap<String, JsonValu
 /// The same path errors as [`read_mrec`].
 #[cfg(feature = "filesystem")]
 pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> {
-    section_names_storage(open_record_store(path.as_ref())?)
+    section_names_storage(open_record_storage(path.as_ref())?)
 }
 
 /// Read the `trajectory` section of a record at `path`.
@@ -1101,7 +1101,7 @@ pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> 
 /// section that fails to decode.
 #[cfg(feature = "filesystem")]
 pub fn read_mrec_trajectory(path: impl AsRef<Path>) -> Result<Trajectory, MolRsError> {
-    let store = open_record_store(path.as_ref())?;
+    let store = open_record_storage(path.as_ref())?;
     read_meta(&store)?;
     if !section_names_storage(store.clone())?
         .iter()
@@ -1312,7 +1312,7 @@ mod tests {
         traj.time = Some(vec![0.0, 0.5]);
 
         let loaded = write_then_read(&rec);
-        assert_eq!(loaded.count_frames(), 2);
+        assert_eq!(loaded.n_frames(), 2);
         let traj = loaded.trajectory.as_ref().unwrap();
         assert_eq!(traj.frames.len(), 2);
         assert_eq!(traj.step, Some(vec![0, 1]));
@@ -1390,7 +1390,7 @@ mod tests {
         rec.frame = Some(frame_with_atoms(3));
         write_mrec(&path, &rec).unwrap();
         let store: ReadableWritableListableStorage =
-            Arc::new(PositionalWriteStore::new(&path).unwrap());
+            Arc::new(PositionalWriteStorage::new(&path).unwrap());
         for group in ["/future", "/future/atoms"] {
             GroupBuilder::new()
                 .build(store.clone(), group)
@@ -1772,7 +1772,7 @@ mod tests {
 
         // Plant a u64 array where a float64 series belongs.
         let store: ReadableWritableListableStorage =
-            std::sync::Arc::new(super::PositionalWriteStore::new(&path).unwrap());
+            std::sync::Arc::new(super::PositionalWriteStorage::new(&path).unwrap());
         GroupBuilder::new()
             .build(store.clone(), "/metrics/series")
             .unwrap()

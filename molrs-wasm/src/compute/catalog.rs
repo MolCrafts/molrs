@@ -61,7 +61,7 @@ struct ParamSpec {
     options: Option<&'static [&'static str]>,
 }
 
-const fn base(
+const fn param_spec(
     key: &'static str,
     label: &'static str,
     kind: &'static str,
@@ -85,7 +85,7 @@ fn p_int(key: &'static str, label: &'static str, default: u32, min: F, max: F) -
     ParamSpec {
         min: Some(min),
         max: Some(max),
-        ..base(key, label, "int", ParamDefault::Num(F::from(default)))
+        ..param_spec(key, label, "int", ParamDefault::Num(F::from(default)))
     }
 }
 
@@ -97,12 +97,12 @@ fn p_float(
 ) -> ParamSpec {
     ParamSpec {
         unit,
-        ..base(key, label, "float", ParamDefault::Num(default))
+        ..param_spec(key, label, "float", ParamDefault::Num(default))
     }
 }
 
 fn p_bool(key: &'static str, label: &'static str, default: bool) -> ParamSpec {
-    base(key, label, "bool", ParamDefault::Bool(default))
+    param_spec(key, label, "bool", ParamDefault::Bool(default))
 }
 
 fn p_select(
@@ -113,7 +113,7 @@ fn p_select(
 ) -> ParamSpec {
     ParamSpec {
         options: Some(options),
-        ..base(key, label, "select", ParamDefault::Text(default))
+        ..param_spec(key, label, "select", ParamDefault::Text(default))
     }
 }
 
@@ -123,7 +123,7 @@ fn p_list(
     kind: &'static str,
     default: &'static str,
 ) -> ParamSpec {
-    base(key, label, kind, ParamDefault::Text(default))
+    param_spec(key, label, kind, ParamDefault::Text(default))
 }
 
 fn optional(spec: ParamSpec) -> ParamSpec {
@@ -158,7 +158,7 @@ struct CatalogCategory {
 /// One analysis: what it is, how to call it, and what it needs.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ComputeCatalogEntry {
+struct ComputeDescriptor {
     id: &'static str,
     category: &'static str,
     label: &'static str,
@@ -271,12 +271,12 @@ struct ComputeCatalog {
     /// Bump whenever an entry's `id`, `wasm_export`, `input_kind` or param keys change.
     version: u32,
     categories: &'static [CatalogCategory],
-    analyses: Vec<ComputeCatalogEntry>,
+    analyses: Vec<ComputeDescriptor>,
 }
 
 // One catalog row per call; the positional form mirrors the table it fills.
 #[allow(clippy::too_many_arguments)]
-fn entry(
+fn descriptor(
     id: &'static str,
     category: &'static str,
     label: &'static str,
@@ -285,8 +285,8 @@ fn entry(
     result_kind: &'static str,
     requires: &'static [&'static str],
     params: Vec<ParamSpec>,
-) -> ComputeCatalogEntry {
-    ComputeCatalogEntry {
+) -> ComputeDescriptor {
+    ComputeDescriptor {
         id,
         category,
         label,
@@ -307,7 +307,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
     let analyses = vec![
         // --- density (freud.density: RDF + local/gaussian density, …) -------
         // The menu category is `density`, matching freud.density.RDF.
-        entry(
+        descriptor(
             "density.radial_distribution",
             "density",
             "Radial distribution g(r)",
@@ -323,7 +323,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- msd ------------------------------------------------------------
-        entry(
+        descriptor(
             "msd.mean_squared_displacement",
             "msd",
             "Mean squared displacement",
@@ -334,7 +334,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![],
         ),
         // --- transport ------------------------------------------------------
-        entry(
+        descriptor(
             "transport.vacf",
             "transport",
             "Vacf",
@@ -349,7 +349,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("resolution", "Max lag", 200, 1.0, 1e6),
             ],
         ),
-        entry(
+        descriptor(
             "transport.einstein_diffusion",
             "transport",
             "Einstein diffusion",
@@ -359,7 +359,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &[],
             vec![p_float("dt", "Timestep", 1.0, Some("fs"))],
         ),
-        entry(
+        descriptor(
             "transport.green_kubo_diffusion",
             "transport",
             "Green-Kubo diffusion",
@@ -374,7 +374,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("resolution", "Max lag", 200, 1.0, 1e6),
             ],
         ),
-        entry(
+        descriptor(
             "transport.conductivity",
             "transport",
             "Conductivity",
@@ -387,7 +387,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("maxLag", "Max lag", 200, 1.0, 1e6),
             ],
         ),
-        entry(
+        descriptor(
             "transport.einstein_conductivity",
             "transport",
             "Einstein conductivity",
@@ -400,7 +400,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("maxLag", "Max lag", 200, 1.0, 1e6),
             ],
         ),
-        entry(
+        descriptor(
             "transport.onsager_correlation",
             "transport",
             "Onsager correlation",
@@ -414,7 +414,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- dynamics -------------------------------------------------------
-        entry(
+        descriptor(
             "dynamics.van_hove_function",
             "transport",
             "Van Hove function",
@@ -429,7 +429,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_int("stride", "Stride", 1, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "dynamics.pair_survival",
             "transport",
             "Pair survival",
@@ -452,7 +452,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- spectroscopy ---------------------------------------------------
-        entry(
+        descriptor(
             "spectroscopy.power_spectrum",
             "spectroscopy",
             "Power spectrum",
@@ -465,7 +465,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "spectroscopy.ir_spectrum",
             "spectroscopy",
             "IR spectrum",
@@ -478,7 +478,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "spectroscopy.raman_spectrum",
             "spectroscopy",
             "Raman spectrum",
@@ -499,7 +499,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "spectroscopy.vcd_spectrum",
             "spectroscopy",
             "VCD spectrum",
@@ -512,7 +512,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "spectroscopy.roa_spectrum",
             "spectroscopy",
             "ROA spectrum",
@@ -533,7 +533,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("resolution", "Max lag", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "spectroscopy.dielectric_spectrum",
             "spectroscopy",
             "Dielectric spectrum",
@@ -549,7 +549,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- dielectric -----------------------------------------------------
-        entry(
+        descriptor(
             "dielectric.static_dielectric_constant",
             "spectroscopy",
             "Static dielectric constant",
@@ -564,7 +564,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- fit ------------------------------------------------------------
-        entry(
+        descriptor(
             "fit.linear_fit",
             "fit",
             "Linear fit",
@@ -577,7 +577,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_float("endFrac", "Window end", 0.8, None),
             ],
         ),
-        entry(
+        descriptor(
             "fit.running_integral",
             "fit",
             "Running integral",
@@ -590,7 +590,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_int("nLags", "Lags", 200, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "fit.plateau",
             "fit",
             "Plateau",
@@ -603,7 +603,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_float("endFrac", "Window end", 0.8, None),
             ],
         ),
-        entry(
+        descriptor(
             "fit.debye_fit",
             "fit",
             "Debye fit",
@@ -614,7 +614,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![p_float("dt", "Timestep", 1.0, Some("fs"))],
         ),
         // --- cluster --------------------------------------------------------
-        entry(
+        descriptor(
             "cluster.connected_components",
             "cluster",
             "Cluster analysis",
@@ -628,7 +628,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- shape ----------------------------------------------------------
-        entry(
+        descriptor(
             "shape.cluster_properties",
             "cluster",
             "Radius of gyration",
@@ -641,7 +641,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "shape.center_of_mass",
             "shape",
             "Center of mass",
@@ -654,7 +654,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "shape.gyration_tensor",
             "shape",
             "Gyration tensor",
@@ -667,7 +667,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 call(p_int("minClusterSize", "Min cluster size", 1, 1.0, 1e6)),
             ],
         ),
-        entry(
+        descriptor(
             "shape.inertia_tensor",
             "shape",
             "Inertia tensor",
@@ -681,7 +681,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- density --------------------------------------------------------
-        entry(
+        descriptor(
             "density.correlation_function",
             "density",
             "Correlation function",
@@ -696,7 +696,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_float("rMin", "r min", 0.0, Some("Å"))),
             ],
         ),
-        entry(
+        descriptor(
             "density.gaussian_density",
             "density",
             "Gaussian density",
@@ -712,7 +712,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_float("rMax", "Cutoff", 5.0, Some("Å"))),
             ],
         ),
-        entry(
+        descriptor(
             "density.local_density",
             "density",
             "Local density",
@@ -726,7 +726,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_float("diameter", "Particle diameter", 1.0, Some("Å"))),
             ],
         ),
-        entry(
+        descriptor(
             "density.spatial_distribution",
             "density",
             "Spatial distribution",
@@ -744,7 +744,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_float("bulkDensity", "Bulk density", 0.0, Some("Å⁻³"))),
             ],
         ),
-        entry(
+        descriptor(
             "density.sphere_voxelization",
             "density",
             "Sphere voxelization",
@@ -760,7 +760,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- order ----------------------------------------------------------
-        entry(
+        descriptor(
             "order.steinhardt",
             "order",
             "Steinhardt",
@@ -776,7 +776,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_bool("wlNormalize", "Normalize w_l", false)),
             ],
         ),
-        entry(
+        descriptor(
             "order.hexatic",
             "order",
             "Hexatic",
@@ -786,7 +786,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &[],
             vec![p_cutoff(3.0), p_int("k", "Symmetry k", 6, 1.0, 32.0)],
         ),
-        entry(
+        descriptor(
             "order.nematic",
             "order",
             "Nematic",
@@ -796,7 +796,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &["orientation"],
             vec![],
         ),
-        entry(
+        descriptor(
             "order.cubatic",
             "order",
             "Cubatic",
@@ -812,7 +812,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_int("nChains", "Chains", 10, 1.0, 1e4)),
             ],
         ),
-        entry(
+        descriptor(
             "order.solid_liquid",
             "order",
             "Solid-liquid",
@@ -828,7 +828,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_bool("normalizeQ", "Normalize q", true)),
             ],
         ),
-        entry(
+        descriptor(
             "order.rotational_autocorrelation",
             "order",
             "Rotational autocorrelation",
@@ -839,7 +839,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![p_int("l", "l", 2, 0.0, 32.0)],
         ),
         // --- environment ----------------------------------------------------
-        entry(
+        descriptor(
             "environment.bond_order",
             "environment",
             "Bond order",
@@ -853,7 +853,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nPhi", "φ bins", 30, 1.0, 512.0),
             ],
         ),
-        entry(
+        descriptor(
             "environment.local_descriptors",
             "environment",
             "Local descriptors",
@@ -863,7 +863,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &[],
             vec![p_cutoff(3.0), p_int("lMax", "l max", 6, 0.0, 32.0)],
         ),
-        entry(
+        descriptor(
             "environment.angular_separation",
             "environment",
             "Angular separation",
@@ -877,7 +877,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 false,
             ))],
         ),
-        entry(
+        descriptor(
             "environment.environment_matching",
             "environment",
             "Environment matching",
@@ -899,7 +899,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- diffraction ----------------------------------------------------
-        entry(
+        descriptor(
             "diffraction.static_structure_factor",
             "diffraction",
             "Static structure factor S(k)",
@@ -913,7 +913,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nK", "k samples", 100, 1.0, 4096.0),
             ],
         ),
-        entry(
+        descriptor(
             "diffraction.diffraction_pattern",
             "diffraction",
             "Diffraction pattern",
@@ -930,7 +930,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // --- distribution ---------------------------------------------------
         // One `DistributionFunction` per observable; the single-option
         // `observable` select is the constructor's first argument.
-        entry(
+        descriptor(
             "distribution.distance_distribution",
             "distribution",
             "Distance distribution",
@@ -945,7 +945,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_float("max", "Max", 10.0, Some("Å")),
             ],
         ),
-        entry(
+        descriptor(
             "distribution.angle_distribution",
             "distribution",
             "Angle distribution",
@@ -958,7 +958,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nBins", "Bins", 100, 1.0, 4096.0),
             ],
         ),
-        entry(
+        descriptor(
             "distribution.dihedral_distribution",
             "distribution",
             "Dihedral distribution",
@@ -971,7 +971,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nBins", "Bins", 100, 1.0, 4096.0),
             ],
         ),
-        entry(
+        descriptor(
             "distribution.combined_distribution",
             "distribution",
             "Combined distribution",
@@ -988,7 +988,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- pmft -----------------------------------------------------------
-        entry(
+        descriptor(
             "pmft.pmft_r12",
             "pmft",
             "PMFT R12",
@@ -1004,7 +1004,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nT2", "θ₂ bins", 36, 1.0, 1024.0),
             ],
         ),
-        entry(
+        descriptor(
             "pmft.pmft_xy",
             "pmft",
             "PMFT XY",
@@ -1020,7 +1020,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nY", "y bins", 50, 1.0, 1024.0),
             ],
         ),
-        entry(
+        descriptor(
             "pmft.pmft_xyt",
             "pmft",
             "PMFT XYT",
@@ -1037,7 +1037,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("nT", "θ bins", 36, 1.0, 1024.0),
             ],
         ),
-        entry(
+        descriptor(
             "pmft.pmft_xyz",
             "pmft",
             "PMFT XYZ",
@@ -1056,7 +1056,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- hbond ----------------------------------------------------------
-        entry(
+        descriptor(
             "hbond.hydrogen_bond_detection",
             "hbond",
             "Hydrogen-bond detection",
@@ -1075,7 +1075,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 optional(p_float("angleCutoff", "Angle cutoff", 150.0, Some("°"))),
             ],
         ),
-        entry(
+        descriptor(
             "hbond.lifetime",
             "hbond",
             "Lifetime",
@@ -1088,7 +1088,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 p_int("maxLag", "Max lag", 200, 1.0, 1e6),
             ],
         ),
-        entry(
+        descriptor(
             "hbond.network_components",
             "hbond",
             "Network components",
@@ -1099,7 +1099,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![],
         ),
         // --- locality (freud.locality: Voronoi; neighbor queries are infra) --
-        entry(
+        descriptor(
             "locality.radical_voronoi",
             "locality",
             "Radical Voronoi",
@@ -1109,7 +1109,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &[],
             vec![p_bool("useAtomRadii", "Weight by covalent radii", true)],
         ),
-        entry(
+        descriptor(
             "locality.voronoi_domain_analysis",
             "locality",
             "Domain analysis",
@@ -1127,7 +1127,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
                 )),
             ],
         ),
-        entry(
+        descriptor(
             "locality.voronoi_void_analysis",
             "locality",
             "Void analysis",
@@ -1141,7 +1141,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         // --- ml -------------------------------------------------------------
-        entry(
+        descriptor(
             "ml.pca",
             "ml",
             "PCA",
@@ -1151,7 +1151,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             &["descriptorMatrix"],
             vec![],
         ),
-        entry(
+        descriptor(
             "ml.kmeans",
             "ml",
             "k-means",

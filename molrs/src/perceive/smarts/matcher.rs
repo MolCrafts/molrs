@@ -18,11 +18,11 @@ use crate::core::Atomistic;
 use crate::core::NodeId;
 
 use super::compile::QueryGraph;
-use super::predicate::{BondFacts, MolContext, RecursiveEval};
+use super::predicate::{BondFacts, RecursiveEval, SmartsTarget};
 use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.
-fn bond_facts(ctx: &MolContext, a: NodeId, b: NodeId) -> Option<BondFacts> {
+fn bond_facts(ctx: &SmartsTarget, a: NodeId, b: NodeId) -> Option<BondFacts> {
     let mol = ctx.mol;
     for (bid, other) in mol.incident_bond_ids(a) {
         if other == b {
@@ -48,7 +48,7 @@ struct RecursiveEvaluator<'g> {
 }
 
 impl RecursiveEval for RecursiveEvaluator<'_> {
-    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: NodeId) -> bool {
+    fn eval_recursive(&self, sub_index: usize, ctx: &SmartsTarget, id: NodeId) -> bool {
         let sub = &self.recursives[sub_index];
         // The recursive subpattern matches iff it has at least one embedding
         // whose first query atom maps to `id` (RDKit roots `$(...)` at the
@@ -75,7 +75,7 @@ impl RecursiveEval for RecursiveEvaluator<'_> {
 /// map, and the search allocates only the two vectors below, once.
 fn enumerate_matches(
     query: &QueryGraph,
-    ctx: &MolContext,
+    ctx: &SmartsTarget,
     root_fix: Option<NodeId>,
     visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) {
@@ -114,7 +114,7 @@ fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
 #[allow(clippy::too_many_arguments)]
 fn backtrack(
     query: &QueryGraph,
-    ctx: &MolContext,
+    ctx: &SmartsTarget,
     rec: &dyn RecursiveEval,
     root_fix: Option<NodeId>,
     depth: usize,
@@ -162,7 +162,7 @@ fn backtrack(
 #[allow(clippy::too_many_arguments)]
 fn try_place(
     query: &QueryGraph,
-    ctx: &MolContext,
+    ctx: &SmartsTarget,
     rec: &dyn RecursiveEval,
     root_fix: Option<NodeId>,
     depth: usize,
@@ -207,16 +207,16 @@ fn try_place(
 /// Find every non-uniquified embedding of `query` in `mol`.
 pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> Vec<SmartsMatch> {
     let ctx = match options.labels {
-        Some(labels) => MolContext::with_labels(mol, labels),
-        None => MolContext::new(mol),
+        Some(labels) => SmartsTarget::with_labels(mol, labels),
+        None => SmartsTarget::new(mol),
     };
-    find_in_context(query, &ctx, options.root, options.limit)
+    find_in_target(query, &ctx, options.root, options.limit)
 }
 
-/// Match against a context already compiled for this molecular graph.
-pub(crate) fn find_in_context(
+/// Match against a target already perceived for this molecular graph.
+pub(crate) fn find_in_target(
     query: &QueryGraph,
-    ctx: &MolContext<'_>,
+    ctx: &SmartsTarget<'_>,
     root: Option<NodeId>,
     limit: Option<usize>,
 ) -> Vec<SmartsMatch> {

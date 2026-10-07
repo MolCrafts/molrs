@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::core::Frame;
 use crate::core::MolRsError;
-use crate::core::bond_order::write_bond_class;
+use crate::core::bond_order::stamp_bond_class;
 use crate::core::keys;
 use crate::core::{Atom, KindId, MolGraph, NodeId, PropValue, Relation, RelationId};
 use crate::core::{BondNumber, BondOrder};
@@ -220,7 +220,7 @@ impl Atomistic {
         bond_type: BondOrder,
         bond_number: BondNumber,
     ) -> Result<(), MolRsError> {
-        write_bond_class(&mut self.graph, self.bond, id, bond_type, bond_number)
+        stamp_bond_class(&mut self.graph, self.bond, id, bond_type, bond_number)
     }
 
     /// Set a plain (non-aromatic) bond, whose class implies its number.
@@ -621,7 +621,7 @@ impl Atomistic {
     /// consumer a guess indistinguishable from a fact.
     pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
         let mut mol = Self::new();
-        mol.graph.read_frame(frame)?;
+        mol.graph.extend_from_frame(frame)?;
         Ok(mol)
     }
 

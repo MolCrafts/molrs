@@ -34,7 +34,7 @@ from molrs import _native
 STUB = Path(__file__).parents[1] / "python" / "molrs" / "_native.pyi"
 
 
-def test_stub_declares_exactly_the_classes_lib_exports() -> None:
+def test_stub_declares_exactly_the_classes_native_exports() -> None:
     tree = ast.parse(STUB.read_text(encoding="utf-8"), filename=str(STUB))
     declared = {node.name for node in tree.body if isinstance(node, ast.ClassDef)}
 

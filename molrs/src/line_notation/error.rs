@@ -260,7 +260,7 @@ pub enum SmilesErrorKind {
     /// character a node bracket could not spell (`{[#A]}.{#A-1=CC}`; a
     /// fragment name is ASCII alphanumeric, or the single wildcard `*`, the
     /// same alphabet `[#NAME]` accepts).
-    CgMalformedFragmentEntry,
+    CgMalformedFragmentDef,
     /// A fragment entry defines an empty body: `{[#A]}.{#A=}`. The name is
     /// written, the `=` is written, and nothing follows it before the `,` or
     /// the `}`.
@@ -416,7 +416,7 @@ impl SmilesErrorKind {
             | SmilesErrorKind::CgDanglingBond
             | SmilesErrorKind::CgInvalidRingMarker
             | SmilesErrorKind::CgExpectedBlock
-            | SmilesErrorKind::CgMalformedFragmentEntry
+            | SmilesErrorKind::CgMalformedFragmentDef
             | SmilesErrorKind::CgEmptyFragmentBody
             | SmilesErrorKind::CgDuplicateFragment(_)
             | SmilesErrorKind::CgUndefinedFragment(_)
@@ -486,7 +486,7 @@ impl SmilesErrorKind {
                  may follow the last one"
                     .to_owned()
             }
-            SmilesErrorKind::CgMalformedFragmentEntry => {
+            SmilesErrorKind::CgMalformedFragmentDef => {
                 "malformed fragment entry — write '#NAME=body', entries separated by ','".to_owned()
             }
             SmilesErrorKind::CgEmptyFragmentBody => {
@@ -892,8 +892,8 @@ mod tests {
     }
 
     #[test]
-    fn test_display_cg_malformed_fragment_entry_names_the_entry_grammar() {
-        let msg = cg_message(SmilesErrorKind::CgMalformedFragmentEntry);
+    fn test_display_cg_malformed_fragment_def_names_the_definition_grammar() {
+        let msg = cg_message(SmilesErrorKind::CgMalformedFragmentDef);
         assert!(!msg.is_empty());
         assert!(
             msg.to_lowercase().contains("fragment"),
@@ -1065,7 +1065,7 @@ mod tests {
             cg_message(SmilesErrorKind::CgDanglingBond),
             cg_message(SmilesErrorKind::CgInvalidRingMarker),
             cg_message(SmilesErrorKind::CgExpectedBlock),
-            cg_message(SmilesErrorKind::CgMalformedFragmentEntry),
+            cg_message(SmilesErrorKind::CgMalformedFragmentDef),
             cg_message(SmilesErrorKind::CgEmptyFragmentBody),
             cg_message(SmilesErrorKind::CgDuplicateFragment("PEO".to_owned())),
             cg_message(SmilesErrorKind::CgUndefinedFragment("PEO".to_owned())),
