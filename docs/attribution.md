@@ -9,10 +9,10 @@ for molrs.**
 
 | Project | SPDX | Copyright | molrs modules | Upstream |
 |---|---|---|---|---|
-| **RDKit** | `BSD-3-Clause` | © 2006–2015 Rational Discovery LLC, Greg Landrum, Julie Penzotti and others | `perceive/aromaticity.rs`, `core/chem/gasteiger.rs`, `optimize/lbfgs.rs`, `conformer/distgeom/**`, `conformer/etkdg/**`, `ff/mmff/**`, `ff/constants.rs` | [rdkit/rdkit](https://github.com/rdkit/rdkit) |
-| **freud** | `BSD-3-Clause` | © 2010–2026 The Regents of the University of Michigan | `compute/density/**`, `compute/diffraction/**`, `compute/environment/**`, `compute/order/**`, `compute/pmft/**`, `compute/rdf/**`, `compute/msd/**`, `core/neighbors/{aabb,filter,mod,query}.rs`, `core/math/{wigner3j,spherical_harmonics}.rs`, `op/{linalg,superpose}.rs` (Jacobi eigensolvers, 3×3 det/inv, Horn superposition) | [glotzerlab/freud](https://github.com/glotzerlab/freud) |
+| **RDKit** | `BSD-3-Clause` | © 2006–2015 Rational Discovery LLC, Greg Landrum, Julie Penzotti and others | `perceive/{aromaticity,mmff_aromaticity,hybridization,hydrogens,rings}.rs`, `perceive/smarts/{mod,matcher}.rs` (substructure-match semantics), `ff/charge/gasteiger.rs`, `optimize/lbfgs.rs`, `conformer/distgeom/**`, `conformer/etkdg/**`, `ff/typifier/mmff/**`, `ff/typifier/uff/**`, `ff/potential/{bond,angle,dihedral,improper,pair}/{mmff,uff}.rs`, `ff/params/mmff.rs`, `core/constants.rs` (`KCAL_MOL_PER_MDYNE_ANGSTROM`) | [rdkit/rdkit](https://github.com/rdkit/rdkit) |
+| **freud** | `BSD-3-Clause` | © 2010–2026 The Regents of the University of Michigan | `compute/cluster/**`, `compute/density/**`, `compute/diffraction/**`, `compute/environment/**`, `compute/order/**`, `compute/pmft/**`, `compute/rdf/**`, `compute/msd/**`, `core/neighbors/{aabb,filter,linkcell,mod,query}.rs`, `core/math/{wigner3j,spherical_harmonics}.rs`, `op/{linalg,superpose}.rs` (Jacobi eigensolvers, 3×3 det/inv, Horn superposition) | [glotzerlab/freud](https://github.com/glotzerlab/freud) |
 | **voro++** | `BSD-3-Clause-LBNL` | © 2008 The Regents of the University of California, through Lawrence Berkeley National Laboratory (Chris Rycroft) | `compute/voronoi/{radical,cell,mod}.rs` (radical/Laguerre tessellation) | [chr1shr/voro](https://github.com/chr1shr/voro) |
-| **tame** | `BSD-3-Clause` | © Yunqi Shao | `compute/transport/jacf.rs`, `compute/transport/onsager.rs`, `compute/dynamics/pair_survival.rs`, `molrs-python/src/compute/transport.rs` — Green–Kubo / Onsager / pair-persistence recipes | [yqshao-archive/tame](https://github.com/yqshao-archive/tame) (archived) |
+| **tame** | `BSD-3-Clause` | © Yunqi Shao | `compute/transport/{green_kubo_conductivity,onsager}.rs`, `compute/dynamics/pair_survival.rs`, `molrs-python/src/compute/transport.rs` — Green–Kubo / Onsager / pair-persistence recipes | [yqshao-archive/tame](https://github.com/yqshao-archive/tame) (archived) |
 
 > `BSD-3-Clause-LBNL` adds a grant-back clause for enhancements; keep the LBNL
 > copyright notice intact. It remains compatible with BSD-3 redistribution.
@@ -31,7 +31,7 @@ tables that hold them now.
 | File | Origin | License |
 |---|---|---|
 | `molrs/src/ff/params/oplsaa.rs` (was `molrs/data/oplsaa.xml`) | OPLS-AA atom types & typing definitions from **foyer** | `MIT` (foyer) |
-| `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`; workspace-root `data/` copies remain) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
+| `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
 
 ## Formula / method references (papers, no code copied)
 
@@ -45,6 +45,6 @@ CODATA constants (`core/constants.rs`).
 
 ## Specifications implemented (cite, not license)
 
-SMILES/SMARTS in `io/smiles/**` implement the **Daylight** theory manual
+SMILES/SMARTS in `line_notation/**`, `io/smiles/**`, `io/cgsmiles/**` and `perceive/smarts/**` implement the **Daylight** theory manual
 (© Daylight C.I.S. — proprietary documentation, cited only) and Weininger,
 *J. Chem. Inf. Comput. Sci.* **28**, 31 (1988).

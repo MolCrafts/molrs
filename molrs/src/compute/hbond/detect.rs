@@ -1,12 +1,4 @@
 //! Per-frame geometric hydrogen-bond detection.
-//!
-//! Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
-//! (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
-//! neighbour search, then gated by the distance and angle criterion (see
-//! [`HBondCriterion`]). molrs gathers candidates with the existing
-//! [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
-//! image via [`Mic`](molrs::core::Mic) — the same MIC the rest of
-//! `compute` uses.
 
 use molrs::core::FrameAccess;
 use molrs::core::NeighborQuery;
@@ -39,6 +31,14 @@ pub struct HBond {
 ///
 /// Stateless parameter bag: the donor/acceptor selections and the geometric
 /// [`HBondCriterion`]. `compute` returns one bond list per frame.
+///
+/// Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
+/// (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
+/// neighbour search, then gated by the distance and angle criterion (see
+/// [`HBondCriterion`]). molrs gathers candidates with the existing
+/// [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
+/// image via [`Mic`](molrs::core::Mic) — the same MIC the rest of
+/// `compute` uses.
 #[derive(Debug, Clone)]
 pub struct HBonds {
     /// Donor `(heavy, hydrogen)` atom-index pairs.

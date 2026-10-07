@@ -1,10 +1,4 @@
-//! Typed array containers for the MD engine.
-//!
-//! [`ForceOutput`] and [`MdState`] are the data contract crossing the
-//! component boundary: a force evaluation hands back energy, forces and
-//! virial, and the state carries them at `pos` alongside the coordinates and
-//! their image flags. Frame topology stays at the composer; the hot step sees
-//! these two structs.
+//! Typed array containers for the MD engine: [`ForceOutput`] and [`MdState`].
 //!
 //! There was a third, `MDObservables`, for a runner's hooks. It had no
 //! consumer and could not have had a correct one: `kinetic`, `total` and
@@ -27,6 +21,12 @@ use super::error::MdError;
 use molrs::core::Virial;
 
 /// Energy + forces from one integrator force evaluation.
+///
+/// [`ForceOutput`] and [`MdState`] are the data contract crossing the
+/// component boundary: a force evaluation hands back energy, forces and
+/// virial, and the state carries them at `pos` alongside the coordinates and
+/// their image flags. Frame topology stays at the composer; the hot step sees
+/// these two structs.
 ///
 /// `energy` is a scalar in amu·Å²/fs². `forces` is `(N, 3)` `= -∂E/∂pos`
 /// in the same unit per Å.

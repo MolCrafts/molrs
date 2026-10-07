@@ -1,44 +1,4 @@
 //! GROMACS XTC binary trajectory reader and writer.
-//!
-//! XTC is the compressed GROMACS trajectory format: an XDR (big-endian) stream
-//! of per-frame records carrying step, time, box, and **lossily compressed**
-//! coordinates (nm). Compression quantizes each coordinate to an integer
-//! (`round(x * precision)`), then bit-packs the integers, exploiting that
-//! consecutive atoms are usually spatially close.
-//!
-//! # Per-frame header (XDR, big-endian)
-//!
-//! ```text
-//! magic   i32 = 1995 (also accepts 2023, a forward-magic test variant)
-//! natoms  i32
-//! step    i32
-//! time    f32
-//! box     9 × f32 (3×3, nm)
-//! ```
-//!
-//! followed by the coordinate block:
-//!
-//! ```text
-//! size      i32 (== natoms)
-//! if natoms <= 9:  3*natoms uncompressed f32
-//! else:
-//!   precision f32
-//!   minint[3] i32   maxint[3] i32   smallidx i32
-//!   nbytes    i32
-//!   buf[nbytes] (XDR opaque, padded to 4)   -- the compressed bitstream
-//! ```
-//!
-//! The compression codec (`magicints` table, `receivebits`/`receiveints`
-//! decode, `sendbits`/`sendints` encode) is a clean-room reimplementation of
-//! the documented `xdr3dfcoord` algorithm — not transcribed from xdrfile or
-//! any GPL source. Its unit tests round-trip hand-built frames through the
-//! encoder and decoder.
-//!
-//! # Output Frame
-//!
-//! - `atoms` block: `id` (1-based), `x`/`y`/`z` (nm).
-//! - `frame.simbox`: from the box (row-stored vectors → column-stored H).
-//! - `frame.meta`: `step`, `time`, `precision`.
 
 use crate::core::constants::ANGSTROM_PER_NM;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
@@ -868,6 +828,47 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 // ---------------------------------------------------------------------------
 
 /// XTC trajectory reader: true sequential stream *or* O(1) indexed random access.
+///
+/// XTC is the compressed GROMACS trajectory format: an XDR (big-endian) stream
+/// of per-frame records carrying step, time, box, and **lossily compressed**
+/// coordinates (nm). Compression quantizes each coordinate to an integer
+/// (`round(x * precision)`), then bit-packs the integers, exploiting that
+/// consecutive atoms are usually spatially close.
+///
+/// # Per-frame header (XDR, big-endian)
+///
+/// ```text
+/// magic   i32 = 1995 (also accepts 2023, a forward-magic test variant)
+/// natoms  i32
+/// step    i32
+/// time    f32
+/// box     9 × f32 (3×3, nm)
+/// ```
+///
+/// followed by the coordinate block:
+///
+/// ```text
+/// size      i32 (== natoms)
+/// if natoms <= 9:  3*natoms uncompressed f32
+/// else:
+///   precision f32
+///   minint[3] i32   maxint[3] i32   smallidx i32
+///   nbytes    i32
+///   buf[nbytes] (XDR opaque, padded to 4)   -- the compressed bitstream
+/// ```
+///
+/// The compression codec (`magicints` table, `receivebits`/`receiveints`
+/// decode, `sendbits`/`sendints` encode) is a clean-room reimplementation of
+/// the documented `xdr3dfcoord` algorithm — not transcribed from xdrfile or
+/// any GPL source. Its unit tests round-trip hand-built frames through the
+/// encoder and decoder.
+///
+/// # Output Frame
+///
+/// - `atoms` block: `id` (1-based), `x`/`y`/`z` (Å; the file's nm converted on
+///   read and back on write).
+/// - `frame.simbox`: from the box (row-stored vectors → column-stored H, in Å).
+/// - `frame.meta`: `step`, `time`, `precision`.
 pub struct XtcReader<R: BufRead + Seek> {
     reader: R,
     offsets: OnceLock<Vec<u64>>,

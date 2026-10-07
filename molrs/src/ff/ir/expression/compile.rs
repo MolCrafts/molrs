@@ -1,25 +1,4 @@
 //! Static checks and lowering to bytecode.
-//!
-//! [`compile`] resolves every identifier of a [`Parsed`] expression against a
-//! [`Binding`] — the category's geometric variables and points, the style's
-//! numeric parameters, the sub-definitions — refusing what does not resolve
-//! with a named [`ExpressionError`]. What resolves is lowered to stack programs
-//! over three kinds of slot:
-//!
-//! - **coordinates**, dual numbers the evaluator seeds: the scalar
-//!   coordinate (`r`; `theta`; `phi`, and `chi = |phi|` for an improper) in
-//!   the scalar program, the 3·arity point coordinates in the compound one;
-//! - **inputs**, the parameter columns the caller supplies, listed by
-//!   [`Compiled::inputs`];
-//! - **temporaries**, the sub-definitions, each evaluated once per term.
-//!
-//! Two programs, as the protocol's §4 has it: a **scalar** one (N = 1 dual
-//! on the coordinate) when the expression is a function of the coordinate
-//! alone, and a **compound** one (N = 3·arity duals on the points, the
-//! geometric variable lowered to its compound function) whenever the
-//! category has points. Every subtree with no coordinate and no input is
-//! folded to a constant, so `2^(1/6)` costs nothing per term and
-//! `(sigma/r)^12` is an integer power.
 
 use std::collections::HashMap;
 
@@ -402,6 +381,27 @@ pub(crate) struct Program {
 /// ([`has_scalar_form`](Compiled::has_scalar_form)),
 /// [`eval_compound`](Compiled::eval_compound) over the points whenever the
 /// category has points.
+///
+/// [`compile`] resolves every identifier of a [`Parsed`] expression against a
+/// [`Binding`] — the category's geometric variables and points, the style's
+/// numeric parameters, the sub-definitions — refusing what does not resolve
+/// with a named [`ExpressionError`]. What resolves is lowered to stack programs
+/// over three kinds of slot:
+///
+/// - **coordinates**, dual numbers the evaluator seeds: the scalar
+///   coordinate (`r`; `theta`; `phi`, and `chi = |phi|` for an improper) in
+///   the scalar program, the 3·arity point coordinates in the compound one;
+/// - **inputs**, the parameter columns the caller supplies, listed by
+///   [`Compiled::inputs`];
+/// - **temporaries**, the sub-definitions, each evaluated once per term.
+///
+/// Two programs, as the protocol's §4 has it: a **scalar** one (N = 1 dual
+/// on the coordinate) when the expression is a function of the coordinate
+/// alone, and a **compound** one (N = 3·arity duals on the points, the
+/// geometric variable lowered to its compound function) whenever the
+/// category has points. Every subtree with no coordinate and no input is
+/// folded to a constant, so `2^(1/6)` costs nothing per term and
+/// `(sigma/r)^12` is an integer power.
 #[derive(Debug, Clone)]
 pub struct Compiled {
     pub(crate) parsed: Parsed,

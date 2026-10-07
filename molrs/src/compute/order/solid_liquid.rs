@@ -4,26 +4,6 @@
 // would require chunks_exact + enumerate without gaining clarity.
 #![allow(clippy::needless_range_loop)]
 
-//! Frenkel–ten Wolde solid/liquid classification.
-//!
-//! Mirrors `freud.order.SolidLiquid`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/SolidLiquid.cc)).
-//!
-//! For each neighbor pair `(i, j)` we compute the normalised dot product
-//! of their Steinhardt qℓm vectors:
-//!
-//! ```text
-//!   d_ij = ( Σ_m q_ℓm(i) · conj q_ℓm(j) ) / ( |q_ℓm(i)| · |q_ℓm(j)| )
-//! ```
-//!
-//! A bond is **solid-like** when `Re(d_ij) > q_threshold` (typically `0.7`).
-//! A particle is **solid** when it has at least `n_threshold` solid-like
-//! bonds. The output is a per-particle solid-bond count plus the boolean
-//! solid mask.
-//!
-//! This phase reuses [`steinhardt_qlm`] directly
-//! — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
-
 use crate::compute::ComputeResult;
 use molrs::core::Complex;
 use molrs::core::FrameAccess;
@@ -36,6 +16,24 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// Frenkel-ten Wolde solid/liquid classifier.
+///
+/// Mirrors `freud.order.SolidLiquid`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/SolidLiquid.cc)).
+///
+/// For each neighbor pair `(i, j)` we compute the normalised dot product
+/// of their Steinhardt qℓm vectors:
+///
+/// ```text
+///   d_ij = ( Σ_m q_ℓm(i) · conj q_ℓm(j) ) / ( |q_ℓm(i)| · |q_ℓm(j)| )
+/// ```
+///
+/// A bond is **solid-like** when `Re(d_ij) > q_threshold` (typically `0.7`).
+/// A particle is **solid** when it has at least `n_threshold` solid-like
+/// bonds. The output is a per-particle solid-bond count plus the boolean
+/// solid mask.
+///
+/// This phase reuses [`steinhardt_qlm`] directly
+/// — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
 #[derive(Debug, Clone, Copy)]
 pub struct SolidLiquid {
     l: u32,

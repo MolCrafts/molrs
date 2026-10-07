@@ -1,9 +1,4 @@
-//! The vocabulary as an inspectable, serializable document.
-//!
-//! The compile-time tables are the source of truth; this is an owned projection
-//! of them. It exists so the schema is something a user can *look at* — print
-//! it, publish it, diff two releases of it — from every binding, rather than a
-//! rule that only exists inside the Rust type system.
+//! The vocabulary as an inspectable, serializable document: [`SchemaDocument`].
 
 use super::{EndpointTarget, FRAME_VOCAB_VERSION, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
 use crate::core::UnitPreset;
@@ -101,6 +96,11 @@ pub struct KeysDocument {
 }
 
 /// The whole vocabulary, owned and serializable.
+///
+/// The compile-time tables are the source of truth; this is an owned projection
+/// of them. It exists so the schema is something a user can *look at* — print
+/// it, publish it, diff two releases of it — from every binding, rather than a
+/// rule that only exists inside the Rust type system.
 ///
 /// Two runs produce byte-identical JSON — the tables are sorted and the
 /// document preserves that order — so `diff`ing the artifact across releases

@@ -1,24 +1,5 @@
-//! Pack a closed directory store into a single stored-entry .mrec.zip.
-//!
-//! `pack` takes the path of a **closed** store — a directory nobody is
-//! appending to any more — and leaves one file where the directory was. The
-//! name is derived, never chosen: the sibling is the store path with
-//! `.mrec.zip` appended, except that a path already ending in `.mrec` only
-//! gains `.zip`, so `traj.mrec` packs to `traj.mrec.zip` and never to
-//! `traj.mrec.mrec.zip`. Paths ending in `.zarr` or `.zarr.zip` are refused.
-//! Every entry is written STORED (method 0): the chunks arrive already
-//! gzipped, so packing is concatenation plus a central directory.
-//!
-//! The parameter is a path and nothing else. There is no door that accepts a
-//! live `MrecWriter` — packing a store still being appended to would
-//! be the live single-file write this design rejects, and the signature is the
-//! only proof that needs to exist. `close(writer)` then `pack_mrec_zip(path)` is the
-//! caller's composition.
-//!
-//! Reading is the mirror door `open_mrec_zip`, which opens the archive through
-//! `zarrs_zip`'s read-only `ZipStorageAdapter` and hands back a store to give
-//! to `MrecReader::open` (or any other read door). No hand-written zip
-//! parser lives here.
+//! Pack a closed directory store into a single stored-entry `.mrec.zip`, and
+//! open one.
 
 use std::ffi::OsStr;
 use std::io::Write as _;

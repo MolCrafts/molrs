@@ -1,26 +1,4 @@
-//! Cross-query neighbor search: one point set against another.
-//!
-//! [`NeighborQuery`] wraps a [`LinkCell`] spatial index built once from a set of
-//! *reference points*, and then answers repeated queries against it:
-//!
-//! - [`query`](NeighborQuery::query) — cross-query: find all pairs `(i, j)` where
-//!   `i` indexes a separate set of *query points* and `j` indexes the reference
-//!   points. Directed and full-shell. This is the question
-//!   [`NeighborList`](crate::core::NeighborList) does not answer,
-//!   and the reason this type exists.
-//! - [`query_self`](NeighborQuery::query_self) — self-query: find unique pairs
-//!   `(i, j)` with `i < j` within the reference point set. Half-shell, so each
-//!   unordered pair appears once. A convenience over the same reference points;
-//!   a search that is *only* a self search wants
-//!   [`NeighborList`](crate::core::NeighborList) instead, which
-//!   can stream its pairs instead of materializing them.
-//!
-//! Every table returned here carries both physical columns
-//! ([`NeighborsStorage::FULL`]): distances in Å² and minimum-image
-//! displacements in Å. This wrapper does not expose a column policy — a caller
-//! who wants a leaner table uses
-//! [`NeighborList::neighbors`](crate::core::NeighborList::neighbors),
-//! or drops columns afterwards with [`Neighbors::repack`].
+//! Cross-query neighbor search, one point set against another: [`NeighborQuery`].
 
 use super::Backend;
 use crate::core::LinkCell;
@@ -39,8 +17,21 @@ use crate::op::{F, Fnx3, Fnx3View};
 ///
 /// Wraps a [`LinkCell`] cell-list spatial index built once at construction, so
 /// that many queries can be answered against the same reference points without
-/// re-indexing. Every returned [`Neighbors`] table uses
-/// [`NeighborsStorage::FULL`].
+/// re-indexing.
+///
+/// - [`query`](NeighborQuery::query) — cross-query: all pairs `(i, j)` where `i`
+///   indexes the query points and `j` the reference points. Directed and
+///   full-shell.
+/// - [`query_self`](NeighborQuery::query_self) — self-query: unique pairs
+///   `(i, j)` with `i < j` within the reference points. Half-shell; a
+///   convenience over the same reference points.
+///
+/// Every returned [`Neighbors`] table carries both physical columns
+/// ([`NeighborsStorage::FULL`]): distances in Å² and minimum-image
+/// displacements in Å. There is no column policy here — a caller who wants a
+/// leaner table uses
+/// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors), or drops
+/// columns afterwards with [`Neighbors::repack`].
 ///
 /// # Example
 ///

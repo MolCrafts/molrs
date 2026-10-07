@@ -1,35 +1,4 @@
 //! Daylight reaction-SMARTS (SMIRKS) transform engine.
-//!
-//! Parses a reaction SMARTS `reactants >> products` (tolerating, and ignoring,
-//! an agent field `reactants > agents > products`), derives the graph edit from
-//! the **atom-map diff** (Daylight SMIRKS transform semantics), and applies it to
-//! a single matched occurrence by editing an [`Atomistic`] in place.
-//!
-//! # Transform semantics (Daylight SMIRKS)
-//!
-//! Atoms are keyed by their `:n` atom-map label:
-//!
-//! - a label on **both** sides is a *preserved* atom (its molecule atom is kept);
-//! - a label on **exactly one** side is an error (Daylight's pairwise-map rule);
-//! - an **unmapped** atom present identically on both sides (same element and the
-//!   same bond to a shared mapped neighbour) is *paired* and left untouched — this
-//!   keeps, e.g., a carbonyl `=O` in `[C:2](=O)OC >> [C:2]=O` from being deleted
-//!   and re-added;
-//! - an unmapped reactant atom with no pair is *deleted* (a leaving group);
-//! - an unmapped product atom with no pair is *added* (element/charge from the
-//!   product template, **no coordinates**).
-//!
-//! Bonds between mapped atoms are diffed: present in product-not-reactant is
-//! *formed*, reactant-not-product is *broken*, and an order change is a
-//! *set-order*. Bonds touching an added atom are formed from the product template.
-//!
-//! # Reaction SMARTS, not strict SMIRKS
-//!
-//! SMARTS queries are permitted on reacting atoms (RDKit style) so functional
-//! groups can be matched (`[N;H2:1]`); only concrete product atoms
-//! (`[N:1]`, `O`, `[S:3]`) can be *added*, since an added atom needs a definite
-//! element. The transform mechanics follow SMIRKS; the SMILES-only restriction on
-//! reacting atoms is not enforced.
 
 use std::collections::{HashMap, HashSet};
 
@@ -675,6 +644,37 @@ fn bond_between(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
 /// A parsed Daylight reaction SMARTS and its compiled graph edit (the private
 /// `Transform`: the atom/bond additions, deletions and property changes the
 /// reaction applies to a match).
+///
+/// Parses a reaction SMARTS `reactants >> products` (tolerating, and ignoring,
+/// an agent field `reactants > agents > products`), derives the graph edit from
+/// the **atom-map diff** (Daylight SMIRKS transform semantics), and applies it to
+/// a single matched occurrence by editing an [`Atomistic`] in place.
+///
+/// # Transform semantics (Daylight SMIRKS)
+///
+/// Atoms are keyed by their `:n` atom-map label:
+///
+/// - a label on **both** sides is a *preserved* atom (its molecule atom is kept);
+/// - a label on **exactly one** side is an error (Daylight's pairwise-map rule);
+/// - an **unmapped** atom present identically on both sides (same element and the
+///   same bond to a shared mapped neighbour) is *paired* and left untouched — this
+///   keeps, e.g., a carbonyl `=O` in `[C:2](=O)OC >> [C:2]=O` from being deleted
+///   and re-added;
+/// - an unmapped reactant atom with no pair is *deleted* (a leaving group);
+/// - an unmapped product atom with no pair is *added* (element/charge from the
+///   product template, **no coordinates**).
+///
+/// Bonds between mapped atoms are diffed: present in product-not-reactant is
+/// *formed*, reactant-not-product is *broken*, and an order change is a
+/// *set-order*. Bonds touching an added atom are formed from the product template.
+///
+/// # Reaction SMARTS, not strict SMIRKS
+///
+/// SMARTS queries are permitted on reacting atoms (RDKit style) so functional
+/// groups can be matched (`[N;H2:1]`); only concrete product atoms
+/// (`[N:1]`, `O`, `[S:3]`) can be *added*, since an added atom needs a definite
+/// element. The transform mechanics follow SMIRKS; the SMILES-only restriction on
+/// reacting atoms is not enforced.
 #[derive(Debug, Clone)]
 pub struct Reaction {
     source: String,

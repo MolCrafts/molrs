@@ -1,133 +1,4 @@
 //! GROMACS force-field directive writer.
-//!
-//! The inverse of
-//! [`GromacsTopForcefieldReader`](crate::io::gromacs::top_reader::GromacsTopForcefieldReader):
-//! it writes a [`ForceField`] as GROMACS force-field **directives**, converting
-//! the force-field IR (LAMMPS's definitions: `real` — Å, kcal/mol, degrees, e;
-//! LAMMPS's un-halved `K`) to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this
-//! boundary only. No molecule section (`[ atoms ]`, `[ bonds ]`,
-//! `[ angles ]`, `[ dihedrals ]`, `[ pairs ]`, …) is written: a force field
-//! holds no molecule.
-//!
-//! # Output
-//!
-//! - **`[ defaults ]`** `1 <comb> yes <fudgeLJ> <fudgeQQ>`. comb is the
-//!   Lennard-Jones style's `mixing` — `arithmetic` → 2, `geometric` → 3 — or,
-//!   when none is declared, the rule the style is evaluated under (arithmetic,
-//!   2, for both `lj/cut` and `lj/charmm`). fudgeLJ / fudgeQQ are the 1-4
-//!   special-bond weights.
-//! - **`[ atomtypes ]`** `name [bond_type] [at.num] mass charge ptype V W`, one
-//!   row per `atom/full` type: `mass` (amu), `charge` (e), `bond_type` (the
-//!   type's string param `class`) and `atomic_number` from the atom type
-//!   (choosing the 6-, 7- or 8-column form), `ptype` as declared or `A` (an
-//!   `atom/full` type is a real atom), and V = σ/10 (nm), W = ε·4.184 (kJ/mol)
-//!   from the type's self row of the Lennard-Jones style (`lj/cut` or
-//!   `lj/charmm`).
-//! - **`[ nonbond_params ]`** `i j 1 V W`: every explicit `lj/cut` cross row
-//!   (CHARMM NBFIX and the like), and every `lj/charmm` cross row whose `epsilon`
-//!   / `sigma` are not the mix of the two self rows (to 10⁻¹² relative — the
-//!   reader adds such rows only to carry `epsilon14` / `sigma14`). Written only
-//!   when there is one.
-//! - **`[ pairtypes ]`** `i j 1 V W`, from an `lj/charmm` declared
-//!   `one_four = "epsilon14"`: GROMACS prices a 1-4 pair of types `i`, `j` at
-//!   fudgeLJ × LJ(the comb-rule or `[ nonbond_params ]` parameters) unless a
-//!   pairtype gives its parameters; the IR prices it at the 1-4 weight ×
-//!   LJ(ε₁₄, σ₁₄) of that type pair. A pairtype (σ₁₄, fudgeLJ·ε₁₄) is written
-//!   for every type pair where the two differ — the inverse of the reader.
-//! - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` /
-//!   `[ cmaptypes ]`**, the inverse of the reader's function-code map:
-//!
-//! | molrs style | Directive, funct | Columns (file units) |
-//! |---|---|---|
-//! | `bond/harmonic` | bondtypes 1 | b₀ = r0/10 nm; k_b = 2·k·418.4 kJ/mol/nm² |
-//! | `bond/morse` | bondtypes 3 | b₀ = r0/10 nm; D = d0·4.184 kJ/mol; β = alpha·10 nm⁻¹ |
-//! | `angle/harmonic` | angletypes 1 | θ₀ = theta0 (degrees); k_θ = 2·k·4.184 kJ/mol/rad² |
-//! | `angle/charmm` | angletypes 5 | θ₀; k_θ = 2·k·4.184; r₁₃ = r_ub/10 nm; k_UB = 2·k_ub·418.4 kJ/mol/nm² |
-//! | `dihedral/periodic`, one term | dihedraltypes 1 | φ_s = phase (degrees); k·4.184 kJ/mol; n |
-//! | `dihedral/periodic`, m terms | dihedraltypes 9, m consecutive rows | each term as funct 1, in term order |
-//! | `dihedral/charmm` with `w` = 0 | dihedraltypes 9 | as funct 1 |
-//! | `dihedral/harmonic` k[1 + d cos nφ] | dihedraltypes 9 | φ_s = 0° (d = 1) or 180° (d = −1) |
-//! | `dihedral/multi/harmonic`, `dihedral/nharmonic` (N ≤ 6) | dihedraltypes 3 | Cₙ = (−1)ⁿ·aₙ₊₁·4.184 kJ/mol (C₅ = 0 for multi/harmonic) |
-//! | `dihedral/opls` | dihedraltypes 5 | Cₙ = kₙ·4.184 kJ/mol |
-//! | `dihedral/class2` (its torsion; LAMMPS's cross terms are not IR) | dihedraltypes 9, a row per non-zero kₙ | φ_s = phiₙ + 180°; kₙ·4.184 kJ/mol; n |
-//! | `improper/periodic` | dihedraltypes 4 | as funct 1; the atoms in the stored order |
-//! | `improper/cvff` k[1 + d cos nφ] | dihedraltypes 4 | φ_s = 0° (d = 1) or 180° (d = −1) |
-//! | `improper/harmonic` | dihedraltypes 2 | ξ₀ = chi0 (0° or 180°); k_ξ = 2·k·4.184 kJ/mol/rad² |
-//! | `cmap/charmm` | cmaptypes 1 | `N N` and the grid ·4.184 kJ/mol, φ-major, 10 values a line |
-//!
-//! Every row is exact: each prices the same energy, constant included, as the
-//! style it comes from. The empty-endpoint wildcard is written as `X`.
-//!
-//! A pair style's `cutoff` and `lj/charmm`'s `inner` are run settings (the
-//! .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
-//! not written.
-//!
-//! `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS fixes
-//! its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 + 9.9·10⁻⁹)) as
-//! LAMMPS and OpenMM fix theirs, so the field's stated `coulomb` is not
-//! written — an AMBER field's 332.0522173 is priced at GROMACS's constant,
-//! 3.5·10⁻⁵ above it, as every engine but AMBER's own prices it. Only
-//! dielectric 1 is accepted, and nothing is written.
-//!
-//! The force field must be in `real` units (the conversions above are from
-//! Å and kcal/mol); another declared preset is refused.
-//!
-//! # Refusals
-//!
-//! What GROMACS force-field directives cannot express is an `Err` naming it,
-//! never a silent drop or an invented value:
-//!
-//! - any other style (`improper/mmff_oop`, `bond/class2`, …),
-//!   `dihedral/charmm` with `w` ≠ 0 (GROMACS prices a 1-4 pair by `[ pairs ]`,
-//!   never by a dihedral), `dihedral/nharmonic` with N > 6;
-//! - `sixthpower` mixing; a non-zero 1-2 or 1-3 special-bond weight;
-//!   `lj/charmm` `epsilon14` / `sigma14` that no 1-4 pair is priced by (the
-//!   style is not `one_four = "epsilon14"`: LAMMPS prices them only inside
-//!   `dihedral charmm`);
-//! - an atom type lacking `mass`, `charge` or its Lennard-Jones self row; a
-//!   Lennard-Jones row (self or cross) whose type is not an `atom/full` type,
-//!   or that lacks `sigma` or `epsilon`;
-//! - a bonded type missing a parameter, carrying one with no column, with an
-//!   endpoint label that is neither an atom-type name nor a `class`, or on the
-//!   same labels as another type of its GROMACS table (GROMACS would read the
-//!   two as one); `improper/harmonic` with `chi0` ∉ {0°, 180°}; a non-integral
-//!   multiplicity or `sign` other than ±1.
-//!
-//! # Systems
-//!
-//! [`GromacsTopForcefieldWriter::write_system_str`] writes a force field **and** a
-//! typed frame as one `.top`, the inverse of
-//! [`GromacsTopForcefieldReader::read_system_str`](crate::io::gromacs::top_reader::GromacsTopForcefieldReader::read_system_str):
-//! `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
-//! and `[ cmaptypes ]` as above, then one `[ moleculetype ]` (`nrexcl` 3) per
-//! molecule (bond-graph component, a run of consecutive atoms), with each
-//! `bonds` / `angles` / `dihedrals` /
-//! `impropers` row written with its type's parameters on the line (one
-//! funct-9 line per periodic term, a single term included), so no lookup can
-//! pick another type; `cmaps` rows
-//! are found by GROMACS's lookup, which must give the row's own grid.
-//! `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
-//! their own from the override cells: funct 1 `σ ε` when only `epsilon` /
-//! `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
-//! `[ exclusions ]` every pair of one molecule beyond three bonds the frame
-//! does not price — so GROMACS prices exactly the frame's intramolecular
-//! `pairs` (built by [`intramolecular_pairs`] when absent), and every pair
-//! across molecules. Refused by name: a priced pair within three bonds that is
-//! not a 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
-//! without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
-//! another grid, a type name two styles of one category share, a molecule
-//! whose atoms are not consecutive or a row across two molecules, more than
-//! `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms, and the force-field refusals
-//! above.
-//!
-//! # Whole-FF serialization, not coefficient writing
-//!
-//! molrs has two kinds of force-field writer. This one is **whole-FF
-//! serialization**: it writes every type the [`ForceField`] holds, as a
-//! force-field file, and takes no type labels. **Coefficient writing**
-//! ([`super::lammps::LammpsForcefieldWriter`], LAMMPS only) answers "which coefficients
-//! does this system's data file need" and is keyed by the system's
-//! `TypeLabels`.
 
 use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -153,8 +24,136 @@ const LJ_STYLES: [&str; 2] = ["lj/cut", "lj/charmm"];
 /// Writer for GROMACS force-field directives.
 ///
 /// `GromacsTopForcefieldWriter::new().with_precision(p)`, then
-/// [`ForceFieldWriter::write`] / [`ForceFieldWriter::write_str`]. The layout,
-/// conversions and refusals are listed in the module documentation.
+/// [`ForceFieldWriter::write`] / [`ForceFieldWriter::write_str`].
+///
+/// The inverse of
+/// [`GromacsTopForcefieldReader`](crate::io::gromacs::GromacsTopForcefieldReader):
+/// it writes a [`ForceField`] as GROMACS force-field **directives**, converting
+/// the force-field IR (LAMMPS's definitions: `real` — Å, kcal/mol, degrees, e;
+/// LAMMPS's un-halved `K`) to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this
+/// boundary only. No molecule section (`[ atoms ]`, `[ bonds ]`,
+/// `[ angles ]`, `[ dihedrals ]`, `[ pairs ]`, …) is written: a force field
+/// holds no molecule.
+///
+/// # Output
+///
+/// - **`[ defaults ]`** `1 <comb> yes <fudgeLJ> <fudgeQQ>`. comb is the
+///   Lennard-Jones style's `mixing` — `arithmetic` → 2, `geometric` → 3 — or,
+///   when none is declared, the rule the style is evaluated under (arithmetic,
+///   2, for both `lj/cut` and `lj/charmm`). fudgeLJ / fudgeQQ are the 1-4
+///   special-bond weights.
+/// - **`[ atomtypes ]`** `name [bond_type] [at.num] mass charge ptype V W`, one
+///   row per `atom/full` type: `mass` (amu), `charge` (e), `bond_type` (the
+///   type's string param `class`) and `atomic_number` from the atom type
+///   (choosing the 6-, 7- or 8-column form), `ptype` as declared or `A` (an
+///   `atom/full` type is a real atom), and V = σ/10 (nm), W = ε·4.184 (kJ/mol)
+///   from the type's self row of the Lennard-Jones style (`lj/cut` or
+///   `lj/charmm`).
+/// - **`[ nonbond_params ]`** `i j 1 V W`: every explicit `lj/cut` cross row
+///   (CHARMM NBFIX and the like), and every `lj/charmm` cross row whose `epsilon`
+///   / `sigma` are not the mix of the two self rows (to 10⁻¹² relative — the
+///   reader adds such rows only to carry `epsilon14` / `sigma14`). Written only
+///   when there is one.
+/// - **`[ pairtypes ]`** `i j 1 V W`, from an `lj/charmm` declared
+///   `one_four = "epsilon14"`: GROMACS prices a 1-4 pair of types `i`, `j` at
+///   fudgeLJ × LJ(the comb-rule or `[ nonbond_params ]` parameters) unless a
+///   pairtype gives its parameters; the IR prices it at the 1-4 weight ×
+///   LJ(ε₁₄, σ₁₄) of that type pair. A pairtype (σ₁₄, fudgeLJ·ε₁₄) is written
+///   for every type pair where the two differ — the inverse of the reader.
+/// - **`[ bondtypes ]` / `[ angletypes ]` / `[ dihedraltypes ]` /
+///   `[ cmaptypes ]`**, the inverse of the reader's function-code map:
+///
+/// | molrs style | Directive, funct | Columns (file units) |
+/// |---|---|---|
+/// | `bond/harmonic` | bondtypes 1 | b₀ = r0/10 nm; k_b = 2·k·418.4 kJ/mol/nm² |
+/// | `bond/morse` | bondtypes 3 | b₀ = r0/10 nm; D = d0·4.184 kJ/mol; β = alpha·10 nm⁻¹ |
+/// | `angle/harmonic` | angletypes 1 | θ₀ = theta0 (degrees); k_θ = 2·k·4.184 kJ/mol/rad² |
+/// | `angle/charmm` | angletypes 5 | θ₀; k_θ = 2·k·4.184; r₁₃ = r_ub/10 nm; k_UB = 2·k_ub·418.4 kJ/mol/nm² |
+/// | `dihedral/periodic`, one term | dihedraltypes 1 | φ_s = phase (degrees); k·4.184 kJ/mol; n |
+/// | `dihedral/periodic`, m terms | dihedraltypes 9, m consecutive rows | each term as funct 1, in term order |
+/// | `dihedral/charmm` with `w` = 0 | dihedraltypes 9 | as funct 1 |
+/// | `dihedral/harmonic` k[1 + d cos nφ] | dihedraltypes 9 | φ_s = 0° (d = 1) or 180° (d = −1) |
+/// | `dihedral/multi/harmonic`, `dihedral/nharmonic` (N ≤ 6) | dihedraltypes 3 | Cₙ = (−1)ⁿ·aₙ₊₁·4.184 kJ/mol (C₅ = 0 for multi/harmonic) |
+/// | `dihedral/opls` | dihedraltypes 5 | Cₙ = kₙ·4.184 kJ/mol |
+/// | `dihedral/class2` (its torsion; LAMMPS's cross terms are not IR) | dihedraltypes 9, a row per non-zero kₙ | φ_s = phiₙ + 180°; kₙ·4.184 kJ/mol; n |
+/// | `improper/periodic` | dihedraltypes 4 | as funct 1; the atoms in the stored order |
+/// | `improper/cvff` k[1 + d cos nφ] | dihedraltypes 4 | φ_s = 0° (d = 1) or 180° (d = −1) |
+/// | `improper/harmonic` | dihedraltypes 2 | ξ₀ = chi0 (0° or 180°); k_ξ = 2·k·4.184 kJ/mol/rad² |
+/// | `cmap/charmm` | cmaptypes 1 | `N N` and the grid ·4.184 kJ/mol, φ-major, 10 values a line |
+///
+/// Every row is exact: each prices the same energy, constant included, as the
+/// style it comes from. The empty-endpoint wildcard is written as `X`.
+///
+/// A pair style's `cutoff` and `lj/charmm`'s `inner` are run settings (the
+/// .mdp's `rvdw` / `rcoulomb` and switch), not force-field data, so they are
+/// not written.
+///
+/// `pair/coul/cut` and `pair/coul/charmm` have no directive: GROMACS fixes
+/// its Coulomb constant (CODATA 2018, LAMMPS `real`'s × (1 + 9.9·10⁻⁹)) as
+/// LAMMPS and OpenMM fix theirs, so the field's stated `coulomb` is not
+/// written — an AMBER field's 332.0522173 is priced at GROMACS's constant,
+/// 3.5·10⁻⁵ above it, as every engine but AMBER's own prices it. Only
+/// dielectric 1 is accepted, and nothing is written.
+///
+/// The force field must be in `real` units (the conversions above are from
+/// Å and kcal/mol); another declared preset is refused.
+///
+/// # Refusals
+///
+/// What GROMACS force-field directives cannot express is an `Err` naming it,
+/// never a silent drop or an invented value:
+///
+/// - any other style (`improper/mmff_oop`, `bond/class2`, …),
+///   `dihedral/charmm` with `w` ≠ 0 (GROMACS prices a 1-4 pair by `[ pairs ]`,
+///   never by a dihedral), `dihedral/nharmonic` with N > 6;
+/// - `sixthpower` mixing; a non-zero 1-2 or 1-3 special-bond weight;
+///   `lj/charmm` `epsilon14` / `sigma14` that no 1-4 pair is priced by (the
+///   style is not `one_four = "epsilon14"`: LAMMPS prices them only inside
+///   `dihedral charmm`);
+/// - an atom type lacking `mass`, `charge` or its Lennard-Jones self row; a
+///   Lennard-Jones row (self or cross) whose type is not an `atom/full` type,
+///   or that lacks `sigma` or `epsilon`;
+/// - a bonded type missing a parameter, carrying one with no column, with an
+///   endpoint label that is neither an atom-type name nor a `class`, or on the
+///   same labels as another type of its GROMACS table (GROMACS would read the
+///   two as one); `improper/harmonic` with `chi0` ∉ {0°, 180°}; a non-integral
+///   multiplicity or `sign` other than ±1.
+///
+/// # Systems
+///
+/// [`GromacsTopForcefieldWriter::write_system_str`] writes a force field **and** a
+/// typed frame as one `.top`, the inverse of
+/// [`GromacsTopForcefieldReader::read_system_str`](crate::io::gromacs::GromacsTopForcefieldReader::read_system_str):
+/// `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
+/// and `[ cmaptypes ]` as above, then one `[ moleculetype ]` (`nrexcl` 3) per
+/// molecule (bond-graph component, a run of consecutive atoms), with each
+/// `bonds` / `angles` / `dihedrals` /
+/// `impropers` row written with its type's parameters on the line (one
+/// funct-9 line per periodic term, a single term included), so no lookup can
+/// pick another type; `cmaps` rows
+/// are found by GROMACS's lookup, which must give the row's own grid.
+/// `[ pairs ]` lists the frame's 1-4 pairs (funct 1, or with parameters of
+/// their own from the override cells: funct 1 `σ ε` when only `epsilon` /
+/// `sigma` differ, else funct 2 `fudgeQQ qᵢqⱼ 1 σ lj_scale·ε`), and
+/// `[ exclusions ]` every pair of one molecule beyond three bonds the frame
+/// does not price — so GROMACS prices exactly the frame's intramolecular
+/// `pairs` (built by [`intramolecular_pairs`] when absent), and every pair
+/// across molecules. Refused by name: a priced pair within three bonds that is
+/// not a 1-4 pair (GROMACS excludes it) or a 1-4 pair beyond them, override cells
+/// without `epsilon` and `sigma`, a crossterm GROMACS's lookup would give
+/// another grid, a type name two styles of one category share, a molecule
+/// whose atoms are not consecutive or a row across two molecules, more than
+/// `MAX_ATOMS_FOR_A_FULL_PAIR_LIST` atoms, and the force-field refusals
+/// above.
+///
+/// # Whole-FF serialization, not coefficient writing
+///
+/// molrs has two kinds of force-field writer. This one is **whole-FF
+/// serialization**: it writes every type the [`ForceField`] holds, as a
+/// force-field file, and takes no type labels. **Coefficient writing**
+/// ([`LammpsForcefieldWriter`](crate::io::lammps::LammpsForcefieldWriter), LAMMPS only) answers "which coefficients
+/// does this system's data file need" and is keyed by the system's
+/// `TypeLabels`.
 #[derive(Debug, Clone)]
 pub struct GromacsTopForcefieldWriter {
     /// Decimal places for floating coefficients.

@@ -1,8 +1,4 @@
-//! Backend-agnostic trajectory + observable logical model.
-//!
-//! `Trajectory` is a plain frame-sequence carrier (frames plus optional
-//! step/time index arrays); `ObservableRecord` is a named, typed observable
-//! payload. Neither is a record aggregate — the canonical entity is `Frame`.
+//! Backend-agnostic trajectory + observable logical model: [`Trajectory`] and [`ObservableRecord`].
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -13,6 +9,10 @@ use crate::core::MolRsError;
 use crate::op::F;
 
 /// Trajectory-like list of frame states plus shared indexing arrays.
+///
+/// A plain frame-sequence carrier (frames plus optional step/time index
+/// arrays), not a record aggregate — the canonical entity is
+/// [`Frame`](crate::core::Frame).
 #[derive(Debug, Clone, Default)]
 pub struct Trajectory {
     /// Ordered frame-like states.
@@ -166,7 +166,8 @@ pub enum ObservableValues {
     Column(Column),
 }
 
-/// Named observable with semantic metadata.
+/// Named observable with semantic metadata: a named, typed observable
+/// payload, not a record aggregate.
 #[derive(Debug, Clone)]
 pub struct ObservableRecord {
     pub name: String,

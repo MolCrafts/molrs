@@ -1,23 +1,4 @@
 //! Streaming (frame-by-frame) velocity-ACF accumulation with bounded memory.
-//!
-//! [`VacfAccumulator`] is the streaming counterpart of the batch
-//! [`Vacf`](super::Vacf) compute (`velocity_acf`: per-DOF mean-subtract →
-//! FFT-ACF → DOF-average). A streaming pass cannot subtract the global
-//! per-DOF mean up front, so it accumulates the **raw** lagged products and
-//! applies the exact algebraic correction at finalize:
-//!
-//! ```text
-//! Σ_τ (x_τ − μ)(x_{τ+k} − μ)
-//!   = Σ_τ x_τ x_{τ+k} − μ·(A_k + B_k) + (T − k)·μ²
-//! A_k = Σ_{τ=0}^{T-1-k} x_τ = S − (sum of the last k samples)
-//! B_k = Σ_{τ=k}^{T-1}   x_τ = S − (sum of the first k samples)
-//! ```
-//!
-//! so only the first `resolution` and last `resolution` frames are retained
-//! (two rings), plus the per-DOF totals and the `resolution + 1` lag sums.
-//! Memory is O(`n_dof · resolution`) — never O(trajectory). The result equals
-//! the batch FFT path to FFT round-off (~1e-12 relative); a unit test pins the
-//! equivalence.
 
 use std::collections::VecDeque;
 
@@ -31,6 +12,25 @@ use crate::compute::ComputeError;
 /// Atomiverse feeds blocked `vx|vy|vz`). Finalize returns the same
 /// unnormalized, mean-subtracted, DOF-averaged ACF curve as the batch
 /// [`Vacf`](super::Vacf) compute truncated at `min(resolution, n_frames − 1)`.
+///
+/// [`VacfAccumulator`] is the streaming counterpart of the batch
+/// [`Vacf`](super::Vacf) compute (`velocity_acf`: per-DOF mean-subtract →
+/// FFT-ACF → DOF-average). A streaming pass cannot subtract the global
+/// per-DOF mean up front, so it accumulates the **raw** lagged products and
+/// applies the exact algebraic correction at finalize:
+///
+/// ```text
+/// Σ_τ (x_τ − μ)(x_{τ+k} − μ)
+///   = Σ_τ x_τ x_{τ+k} − μ·(A_k + B_k) + (T − k)·μ²
+/// A_k = Σ_{τ=0}^{T-1-k} x_τ = S − (sum of the last k samples)
+/// B_k = Σ_{τ=k}^{T-1}   x_τ = S − (sum of the first k samples)
+/// ```
+///
+/// so only the first `resolution` and last `resolution` frames are retained
+/// (two rings), plus the per-DOF totals and the `resolution + 1` lag sums.
+/// Memory is O(`n_dof · resolution`) — never O(trajectory). The result equals
+/// the batch FFT path to FFT round-off (~1e-12 relative); a unit test pins the
+/// equivalence.
 #[derive(Debug, Clone)]
 pub struct VacfAccumulator {
     resolution: usize,

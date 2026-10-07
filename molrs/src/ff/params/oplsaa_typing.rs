@@ -1,79 +1,79 @@
 //! OPLS-AA SMARTS typing rules — molrs-owned, hand-maintained.
-//!
-//! These rules are **not** GROMACS's: GROMACS `oplsaa.ff` carries no typing
-//! rules at all. They are molrs's own, and `cargo mrs-gen-opls` never reads or
-//! writes this file — regenerating [`super::oplsaa`] leaves every rule here
-//! untouched. Edit them by hand.
-//!
-//! Each [`OplsRuleRow`] names the `opls_NNN` type it assigns (an
-//! [`OplsAtomRow`](super::OplsAtomRow) of [`super::oplsaa::OPLSAA_ATOMS`]), the
-//! SMARTS `def` that assigns it, and the types it `overrides` when both match.
-//! The shipped typifier joins the two tables by name
-//! (`ff::typifier::opls::embedded::try_typing_meta`). The trailing comment of
-//! each rule is the type's GROMACS v2026.3 `atomtypes.atp` description.
-//!
-//! # Conventions
-//!
-//! Every `def` is Daylight SMARTS (Daylight Theory Manual ch. 4), read by the
-//! standard molrs matcher against a graph with explicit hydrogens whose
-//! aromaticity the typifier perceives on a private copy first:
-//!
-//! 1. **Explicit bonds.** Every bond is written `-`, `=`, `#` or `:`. An
-//!    unmarked bond would mean single-or-aromatic, which is what made the
-//!    foyer-dialect rules miss every `=` bond. `~` (any bond) appears only
-//!    where a type deliberately spans resonance forms — carboxylate O
-//!    (opls_271/272), sulfoxide S=O (opls_496/497) and nitro O
-//!    (opls_760/761/767) — and each such rule says so in its comment.
-//! 2. **Hydrogens.** A hydrogen atom is `[#1]`; `H<n>` appears only as a
-//!    hydrogen count. Foyer's `[!H]` is `[!#1]` (opls_154, opls_207, opls_467)
-//!    and its `[Cl,C,H]` is `[Cl,#6,#1]` (opls_152/153).
-//! 3. **Aromatic case.** Aromatic atoms are lowercase, aliphatic uppercase: the
-//!    typed atom and every `%opls_NNN` neighbour carry the case of their
-//!    type's chemistry (opls_264 `[Cl;X1]-[c;%opls_263]`, opls_719
-//!    `F-[c;%opls_718]`, opls_534 `[#1]-[c;%opls_531]`, opls_167
-//!    `[O;X2](-[#1])-[c;%opls_166]`; pyridine opls_520–526, pyrimidine
-//!    opls_530–536 and pyrrole opls_542–547 as `n` / `c` rings with `:`
-//!    bonds; opls_678/679 on the pyrrole `c`). A substituent carbon the foyer
-//!    rules wrote as a bare `C` is `[#6]`: foyer matched a bare symbol by
-//!    element alone, so an aromatic neighbour was always admitted there
-//!    (opls_917, N-methylaniline's ring carbon, depends on it: it reads an
-//!    opls_901 N, and opls_901 must admit the aromatic neighbour).
-//! 4. **Monatomic ions.** Written `X0`: opls_401 `[Cl;X0]`, opls_406
-//!    `[Li;X0]`.
-//! 5. **Preconditions.** Hydrogens are explicit atoms; `r<n>` is the size of
-//!    the atom's *smallest* ring (RDKit/Daylight), not any chordless cycle.
-//!
-//! # Changes from the moved foyer table
-//!
-//! The 157 `def` / `overrides` pairs moved here from the foyer-derived
-//! `oplsaa.rs` table (spec opls-gromacs-02) and were rewritten to the
-//! conventions above (spec opls-gromacs-03). No rule declares an explicit
-//! priority. Every override of the moved table is kept; the changes are:
-//!
-//! - **New:** opls_150 (diene `=CH-CH=`) `[C;X3;H1](=[C;X3])-[C;X3]=[C;X3]`,
-//!   overriding opls_142; opls_178 (diene `=CR-CR=`)
-//!   `[C;X3;H0](=[C;X3])(-[#6])-[C;X3]=[C;X3]`, overriding opls_141. Both are
-//!   for conjugated dienes only, so methacrylate's α-carbon stays opls_141.
-//! - **New:** opls_928 (alkyne C2 whose R carries one H)
-//!   `[C;X2](-[C;X4;H1])#[#6]`, overriding nothing. The moved opls_927 lost
-//!   its override of opls_928 in opls-gromacs-02 because opls_928 had no
-//!   rule; it is not restored: by their `.atp` descriptions opls_927 (R with 2
-//!   or 3 H, `-[#6](-[#1])-[#1]`) and opls_928 (R with 1 H) are disjoint, so
-//!   they are never candidates on the same atom. R is sp3 (`X4`) because the
-//!   description sends C3 to the alkane types opls_135–139.
-//! - **Dropped term:** opls_542 (pyrrole N) no longer ends in a bare `H`,
-//!   which the foyer rule bonded to a ring carbon rather than to N; the ring
-//!   `[n;X3;r5]1:[c;X3;r5]:…:1` alone identifies it.
-//!
-//! Overrides between an aliphatic and an aromatic rule (opls_145 over
-//! opls_141/142, opls_522/523/533/544 over opls_142, the aromatic H types over
-//! opls_144) and those of opls_151/264 over the ion opls_401 can no longer
-//! meet a co-matching candidate under the case and `X0` conventions; they are
-//! kept, harmless, as the moved table's record.
 
 use crate::ff::params::OplsRuleRow;
 
 /// The 160 molrs-owned OPLS-AA typing rules, in the order of their atom types.
+///
+/// These rules are **not** GROMACS's: GROMACS `oplsaa.ff` carries no typing
+/// rules at all. They are molrs's own, and `cargo mrs-gen-opls` never reads or
+/// writes this file — regenerating the OPLS-AA parameter tables leaves every rule here
+/// untouched. Edit them by hand.
+///
+/// Each [`OplsRuleRow`] names the `opls_NNN` type it assigns (an
+/// [`OplsAtomRow`](super::OplsAtomRow) of [`OPLSAA_ATOMS`](super::OPLSAA_ATOMS)), the
+/// SMARTS `def` that assigns it, and the types it `overrides` when both match.
+/// The shipped typifier joins the two tables by name
+/// (`ff::typifier::opls::embedded::try_typing_meta`). The trailing comment of
+/// each rule is the type's GROMACS v2026.3 `atomtypes.atp` description.
+///
+/// # Conventions
+///
+/// Every `def` is Daylight SMARTS (Daylight Theory Manual ch. 4), read by the
+/// standard molrs matcher against a graph with explicit hydrogens whose
+/// aromaticity the typifier perceives on a private copy first:
+///
+/// 1. **Explicit bonds.** Every bond is written `-`, `=`, `#` or `:`. An
+///    unmarked bond would mean single-or-aromatic, which is what made the
+///    foyer-dialect rules miss every `=` bond. `~` (any bond) appears only
+///    where a type deliberately spans resonance forms — carboxylate O
+///    (opls_271/272), sulfoxide S=O (opls_496/497) and nitro O
+///    (opls_760/761/767) — and each such rule says so in its comment.
+/// 2. **Hydrogens.** A hydrogen atom is `[#1]`; `H<n>` appears only as a
+///    hydrogen count. Foyer's `[!H]` is `[!#1]` (opls_154, opls_207, opls_467)
+///    and its `[Cl,C,H]` is `[Cl,#6,#1]` (opls_152/153).
+/// 3. **Aromatic case.** Aromatic atoms are lowercase, aliphatic uppercase: the
+///    typed atom and every `%opls_NNN` neighbour carry the case of their
+///    type's chemistry (opls_264 `[Cl;X1]-[c;%opls_263]`, opls_719
+///    `F-[c;%opls_718]`, opls_534 `[#1]-[c;%opls_531]`, opls_167
+///    `[O;X2](-[#1])-[c;%opls_166]`; pyridine opls_520–526, pyrimidine
+///    opls_530–536 and pyrrole opls_542–547 as `n` / `c` rings with `:`
+///    bonds; opls_678/679 on the pyrrole `c`). A substituent carbon the foyer
+///    rules wrote as a bare `C` is `[#6]`: foyer matched a bare symbol by
+///    element alone, so an aromatic neighbour was always admitted there
+///    (opls_917, N-methylaniline's ring carbon, depends on it: it reads an
+///    opls_901 N, and opls_901 must admit the aromatic neighbour).
+/// 4. **Monatomic ions.** Written `X0`: opls_401 `[Cl;X0]`, opls_406
+///    `[Li;X0]`.
+/// 5. **Preconditions.** Hydrogens are explicit atoms; `r<n>` is the size of
+///    the atom's *smallest* ring (RDKit/Daylight), not any chordless cycle.
+///
+/// # Changes from the moved foyer table
+///
+/// The 157 `def` / `overrides` pairs moved here from the foyer-derived
+/// `oplsaa.rs` table (spec opls-gromacs-02) and were rewritten to the
+/// conventions above (spec opls-gromacs-03). No rule declares an explicit
+/// priority. Every override of the moved table is kept; the changes are:
+///
+/// - **New:** opls_150 (diene `=CH-CH=`) `[C;X3;H1](=[C;X3])-[C;X3]=[C;X3]`,
+///   overriding opls_142; opls_178 (diene `=CR-CR=`)
+///   `[C;X3;H0](=[C;X3])(-[#6])-[C;X3]=[C;X3]`, overriding opls_141. Both are
+///   for conjugated dienes only, so methacrylate's α-carbon stays opls_141.
+/// - **New:** opls_928 (alkyne C2 whose R carries one H)
+///   `[C;X2](-[C;X4;H1])#[#6]`, overriding nothing. The moved opls_927 lost
+///   its override of opls_928 in opls-gromacs-02 because opls_928 had no
+///   rule; it is not restored: by their `.atp` descriptions opls_927 (R with 2
+///   or 3 H, `-[#6](-[#1])-[#1]`) and opls_928 (R with 1 H) are disjoint, so
+///   they are never candidates on the same atom. R is sp3 (`X4`) because the
+///   description sends C3 to the alkane types opls_135–139.
+/// - **Dropped term:** opls_542 (pyrrole N) no longer ends in a bare `H`,
+///   which the foyer rule bonded to a ring carbon rather than to N; the ring
+///   `[n;X3;r5]1:[c;X3;r5]:…:1` alone identifies it.
+///
+/// Overrides between an aliphatic and an aromatic rule (opls_145 over
+/// opls_141/142, opls_522/523/533/544 over opls_142, the aromatic H types over
+/// opls_144) and those of opls_151/264 over the ion opls_401 can no longer
+/// meet a co-matching candidate under the case and `X0` conventions; they are
+/// kept, harmless, as the moved table's record.
 #[rustfmt::skip]
 pub const OPLSAA_TYPING: &[OplsRuleRow] = &[
     OplsRuleRow { name: "opls_135", def: "[C;X4](-[#6])(-[#1])(-[#1])-[#1]", overrides: &[] }, // alkane CH3

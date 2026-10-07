@@ -1,20 +1,4 @@
-//! Harmonic improper (LAMMPS `improper_style harmonic`):
-//!
-//! E(χ) = K · (χ − χ₀)²
-//!
-//! Following LAMMPS, the improper angle χ is the **unsigned** dihedral of the
-//! quadruple I-J-K-L: χ = |φ| ∈ [0, π], where φ = atan2(…) is the signed
-//! dihedral. Hence dχ/dφ = sign(φ), so dE/dφ = 2K(χ − χ₀)·sign(φ), projected
-//! onto Cartesian forces by the shared dihedral routine. `chi0` is the
-//! equilibrium angle in **degrees** (0 for a planar centre), as LAMMPS takes
-//! it; the kernel converts it to radians once. `k` is LAMMPS's `K`
-//! (energy/rad², the ½ included).
-//!
-//! # Atom order
-//!
-//! LAMMPS's: the improper angle is the dihedral I-J-K-L of the stored order,
-//! and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
-//! style; CHARMM writes its impropers this way).
+//! Harmonic improper (LAMMPS `improper_style harmonic`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
@@ -31,6 +15,24 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Harmonic improper with pre-resolved flat arrays.
+///
+/// Harmonic improper (LAMMPS `improper_style harmonic`):
+///
+/// E(χ) = K · (χ − χ₀)²
+///
+/// Following LAMMPS, the improper angle χ is the **unsigned** dihedral of the
+/// quadruple I-J-K-L: χ = |φ| ∈ [0, π], where φ = atan2(…) is the signed
+/// dihedral. Hence dχ/dφ = sign(φ), so dE/dφ = 2K(χ − χ₀)·sign(φ), projected
+/// onto Cartesian forces by the shared dihedral routine. `chi0` is the
+/// equilibrium angle in **degrees** (0 for a planar centre), as LAMMPS takes
+/// it; the kernel converts it to radians once. `k` is LAMMPS's `K`
+/// (energy/rad², the ½ included).
+///
+/// # Atom order
+///
+/// LAMMPS's: the improper angle is the dihedral I-J-K-L of the stored order,
+/// and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
+/// style; CHARMM writes its impropers this way).
 pub struct ImproperHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

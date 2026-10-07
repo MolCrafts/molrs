@@ -1,50 +1,4 @@
-//! Post-processing filters that prune a [`Neighbors`] table using
-//! geometric criteria.
-//!
-//! A cutoff-based neighbor list answers "which particles are within `r_c`?",
-//! which is a question about a number the user picked, not about the structure.
-//! The filters here answer "which particles are *actually* nearest neighbors?"
-//! — they take an over-generous cutoff list and discard the pairs that a
-//! parameter-free geometric criterion says are not part of the first
-//! coordination shell (the set of particles directly touching a given one).
-//!
-//! Two filters are exposed, mirroring `freud.locality`:
-//!
-//! - [`filter_sann`]: a port of van Meel et al.'s Solid-Angle Nearest-Neighbour
-//!   construction
-//!   ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterSANN.cc)).
-//!   Each neighbor is imagined to claim a cap of the unit sphere centred on the
-//!   query point, whose *solid angle* (area on the unit sphere, measured in
-//!   steradians, of which the whole sphere has `4π`) shrinks as the neighbor
-//!   gets farther away. The kept set is the smallest number of nearest
-//!   neighbors whose caps tile the full `4π`, which fixes both the shell
-//!   radius and the coordination number without a user-supplied cutoff — see
-//!   [`filter_sann`] for the criterion and its citation.
-//! - [`filter_rad`]: Higham–Henchman Relative-Angular-Distance filter
-//!   ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterRAD.cc)).
-//!   For each query point we walk neighbors in distance order and drop a
-//!   neighbor `j` if there exists an already-accepted closer neighbor `k`
-//!   such that the bond `r_ij` lies "behind" `r_ik` (i.e. the angle
-//!   `∠(r̂_ik, r̂_ij)` is < some acceptance threshold). The default
-//!   threshold is `arccos(½) = π/3 = 60°`, removing redundant second-
-//!   shell artifacts that share a half-space with a closer first-shell
-//!   bond.
-//!
-//! Both filters preserve the query-point ordering of pairs but may shrink the
-//! list. The output [`Neighbors`] inherits the `mode` and the storage policy of
-//! the input.
-//!
-//! # Both filters require a fully populated input
-//!
-//! Each filter reads `dist_sq` for its criterion and `disp` to copy surviving
-//! pairs into the output, so a table built without either column is rejected
-//! with a panic naming the missing column. That is deliberate: a lean table
-//! reports an absent column as `None`, and the only alternatives to panicking
-//! would be to invent zeros — a zero displacement is a physically meaningful
-//! value, so it would be indistinguishable from data — or to return an empty
-//! list, which reads downstream as "this particle has no neighbors". Rerun the
-//! search with [`NeighborsStorage::FULL`](crate::core::NeighborsStorage::FULL)
-//! instead.
+//! Post-processing filters that prune a [`Neighbors`] table using geometric criteria: [`filter_sann`] and [`filter_rad`].
 
 use crate::core::Neighbors;
 use crate::op::F;
@@ -98,11 +52,35 @@ use crate::op::F;
 /// The output inherits the input's `mode` and storage policy, and query points
 /// are visited in ascending index order so the result is deterministic.
 ///
+/// # Why a filter
+///
+/// A cutoff-based neighbor list answers "which particles are within `r_c`?",
+/// which is a question about a number the user picked, not about the structure.
+/// The filters here answer "which particles are *actually* nearest neighbors?"
+/// — they take an over-generous cutoff list and discard the pairs that a
+/// parameter-free geometric criterion says are not part of the first
+/// coordination shell (the set of particles directly touching a given one).
+///
+/// A port of `freud.locality.FilterSANN`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterSANN.cc));
+/// [`filter_rad`] is the other filter. Both preserve the query-point ordering of
+/// pairs but may shrink the list.
+///
 /// # Panics
 /// Panics if `nlist` lacks the `dist_sq` or `disp` column. `dist_sq` carries the
 /// criterion itself; `disp` is needed to copy surviving pairs into the output
 /// table. Neither can be reconstructed from indices, and substituting zeros
-/// would fabricate physically meaningful values — see the module documentation.
+/// would fabricate physically meaningful values.
+///
+/// Both filters require a fully populated input. Each reads `dist_sq` for its criterion and `disp` to copy surviving
+/// pairs into the output, so a table built without either column is rejected
+/// with a panic naming the missing column. That is deliberate: a lean table
+/// reports an absent column as `None`, and the only alternatives to panicking
+/// would be to invent zeros — a zero displacement is a physically meaningful
+/// value, so it would be indistinguishable from data — or to return an empty
+/// list, which reads downstream as "this particle has no neighbors". Rerun the
+/// search with [`NeighborsStorage::FULL`](crate::core::NeighborsStorage::FULL)
+/// instead.
 pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
     let (offsets, mut order) = pairs_by_query(nlist);
 
@@ -206,8 +184,9 @@ fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
 /// keeps more neighbors. Note that the criterion here is a *fixed* cone: unlike
 /// the original relative-angular-distance formulation it does not additionally
 /// weight the test by how much closer the occluding neighbor is, so agreement
-/// with the freud implementation linked in the module documentation should be
-/// re-established by test before the two are treated as interchangeable.
+/// with the freud implementation
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/FilterRAD.cc))
+/// should be re-established by test before the two are treated as interchangeable.
 ///
 /// A candidate at exactly zero distance has no direction, so it is skipped
 /// entirely — it neither survives the filter nor occludes anything. This
@@ -220,8 +199,8 @@ fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
 /// # Panics
 /// Panics if `nlist` lacks the `dist_sq` or `disp` column. Both are load-bearing
 /// here: `disp` supplies the directions the criterion compares and `dist_sq` the
-/// order they are considered in. See the module documentation for why a missing
-/// column is a panic rather than an empty result.
+/// order they are considered in. See [`filter_sann`] for why a missing column is a
+/// panic rather than an empty result.
 pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
     let cos_thresh = acceptance.cos();
     let (offsets, mut order) = pairs_by_query(nlist);

@@ -4,39 +4,6 @@
 
 //! Environment matching by neighbor-bond fingerprint, with optional
 //! rotation-invariant registration.
-//!
-//! Mirrors `freud.environment.EnvironmentCluster` / `EnvironmentMatch`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/EnvironmentMatch.cc)).
-//! Two modes:
-//!
-//! - **No-rotation** (`with_registration(false)`, the default): two
-//!   particles match when their **sorted bond magnitudes** agree
-//!   pair-wise within `rmsd_threshold`.
-//! - **Registration** (`with_registration(true)`): two particles match
-//!   when there is a **rotation** and a **permutation** of one bond
-//!   set that minimises the RMSD vs the other to within
-//!   `rmsd_threshold`. Optimal rotation per permutation is found by
-//!   Horn's quaternion method ([`crate::op::superpose`]), rotation only:
-//!   the bond vectors are already relative to the centre particle, so no
-//!   translation is fitted.
-//!   Permutations are enumerated by Heap's algorithm — viable for the
-//!   typical neighborhood sizes `n ≤ 12` (12! ≈ 4.8 × 10⁸ but with
-//!   early-exit on `rmsd > threshold` the practical count is much lower).
-//!
-//! After per-pair match decisions, particles are clustered into
-//! environment classes by union-find.
-//!
-//! # Performance
-//!
-//! Per-particle bond fingerprints are built in a **single O(n_pairs)
-//! pass** over the neighbor list — linear in the total neighbor count
-//! (≈ O(N·k) for `N` particles with `k` neighbors each). Particles are
-//! then bucketed by neighbor count, and matching compares every pair
-//! *within* a bucket: O(b²) per bucket of size `b`. That quadratic
-//! comparison is intrinsic to environment matching (freud does the same)
-//! and is the dominant cost at scale. In registration mode each
-//! comparison additionally enumerates up to `n!` permutations, bounded by
-//! [`EnvironmentMatch::with_max_neighbors_for_registration`].
 
 use crate::compute::ComputeResult;
 use std::collections::HashMap;
@@ -58,6 +25,39 @@ use crate::compute::require_disp;
 /// comparison).
 ///
 /// Environment matching / clustering by neighbor-vector geometry.
+///
+/// Mirrors `freud.environment.EnvironmentCluster` / `EnvironmentMatch`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/EnvironmentMatch.cc)).
+/// Two modes:
+///
+/// - **No-rotation** (`with_registration(false)`, the default): two
+///   particles match when their **sorted bond magnitudes** agree
+///   pair-wise within `rmsd_threshold`.
+/// - **Registration** (`with_registration(true)`): two particles match
+///   when there is a **rotation** and a **permutation** of one bond
+///   set that minimises the RMSD vs the other to within
+///   `rmsd_threshold`. Optimal rotation per permutation is found by
+///   Horn's quaternion method ([`crate::op::superpose`]), rotation only:
+///   the bond vectors are already relative to the centre particle, so no
+///   translation is fitted.
+///   Permutations are enumerated by Heap's algorithm — viable for the
+///   typical neighborhood sizes `n ≤ 12` (12! ≈ 4.8 × 10⁸ but with
+///   early-exit on `rmsd > threshold` the practical count is much lower).
+///
+/// After per-pair match decisions, particles are clustered into
+/// environment classes by union-find.
+///
+/// # Performance
+///
+/// Per-particle bond fingerprints are built in a **single O(n_pairs)
+/// pass** over the neighbor list — linear in the total neighbor count
+/// (≈ O(N·k) for `N` particles with `k` neighbors each). Particles are
+/// then bucketed by neighbor count, and matching compares every pair
+/// *within* a bucket: O(b²) per bucket of size `b`. That quadratic
+/// comparison is intrinsic to environment matching (freud does the same)
+/// and is the dominant cost at scale. In registration mode each
+/// comparison additionally enumerates up to `n!` permutations, bounded by
+/// [`EnvironmentMatch::with_max_neighbors_for_registration`].
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentMatch {
     rmsd_threshold: F,

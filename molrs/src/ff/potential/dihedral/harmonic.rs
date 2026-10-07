@@ -1,12 +1,4 @@
-//! Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`):
-//!
-//! E(φ) = k · [1 + sign · cos(n·φ)]
-//!
-//! `k` is LAMMPS's `K` (energy), `sign` its `d` (±1 — a sign, not a phase) and
-//! `periodicity` its `n`. It is the same function of the dihedral as LAMMPS
-//! `improper_style cvff`, so it shares that kernel
-//! ([`signed_cosine_constructor`]),
-//! evaluated over the `"dihedrals"` block.
+//! Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`).
 
 use molrs::core::Frame;
 use molrs::core::schema::block_names::DIHEDRALS;
@@ -17,6 +9,16 @@ use crate::ff::potential::improper::cvff::signed_cosine_constructor;
 
 /// Construct a harmonic dihedral from per-type params (`k`, `sign`,
 /// `periodicity`) and a Frame's `"dihedrals"` block.
+///
+/// Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`):
+///
+/// E(φ) = k · [1 + sign · cos(n·φ)]
+///
+/// `k` is LAMMPS's `K` (energy), `sign` its `d` (±1 — a sign, not a phase) and
+/// `periodicity` its `n`. It is the same function of the dihedral as LAMMPS
+/// `improper_style cvff`, so it shares that kernel
+/// ([`ImproperCvff`](crate::ff::potential::improper::ImproperCvff)),
+/// evaluated over the `"dihedrals"` block.
 pub fn dihedral_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],

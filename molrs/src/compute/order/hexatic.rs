@@ -1,41 +1,4 @@
 //! Hexatic order parameter `ψ_k` for 2-D systems.
-//!
-//! Mirrors `freud.order.Hexatic`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/HexaticTranslational.cc)).
-//!
-//! For each particle `i` and a chosen integer rotational symmetry `k`
-//! (typically 6 for hexagonal lattices, 4 for square, 3 for triangular),
-//!
-//! ```text
-//!   ψ_k(i) = (1/N_i) Σ_{j ∈ neigh(i)} e^{i k θ_{ij}}
-//! ```
-//!
-//! where `N_i` is the number of neighbors of `i` and `θ_{ij}` is the in-plane
-//! angle in radians (`atan2(dy, dx)`) of the bond `r_j − r_i`. `ψ_k` is a
-//! dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
-//! bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
-//! (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
-//! orientation. Isolated particles get `|ψ_k| = 0`.
-//!
-//! The z-component of the bond vector is ignored — callers must arrange
-//! that the configuration is genuinely planar (typically `Lz = 1`,
-//! `pbc.z = false`).
-//!
-//! A self-query table is half-shell — it holds each bond once, as `(i, j)` with
-//! `i < j` — so the accumulator visits a pair once and updates *both*
-//! particles: from `j`'s side the same bond points the other way, `θ + π`, and
-//! `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
-//!
-//! # Required neighbor columns
-//!
-//! Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
-//! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::core::NeighborsStorage::FULL). A `DIST_SQ`
-//! or `INDICES_ONLY` table stores no directions and reads back `None` rather
-//! than zeros, so [`Hexatic::compute`](Compute::compute) answers
-//! [`ComputeError::BadShape`] naming the missing column instead of indexing an
-//! empty view.
 
 use crate::compute::ComputeResult;
 use molrs::core::Complex;
@@ -60,6 +23,43 @@ use crate::compute::{require_disp, require_self_query};
 /// visited once and credited to *both* of its particles, which double-counts on
 /// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table, so
 /// that table is [`ComputeError::BadShape`] too.
+///
+/// Mirrors `freud.order.Hexatic`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/HexaticTranslational.cc)).
+///
+/// For each particle `i` and a chosen integer rotational symmetry `k`
+/// (typically 6 for hexagonal lattices, 4 for square, 3 for triangular),
+///
+/// ```text
+///   ψ_k(i) = (1/N_i) Σ_{j ∈ neigh(i)} e^{i k θ_{ij}}
+/// ```
+///
+/// where `N_i` is the number of neighbors of `i` and `θ_{ij}` is the in-plane
+/// angle in radians (`atan2(dy, dx)`) of the bond `r_j − r_i`. `ψ_k` is a
+/// dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
+/// bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
+/// (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
+/// orientation. Isolated particles get `|ψ_k| = 0`.
+///
+/// The z-component of the bond vector is ignored — callers must arrange
+/// that the configuration is genuinely planar (typically `Lz = 1`,
+/// `pbc.z = false`).
+///
+/// A self-query table is half-shell — it holds each bond once, as `(i, j)` with
+/// `i < j` — so the accumulator visits a pair once and updates *both*
+/// particles: from `j`'s side the same bond points the other way, `θ + π`, and
+/// `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
+///
+/// # Required neighbor columns
+///
+/// Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
+/// minimum-image displacement column `disp` (Å) — materialize it with
+/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
+/// or [`FULL`](molrs::core::NeighborsStorage::FULL). A `DIST_SQ`
+/// or `INDICES_ONLY` table stores no directions and reads back `None` rather
+/// than zeros, so [`Hexatic::compute`](Compute::compute) answers
+/// [`ComputeError::BadShape`] naming the missing column instead of indexing an
+/// empty view.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
     k: u32,

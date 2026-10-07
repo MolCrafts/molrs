@@ -1,22 +1,4 @@
 //! STL — stereolithography triangle soup, ASCII and binary.
-//!
-//! The format has two shapes and no version marker, so telling them apart is
-//! the reader's first job. A binary file is an 80-byte header, a `u32` triangle
-//! count, then exactly 50 bytes per triangle; that **length identity** is the
-//! discriminator here. The leading `solid` keyword is not: a binary header is
-//! free text and routinely starts with `solid` too, so keyword-first detection
-//! reads binary files as ASCII and finds no vertices in them.
-//!
-//! Recorded facet normals are read past and thrown away. Writers routinely
-//! leave them at `0 0 0` — molpack's own STL writer does — so the normal a
-//! consumer can trust is the one
-//! [`TriMesh::face_normal`](crate::core::TriMesh::face_normal) computes from
-//! the winding.
-//!
-//! What comes back is triangles, nothing more: no watertight gate, no
-//! degeneracy gate, no unit conversion. A packing region needs a closed surface
-//! and refuses without one; a viewer paints whatever it is handed. Both ask the
-//! [`TriMesh`] rather than being second-guessed here.
 
 use crate::io::invalid_data;
 use std::io::{Error, Result};
@@ -53,6 +35,24 @@ pub fn read_stl<P: AsRef<Path>>(path: P) -> Result<TriMesh> {
 /// A file with no facets is not an error: it reads as an empty
 /// [`TriMesh`]. Whether that is acceptable is the consumer's call — the same
 /// division that leaves the watertight gate to whoever needs a closed surface.
+///
+/// The format has two shapes and no version marker, so telling them apart is
+/// the reader's first job. A binary file is an 80-byte header, a `u32` triangle
+/// count, then exactly 50 bytes per triangle; that **length identity** is the
+/// discriminator. The leading `solid` keyword is not: a binary header is free
+/// text and routinely starts with `solid` too, so keyword-first detection reads
+/// binary files as ASCII and finds no vertices in them.
+///
+/// Recorded facet normals are read past and thrown away. Writers routinely
+/// leave them at `0 0 0` — molpack's own STL writer does — so the normal a
+/// consumer can trust is the one
+/// [`TriMesh::face_normal`](crate::core::TriMesh::face_normal) computes from
+/// the winding.
+///
+/// What comes back is triangles, nothing more: no watertight gate, no
+/// degeneracy gate, no unit conversion. A packing region needs a closed surface
+/// and refuses without one; a viewer paints whatever it is handed. Both ask the
+/// [`TriMesh`] rather than being second-guessed here.
 ///
 /// # Errors
 ///

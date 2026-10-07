@@ -1,16 +1,5 @@
 //! The per-particle orientations a PMFT reads off a frame — one extractor,
 //! shared by every binding.
-//!
-//! Two sources can state an orientation:
-//!
-//! * the **quaternion columns** [`keys::QUAT`] (`quatw`, `quati`, `quatj`,
-//!   `quatk`) on the `atoms` block — the stored orientation of each particle;
-//! * an **`orientations` topology block** of `(head, tail)` atom pairs, one per
-//!   query particle — an orientation derived from positions, the `head − tail`
-//!   axis of each particle in this frame.
-//!
-//! A frame states at most one of them: carrying both is refused rather than
-//! one silently winning over the other.
 
 use crate::compute::{AtomGroups, ComputeError};
 use crate::core::Frame;
@@ -23,6 +12,17 @@ const ORIENTATIONS: &str = "orientations";
 /// Per-atom unit quaternions `(w, i, j, k)` from the [`keys::QUAT`] columns of
 /// the `atoms` block, each normalised (a zero quaternion reads as the
 /// identity). `None` when any of the four columns is absent.
+///
+/// Two sources can state an orientation:
+///
+/// * the **quaternion columns** [`keys::QUAT`] (`quatw`, `quati`, `quatj`,
+///   `quatk`) on the `atoms` block — the stored orientation of each particle;
+/// * an **`orientations` topology block** of `(head, tail)` atom pairs, one per
+///   query particle — an orientation derived from positions, the `head − tail`
+///   axis of each particle in this frame.
+///
+/// A frame states at most one of them: carrying both is refused rather than
+/// one silently winning over the other.
 pub fn orientation_quaternions(frame: &Frame) -> Option<Vec<Quat>> {
     let atoms = frame.get("atoms")?;
     let cols = keys::QUAT.map(|key| atoms.get(key).and_then(|c| c.as_float()));

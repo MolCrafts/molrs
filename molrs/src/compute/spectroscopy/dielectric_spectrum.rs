@@ -1,40 +1,12 @@
 //! Dielectric ε(ω) transform [`Fit`] impls: [`EinsteinHelfandSpectrum`] and
 //! [`GreenKuboSpectrum`].
 //!
-//! Each [`Fit`] consumes a **raw autocorrelation function** (the fluctuation
-//! dipole ACF for the Einstein–Helfand route; the current ACF for the
-//! Green–Kubo route) plus the physical metadata (`dt`, `V`, `T`, `ε_∞`, and —
-//! for EH — the zero-lag variance ⟨|δM|²⟩) and applies window + FFT +
-//! prefactors to produce the frequency-dependent permittivity
-//! [`DielectricSpectrumResult`].
-//!
 //! The window + one-sided-FFT machinery (`piecewise_linear_onesided_ft`,
 //! `taper_derivative_spectrum`, `windowed_acf_spectrum`) was relocated here
 //! from `compute::dielectric` in compute-fit-04-dielectric: windowing +
 //! transforming a raw ACF into ε(ω) is a *fit*, so it belongs in the [`Fit`]
 //! layer. Window coefficients always route through [`molrs::signal`] (never
 //! reimplemented).
-//!
-//! The raw, unwindowed ACFs these fits consume come from the raw computes
-//! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) (fluctuation dipole ACF +
-//! ⟨M(0)²⟩ + V/T/Ewald-BC) and
-//! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) (current ACF).
-//!
-//! # Units
-//!
-//! All inputs and outputs use LAMMPS *real* units throughout:
-//!
-//! | quantity        | unit                |
-//! |-----------------|---------------------|
-//! | length          | Å                   |
-//! | charge          | e                   |
-//! | time / dt       | ps                  |
-//! | temperature     | K                   |
-//! | volume          | Å³                  |
-//! | dipole moment   | e · Å               |
-//! | current density | e · Å⁻² · ps⁻¹      |
-//! | angular ω       | rad · ps⁻¹          |
-//! | ε permittivity  | dimensionless       |
 
 use ndarray::Array1;
 use rustfft::FftPlanner;
@@ -66,6 +38,34 @@ const FOUR_PI_OVER_3: f64 = 4.1887902047863905;
 /// The complex permittivity is `ε*(ω) = ε′(ω) − i·ε″(ω)`. `eps_imag`
 /// stores `ε″(ω)` with the **positive-loss** convention (≥ 0 for stable
 /// causal systems). FT convention throughout: `X(ω) = ∫₀^∞ f(t) e^{−iωt} dt`.
+///
+/// Each of [`EinsteinHelfandSpectrum`] and [`GreenKuboSpectrum`] — a
+/// [`Fit`] — consumes a **raw autocorrelation function** (the fluctuation
+/// dipole ACF for the Einstein–Helfand route; the current ACF for the
+/// Green–Kubo route) plus the physical metadata (`dt`, `V`, `T`, `ε_∞`, and —
+/// for EH — the zero-lag variance ⟨|δM|²⟩) and applies window + FFT +
+/// prefactors to produce this frequency-dependent permittivity.
+///
+/// The raw, unwindowed ACFs these fits consume come from the raw computes
+/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) (fluctuation dipole ACF +
+/// ⟨M(0)²⟩ + V/T/Ewald-BC) and
+/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) (current ACF).
+///
+/// # Units
+///
+/// All inputs and outputs use LAMMPS *real* units throughout:
+///
+/// | quantity        | unit                |
+/// |-----------------|---------------------|
+/// | length          | Å                   |
+/// | charge          | e                   |
+/// | time / dt       | ps                  |
+/// | temperature     | K                   |
+/// | volume          | Å³                  |
+/// | dipole moment   | e · Å               |
+/// | current density | e · Å⁻² · ps⁻¹      |
+/// | angular ω       | rad · ps⁻¹          |
+/// | ε permittivity  | dimensionless       |
 #[derive(Debug, Clone)]
 pub struct DielectricSpectrumResult {
     /// Angular frequency grid, rad·ps⁻¹, length `n_pad/2 + 1` with

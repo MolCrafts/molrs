@@ -4,27 +4,6 @@
 // more clearly than nested zips.
 #![allow(clippy::needless_range_loop)]
 
-//! 2-D `(r, t1, t2)` Pair Mode Fourier Transform.
-//!
-//! Mirrors `freud.pmft.PmftR12`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftR12.cc)).
-//!
-//! 2-D pair distribution function on polar bond coordinates plus the
-//! relative angle each particle makes with the bond. For a neighbor pair
-//! `(i, j)` with lab-frame bond vector `r_ij = r_j − r_i`:
-//!
-//! - `r       = |r_ij|`                              (radial distance)
-//! - `θ_lab   = atan2(r_ij.y, r_ij.x)`               (lab-frame bond angle)
-//! - `t1      = wrap(θ_lab − orient_i,  [0, 2π))`    (bond in i's frame)
-//! - `t2      = wrap(θ_lab + π − orient_j, [0, 2π))` (reverse bond in j's frame)
-//!
-//! The triplet `(r, t1, t2)` is binned into a 3-D histogram on
-//! `[0, r_max] × [0, 2π) × [0, 2π)`. PMF is `−ln(ρ / ρ_ref)` per cell.
-//!
-//! The system is 2-D in the sense that `r_ij.z` is ignored and the
-//! orientations are scalar angles (radians). Caller is responsible for
-//! the planar configuration.
-
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
@@ -39,6 +18,25 @@ use crate::compute::require_disp;
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
 /// `PmftR12` analyzer.
+///
+/// Mirrors `freud.pmft.PmftR12`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftR12.cc)).
+///
+/// 2-D pair distribution function on polar bond coordinates plus the
+/// relative angle each particle makes with the bond. For a neighbor pair
+/// `(i, j)` with lab-frame bond vector `r_ij = r_j − r_i`:
+///
+/// - `r       = |r_ij|`                              (radial distance)
+/// - `θ_lab   = atan2(r_ij.y, r_ij.x)`               (lab-frame bond angle)
+/// - `t1      = wrap(θ_lab − orient_i,  [0, 2π))`    (bond in i's frame)
+/// - `t2      = wrap(θ_lab + π − orient_j, [0, 2π))` (reverse bond in j's frame)
+///
+/// The triplet `(r, t1, t2)` is binned into a 3-D histogram on
+/// `[0, r_max] × [0, 2π) × [0, 2π)`. PMF is `−ln(ρ / ρ_ref)` per cell.
+///
+/// The system is 2-D in the sense that `r_ij.z` is ignored and the
+/// orientations are scalar angles (radians). Caller is responsible for
+/// the planar configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct PmftR12 {
     r_max: F,

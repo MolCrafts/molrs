@@ -1,10 +1,4 @@
-//! MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
-//!
-//! No LAMMPS style has this name. Its atom order is that of LAMMPS's
-//! out-of-plane styles (`improper_style fourier`, `umbrella`): the centre is
-//! **first** (`atomi`), and χ is the angle between the bond centre→`atoml` and
-//! the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
-//! read centre first.
+//! MMFF94 out-of-plane bending (Wilson angle).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
@@ -19,6 +13,13 @@ use molrs::op::F;
 
 use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 
+/// MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
+///
+/// No LAMMPS style has this name. Its atom order is that of LAMMPS's
+/// out-of-plane styles (`improper_style fourier`, `umbrella`): the centre is
+/// **first** (`atomi`), and χ is the angle between the bond centre→`atoml` and
+/// the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
+/// read centre first.
 pub struct ImproperMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

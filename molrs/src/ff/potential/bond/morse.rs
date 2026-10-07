@@ -1,8 +1,4 @@
-//! Morse bond (LAMMPS `bond_style morse`): E = d0·(1 − e^{−alpha·(r − r0)})²
-//!
-//! Anharmonic bond with a finite dissociation energy. Parameters per type, as
-//! LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
-//! (steepness, 1/length), `r0` (equilibrium length).
+//! Morse bond (LAMMPS `bond_style morse`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::BONDS;
@@ -18,6 +14,12 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Morse bond potential with pre-resolved flat arrays.
+///
+/// LAMMPS `bond_style morse`: E = d0·(1 − e^{−alpha·(r − r0)})²
+///
+/// Anharmonic bond with a finite dissociation energy. Parameters per type, as
+/// LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
+/// (steepness, 1/length), `r0` (equilibrium length).
 pub struct BondMorse {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

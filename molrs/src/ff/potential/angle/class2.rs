@@ -1,10 +1,4 @@
-//! Class2 (quartic) angle potential:
-//! E = k2*(theta-theta0)^2 + k3*(theta-theta0)^3 + k4*(theta-theta0)^4
-//!
-//! The COMPASS/class2 anharmonic angle core term (cross-terms bb/ba are
-//! separate styles, not implemented here). Parameters per type, as LAMMPS
-//! `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
-//! in energy/radianⁿ. The kernel converts `theta0` to radians once.
+//! Class2 (quartic) angle (LAMMPS `angle_style class2`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
@@ -19,6 +13,14 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Class2 quartic angle potential. Its own `theta0` array is in radians.
+///
+/// Class2 (quartic) angle potential:
+/// E = k2*(theta-theta0)^2 + k3*(theta-theta0)^3 + k4*(theta-theta0)^4
+///
+/// The COMPASS/class2 anharmonic angle core term (cross-terms bb/ba are
+/// separate styles, not implemented here). Parameters per type, as LAMMPS
+/// `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
+/// in energy/radianⁿ. The kernel converts `theta0` to radians once.
 pub struct AngleClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

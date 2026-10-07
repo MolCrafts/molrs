@@ -1,24 +1,4 @@
 //! LAMMPS unit-style conversion for force-field I/O.
-//!
-//! All conversions go through the molrs [`UnitRegistry`] / [`Quantity`] stack
-//! with **lj reduced units as the mandatory hub**:
-//!
-//! ```text
-//! source style  →  lj_*  →  target style
-//! ```
-//!
-//! Physical quantity meanings follow the LAMMPS `units` command
-//! (<https://docs.lammps.org/units.html>): real (Å, kcal/mol), metal (Å, eV),
-//! lj (reduced). Thermochemical calorie (4.184 J) is already encoded in
-//! [`UnitRegistry`]'s MD preload.
-//!
-//! A **canonical reference** `(m=1 g/mol, σ=1 Å, ε=1 kcal/mol)` makes
-//! real↔metal bridge through lj without material-specific scales, while still
-//! never hard-coding eV↔kcal factors in the FF reader.
-//!
-//! This module is the LAMMPS reader/writer adapter: it maps a LAMMPS `units`
-//! token onto a core [`crate::core::UnitPreset`] name and converts through
-//! [`UnitRegistry`]. It does not define a unit-system type.
 
 use crate::ff::ir::UnitScale;
 use molrs::core::{Quantity, UnitRegistry, UnitsError};
@@ -63,6 +43,22 @@ impl LammpsLjReference {
 /// LAMMPS force-field I/O adapter: `UnitRegistry` plus the lj hub.
 ///
 /// Not a unit-system type — conversion data lives in core.
+///
+/// All conversions go through the molrs [`UnitRegistry`] / [`Quantity`] stack
+/// with **lj reduced units as the mandatory hub**:
+///
+/// ```text
+/// source style  →  lj_*  →  target style
+/// ```
+///
+/// Physical quantity meanings follow the LAMMPS `units` command
+/// (<https://docs.lammps.org/units.html>): real (Å, kcal/mol), metal (Å, eV),
+/// lj (reduced). Thermochemical calorie (4.184 J) is already encoded in
+/// [`UnitRegistry`]'s MD preload.
+///
+/// A **canonical reference** `(m=1 g/mol, σ=1 Å, ε=1 kcal/mol)` makes
+/// real↔metal bridge through lj without material-specific scales, while still
+/// never hard-coding eV↔kcal factors in the force-field reader.
 pub struct LammpsUnitConverter {
     reg: UnitRegistry,
 }

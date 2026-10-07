@@ -1,29 +1,4 @@
 //! VASP POSCAR / CONTCAR structure file reader and writer.
-//!
-//! POSCAR is the VASP input format describing a crystalline cell and the atoms
-//! within it. Format outline:
-//!
-//! ```text
-//! line 1   : comment / system name              → frame.meta["title"]
-//! line 2   : global scale factor (Å)
-//! line 3-5 : lattice vectors (row-per-line, Å after scaling)
-//! line 6   : element symbols  (VASP5 only — omitted in VASP4)
-//! line 7   : atom counts per element
-//! line 8?  : "Selective dynamics" (optional)
-//! line N   : "Direct" or "Cartesian"
-//! line N+1+: atom coordinates (3 floats; + T/F flags if selective dynamics)
-//! [opt]    : blank line then "Cartesian"/"Direct" + N velocity rows
-//! ```
-//!
-//! The returned [`Frame`] contains:
-//!
-//! - `"atoms"` block:
-//!   - `x`, `y`, `z` — Cartesian Å (`Direct` files are converted on read).
-//!   - `symbol` — element symbol (omitted when the file did not declare them).
-//!   - `sd_x`, `sd_y`, `sd_z` — selective-dynamics flags, if present.
-//!   - `vx`, `vy`, `vz` — atomic velocities, if present.
-//! - `frame.simbox` — periodic [`SimBox`](molrs::core::SimBox) from the lattice vectors.
-//! - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
 
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
@@ -44,6 +19,31 @@ use crate::io::writer::{FrameWriter, Writer};
 // ---------------------------------------------------------------------------
 
 /// Read one POSCAR file from `path`.
+///
+/// POSCAR is the VASP input format describing a crystalline cell and the atoms
+/// within it. Format outline:
+///
+/// ```text
+/// line 1   : comment / system name              → frame.meta["title"]
+/// line 2   : global scale factor (Å)
+/// line 3-5 : lattice vectors (row-per-line, Å after scaling)
+/// line 6   : element symbols  (VASP5 only — omitted in VASP4)
+/// line 7   : atom counts per element
+/// line 8?  : "Selective dynamics" (optional)
+/// line N   : "Direct" or "Cartesian"
+/// line N+1+: atom coordinates (3 floats; + T/F flags if selective dynamics)
+/// [opt]    : blank line then "Cartesian"/"Direct" + N velocity rows
+/// ```
+///
+/// The returned [`Frame`] contains:
+///
+/// - `"atoms"` block:
+///   - `x`, `y`, `z` — Cartesian Å (`Direct` files are converted on read).
+///   - `symbol` — element symbol (omitted when the file did not declare them).
+///   - `sd_x`, `sd_y`, `sd_z` — selective-dynamics flags, if present.
+///   - `vx`, `vy`, `vz` — atomic velocities, if present.
+/// - `frame.simbox` — periodic [`SimBox`](molrs::core::SimBox) from the lattice vectors.
+/// - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
 pub fn read_vasp_poscar<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))

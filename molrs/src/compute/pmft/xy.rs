@@ -1,25 +1,4 @@
 //! 2-D `(x, y)` Pair Mode Fourier Transform.
-//!
-//! Mirrors `freud.pmft.PmftXy`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXy.cc)).
-//!
-//! For every neighbor pair the bond vector `(dx, dy)` (ignoring `dz`) is
-//! binned into a 2-D histogram on `[−x_max, x_max] × [−y_max, y_max]`.
-//! The result is the **PMF** estimate
-//!
-//! ```text
-//!   PMF(x, y) = −ln( ρ(x, y) / ρ_ref )
-//! ```
-//!
-//! where `ρ_ref` is the bulk number density (`N / (Lx · Ly)` for an
-//! orthorhombic 2-D box). Empty bins return `+∞` for the PMF; the raw
-//! density and per-bin counts are also exposed.
-//!
-//! When per-particle 2-D orientations are supplied via
-//! [`PmftXyArgs::query_orientations`], every bond is rotated into the
-//! query particle's local frame before binning (matches freud's
-//! `query_orientations` argument). Without orientations the analyzer
-//! works in the lab frame.
 
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
@@ -33,6 +12,27 @@ use crate::compute::ComputeError;
 use crate::compute::require_disp;
 
 /// `PmftXy` analyzer.
+///
+/// Mirrors `freud.pmft.PmftXy`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXy.cc)).
+///
+/// For every neighbor pair the bond vector `(dx, dy)` (ignoring `dz`) is
+/// binned into a 2-D histogram on `[−x_max, x_max] × [−y_max, y_max]`.
+/// The result is the **PMF** estimate
+///
+/// ```text
+///   PMF(x, y) = −ln( ρ(x, y) / ρ_ref )
+/// ```
+///
+/// where `ρ_ref` is the bulk number density (`N / (Lx · Ly)` for an
+/// orthorhombic 2-D box). Empty bins return `+∞` for the PMF; the raw
+/// density and per-bin counts are also exposed.
+///
+/// When per-particle 2-D orientations are supplied via
+/// [`PmftXyArgs::query_orientations`], every bond is rotated into the
+/// query particle's local frame before binning (matches freud's
+/// `query_orientations` argument). Without orientations the analyzer
+/// works in the lab frame.
 #[derive(Debug, Clone, Copy)]
 pub struct PmftXy {
     x_max: F,

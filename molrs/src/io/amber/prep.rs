@@ -1,7 +1,4 @@
 //! Amber prep (`.prepi` / `.prep`) residue template read/write.
-//!
-//! Minimal surface (the molpy prep surface):
-//! residue name, atom Z-matrix rows, optional IMPROPER section.
 
 use crate::io::invalid_data;
 use std::fs;
@@ -29,6 +26,9 @@ pub struct PrepAtom {
 }
 
 /// Residue definition in prep format.
+///
+/// The surface is minimal (molpy's prep surface): the residue name, the atom
+/// Z-matrix rows and the optional `IMPROPER` section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrepResidue {
     pub name: String,

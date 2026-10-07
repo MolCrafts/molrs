@@ -1,55 +1,4 @@
 //! AMBER prmtop force-field reader.
-//!
-//! Builds a molrs [`ForceField`] from the parameter tables of an AMBER
-//! topology (prmtop / parm7), and of a CHARMM topology ParmEd's `chamber`
-//! wrote in the same format. Structure/connectivity lives in
-//! [`read_amber_prmtop`](crate::io::read_amber_prmtop); this module owns styles + type params only.
-//! AMBER is read, never written: there is no prmtop writer.
-//!
-//! # Amber FileFormats (I/O) vs the force-field IR
-//!
-//! **Parsing** follows <https://ambermd.org/FileFormats.php> (and the
-//! expanded Swails prmtop appendix for section layout). **Stored potentials**
-//! are the force-field IR's, whose definitions follow LAMMPS — AMBER's own
-//! for every bonded term but for the angle unit:
-//!
-//! | Term | Amber prmtop storage | LAMMPS style | molrs store |
-//! |------|----------------------|--------------|-------------|
-//! | Bond | `RK` in `E = RK·(r−r₀)²` (no ½) | `bond_style harmonic`, same | `bond harmonic`: `k = RK`, `r0` |
-//! | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic`, same | `angle harmonic`: `k = TK`, `theta0` in degrees |
-//! | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad; rows of one quartet and negative-`PN` chains are one torsion | `dihedral_style fourier` | `dihedral periodic`: `k<m>/periodicity<m>/phase<m>` (degrees), terms sorted by periodicity |
-//! | Improper | same form; 4th pointer negative | `improper_style cvff` (one term) | `improper periodic`, AMBER's atom order (centre third); a multi-term improper is one `<quartet>@<n>` type per term |
-//! | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)`; self rows from the diagonal, an explicit cross row for each off-diagonal entry that is not Lorentz–Berthelot (NBFIX) |
-//! | 1-4 scales | `SCEE`/`SCNB` divisors per torsion type (default 1.2 / 2.0) | `special_bonds` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` of the divisor most 1-4 rows carry; the frame's `pairs` carry `coul_scale` / `lj_scale` for the pairs that differ |
-//!
-//! A chamber prmtop (`%FLAG CTITLE`) adds CHARMM's terms:
-//!
-//! | Term | chamber prmtop storage | LAMMPS style | molrs store |
-//! |------|------------------------|--------------|-------------|
-//! | Urey–Bradley | `CHARMM_UREY_BRADLEY*`: `K_ub·(r₁₃ − r_ub)²` per angle | `angle_style charmm` | every angle `angle charmm`: `k = TK`, `theta0`, `k_ub`, `r_ub` (0, 0 for an angle without one) |
-//! | Improper | `CHARMM_IMPROPER*`: `K_ψ·(ψ − ψ₀)²`, centre first | `improper_style harmonic` | `improper harmonic`: `k = K_ψ`, `chi0` in degrees, file order |
-//! | CMAP | `CHARMM_CMAP_*` (`CMAP_*` in an AMBER ff19SB file) | `fix cmap` | `cmap charmm`, one type per map (`cmap_terms`) |
-//! | LJ | `LENNARD_JONES_ACOEF/BCOEF` + `LENNARD_JONES_14_ACOEF/BCOEF` | `lj/charmm/coul/charmm` | `lj/charmm`: `epsilon`, `sigma`, and `epsilon14`, `sigma14` with `one_four = "epsilon14"` when the 1-4 table differs |
-//! | Coulomb | `CHARGE` = `q·√332.0716` | `coul/charmm` | `coul/charmm`: `coulomb = 332.0716` |
-//!
-//! Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
-//! and 10-12 hydrogen-bond (non-zero `HBOND_ACOEF/BCOEF`, a negative ICO)
-//! prmtops; a 1-4 row on a negative-`PN` chain (`one_four_weights`: sander
-//! prices that pair once per chained term); two terms of one improper with
-//! one periodicity; a CHARMM improper with ψ₀ other than 0° or 180° (LAMMPS
-//! prices |ψ|); a Urey–Bradley term that is not on exactly one angle.
-//!
-//! Every phase within 0.004 rad of ±π is ±π exactly, as sander's `rdparm`
-//! takes it (`amber_phase`): tleap writes π as `3.14159400`. A type name
-//! that stands for two LJ classes or masses is split (`atom_type_names`).
-//!
-//! Notes:
-//! - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into its ½k
-//!   kernels; molrs, like LAMMPS, keeps them. Dihedral `PK` is never doubled.
-//! - Swails’ appendix writes bond/angle as ½k and torsion as `k cos(…)`; those
-//!   equations disagree with Amber parameter files, OpenMM’s converter, and
-//!   the FileFormats `parm.dat` section. We follow FileFormats + OpenMM.
-//! - `%COMMENT` lines are skipped. Section order is free (flag map).
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -76,6 +25,57 @@ use molrs::op::{F, Idx};
 type Lj = (f64, f64);
 
 /// Reader for AMBER prmtop force-field parameter tables.
+///
+/// Builds a molrs [`ForceField`] from the parameter tables of an AMBER
+/// topology (prmtop / parm7), and of a CHARMM topology ParmEd's `chamber`
+/// wrote in the same format. Structure/connectivity lives in
+/// [`read_amber_prmtop`](crate::io::read_amber_prmtop); this module owns styles + type params only.
+/// AMBER is read, never written: there is no prmtop writer.
+///
+/// # Amber FileFormats (I/O) vs the force-field IR
+///
+/// **Parsing** follows <https://ambermd.org/FileFormats.php> (and the
+/// expanded Swails prmtop appendix for section layout). **Stored potentials**
+/// are the force-field IR's, whose definitions follow LAMMPS — AMBER's own
+/// for every bonded term but for the angle unit:
+///
+/// | Term | Amber prmtop storage | LAMMPS style | molrs store |
+/// |------|----------------------|--------------|-------------|
+/// | Bond | `RK` in `E = RK·(r−r₀)²` (no ½) | `bond_style harmonic`, same | `bond harmonic`: `k = RK`, `r0` |
+/// | Angle | `TK` in `E = TK·(θ−θ₀)²` (no ½), `θ₀` rad | `angle_style harmonic`, same | `angle harmonic`: `k = TK`, `theta0` in degrees |
+/// | Dihedral | `PK·[1 + cos(nφ − δ)]`, `δ` rad; rows of one quartet and negative-`PN` chains are one torsion | `dihedral_style fourier` | `dihedral periodic`: `k<m>/periodicity<m>/phase<m>` (degrees), terms sorted by periodicity |
+/// | Improper | same form; 4th pointer negative | `improper_style cvff` (one term) | `improper periodic`, AMBER's atom order (centre third); a multi-term improper is one `<quartet>@<n>` type per term |
+/// | LJ | `A/r¹² − B/r⁶` via ICO | `lj/cut` σ/ε | `σ = 2^{−1/6} r_min`, `ε = B²/(4A)`; self rows from the diagonal, an explicit cross row for each off-diagonal entry that is not Lorentz–Berthelot (NBFIX) |
+/// | 1-4 scales | `SCEE`/`SCNB` divisors per torsion type (default 1.2 / 2.0) | `special_bonds` | `coul_14 = 1/SCEE`, `lj_14 = 1/SCNB` of the divisor most 1-4 rows carry; the frame's `pairs` carry `coul_scale` / `lj_scale` for the pairs that differ |
+///
+/// A chamber prmtop (`%FLAG CTITLE`) adds CHARMM's terms:
+///
+/// | Term | chamber prmtop storage | LAMMPS style | molrs store |
+/// |------|------------------------|--------------|-------------|
+/// | Urey–Bradley | `CHARMM_UREY_BRADLEY*`: `K_ub·(r₁₃ − r_ub)²` per angle | `angle_style charmm` | every angle `angle charmm`: `k = TK`, `theta0`, `k_ub`, `r_ub` (0, 0 for an angle without one) |
+/// | Improper | `CHARMM_IMPROPER*`: `K_ψ·(ψ − ψ₀)²`, centre first | `improper_style harmonic` | `improper harmonic`: `k = K_ψ`, `chi0` in degrees, file order |
+/// | CMAP | `CHARMM_CMAP_*` (`CMAP_*` in an AMBER ff19SB file) | `fix cmap` | `cmap charmm`, one type per map (`cmap_terms`) |
+/// | LJ | `LENNARD_JONES_ACOEF/BCOEF` + `LENNARD_JONES_14_ACOEF/BCOEF` | `lj/charmm/coul/charmm` | `lj/charmm`: `epsilon`, `sigma`, and `epsilon14`, `sigma14` with `one_four = "epsilon14"` when the 1-4 table differs |
+/// | Coulomb | `CHARGE` = `q·√332.0716` | `coul/charmm` | `coul/charmm`: `coulomb = 332.0716` |
+///
+/// Refused by name: polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
+/// and 10-12 hydrogen-bond (non-zero `HBOND_ACOEF/BCOEF`, a negative ICO)
+/// prmtops; a 1-4 row on a negative-`PN` chain (`one_four_weights`: sander
+/// prices that pair once per chained term); two terms of one improper with
+/// one periodicity; a CHARMM improper with ψ₀ other than 0° or 180° (LAMMPS
+/// prices |ψ|); a Urey–Bradley term that is not on exactly one angle.
+///
+/// Every phase within 0.004 rad of ±π is ±π exactly, as sander's `rdparm`
+/// takes it (`amber_phase`): tleap writes π as `3.14159400`. A type name
+/// that stands for two LJ classes or masses is split (`atom_type_names`).
+///
+/// Notes:
+/// - OpenMM multiplies Amber bond/angle `RK`/`TK` by 2 when loading into its ½k
+///   kernels; molrs, like LAMMPS, keeps them. Dihedral `PK` is never doubled.
+/// - Swails’ appendix writes bond/angle as ½k and torsion as `k cos(…)`; those
+///   equations disagree with Amber parameter files, OpenMM’s converter, and
+///   the FileFormats `parm.dat` section. We follow FileFormats + OpenMM.
+/// - `%COMMENT` lines are skipped. Section order is free (flag map).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AmberPrmtopForcefieldReader;
 

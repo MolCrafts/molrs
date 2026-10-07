@@ -1,15 +1,4 @@
-//! The union of many spheres — atoms as a region.
-//!
-//! With one sphere per atom of radius `r_vdW + r_probe`, the union is the
-//! solvent-accessible volume of Lee & Richards (*J. Mol. Biol.* 55, 379–400,
-//! 1971): its boundary is the surface a probe of radius `r_probe` sweeps
-//! while rolling over the atoms, and `NotRegion(SphereUnion)` is the space a
-//! probe centre can occupy — the void a packer fills. The numerical form of
-//! that surface is Shrake & Rupley (*J. Mol. Biol.* 79, 351–371, 1973); this
-//! type needs no surface, only the distance to it. The solvent-*excluded*
-//! (Connolly) surface is a different object and is not this type.
-//!
-//! The radii are the caller's: molrs knows centres and lengths, not chemistry.
+//! The union of many spheres — atoms as a region: [`SphereUnion`].
 
 use super::primitives::Region;
 use crate::core::bvh::Bvh;
@@ -73,6 +62,16 @@ impl From<BoxError> for SphereUnionError {
 
 /// The union of spheres `‖x − c_i‖ ≤ r_i`, minimum-image on the periodic axes
 /// of its box.
+///
+/// With one sphere per atom of radius `r_vdW + r_probe`, the union is the
+/// solvent-accessible volume of Lee & Richards (*J. Mol. Biol.* 55, 379–400,
+/// 1971): its boundary is the surface a probe of radius `r_probe` sweeps
+/// while rolling over the atoms, and `NotRegion(SphereUnion)` is the space a
+/// probe centre can occupy — the void a packer fills. The numerical form of
+/// that surface is Shrake & Rupley (*J. Mol. Biol.* 79, 351–371, 1973); this
+/// type needs no surface, only the distance to it. The solvent-*excluded*
+/// (Connolly) surface is a different object and is not this type. The radii are
+/// the caller's: molrs knows centres and lengths, not chemistry.
 ///
 /// `distance(x) = min_{i, s} (‖w(x) + s − c_i‖ − r_i)` over the spheres `i`
 /// and the lattice shifts `s` of the periodic axes (each of `−1, 0, +1` cells),

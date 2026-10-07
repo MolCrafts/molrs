@@ -1,10 +1,4 @@
-//! Dimensionless 1-2 / 1-3 / … / 1-N scale weights indexed by bond distance.
-//!
-//! The table is the Cassandra `Intra_Scaling` shape: slot `k` (0-based) is the
-//! weight at bond distance `k + 1`, and the last slot is the 1-N tail for every
-//! farther hop. LAMMPS `special_bonds` writes only three slots (1-2 / 1-3 / 1-4)
-//! with an implicit tail of `1`; that triple is **not** a legal construction
-//! here until the tail is appended.
+//! Dimensionless 1-2 / 1-3 / … / 1-N scale weights indexed by bond distance: [`BondDistanceWeights`].
 
 use crate::core::MolRsError;
 use crate::op::F;
@@ -16,6 +10,12 @@ use crate::op::F;
 /// There is no [`Default`] — callers write the table;
 /// [`from_exclusion_depth`](Self::from_exclusion_depth) is the named one-liner
 /// for "exempt up to this hop, then 1".
+///
+/// The table is the Cassandra `Intra_Scaling` shape: slot `k` (0-based) is the
+/// weight at bond distance `k + 1`, and the last slot is the 1-N tail for every
+/// farther hop. LAMMPS `special_bonds` writes only three slots (1-2 / 1-3 / 1-4)
+/// with an implicit tail of `1`; that triple is **not** a legal construction
+/// here until the tail is appended.
 ///
 /// This type is not `molrs::ff::forcefield::SpecialBonds`. That force-field
 /// type is gated, holds separate LJ/Coulomb triples, and has no 1-N tail.

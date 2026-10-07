@@ -1,56 +1,4 @@
 //! CHARMM CMAP crossterm (LAMMPS `fix cmap`).
-//!
-//! A crossterm names five atoms `(a, b, c, d, e)` and is priced from an N×N
-//! energy grid over the two dihedrals it spans:
-//!
-//! ```text
-//! φ = dihedral(a, b, c, d),   ψ = dihedral(b, c, d, e),   E = map(φ, ψ)
-//! ```
-//!
-//! # The grid
-//!
-//! A type's `grid` array param is the map, **φ-major**: element `[i][j]` is
-//! the energy at φ = −180° + i·Δ, ψ = −180° + j·Δ, Δ = 360°/N (CHARMM:
-//! N = 24, Δ = 15°) — the order of a LAMMPS / CHARMM `.cmap` file.
-//!
-//! # The interpolation is LAMMPS's
-//!
-//! This is a port of LAMMPS `src/MOLECULE/fix_cmap.cpp`, step for step, so a
-//! molrs energy is the `fix cmap` energy (molrs-python docs, "Force-field
-//! conventions", CMAP):
-//!
-//! 1. **Node derivatives** (`set_map_derivatives`). The map is extended
-//!    periodically to 2N × 2N (φ, ψ ∈ [−360°, 360°)), each φ row gets a
-//!    *natural* cubic spline along ψ; at every node, the row splines give
-//!    `E` and `∂E/∂ψ` down the 2N φ column, which are splined along φ again.
-//!    The node's `∂E/∂φ`, `∂E/∂ψ` and `∂²E/∂φ∂ψ` (per degree) are those
-//!    splines' values and slopes. The doubled map keeps the spline's natural
-//!    end conditions half a period away from every node it is read at.
-//! 2. **Patch** (`bc_coeff`, `bc_interpol`). The cell holding (φ, ψ) gets the
-//!    16 bicubic coefficients from its four corners' values and derivatives
-//!    (Numerical Recipes' `bcucof` weight matrix), and E, ∂E/∂φ, ∂E/∂ψ are
-//!    the bicubic polynomial and its slopes at the point; the slopes are
-//!    converted from per degree to per radian.
-//! 3. **Angles and forces** (`post_force`). φ and ψ are LAMMPS's
-//!    `atan2` dihedrals in degrees, in [−180°, 180°) (180° reads as −180°),
-//!    and the forces are LAMMPS's `dφ/dr`, `dψ/dr` expressions, so the
-//!    crossterm is distributed onto the five atoms exactly as LAMMPS does.
-//!
-//! Two LAMMPS behaviours are kept on purpose, as they change energies:
-//!
-//! - a crossterm whose dihedral planes are degenerate — any of the four
-//!   cross products `|b_ij × b_jk|²` below 10⁻⁴ Å⁴ — contributes **nothing**
-//!   (`fix cmap` skips it);
-//! - the dihedrals are LAMMPS's, which equal molrs's
-//!   [`compute_dihedral`](crate::ff::potential::flat_coords::compute_dihedral)
-//!   (the IUPAC sign) to rounding.
-//!
-//! One is not: LAMMPS fixes N = 24 and at most six maps (`CMAPDIM`,
-//! `CMAPMAX`); this kernel takes any N ≥ 2 and any number of maps, with
-//! Δ = 360°/N. LAMMPS stores the derivative grids rotated by N/2 and finds
-//! their cell from φ wrapped to [0°, 360°); here they are stored unrotated
-//! and read at the value cell — the same numbers, except where a float tie on
-//! a cell edge sent LAMMPS's two lookups to neighbouring cells.
 
 use crate::ff::potential::param_reads;
 use std::collections::HashMap;
@@ -264,6 +212,57 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
 }
 
 /// The CHARMM CMAP crossterm over pre-resolved atoms and maps.
+///
+/// A crossterm names five atoms `(a, b, c, d, e)` and is priced from an N×N
+/// energy grid over the two dihedrals it spans:
+///
+/// ```text
+/// φ = dihedral(a, b, c, d),   ψ = dihedral(b, c, d, e),   E = map(φ, ψ)
+/// ```
+///
+/// # The grid
+///
+/// A type's `grid` array param is the map, **φ-major**: element `[i][j]` is
+/// the energy at φ = −180° + i·Δ, ψ = −180° + j·Δ, Δ = 360°/N (CHARMM:
+/// N = 24, Δ = 15°) — the order of a LAMMPS / CHARMM `.cmap` file.
+///
+/// # The interpolation is LAMMPS's
+///
+/// This is a port of LAMMPS `src/MOLECULE/fix_cmap.cpp`, step for step, so a
+/// molrs energy is the `fix cmap` energy (molrs-python docs, "Force-field
+/// conventions", CMAP):
+///
+/// 1. **Node derivatives** (`set_map_derivatives`). The map is extended
+///    periodically to 2N × 2N (φ, ψ ∈ [−360°, 360°)), each φ row gets a
+///    *natural* cubic spline along ψ; at every node, the row splines give
+///    `E` and `∂E/∂ψ` down the 2N φ column, which are splined along φ again.
+///    The node's `∂E/∂φ`, `∂E/∂ψ` and `∂²E/∂φ∂ψ` (per degree) are those
+///    splines' values and slopes. The doubled map keeps the spline's natural
+///    end conditions half a period away from every node it is read at.
+/// 2. **Patch** (`bc_coeff`, `bc_interpol`). The cell holding (φ, ψ) gets the
+///    16 bicubic coefficients from its four corners' values and derivatives
+///    (Numerical Recipes' `bcucof` weight matrix), and E, ∂E/∂φ, ∂E/∂ψ are
+///    the bicubic polynomial and its slopes at the point; the slopes are
+///    converted from per degree to per radian.
+/// 3. **Angles and forces** (`post_force`). φ and ψ are LAMMPS's
+///    `atan2` dihedrals in degrees, in [−180°, 180°) (180° reads as −180°),
+///    and the forces are LAMMPS's `dφ/dr`, `dψ/dr` expressions, so the
+///    crossterm is distributed onto the five atoms exactly as LAMMPS does.
+///
+/// Two LAMMPS behaviours are kept on purpose, as they change energies:
+///
+/// - a crossterm whose dihedral planes are degenerate — any of the four
+///   cross products `|b_ij × b_jk|²` below 10⁻⁴ Å⁴ — contributes **nothing**
+///   (`fix cmap` skips it);
+/// - the dihedrals are [`op::vec3::dihedral`](crate::op::vec3::dihedral) in
+///   degrees, which is LAMMPS's `atan2` dihedral (the IUPAC sign) to rounding.
+///
+/// One is not: LAMMPS fixes N = 24 and at most six maps (`CMAPDIM`,
+/// `CMAPMAX`); this kernel takes any N ≥ 2 and any number of maps, with
+/// Δ = 360°/N. LAMMPS stores the derivative grids rotated by N/2 and finds
+/// their cell from φ wrapped to [0°, 360°); here they are stored unrotated
+/// and read at the value cell — the same numbers, except where a float tie on
+/// a cell edge sent LAMMPS's two lookups to neighbouring cells.
 pub struct CmapCharmm {
     atoms: [Vec<usize>; 5],
     /// Map index of each crossterm into `maps`.

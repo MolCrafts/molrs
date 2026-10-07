@@ -1,28 +1,4 @@
 //! Grid-smeared 3-D Gaussian density.
-//!
-//! Mirrors `freud.density.GaussianDensity`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/GaussianDensity.cc)).
-//!
-//! Discretises the simulation box into a regular `(nx, ny, nz)` voxel grid
-//! and accumulates a Gaussian of width `σ` centred on each particle:
-//!
-//! ```text
-//!   ρ(r) = Σ_i (2π σ²)^{-3/2} · exp( −|r − r_i|² / (2 σ²) )
-//! ```
-//!
-//! Only voxels within `r_max` of each particle are touched (`r_max = 3 σ`
-//! by default, which captures ≳ 99% of the Gaussian mass). The total
-//! integral `Σ_v ρ_v · ΔV = N_particles` to within the truncation.
-//!
-//! # Conventions
-//!
-//! - Voxel centres at `origin[d] + (i + 0.5) · Lx[d] / nx[d]`, matching
-//!   freud's `GaussianDensity::compute`.
-//! - Currently orthorhombic-box only; triclinic returns
-//!   [`ComputeError::OutOfRange`]. (freud's GaussianDensity has the same
-//!   ortho-only restriction in its `period` calculation.)
-//! - PBC is honoured per-axis via wrap-around grid indexing when the
-//!   corresponding `pbc` flag is true.
 
 use crate::compute::ComputeResult;
 use ndarray::Array3;
@@ -37,6 +13,30 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// Gaussian-density calculator.
+///
+/// Mirrors `freud.density.GaussianDensity`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/GaussianDensity.cc)).
+///
+/// Discretises the simulation box into a regular `(nx, ny, nz)` voxel grid
+/// and accumulates a Gaussian of width `σ` centred on each particle:
+///
+/// ```text
+///   ρ(r) = Σ_i (2π σ²)^{-3/2} · exp( −|r − r_i|² / (2 σ²) )
+/// ```
+///
+/// Only voxels within `r_max` of each particle are touched (`r_max = 3 σ`
+/// by default, which captures ≳ 99% of the Gaussian mass). The total
+/// integral `Σ_v ρ_v · ΔV = N_particles` to within the truncation.
+///
+/// # Conventions
+///
+/// - Voxel centres at `origin[d] + (i + 0.5) · Lx[d] / nx[d]`, matching
+///   freud's `GaussianDensity::compute`.
+/// - Currently orthorhombic-box only; triclinic returns
+///   [`ComputeError::OutOfRange`]. (freud's GaussianDensity has the same
+///   ortho-only restriction in its `period` calculation.)
+/// - PBC is honoured per-axis via wrap-around grid indexing when the
+///   corresponding `pbc` flag is true.
 #[derive(Debug, Clone, Copy)]
 pub struct GaussianDensity {
     nx: usize,

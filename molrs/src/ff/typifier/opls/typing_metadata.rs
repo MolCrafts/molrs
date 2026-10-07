@@ -1,32 +1,5 @@
 //! OPLS-AA typing metadata: per-type SMARTS definition, overrides, explicit
 //! priority and overlay layer.
-//!
-//! This is the typing-metadata half of an OPLS-AA force field, kept separate
-//! from the potential parameters (mirroring
-//! [`MmffAtomProperties`](crate::ff::typifier::mmff::MmffAtomProperties) versus the
-//! [`ForceField`](crate::ff::forcefield::ForceField)). The shipped table is
-//! joined from the molrs-owned rules of
-//! [`crate::ff::params::oplsaa_typing`]; for a caller's own OPLS / CL&P XML, the
-//! potential reader
-//! ([`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader))
-//! drops the `def` / `overrides` / `priority` / `layer` attributes and
-//! [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
-//! reads them into the [`OplsTypingMetadata`] table here.
-//!
-//! # How the fields rank candidates
-//!
-//! The table carries the inputs; the
-//! [`LayeredTypingEngine`](super::layered::LayeredTypingEngine) ranks with
-//! them. `layer` and `overrides` define a pairwise *dominance*: a type on a
-//! higher layer, or on the same layer and overriding another (directly or
-//! transitively), always wins over it. `priority` (absent = 0) only orders
-//! candidates that nothing dominates. No field is folded into a single score.
-//!
-//! # Scope
-//!
-//! Only types carrying a SMARTS `def` participate in automatic SMARTS typing.
-//! Rows with no `def` (the united-atom `opls_001`–`opls_134` block, for one)
-//! can only be assigned by hand or read back from a LAMMPS data file.
 
 use std::collections::HashMap;
 
@@ -64,6 +37,33 @@ pub struct OplsTypeRow {
 /// Read from the same XML as the potential [`ForceField`](crate::ff::forcefield::ForceField)
 /// but kept separate — this table drives SMARTS atom typing, the `ForceField`
 /// drives energy evaluation.
+///
+/// This is the typing-metadata half of an OPLS-AA force field, kept separate
+/// from the potential parameters (mirroring
+/// [`MmffAtomProperties`](crate::ff::typifier::mmff::MmffAtomProperties) versus the
+/// [`ForceField`](crate::ff::forcefield::ForceField)). The shipped table is
+/// joined from the molrs-owned rules of
+/// [`OPLSAA_TYPING`](crate::ff::params::OPLSAA_TYPING); for a caller's own OPLS / CL&P XML, the
+/// potential reader
+/// ([`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader))
+/// drops the `def` / `overrides` / `priority` / `layer` attributes and
+/// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
+/// reads them into the [`OplsTypingMetadata`] table here.
+///
+/// # How the fields rank candidates
+///
+/// The table carries the inputs; the
+/// layered typing engine ranks with
+/// them. `layer` and `overrides` define a pairwise *dominance*: a type on a
+/// higher layer, or on the same layer and overriding another (directly or
+/// transitively), always wins over it. `priority` (absent = 0) only orders
+/// candidates that nothing dominates. No field is folded into a single score.
+///
+/// # Scope
+///
+/// Only types carrying a SMARTS `def` participate in automatic SMARTS typing.
+/// Rows with no `def` (the united-atom `opls_001`–`opls_134` block, for one)
+/// can only be assigned by hand or read back from a LAMMPS data file.
 #[derive(Debug, Clone, Default)]
 pub struct OplsTypingMetadata {
     rows: HashMap<String, OplsTypeRow>,

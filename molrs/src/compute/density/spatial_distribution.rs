@@ -1,29 +1,6 @@
 //! Spatial Distribution Function (SDF): 3-D number density of a target species
 //! in the body-fixed frame of a reference molecule, accumulated over a
 //! trajectory.
-//!
-//! Unlike [`GaussianDensity`](super::gaussian_density::GaussianDensity), which
-//! is lab-frame, the SDF first superimposes each frame's reference atoms onto a
-//! canonical template (Horn superposition, [`crate::op::superpose`]), applies the same
-//! rigid rotation to the surrounding target atoms — after minimum-image
-//! unwrapping relative to the reference centre of mass — and only then bins
-//! them into a grid centred on that COM. The result is the familiar "density
-//! cloud" of *where, relative to this molecule*, a second species sits.
-//!
-//! # reference implementation provenance
-//!
-//! - The reference-frame fix on a 3-atom reference set mirrors the reference implementation's global
-//!   `g_iFixMol` / `g_iFixAtom[0..2]` alignment (the SDF "fix" in `engine.cpp`),
-//!   here realized as a least-squares quaternion superposition so the whole
-//!   reference set — not just three atoms — is used and no BLAS is needed.
-//! - 3-D voxel accumulation follows the reference implementation's `C3DF::AddToBin` (`src/3df.cpp`):
-//!   nearest-voxel deposition, out-of-grid samples skipped.
-//! - The per-voxel mean-orientation field is `Σ value / count` exactly as
-//!   `CSDFMap::Finish` averages its value bins (`src/sdfmap.cpp:418-424`).
-//!
-//! Density normalization: `ρ(voxel) = counts / (n_frames · ΔV)` in Å⁻³; the
-//! optional bulk-normalized `g_SDF = ρ / ρ_bulk` is the SDF analogue of RDF's
-//! `g(r)` and tends to 1 far from the reference for an unstructured target.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -92,6 +69,29 @@ impl GridSpec {
 /// All inputs live on `&self` (the [`Compute::Args`] are `()`): a rigid
 /// reference atom selection and its canonical `template`, a target selection,
 /// the grid, and optional bulk density / orientation vectors.
+///
+/// Unlike [`GaussianDensity`](super::gaussian_density::GaussianDensity), which
+/// is lab-frame, the SDF first superimposes each frame's reference atoms onto a
+/// canonical template (Horn superposition, [`crate::op::superpose`]), applies the same
+/// rigid rotation to the surrounding target atoms — after minimum-image
+/// unwrapping relative to the reference centre of mass — and only then bins
+/// them into a grid centred on that COM. The result is the familiar "density
+/// cloud" of *where, relative to this molecule*, a second species sits.
+///
+/// # reference implementation provenance
+///
+/// - The reference-frame fix on a 3-atom reference set mirrors the reference implementation's global
+///   `g_iFixMol` / `g_iFixAtom[0..2]` alignment (the SDF "fix" in `engine.cpp`),
+///   here realized as a least-squares quaternion superposition so the whole
+///   reference set — not just three atoms — is used and no BLAS is needed.
+/// - 3-D voxel accumulation follows the reference implementation's `C3DF::AddToBin` (`src/3df.cpp`):
+///   nearest-voxel deposition, out-of-grid samples skipped.
+/// - The per-voxel mean-orientation field is `Σ value / count` exactly as
+///   `CSDFMap::Finish` averages its value bins (`src/sdfmap.cpp:418-424`).
+///
+/// Density normalization: `ρ(voxel) = counts / (n_frames · ΔV)` in Å⁻³; the
+/// optional bulk-normalized `g_SDF = ρ / ρ_bulk` is the SDF analogue of RDF's
+/// `g(r)` and tends to 1 far from the reference for an unstructured target.
 #[derive(Debug, Clone)]
 pub struct SpatialDistribution {
     reference: Vec<usize>,

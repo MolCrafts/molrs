@@ -1,27 +1,4 @@
 //! The molrs force-field XML: a [`ForceField`] written style by style.
-//!
-//! One element per style, `<BondStyle>`, `<AngleStyle>`, `<DihedralStyle>`,
-//! `<ImproperStyle>` or `<PairStyle>`, named by its `name` attribute; a pair
-//! style's other numeric attributes are its style parameters. A `<Type>`'s
-//! `name` is stored verbatim and its endpoints are its `class1` … `class4`
-//! attributes (one or two for a pair style); its other numeric attributes are
-//! its parameters:
-//!
-//! ```xml
-//! <ForceField name="TIP3P">
-//!   <BondStyle name="harmonic">
-//!     <Type name="OW-HW" class1="OW" class2="HW" k="450.0" r0="0.9572" />
-//!   </BondStyle>
-//! </ForceField>
-//! ```
-//!
-//! [`read_molrs_xml_forcefield`] reads this layout and nothing else: an element
-//! of another layout (OpenMM's `<HarmonicBondForce>`, MMFF's `<VdWParams>`) is
-//! an error naming the door that reads it. [`write_molrs_xml_forcefield`] is
-//! its inverse: it writes what the reader reads, and refuses by name what the
-//! layout cannot hold (another category, a string or array parameter, a
-//! declared unit system or special-bonds weights, a style parameter of a
-//! bonded style).
 
 use std::fmt::Write as _;
 
@@ -44,6 +21,25 @@ pub fn read_molrs_xml_forcefield(path: &str) -> Result<ForceField, String> {
 }
 
 /// Read a [`ForceField`] from molrs force-field XML text.
+///
+/// The layout has one element per style, `<BondStyle>`, `<AngleStyle>`,
+/// `<DihedralStyle>`, `<ImproperStyle>` or `<PairStyle>`, named by its `name`
+/// attribute; a pair style's other numeric attributes are its style
+/// parameters. A `<Type>`'s `name` is stored verbatim and its endpoints are its
+/// `class1` … `class4` attributes (one or two for a pair style); its other
+/// numeric attributes are its parameters:
+///
+/// ```xml
+/// <ForceField name="TIP3P">
+///   <BondStyle name="harmonic">
+///     <Type name="OW-HW" class1="OW" class2="HW" k="450.0" r0="0.9572" />
+///   </BondStyle>
+/// </ForceField>
+/// ```
+///
+/// This reads that layout and nothing else: an element of another layout
+/// (OpenMM's `<HarmonicBondForce>`, MMFF's `<VdWParams>`) is an error naming
+/// the door that reads it. [`write_molrs_xml_forcefield_str`] is its inverse.
 ///
 /// # Errors
 ///

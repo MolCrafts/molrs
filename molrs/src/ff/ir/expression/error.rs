@@ -1,10 +1,12 @@
-//! The engine's errors. Each names what is wrong — the token and its byte
-//! offset for a syntax error, the identifier for a semantic one — so a
-//! refusal at registration or at compile can say which expression to fix.
+//! The expression engine's errors.
 
 use std::fmt;
 
 /// Why an expression does not parse or does not compile.
+///
+/// Each variant names what is wrong — the token and its byte offset for a
+/// syntax error, the identifier for a semantic one — so a refusal at
+/// registration or at compile can say which expression to fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpressionError {
     // -- syntax (parse) --

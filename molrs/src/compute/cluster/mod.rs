@@ -1,13 +1,4 @@
-//! Distance-based cluster detection and per-cluster properties, ported from
-//! `freud.cluster`.
-//!
-//! | Method | Measures |
-//! |--------|----------|
-//! | [`Cluster`] | connected components on the neighbor graph (BFS); per-particle cluster IDs + sizes |
-//! | [`ClusterProperties`] | per-cluster center of mass, gyration tensor, and radius of gyration (Å) |
-//!
-//! Typical flow: run [`Cluster`] first, feed its [`ClusterResult`] to
-//! [`ClusterProperties`] as `Args`.
+//! Distance-based cluster detection and per-cluster properties.
 
 mod properties;
 mod result;
@@ -28,7 +19,10 @@ use crate::compute::ComputeError;
 ///
 /// Two particles belong to the same cluster if they are connected (directly
 /// or transitively) within the neighbor cutoff. Uses CSR adjacency for
-/// cache-friendly traversal. One [`ClusterResult`] per input frame.
+/// cache-friendly traversal. One [`ClusterResult`] per input frame: the
+/// per-particle cluster IDs and the cluster sizes. Ported from
+/// `freud.cluster.Cluster`; feed its result to [`ClusterProperties`] for the
+/// per-cluster centers, gyration tensors and radii of gyration.
 #[derive(Debug, Clone)]
 pub struct Cluster {
     min_cluster_size: usize,

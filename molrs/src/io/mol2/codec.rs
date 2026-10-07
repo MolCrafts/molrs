@@ -1,32 +1,4 @@
 //! The Tripos MOL2 codec.
-//!
-//! MOL2 is a section-delimited text format used widely in cheminformatics.
-//! Sections are introduced by lines starting with `@<TRIPOS>`. The four
-//! sections this reader honours:
-//!
-//! - `MOLECULE` — name + counts line (`n_atoms n_bonds n_subst n_feat n_sets`)
-//! - `ATOM` — `id name x y z atom_type [subst_id subst_name [charge]]`
-//! - `BOND` — `id atom_i atom_j type` (type ∈ `1 2 3 am ar du un nc`)
-//! - All other sections are tolerantly skipped.
-//!
-//! Multi-molecule files (repeated `@<TRIPOS>MOLECULE` blocks) are supported by
-//! repeated [`Mol2Reader::read`] calls.
-//!
-//! ## Output Frame
-//!
-//! Columns carry the canonical vocabulary names; the MOL2 field each one
-//! comes from is in parentheses.
-//!
-//! - `"atoms"` block: `id` (uint, 1-based; `atom_id`), `name` (str;
-//!   `atom_name`), `x`/`y`/`z` (F), `type` (str; the SYBYL `atom_type`),
-//!   `res_id` (uint; `subst_id`) and `res_name` (str; `subst_name`) when
-//!   present, `charge` (F) when present.
-//! - `"bonds"` block (when present): `atomi`/`atomj` (uint, 0-based indices),
-//!   `type` (str; the SYBYL `bond_type` token `1`, `2`, `ar`, `am`, …), plus
-//!   the chemical `bond_type` / `bond_number` codes it maps onto.
-//! - `frame.meta["title"]` = molecule name.
-//!
-//! The writer reads the same names back.
 
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
@@ -433,6 +405,31 @@ pub fn read_mol2_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
 
 /// `FrameReader`-trait wrapper. Each call returns the next molecule or `None`
 /// at EOF.
+///
+/// MOL2 is a section-delimited text format used widely in cheminformatics.
+/// Sections are introduced by lines starting with `@<TRIPOS>`. The four
+/// sections this reader honours:
+///
+/// - `MOLECULE` — name + counts line (`n_atoms n_bonds n_subst n_feat n_sets`)
+/// - `ATOM` — `id name x y z atom_type [subst_id subst_name [charge]]`
+/// - `BOND` — `id atom_i atom_j type` (type ∈ `1 2 3 am ar du un nc`)
+/// - All other sections are tolerantly skipped.
+///
+/// # Output Frame
+///
+/// Columns carry the canonical vocabulary names; the MOL2 field each one
+/// comes from is in parentheses.
+///
+/// - `"atoms"` block: `id` (uint, 1-based; `atom_id`), `name` (str;
+///   `atom_name`), `x`/`y`/`z` (F), `type` (str; the SYBYL `atom_type`),
+///   `res_id` (uint; `subst_id`) and `res_name` (str; `subst_name`) when
+///   present, `charge` (F) when present.
+/// - `"bonds"` block (when present): `atomi`/`atomj` (uint, 0-based indices),
+///   `type` (str; the SYBYL `bond_type` token `1`, `2`, `ar`, `am`, …), plus
+///   the chemical `bond_type` / `bond_number` codes it maps onto.
+/// - `frame.meta["title"]` = molecule name.
+///
+/// [`Mol2Writer`] reads the same names back.
 pub struct Mol2Reader<R: BufRead> {
     reader: R,
     pending: Option<String>,

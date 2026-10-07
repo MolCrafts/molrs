@@ -1,16 +1,4 @@
 //! Generic distance-binned correlation `⟨A_i · B_j⟩(r)`.
-//!
-//! Mirrors `freud.density.CorrelationFunction`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/CorrelationFunction.cc)).
-//!
-//! Given per-particle real scalar fields `A_i` and `B_j` and a neighbor
-//! list, builds the histogram `⟨A_i · B_j⟩(r)` averaged over all pairs
-//! that fall into each shell `[r, r + dr)`. Empty bins return 0.
-//!
-//! freud also supports complex-valued fields with the convention
-//! `A_i · conj(B_j)`; the real version is implemented here. The complex
-//! variant requires only a handful of extra lines and will follow when the
-//! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -23,6 +11,18 @@ use crate::compute::ComputeError;
 use crate::compute::require_dist_sq;
 
 /// Correlation-function calculator. Stateless container of bin parameters.
+///
+/// Mirrors `freud.density.CorrelationFunction`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/CorrelationFunction.cc)).
+///
+/// Given per-particle real scalar fields `A_i` and `B_j` and a neighbor
+/// list, builds the histogram `⟨A_i · B_j⟩(r)` averaged over all pairs
+/// that fall into each shell `[r, r + dr)`. Empty bins return 0.
+///
+/// freud also supports complex-valued fields with the convention
+/// `A_i · conj(B_j)`; the real version is implemented here. The complex
+/// variant requires only a handful of extra lines and will follow when the
+/// first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 #[derive(Debug, Clone)]
 pub struct CorrelationFunction {
     n_bins: usize,

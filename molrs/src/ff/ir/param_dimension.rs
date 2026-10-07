@@ -1,15 +1,5 @@
 //! The dimension of a force-field parameter: exponents of energy, length,
 //! angle, charge and mass.
-//!
-//! A [`ParamDimension`] is what lets an engine codec convert a parameter it has never
-//! seen: `E/L^2` scales by `energy / length²` whatever the parameter is
-//! called, so the conversion is per dimension, not per style.
-//!
-//! The angle exponent has a meaning of its own (`ff-ir-02-protocol` D2):
-//! exactly `A` is an angle **value**, stored in `units.angle` (the degree in
-//! every preset); a **negative** angle exponent is per **radian** and never
-//! converted (`angle harmonic` `k` is `E/A^2`, LAMMPS's energy/rad²); any
-//! other positive angle exponent is refused ([`ParamDimension::check`]).
 
 use std::fmt;
 use std::str::FromStr;
@@ -21,6 +11,16 @@ use std::str::FromStr;
 /// factors joined by `*`, a factor a symbol with an optional positive power:
 /// `"E/L^2"`, `"E*L/Q^2"`, `"A"`, `"E/A^2"`, `"1/L"`, `"1"`. Each symbol
 /// appears at most once.
+///
+/// A [`ParamDimension`] is what lets an engine codec convert a parameter it has never
+/// seen: `E/L^2` scales by `energy / length²` whatever the parameter is
+/// called, so the conversion is per dimension, not per style.
+///
+/// The angle exponent has a meaning of its own (`ff-ir-02-protocol` D2):
+/// exactly `A` is an angle **value**, stored in `units.angle` (the degree in
+/// every preset); a **negative** angle exponent is per **radian** and never
+/// converted (`angle harmonic` `k` is `E/A^2`, LAMMPS's energy/rad²); any
+/// other positive angle exponent is refused ([`ParamDimension::check`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ParamDimension {
     pub energy: i8,

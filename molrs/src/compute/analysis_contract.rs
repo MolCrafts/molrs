@@ -1,16 +1,5 @@
 //! The analysis contract: the traits every compute, fit and check
 //! implements, and the traits every output carries.
-//!
-//! - [`Compute`] — run an analysis over frames; [`Fit`] — turn a raw curve
-//!   into a derived quantity; [`Check`] → [`Verdict`] — judge a result.
-//! - [`ComputeResult`] — "finalize into a fully-usable value". Multi-frame
-//!   accumulations can return a not-yet-normalized intermediate value from
-//!   `Compute::compute`; `ComputeResult::finalize` turns it into the
-//!   user-facing final form; callers (or the Python-side `Workflow`
-//!   orchestrator) invoke it once after `compute`.
-//! - [`DescriptorRow`] — "flatten into an `&[F]` row". Used by downstream
-//!   matrix consumers such as PCA and k-means to treat any prior Compute
-//!   output as a descriptor row without an extra conversion step.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;

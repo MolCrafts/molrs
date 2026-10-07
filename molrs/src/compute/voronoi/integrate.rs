@@ -1,37 +1,5 @@
 //! Voronoi integration of a volumetric electron density into per-molecule
 //! electromagnetic moments (charge + dipole).
-//!
-//! Ported from the reference implementation's Voronoi charge/dipole gathering (`CalcVoronoiCharges` /
-//! dipole accumulation in `src/gather.cpp`), which assigns each density grid
-//! point to its enclosing radical-Voronoi cell and sums the electronic charge
-//! `q = −∫ρ dV` and dipole `μ = −∫ρ (r − r_ref) dV` per cell, then per molecule.
-//! Cube-frame Bohr/atomic-unit conventions follow `src/bqb_cubeframe.cpp`.
-//!
-//! # Definitions (Thomas, Brehm, Kirchner, *PCCP* 2015, 17, 3207)
-//!
-//! With electron (number) density `ρ ≥ 0`:
-//! - cell electronic population `Nᵃ = ∫_cell ρ dV` (electrons, ≥ 0);
-//! - molecular charge `Q_m = Σ_{a∈m} (Z_a − Nᵃ)`;
-//! - molecular dipole `μ_m = Σ_a Z_a (r_a − r_ref) − Σ_{a∈m} ∫_cell ρ (r − r_ref) dV`,
-//!   with `r_ref` the molecule's centre of nuclear charge (documented;
-//!   origin-dependent for `Q_m ≠ 0`).
-//!
-//! # Cell assignment
-//!
-//! A point `x` belongs to the radical cell of generator `i` iff `i` minimises
-//! the power distance `|x − x_i|² − R_i²` — this argmin **is** the radical
-//! Voronoi partition (same cells [`RadicalVoronoi`](super::RadicalVoronoi)
-//! builds geometrically), so the integrator reuses the generators + radii
-//! directly. Exact ties break to the lowest index (deterministic). All
-//! displacements use the orthorhombic minimum image, so a molecule straddling
-//! the periodic boundary integrates correctly.
-//!
-//! # Units
-//!
-//! Gaussian-cube volumetric values are atomic units (`e/Bohr³`); positions and
-//! voxel vectors are normalised to Å by the cube reader. [`DensityGrid::from_cube_frame`]
-//! converts the density `e/Bohr³ → e/Å³` (divide by `a³`, `a = 0.529177… Å/Bohr`)
-//! so `∫ρ dV` is a pure electron count and `μ` is in `e·Å`.
 
 use molrs::core::Frame;
 use molrs::core::{Mic, SimBox};
@@ -163,6 +131,38 @@ pub struct MolecularMoments {
 impl ComputeResult for MolecularMoments {}
 
 /// Voronoi electron-density integrator.
+///
+/// Ported from the reference implementation's Voronoi charge/dipole gathering (`CalcVoronoiCharges` /
+/// dipole accumulation in `src/gather.cpp`), which assigns each density grid
+/// point to its enclosing radical-Voronoi cell and sums the electronic charge
+/// `q = −∫ρ dV` and dipole `μ = −∫ρ (r − r_ref) dV` per cell, then per molecule.
+/// Cube-frame Bohr/atomic-unit conventions follow `src/bqb_cubeframe.cpp`.
+///
+/// # Definitions (Thomas, Brehm, Kirchner, *PCCP* 2015, 17, 3207)
+///
+/// With electron (number) density `ρ ≥ 0`:
+/// - cell electronic population `Nᵃ = ∫_cell ρ dV` (electrons, ≥ 0);
+/// - molecular charge `Q_m = Σ_{a∈m} (Z_a − Nᵃ)`;
+/// - molecular dipole `μ_m = Σ_a Z_a (r_a − r_ref) − Σ_{a∈m} ∫_cell ρ (r − r_ref) dV`,
+///   with `r_ref` the molecule's centre of nuclear charge (documented;
+///   origin-dependent for `Q_m ≠ 0`).
+///
+/// # Cell assignment
+///
+/// A point `x` belongs to the radical cell of generator `i` iff `i` minimises
+/// the power distance `|x − x_i|² − R_i²` — this argmin **is** the radical
+/// Voronoi partition (same cells [`RadicalVoronoi`](super::RadicalVoronoi)
+/// builds geometrically), so the integrator reuses the generators + radii
+/// directly. Exact ties break to the lowest index (deterministic). All
+/// displacements use the orthorhombic minimum image, so a molecule straddling
+/// the periodic boundary integrates correctly.
+///
+/// # Units
+///
+/// Gaussian-cube volumetric values are atomic units (`e/Bohr³`); positions and
+/// voxel vectors are normalised to Å by the cube reader. [`DensityGrid::from_cube_frame`]
+/// converts the density `e/Bohr³ → e/Å³` (divide by `a³`, `a = 0.529177… Å/Bohr`)
+/// so `∫ρ dV` is a pure electron count and `μ` is in `e·Å`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiIntegration;
 

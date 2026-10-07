@@ -1,15 +1,4 @@
 //! Void (cavity / free-volume) analysis over a radical-Voronoi tessellation.
-//!
-//! Following the reference implementation's domain-style void aggregation (`src/void.cpp`): a set of
-//! **probe generators** is tessellated *together with* the atoms, and the cells
-//! belonging to probes are the unoccupied regions. Face-adjacent probe cells are
-//! merged (connected-components) into cavities; each cavity's volume is the sum
-//! of its probe-cell volumes, and the total void fraction is the probe volume
-//! over the box volume.
-//!
-//! The caller builds one [`VoronoiCells`] over `atoms ++ probes` and passes a
-//! boolean mask marking which generators are probes — keeping this a pure
-//! consumer of the tessellation (no second geometry path).
 
 use molrs::op::F;
 
@@ -29,6 +18,17 @@ pub struct VoronoiVoidResult {
 }
 
 /// Aggregate probe cells of a combined atom+probe tessellation into cavities.
+///
+/// Following the reference implementation's domain-style void aggregation (`src/void.cpp`): a set of
+/// **probe generators** is tessellated *together with* the atoms, and the cells
+/// belonging to probes are the unoccupied regions. Face-adjacent probe cells are
+/// merged (connected-components) into cavities; each cavity's volume is the sum
+/// of its probe-cell volumes, and the total void fraction is the probe volume
+/// over the box volume.
+///
+/// The caller builds one [`VoronoiCells`] over `atoms ++ probes` and passes a
+/// boolean mask marking which generators are probes — keeping this a pure
+/// consumer of the tessellation (no second geometry path).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiVoidAnalysis;
 

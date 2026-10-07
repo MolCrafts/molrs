@@ -1,30 +1,4 @@
 //! Turning a [`ForceField`]'s declarations into evaluable potentials.
-//!
-//! [`PotentialCompiler`] reads one force field and has two doors; the
-//! difference between them is what carries the non-bonded pair list:
-//!
-//! * [`PotentialCompiler::compile`] resolves every pair style against the
-//!   frame's `pairs` block — a fixed list, finite by construction. Right for
-//!   a molecule in free space, and what the geometry optimizer and the
-//!   conformer pipeline use.
-//! * [`PotentialCompiler::compile_typed`] resolves them against the **atoms**,
-//!   so the kernels answer for whatever pairs a neighbour search turns up.
-//!   Right for a periodic box, and what MD uses.
-//!
-//! Both doors price a pair exactly as LAMMPS does: only at `r < cutoff`, the
-//! style's own `cutoff` (and between `inner` and `cutoff` through the
-//! switch of a style that defines one, `lj/charmm`, `coul/charmm`) — the
-//! pairs a list holds beyond it price nothing, 1-4 pairs scaled by
-//! `special_bonds` included. A style that states no cutoff has cutoff ∞
-//! (the spec's default of `lj/cut`, `coul/cut`, …), so a field read from an
-//! engine priced untruncated (OpenMM `NoCutoff`, a prmtop) prices every
-//! listed pair. The 1-4 exceptions kernel (a `dihedral charmm` `w`, per-pair
-//! overrides) is no pair style and is never truncated, as LAMMPS's
-//! `dihedral_style charmm` prices its 1-4 pair at any distance.
-//!
-//! The direction is one-way: a force field **declares** styles, types and
-//! constants, and this module reads them to build kernels. Nothing here is
-//! imported back by [`crate::ff::forcefield`].
 
 use std::borrow::Cow;
 
@@ -65,6 +39,32 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 /// Each style's category and kernel come from the force-field IR registry
 /// ([`crate::ff::ir`]): the process-wide one, unless the compiler was made
 /// with [`with_registry`](Self::with_registry).
+///
+/// [`PotentialCompiler`] reads one force field and has two doors; the
+/// difference between them is what carries the non-bonded pair list:
+///
+/// * [`PotentialCompiler::compile`] resolves every pair style against the
+///   frame's `pairs` block — a fixed list, finite by construction. Right for
+///   a molecule in free space, and what the geometry optimizer and the
+///   conformer pipeline use.
+/// * [`PotentialCompiler::compile_typed`] resolves them against the **atoms**,
+///   so the kernels answer for whatever pairs a neighbour search turns up.
+///   Right for a periodic box, and what MD uses.
+///
+/// Both doors price a pair exactly as LAMMPS does: only at `r < cutoff`, the
+/// style's own `cutoff` (and between `inner` and `cutoff` through the
+/// switch of a style that defines one, `lj/charmm`, `coul/charmm`) — the
+/// pairs a list holds beyond it price nothing, 1-4 pairs scaled by
+/// `special_bonds` included. A style that states no cutoff has cutoff ∞
+/// (the spec's default of `lj/cut`, `coul/cut`, …), so a field read from an
+/// engine priced untruncated (OpenMM `NoCutoff`, a prmtop) prices every
+/// listed pair. The 1-4 exceptions kernel (a `dihedral charmm` `w`, per-pair
+/// overrides) is no pair style and is never truncated, as LAMMPS's
+/// `dihedral_style charmm` prices its 1-4 pair at any distance.
+///
+/// The direction is one-way: a force field **declares** styles, types and
+/// constants, and the compiler reads them to build kernels. Nothing here is
+/// imported back by [`crate::ff::forcefield`].
 #[derive(Debug, Clone, Copy)]
 pub struct PotentialCompiler<'a> {
     ff: &'a ForceField,

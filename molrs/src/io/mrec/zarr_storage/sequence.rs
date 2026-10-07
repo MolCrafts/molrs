@@ -1,128 +1,5 @@
 //! The `trajectory/` frame sequence: one on-disk layout, one encoder, one
 //! decoder.
-//!
-//! # One object, three access forms
-//!
-//! A frame sequence is a single thing. Three Rust names reach it, and they are
-//! named after the **access form**, never after the content:
-//!
-//! - [`Trajectory`] — the **eager in-memory carrier**. Every frame is
-//!   materialized in a `Vec<Frame>`; it does not know a store exists.
-//! - [`MrecReader`] — the **lazy store cursor**. It opens index-only (each
-//!   section's `step_index` and `offset`, plus the schema) and reads **one**
-//!   frame per call. [`MrecReader::to_trajectory`] is the named lazy → eager
-//!   conversion, not a second representation.
-//! - [`MrecWriter`] — the sequence's **streaming producer**. One frame
-//!   per [`append`](MrecWriter::append); complete inner chunks land
-//!   on their own, [`flush`](MrecWriter::flush) commits whatever is
-//!   still buffered.
-//!
-//! The `trajectory/` group on disk is the sequence's serialized form; none of
-//! the three names is a second name for it.
-//!
-//! # Error vocabulary
-//!
-//! Every [`MrecReader`] and [`MrecWriter`] door yields
-//! [`MolRsError`]. The three [`TrajectoryReader`] methods keep `io::Result` and
-//! convert `MolRsError` in at the boundary — **lossy, and deliberately so**:
-//! the trait is the shape every backend shares and must not be captured by one
-//! backend's error type.
-//!
-//! # The layout
-//!
-//! ```text
-//! /                              root group
-//! meta/                          the record's identity document (attributes)
-//! trajectory/                    group; attrs: sequence_schema (the pin),
-//!                                nstep (the commit marker, written last),
-//!                                step_progression / time_progression
-//!                                ({start, stride} while the series is regular)
-//!   step     i64  [nstep]        only once the numbering is not a progression
-//!   time     f64  [nstep]        only when supplied and not a progression
-//!   meta/<key>    typed [nstep] (or [nstep][3|6|9]); attr meta_dtype
-//!   box/                         attrs: cell_defined; vectors / origin /
-//!                                boundary while the cell is fixed from ordinal 0
-//!     step_index u64  [n_updates]     the arrays, once the cell changes
-//!     vectors    f64  [n_updates][3][3]
-//!     origin     f64  [n_updates][3]
-//!     boundary   bool [n_updates][3]
-//!   <block>/                     attrs structural_shape, uniform_rows, dense_updates
-//!     step_index u64  [n_updates]     absent while the block is regular
-//!     offset     u64  [n_updates+1]   CSR row pointer, offset[0] = 0
-//!     <column>        [total_rows][...trailing]
-//!     _validity/                 group; only for columns declared nullable
-//!       <column> bool [total_rows]    one flag per row, no trailing axes
-//! ```
-//!
-//! The layout is built so the common run — a fixed number of atoms moving
-//! every frame, a topology written once, a fixed cell, frames dumped every
-//! `k` steps — costs one array per column and nothing else. A **regular**
-//! block (a fixed, non-zero row count at ordinals `0, 1, 2, …`) writes no
-//! index: its group hints plus any column's length resolve every frame. The
-//! first irregular update materializes `offset` and `step_index`, backfilled
-//! with the regular history, and withdraws the hints for good.
-//!
-//! `offset` is a **CSR** (compressed sparse row) row pointer, the standard way
-//! to store a ragged sequence of row groups in one flat array: entry `j` holds
-//! the index of the first row of update `j`, so update `j` owns the half-open
-//! row range `offset[j]..offset[j+1]`, and the array is therefore one entry
-//! longer than `step_index`.
-//!
-//! # Three states of a block at a frame
-//!
-//! Resolving block `B` at frame `i`: binary-search `B/step_index` for the
-//! largest entry `<= i`, giving update `j`; the frame's rows are
-//! `offset[j]..offset[j+1]`. The three cases are the layout's whole
-//! presence vocabulary:
-//!
-//! - **No entry `<= i`** — the block does not exist at frame `i` (absence).
-//! - **An update of zero rows** — the block is present and empty from that
-//!   frame until its next update. It reads back as an empty [`Block`] with the
-//!   declared columns.
-//! - **A frame that omits a declared block** earns *no* update: the block
-//!   carries forward from its latest update. That is what makes a constant
-//!   topology cost one `step_index` entry whether the producer re-presents it
-//!   every frame (bit-identical content earns no update either) or presents
-//!   it once.
-//!
-//! Once a block has appeared it never becomes absent again; there is no
-//! tombstone. The `box/` section has no `offset` and follows the same
-//! carry-forward rule: once a run writes a cell, every later frame resolves to
-//! the most recent one.
-//!
-//! # Chunks, shards, and the commit
-//!
-//! Every array of the sequence is a Zarr V3 `sharding_indexed` array whose
-//! shard **index sits at the start** of the shard file. An **inner chunk** is
-//! the unit the codec compresses; a **shard** is one file holding a fixed
-//! number of consecutive inner chunks plus that index. With the index at the
-//! start, appending a complete inner chunk is a write at the tail of the file
-//! plus an in-place rewrite of the fixed-size index — nothing is re-encoded and
-//! no dead bytes are left behind.
-//!
-//! Block columns are **frame-aligned**: their inner chunk holds a whole number
-//! of frames of the representative row count (see [`SequenceSchema`]), so a
-//! frame decodes from exactly its own chunk and a commit at a chunk boundary
-//! rewrites nothing. The writer lands complete chunks on its own cadence
-//! ([`MrecWriter::with_flush_every`] overrides it); an explicit
-//! [`flush`](MrecWriter::flush) may land a partially filled trailing
-//! chunk, whose superseded copy then stays in the shard as dead bytes — bounded
-//! by one chunk per column per flush, and never cleaned up, because the
-//! whole-shard rewrite that would clean it is the one write that can destroy
-//! committed data on a crash.
-//!
-//! **Commit protocol.** For every array: data is written, then the array's
-//! `zarr.json` (its new shape) is replaced atomically. Last comes the
-//! trajectory group's metadata — the `nstep` marker and the progression
-//! attributes — in one atomic replace. A reader takes `nstep` from that
-//! attribute; anything a crash left longer is invisible, and a reopened
-//! writer rolls it back before appending. An explicit `flush` / `close` is durable (the touched
-//! files are synced before `step` moves) unless
-//! [`with_durable(false)`](MrecWriter::with_durable) says otherwise;
-//! the automatic chunk-boundary landings are not synced.
-//!
-//! [`Trajectory`]: molrs::core::Trajectory
-//! [`TrajectoryReader`]: crate::io::reader::TrajectoryReader
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU64;
@@ -3598,6 +3475,37 @@ struct PendingFrame {
 /// storage-backed ones arrive as the [`MolRsError::Zarr`] variant carrying a
 /// message that names the block, column, metadata key or array path that
 /// disagreed.
+///
+/// # Chunks, shards, and the commit
+///
+/// Every array of the sequence is a Zarr V3 `sharding_indexed` array whose
+/// shard **index sits at the start** of the shard file. An **inner chunk** is
+/// the unit the codec compresses; a **shard** is one file holding a fixed
+/// number of consecutive inner chunks plus that index. With the index at the
+/// start, appending a complete inner chunk is a write at the tail of the file
+/// plus an in-place rewrite of the fixed-size index — nothing is re-encoded and
+/// no dead bytes are left behind.
+///
+/// Block columns are **frame-aligned**: their inner chunk holds a whole number
+/// of frames of the representative row count (see [`SequenceSchema`]), so a
+/// frame decodes from exactly its own chunk and a commit at a chunk boundary
+/// rewrites nothing. The writer lands complete chunks on its own cadence
+/// ([`MrecWriter::with_flush_every`] overrides it); an explicit
+/// [`flush`](MrecWriter::flush) may land a partially filled trailing
+/// chunk, whose superseded copy then stays in the shard as dead bytes — bounded
+/// by one chunk per column per flush, and never cleaned up, because the
+/// whole-shard rewrite that would clean it is the one write that can destroy
+/// committed data on a crash.
+///
+/// **Commit protocol.** For every array: data is written, then the array's
+/// `zarr.json` (its new shape) is replaced atomically. Last comes the
+/// trajectory group's metadata — the `nstep` marker and the progression
+/// attributes — in one atomic replace. A reader takes `nstep` from that
+/// attribute; anything a crash left longer is invisible, and a reopened
+/// writer rolls it back before appending. An explicit `flush` / `close` is
+/// durable (the touched files are synced before `step` moves) unless
+/// [`with_durable(false)`](MrecWriter::with_durable) says otherwise;
+/// the automatic chunk-boundary landings are not synced.
 pub struct MrecWriter {
     store: ReadableWritableListableStorage,
     /// The concrete positional-write store behind `store`, when this writer
@@ -4946,6 +4854,98 @@ struct ReadState {
 /// boundary — lossy, and deliberately so: the trait is the shape every
 /// trajectory backend shares and must not be captured by one backend's error
 /// type.
+///
+/// # One object, three access forms
+///
+/// A frame sequence is a single thing. Three Rust names reach it, and they are
+/// named after the **access form**, never after the content:
+///
+/// - [`Trajectory`] — the **eager in-memory carrier**. Every frame is
+///   materialized in a `Vec<Frame>`; it does not know a store exists.
+/// - [`MrecReader`] — the **lazy store cursor**. It opens index-only (each
+///   section's `step_index` and `offset`, plus the schema) and reads **one**
+///   frame per call. [`MrecReader::to_trajectory`] is the named lazy → eager
+///   conversion, not a second representation.
+/// - [`MrecWriter`] — the sequence's **streaming producer**. One frame
+///   per [`append`](MrecWriter::append); complete inner chunks land
+///   on their own, [`flush`](MrecWriter::flush) commits whatever is
+///   still buffered.
+///
+/// The `trajectory/` group on disk is the sequence's serialized form; none of
+/// the three names is a second name for it.
+///
+/// # Error vocabulary
+///
+/// Every [`MrecReader`] and [`MrecWriter`] door yields
+/// [`MolRsError`]. The three [`TrajectoryReader`] methods keep `io::Result` and
+/// convert `MolRsError` in at the boundary — **lossy, and deliberately so**:
+/// the trait is the shape every backend shares and must not be captured by one
+/// backend's error type.
+///
+/// # The layout
+///
+/// ```text
+/// /                              root group
+/// meta/                          the record's identity document (attributes)
+/// trajectory/                    group; attrs: sequence_schema (the pin),
+///                                nstep (the commit marker, written last),
+///                                step_progression / time_progression
+///                                ({start, stride} while the series is regular)
+///   step     i64  [nstep]        only once the numbering is not a progression
+///   time     f64  [nstep]        only when supplied and not a progression
+///   meta/<key>    typed [nstep] (or [nstep][3|6|9]); attr meta_dtype
+///   box/                         attrs: cell_defined; vectors / origin /
+///                                boundary while the cell is fixed from ordinal 0
+///     step_index u64  [n_updates]     the arrays, once the cell changes
+///     vectors    f64  [n_updates][3][3]
+///     origin     f64  [n_updates][3]
+///     boundary   bool [n_updates][3]
+///   <block>/                     attrs structural_shape, uniform_rows, dense_updates
+///     step_index u64  [n_updates]     absent while the block is regular
+///     offset     u64  [n_updates+1]   CSR row pointer, offset[0] = 0
+///     <column>        [total_rows][...trailing]
+///     _validity/                 group; only for columns declared nullable
+///       <column> bool [total_rows]    one flag per row, no trailing axes
+/// ```
+///
+/// The layout is built so the common run — a fixed number of atoms moving
+/// every frame, a topology written once, a fixed cell, frames dumped every
+/// `k` steps — costs one array per column and nothing else. A **regular**
+/// block (a fixed, non-zero row count at ordinals `0, 1, 2, …`) writes no
+/// index: its group hints plus any column's length resolve every frame. The
+/// first irregular update materializes `offset` and `step_index`, backfilled
+/// with the regular history, and withdraws the hints for good.
+///
+/// `offset` is a **CSR** (compressed sparse row) row pointer, the standard way
+/// to store a ragged sequence of row groups in one flat array: entry `j` holds
+/// the index of the first row of update `j`, so update `j` owns the half-open
+/// row range `offset[j]..offset[j+1]`, and the array is therefore one entry
+/// longer than `step_index`.
+///
+/// # Three states of a block at a frame
+///
+/// Resolving block `B` at frame `i`: binary-search `B/step_index` for the
+/// largest entry `<= i`, giving update `j`; the frame's rows are
+/// `offset[j]..offset[j+1]`. The three cases are the layout's whole
+/// presence vocabulary:
+///
+/// - **No entry `<= i`** — the block does not exist at frame `i` (absence).
+/// - **An update of zero rows** — the block is present and empty from that
+///   frame until its next update. It reads back as an empty [`Block`] with the
+///   declared columns.
+/// - **A frame that omits a declared block** earns *no* update: the block
+///   carries forward from its latest update. That is what makes a constant
+///   topology cost one `step_index` entry whether the producer re-presents it
+///   every frame (bit-identical content earns no update either) or presents
+///   it once.
+///
+/// Once a block has appeared it never becomes absent again; there is no
+/// tombstone. The `box/` section has no `offset` and follows the same
+/// carry-forward rule: once a run writes a cell, every later frame resolves to
+/// the most recent one.
+///
+/// [`Trajectory`]: molrs::core::Trajectory
+/// [`TrajectoryReader`]: crate::io::reader::TrajectoryReader
 pub struct MrecReader {
     /// The read-only view of the store. A read door keeps no write capability,
     /// which is also what lets a packed `.mrec.zip` be opened through it.

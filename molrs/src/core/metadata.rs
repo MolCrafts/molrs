@@ -1,12 +1,12 @@
-//! Typed frame metadata.
-//!
-//! [`MetaMap`] is the only frame-metadata container.  Every value carries an
-//! exact scalar or fixed-vector dtype; metadata is never routed through a
-//! string representation.
+//! Typed frame metadata: [`MetaMap`] of [`MetaValue`]s.
 
 use indexmap::IndexMap;
 
 /// Exact metadata value stored on a frame.
+///
+/// Every value carries an exact scalar or fixed-vector dtype; metadata is never
+/// routed through a string representation. [`MetaMap`] is the only
+/// frame-metadata container.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MetaValue {
     Bool(bool),

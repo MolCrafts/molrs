@@ -1,36 +1,4 @@
-//! Integrator components: advance an [`MdState`].
-//!
-//! Required pieces go in the constructor — no `bind_*` afterthoughts:
-//!
-//! ```ignore
-//! VelocityVerlet::new(dt, MicPairs::new(ForceTerm::pair(lj), skin).unwrap(), mass, Some(bx))?;
-//! Langevin::new(dt, gamma, kbt, SelfPairedForces::new(potentials), mass, seed, None)?;
-//! ```
-//!
-//! The second argument is a [`ForceProvider`],
-//! and it is the only thing an integrator knows about force fields. The
-//! potential, the neighbour bookkeeping and the periodic régime all live behind
-//! it: [`SelfPairedForces`](super::forces::SelfPairedForces) hands the potential raw coordinates,
-//! [`MicPairs`](super::forces::MicPairs) gives it minimum-image pairs, and
-//! [`GhostPairs`](super::forces::GhostPairs) gives it periodic copies and folds
-//! the forces back. An integrator holds no skin, no halo and no potential, so
-//! adding a fourth way to make a force changes nothing here.
-//!
-//! Two schemes, two types — no `gamma=0` switch:
-//!
-//! * [`VelocityVerlet`] — NVE (B-A-A-B; the two half-drifts stay as separate
-//!   adds).
-//! * [`Langevin`] — BAOAB Langevin (γ > 0). Ordering (Leimkuhler & Matthews):
-//!   B (half kick) → A (half drift) → O (Ornstein-Uhlenbeck) → A → B. The O
-//!   step `v ← c1·v + c2·σ·ξ` with `c1 = e^{-γΔt}`, `c2 = √(1-c1²)`,
-//!   `σ = √(k_BT/m)`.
-//!
-//! Units are the caller's. MD has no unit knowledge.
-//!
-//! Reference:
-//!     Leimkuhler & Matthews, "Rational Construction of Stochastic Numerical
-//!     Methods for Molecular Sampling", Appl. Math. Res. Express 2013.
-//!     <https://doi.org/10.1093/amrx/abs010>
+//! The integrators, [`VelocityVerlet`] and [`Langevin`], that advance an [`MdState`].
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
@@ -223,6 +191,25 @@ impl Stepper {
     }
 }
 
+/// Velocity-Verlet (NVE): B-A-A-B, the two half-drifts kept as separate adds.
+///
+/// Required pieces go in the constructor — no `bind_*` afterthoughts:
+///
+/// ```ignore
+/// VelocityVerlet::new(dt, MicPairs::new(ForceTerm::pair(lj), skin).unwrap(), mass, Some(bx))?;
+/// ```
+///
+/// The second argument is a [`ForceProvider`], and it is the only thing an
+/// integrator knows about force fields. The potential, the neighbour
+/// bookkeeping and the periodic régime all live behind it:
+/// [`SelfPairedForces`](crate::md::SelfPairedForces) hands the potential raw
+/// coordinates, [`MicPairs`](crate::md::MicPairs) gives it minimum-image
+/// pairs, and [`GhostPairs`](crate::md::GhostPairs) gives it periodic copies
+/// and folds the forces back. An integrator holds no skin, no halo and no
+/// potential, so adding a fourth way to make a force changes nothing here.
+///
+/// Two schemes, two types — no `gamma=0` switch: the thermostatted one is
+/// [`Langevin`]. Units are the caller's; MD has no unit knowledge.
 pub struct VelocityVerlet {
     inner: Stepper,
 }
@@ -304,7 +291,20 @@ impl VelocityVerlet {
 
 /// Langevin velocity-Verlet (BAOAB). γ must be strictly positive.
 ///
-/// NVE is [`VelocityVerlet`] — not this type with `gamma=0`.
+/// Ordering (Leimkuhler & Matthews): B (half kick) → A (half drift) → O
+/// (Ornstein-Uhlenbeck) → A → B. The O step is `v ← c1·v + c2·σ·ξ` with
+/// `c1 = e^{-γΔt}`, `c2 = √(1-c1²)`, `σ = √(k_BT/m)`.
+///
+/// ```ignore
+/// Langevin::new(dt, gamma, kbt, SelfPairedForces::new(potentials), mass, seed, None)?;
+/// ```
+///
+/// NVE is [`VelocityVerlet`] — not this type with `gamma=0`. Units are the
+/// caller's; MD has no unit knowledge.
+///
+/// Reference: Leimkuhler & Matthews, "Rational Construction of Stochastic
+/// Numerical Methods for Molecular Sampling", Appl. Math. Res. Express 2013.
+/// <https://doi.org/10.1093/amrx/abs010>
 pub struct Langevin {
     inner: Stepper,
     gamma: F,

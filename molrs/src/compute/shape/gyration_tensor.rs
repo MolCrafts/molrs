@@ -1,11 +1,4 @@
 //! Gyration tensor computation for clusters.
-//!
-//! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
-//! ([`ClusterResult`],
-//! [`ClusterCentersResult`])
-//! pairs — run [`Cluster`](crate::compute::Cluster) and
-//! [`ClusterCenters`](crate::compute::ClusterCenters) first. Output:
-//! per-cluster 3×3 gyration tensors (Å²).
 
 #![allow(clippy::needless_range_loop)]
 
@@ -27,6 +20,13 @@ use molrs::core::{Mic, SimBox};
 /// where `s_i = shortest_vector(center_k, r_i)` is the MIC displacement from
 /// the geometric center. Geometric centers come from the
 /// [`ClusterCentersResult`] arg — this Compute does **not** recompute them.
+///
+/// Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
+/// ([`ClusterResult`],
+/// [`ClusterCentersResult`])
+/// pairs — run [`Cluster`](crate::compute::Cluster) and
+/// [`ClusterCenters`](crate::compute::ClusterCenters) first. Output:
+/// per-cluster 3×3 gyration tensors (Å²).
 #[derive(Debug, Clone, Default)]
 pub struct GyrationTensor;
 

@@ -1,14 +1,4 @@
 //! Shared 1-D histogram with probability-density normalization.
-//!
-//! Ported from the reference implementation `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
-//! commit 220729): linear binning with `m_fFac = resolution / (max - min)`,
-//! out-of-range samples skipped (reference implementation `m_fSkipEntries`), and running
-//! sum / sum-of-squares / input min-max bookkeeping. The probability-density
-//! normalization (∫ p dx = 1) is the molrs reading of the reference implementation's binned
-//! distribution divided by the total entry count and bin width.
-//!
-//! This is the single 1-D histogram implementation behind every geometric
-//! distribution function (ADF, DDF, distance DF).
 
 use molrs::op::F;
 use ndarray::Array1;
@@ -17,6 +7,16 @@ use ndarray::Array1;
 ///
 /// Mirrors the reference implementation `CDF`: samples outside `[min, max]` are counted as skipped
 /// (not binned), and the in-range count plus running statistics are retained.
+///
+/// Ported from the reference implementation `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
+/// commit 220729): linear binning with `m_fFac = resolution / (max - min)`,
+/// out-of-range samples skipped (reference implementation `m_fSkipEntries`), and running
+/// sum / sum-of-squares / input min-max bookkeeping. The probability-density
+/// normalization (∫ p dx = 1) is the molrs reading of the reference implementation's binned
+/// distribution divided by the total entry count and bin width.
+///
+/// This is the single 1-D histogram implementation behind every geometric
+/// distribution function (ADF, DDF, distance DF).
 #[derive(Debug, Clone)]
 pub struct Histogram1d {
     n_bins: usize,

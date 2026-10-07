@@ -1,38 +1,4 @@
 //! antechamber's ring perception and ring classes (`ring.c`).
-//!
-//! antechamber does not use a smallest set of smallest rings. `ringdetect`
-//! walks paths of up to ten ring-capable atoms (C with three or four
-//! connections, N, O and S with at least two, P) from every such atom, through
-//! the first four neighbours of each, and keeps every cycle of 3 … 10 atoms
-//! without a chord (`purify`). Each ring is then classed (`aromatic`) from the
-//! connection counts of its atoms and the current bond types:
-//!
-//! * **AR5** — every atom an sp3 carbon;
-//! * **AR4** — any sp3 carbon, four-connected P, or three-or-more-connected S;
-//! * **AR3** — planar, with a double bond (2 or 8) from a ring atom to an atom
-//!   in no ring;
-//! * **AR1** — a six-ring of six planar atoms whose every N / P carries a
-//!   double or aromatic bond (2, 8, 10);
-//! * **AR2** — any other ring of enough planar atoms;
-//! * **AR4** — what is left.
-//!
-//! For AM1-BCC (`bondtype`, and `atomtype` under the BCC and ABCG2 tables) the
-//! five-ring of an indole-like fused system is then taken out of AR2: every atom
-//! in both a five- and a six-ring and in two AR1 / AR2 rings knocks one off the
-//! AR2 count of every atom of each five-ring it is in (the count can go
-//! negative, as antechamber's does).
-//!
-//! Selenophene's ring holds an Se, which no path may cross, so it is no ring at
-//! all here; cubane's faces are rings, its body diagonals are not.
-//!
-//! # Provenance
-//!
-//! A transcription of AmberTools' `antechamber/ring.c` (`ring_detect_cycle`,
-//! `purify`, `ringproperty`, `aromatic`, `ringdetect`), including its ring table
-//! bookkeeping: `purify` compacts the table without shrinking its count, so a
-//! ring the compaction moved forward can be counted again from its old slot.
-//! That is antechamber's arithmetic, and the `RG` / `AR` counts its atom types
-//! are matched against.
 
 /// One slot of antechamber's ring table (`RING`): the ring's atoms (sorted
 /// ascending once purified) and its size, `0` for an empty or removed slot.
@@ -82,6 +48,40 @@ pub struct RingClasses {
 }
 
 /// antechamber's `ringdetect` on a molecule in index space.
+///
+/// antechamber does not use a smallest set of smallest rings. `ringdetect`
+/// walks paths of up to ten ring-capable atoms (C with three or four
+/// connections, N, O and S with at least two, P) from every such atom, through
+/// the first four neighbours of each, and keeps every cycle of 3 … 10 atoms
+/// without a chord (`purify`). Each ring is then classed (`aromatic`) from the
+/// connection counts of its atoms and the current bond types:
+///
+/// * **AR5** — every atom an sp3 carbon;
+/// * **AR4** — any sp3 carbon, four-connected P, or three-or-more-connected S;
+/// * **AR3** — planar, with a double bond (2 or 8) from a ring atom to an atom
+///   in no ring;
+/// * **AR1** — a six-ring of six planar atoms whose every N / P carries a
+///   double or aromatic bond (2, 8, 10);
+/// * **AR2** — any other ring of enough planar atoms;
+/// * **AR4** — what is left.
+///
+/// For AM1-BCC (`bondtype`, and `atomtype` under the BCC and ABCG2 tables) the
+/// five-ring of an indole-like fused system is then taken out of AR2: every atom
+/// in both a five- and a six-ring and in two AR1 / AR2 rings knocks one off the
+/// AR2 count of every atom of each five-ring it is in (the count can go
+/// negative, as antechamber's does).
+///
+/// Selenophene's ring holds an Se, which no path may cross, so it is no ring at
+/// all here; cubane's faces are rings, its body diagonals are not.
+///
+/// # Provenance
+///
+/// A transcription of AmberTools' `antechamber/ring.c` (`ring_detect_cycle`,
+/// `purify`, `ringproperty`, `aromatic`, `ringdetect`), including its ring table
+/// bookkeeping: `purify` compacts the table without shrinking its count, so a
+/// ring the compaction moved forward can be counted again from its old slot.
+/// That is antechamber's arithmetic, and the `RG` / `AR` counts its atom types
+/// are matched against.
 ///
 /// # Arguments
 ///

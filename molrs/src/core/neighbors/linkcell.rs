@@ -1,23 +1,4 @@
-//! Cell-list neighbor search — O(N) with sorted-particle layout and half-shell
-//! iteration.
-//!
-//! A *cell list* divides the simulation box into a grid of cells at least one
-//! cutoff wide. A particle can then only have neighbors in its own cell and the
-//! 26 cells touching it, which turns the O(N²) all-pairs scan into an O(N) one.
-//!
-//! Particles are *counting-sorted* by cell index — a linear-time sort that
-//! works by tallying how many particles fall in each cell and then scattering
-//! them into the resulting offsets — so that all particles in the same cell
-//! occupy a contiguous slice of `sorted_idx` / `sorted_pos`. This gives
-//! excellent cache locality during the pair search compared to a linked-list
-//! layout.
-//!
-//! Only **occupied cells** are visited during pair search, so sparse systems
-//! (few particles, many cells) pay O(N), not O(n_cells).
-//!
-//! *Half-shell* iteration means each cell only looks at a forward half of its
-//! neighboring cells, so every unordered pair is discovered exactly once and
-//! the resulting table satisfies `i < j`.
+//! Cell-list neighbor search — O(N) with sorted-particle layout and half-shell iteration: [`LinkCell`].
 
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
@@ -59,6 +40,26 @@ const PAR_MIN_CELLS: usize = 64;
 /// Search from outside this crate goes through
 /// [`NeighborList::new`](crate::core::NeighborList::new), which
 /// drives this type.
+///
+/// # Algorithm
+///
+/// A *cell list* divides the simulation box into a grid of cells at least one
+/// cutoff wide. A particle can then only have neighbors in its own cell and the
+/// 26 cells touching it, which turns the O(N²) all-pairs scan into an O(N) one.
+///
+/// Particles are *counting-sorted* by cell index — a linear-time sort that
+/// works by tallying how many particles fall in each cell and then scattering
+/// them into the resulting offsets — so that all particles in the same cell
+/// occupy a contiguous slice of `sorted_idx` / `sorted_pos`. This gives
+/// excellent cache locality during the pair search compared to a linked-list
+/// layout.
+///
+/// Only **occupied cells** are visited during pair search, so sparse systems
+/// (few particles, many cells) pay O(N), not O(n_cells).
+///
+/// *Half-shell* iteration means each cell only looks at a forward half of its
+/// neighboring cells, so every unordered pair is discovered exactly once and
+/// the resulting table satisfies `i < j`.
 #[derive(Debug, Clone)]
 pub struct LinkCell {
     /// Interaction cutoff distance (Å). Also sets the minimum cell width, so

@@ -1,9 +1,4 @@
 //! k-means clustering with k-means++ initialization.
-//!
-//! [`Kmeans`] is a [`Compute`] consuming an upstream [`PcaResult`]. The 2D
-//! PCA scores are interpreted as a row-major `[n_rows, 2]` matrix and
-//! clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
-//! fixed seed.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -22,6 +17,11 @@ pub struct KmeansResult(pub Vec<i32>);
 impl ComputeResult for KmeansResult {}
 
 /// Configuration handle for k-means clustering.
+///
+/// [`Kmeans`] is a [`Compute`] consuming an upstream [`PcaResult`]. The 2D
+/// PCA scores are interpreted as a row-major `[n_rows, 2]` matrix and
+/// clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
+/// fixed seed.
 #[derive(Debug, Clone, Copy)]
 pub struct Kmeans {
     k: usize,

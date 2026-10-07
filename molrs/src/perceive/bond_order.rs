@@ -1,59 +1,4 @@
 //! Bond orders from connectivity alone — antechamber's bond-order perception.
-//!
-//! `antechamber` (its default `-j 4`) runs `bondtype -j full` before it types a
-//! single atom: whatever bond orders the input file states, it throws them away
-//! and re-derives a Kekulé structure from the elements and the connectivity. The
-//! atom types it then assigns — GAFF's `cc` / `cd`, `ce` / `cf`, `nc` / `nd`
-//! colouring above all — follow *that* structure. Where a molecule has more than
-//! one (azulene, cyclooctatetraene, every polycyclic aromatic), the one antechamber
-//! settles on is fixed by its search, not by chemistry, so matching antechamber
-//! means running its search. This module is that search.
-//!
-//! # The algorithm (`bondtype.c`)
-//!
-//! 1. **Atomic penalty scores** (`assignav`). Every atom gets a row of `APS.DAT`:
-//!    the penalty of each total valence 0–7 for its element and connection count,
-//!    with special rows for carboxylate / phosphate / sulfonate / nitro centres,
-//!    `N1-` / `N2+` (azides, diazo), `N3+` / `O1-` / `S1-` (N-oxides) and `C1+`
-//!    (isonitriles). The valence of penalty 0 is the atom's best valence. An atom
-//!    no row covers (B, Se, metals) has no score, and its bonds are *frozen* at
-//!    their input order.
-//! 2. **Valence states** (`process`, `ncsu-penalties.c`). The state of best
-//!    valences is tried first, then every state that raises atoms to valences of
-//!    penalty 1 … `PSCUTOFF` (10), in order of total penalty, and within one
-//!    penalty in the order of Stockmal's partition enumeration and of the
-//!    lexicographic combinations of the atoms (in atom order) holding each
-//!    penalty.
-//! 3. **Bond orders for one state** (`judgebt`, `jbo_induce`, `jbo_iteration`).
-//!    Orders that are forced are induced (an atom with one undecided bond takes
-//!    all its remaining valence on it; an atom whose undecided bonds equal its
-//!    remaining valence takes them all single). When nothing is forced, the first
-//!    undecided bond *in bond order* is tried single, then double, then triple,
-//!    inducing after each, and a violation backtracks to the snapshot taken at the
-//!    start of that sweep. The first state that closes with every valence spent
-//!    wins.
-//!
-//! The answer therefore depends on the order of the atoms (the valence states,
-//! the induction sweep) and of the bonds (the trial order) — exactly as
-//! antechamber's does on the file it reads. A molecule built from a mol2 file
-//! keeps the file's order, so molrs and antechamber see the same input.
-//!
-//! Each residue (`res_id`) is judged on its own, as `bondtype` does: a bond to
-//! another residue is single, and its far end stands in the residue as a capping
-//! hydrogen. (`bondtype` also carries the valence states of one residue into the
-//! next — its state table is never reset — which reads past its arrays; molrs
-//! judges each residue from a fresh table.)
-//!
-//! The graph must carry every hydrogen, as antechamber's input does: the scores
-//! are keyed on the drawn connection count.
-//!
-//! # Provenance
-//!
-//! A transcription of AmberTools' `antechamber/bondtype.c` (`assignav`, `main`'s
-//! residue set-up, `process`, `judgebt`, `jbo_induce`, `jbo_iteration`,
-//! `jbo_score`) and `ncsu-penalties.c`, with the `APS.DAT` rows of AmberTools
-//! 26.1 transcribed in `APS`. Checked against `bondtype -j full` of AmberTools
-//! 26.1 bond for bond.
 
 use std::collections::HashMap;
 
@@ -197,6 +142,61 @@ pub fn assign_bond_orders(mol: &Atomistic) -> Atomistic {
 
 /// Judge the bond orders of `mol` from its connectivity, as antechamber's
 /// `bondtype -j full` does.
+///
+/// `antechamber` (its default `-j 4`) runs `bondtype -j full` before it types a
+/// single atom: whatever bond orders the input file states, it throws them away
+/// and re-derives a Kekulé structure from the elements and the connectivity. The
+/// atom types it then assigns — GAFF's `cc` / `cd`, `ce` / `cf`, `nc` / `nd`
+/// colouring above all — follow *that* structure. Where a molecule has more than
+/// one (azulene, cyclooctatetraene, every polycyclic aromatic), the one antechamber
+/// settles on is fixed by its search, not by chemistry, so matching antechamber
+/// means running its search. This function is that search.
+///
+/// # The algorithm (`bondtype.c`)
+///
+/// 1. **Atomic penalty scores** (`assignav`). Every atom gets a row of `APS.DAT`:
+///    the penalty of each total valence 0–7 for its element and connection count,
+///    with special rows for carboxylate / phosphate / sulfonate / nitro centres,
+///    `N1-` / `N2+` (azides, diazo), `N3+` / `O1-` / `S1-` (N-oxides) and `C1+`
+///    (isonitriles). The valence of penalty 0 is the atom's best valence. An atom
+///    no row covers (B, Se, metals) has no score, and its bonds are *frozen* at
+///    their input order.
+/// 2. **Valence states** (`process`, `ncsu-penalties.c`). The state of best
+///    valences is tried first, then every state that raises atoms to valences of
+///    penalty 1 … `PSCUTOFF` (10), in order of total penalty, and within one
+///    penalty in the order of Stockmal's partition enumeration and of the
+///    lexicographic combinations of the atoms (in atom order) holding each
+///    penalty.
+/// 3. **Bond orders for one state** (`judgebt`, `jbo_induce`, `jbo_iteration`).
+///    Orders that are forced are induced (an atom with one undecided bond takes
+///    all its remaining valence on it; an atom whose undecided bonds equal its
+///    remaining valence takes them all single). When nothing is forced, the first
+///    undecided bond *in bond order* is tried single, then double, then triple,
+///    inducing after each, and a violation backtracks to the snapshot taken at the
+///    start of that sweep. The first state that closes with every valence spent
+///    wins.
+///
+/// The answer therefore depends on the order of the atoms (the valence states,
+/// the induction sweep) and of the bonds (the trial order) — exactly as
+/// antechamber's does on the file it reads. A molecule built from a mol2 file
+/// keeps the file's order, so molrs and antechamber see the same input.
+///
+/// Each residue (`res_id`) is judged on its own, as `bondtype` does: a bond to
+/// another residue is single, and its far end stands in the residue as a capping
+/// hydrogen. (`bondtype` also carries the valence states of one residue into the
+/// next — its state table is never reset — which reads past its arrays; molrs
+/// judges each residue from a fresh table.)
+///
+/// The graph must carry every hydrogen, as antechamber's input does: the scores
+/// are keyed on the drawn connection count.
+///
+/// # Provenance
+///
+/// A transcription of AmberTools' `antechamber/bondtype.c` (`assignav`, `main`'s
+/// residue set-up, `process`, `judgebt`, `jbo_induce`, `jbo_iteration`,
+/// `jbo_score`) and `ncsu-penalties.c`, with the `APS.DAT` rows of AmberTools
+/// 26.1 transcribed in a private table. Checked against `bondtype -j full` of AmberTools
+/// 26.1 bond for bond.
 ///
 /// # Arguments
 ///

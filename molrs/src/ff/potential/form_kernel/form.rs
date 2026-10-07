@@ -1,10 +1,6 @@
 //! The Tier-2 calling conventions (`ff-ir-02-protocol` §3): an energy as a
 //! function of one coordinate ([`ScalarForm`]) or of the atoms' positions
 //! ([`CompoundForm`]), evaluated for a whole batch of terms per call.
-//!
-//! Batch, so that a kernel written in a language with a per-call cost (a
-//! numpy callable, an expression interpreter) pays it once per evaluation
-//! and not once per term.
 
 use ndarray::ArrayViewD;
 
@@ -100,6 +96,10 @@ impl<'a> ParamColumns<'a> {
 ///
 /// The derivative is checked against a central difference of `e`, at
 /// registration on the style's samples or at its first compile.
+///
+/// Batch, so that a kernel written in a language with a per-call cost (a
+/// numpy callable, an expression interpreter) pays it once per evaluation
+/// and not once per term.
 pub trait ScalarForm: Send + Sync + 'static {
     fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de_dq: &mut [F]);
 

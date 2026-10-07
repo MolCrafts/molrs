@@ -1,90 +1,4 @@
-//! AMBER prmtop **structure** reader — AMBER files and the CHARMM files
-//! ParmEd's `chamber` writes in the same format (`%FLAG CTITLE`).
-//!
-//! Parses topology/connectivity into a [`Frame`]. Force-field parameter tables
-//! (harmonic constants, LJ coefficients, Fourier terms) are **not** assembled
-//! here — that is the force-field reader's product
-//! (`io::amber::prmtop_forcefield`), which names its types exactly as the
-//! rows below are labelled (the shared `prmtop_tables` helpers decide both).
-//! What the frame carries of the tables is per-row: which rows a multi-term
-//! improper is. A 1-4 pair's own weight (`SCEE` / `SCNB`) is force-field
-//! meaning: `io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader::read_system`
-//! returns this frame with those `pairs` rows. Structure fields mirror the
-//! historical molpy `AmberPrmtopReader` Frame contract so molpy can thin to a
-//! molrs call.
-//!
-//! ## Output Frame
-//!
-//! - `"atoms"`: `id` (uint, 1-based), `name` (str), `type` (str,
-//!   `prmtop_tables::atom_type_names`: the `AMBER_ATOM_TYPE`, or
-//!   `<type>~<class>` when one type name stands for two LJ classes or masses —
-//!   a chamber file cuts CHARMM's types to four characters), `charge` (float,
-//!   electron units — prmtop value / 18.2223, or / √332.0716 in a chamber
-//!   file), `mass` (float), optional `atomic_number` (uint) + `element`
-//!   (str), `res_id` (uint, 0-based from `RESIDUE_POINTER`), optional
-//!   `res_name` (from `RESIDUE_LABEL`), optional `mol_id` (1-based, from
-//!   `ATOMS_PER_MOLECULE`; never inferred from bonds). Format-local
-//!   unregistered columns — a debt, not a licence, with no cross-format
-//!   consumer: `tree` (`TREE_CHAIN_CLASSIFICATION`), `gb_radius` (Å, `RADII`),
-//!   `gb_screen` (`SCREEN`). Each is absent when its section is absent.
-//! - `"bonds"` / `"angles"`: connectivity (`atomi`/… 0-based uint), `type`
-//!   (the force-field reader's type name: the end atom types in sorted order,
-//!   an angle's vertex in the middle), `type_id` (uint, prmtop index), `id`
-//!   (uint, 1-based row id).
-//! - `"dihedrals"` (propers) / `"impropers"` (negative 4th pointer):
-//!   connectivity, `type` (the force-field reader's type name), `id` and
-//!   `exclude_14` (bool: every merged row had a negative 3rd pointer). A
-//!   proper is one row per torsion, not per cosine term: the prmtop rows of a
-//!   multi-term torsion share one atom quartet and become one row, and the
-//!   prmtop parameter index (`type_id`) is dropped because such a torsion has
-//!   none. An improper keeps its prmtop atom order (centre third); a
-//!   multi-term improper (several rows on its quartet, or a negative-PN chain)
-//!   is one row per term, typed `<quartet>@<n>`, since `improper periodic`
-//!   holds one term. A chamber file's CHARMM impropers (`CHARMM_IMPROPERS`)
-//!   follow, in file order (CHARMM's centre first), `exclude_14` set. Empty
-//!   systems still get schema-typed empty blocks; `"impropers"` is absent when
-//!   there are none.
-//! - `"cmaps"`: `atomi` … `atomm`, `type` — the CMAP crossterms
-//!   (`CHARMM_CMAP_INDEX`, or ff19SB's `CMAP_INDEX`), typed as
-//!   `prmtop_tables::cmap_terms` names them; absent without CMAP.
-//! - `"exclusions"`: `atomi`/`atomj` (uint, 0-based, `atomi < atomj`), the
-//!   Ewald real-space correction set from `NUMBER_EXCLUDED_ATOMS` /
-//!   `EXCLUDED_ATOMS_LIST`. `0` placeholders are dropped. An all-placeholder
-//!   list yields a schema-typed empty block.
-//! - `frame.simbox`: from `BOX_DIMENSIONS` when `IFBOX = 1` (ortho) or
-//!   `IFBOX = 2` (truncated octahedron at `arccos(-1/3)`). An inpcrd box
-//!   takes precedence over a prmtop box: the prmtop cell is the topology-time
-//!   default and the inpcrd cell is the current state. The two readers stay
-//!   independent — callers who read both files apply that rule.
-//! - `frame.meta`: POINTERS raw fields (`NATOM`, …) plus derived
-//!   `n_atoms` / `n_bonds` / `n_angles` / `n_dihedrals` / `n_atomtypes` /
-//!   `n_bondtypes` / `n_angletypes` / `n_dihedraltypes`, optional `title`,
-//!   and optional `radius_set` / `oldbeta` / `solvent_iptres` /
-//!   `solvent_nspm` / `solvent_nspsol`.
-//!
-//! Refused by name: perturbed (`IFPERT > 0`), solvent-cap (`IFCAP > 0`),
-//! `IFBOX = 3`, polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
-//! and 10-12 (negative ICO) files. A 1-4 row on a negative-PN chain or on a
-//! bonded / angle-end pair (sander prices both, the IR has no form) is the
-//! force-field reader's refusal, not this one's.
-//!
-//! ## Encoding notes (Amber [FileFormats](https://ambermd.org/FileFormats.php))
-//!
-//! - Bonded atom pointers are coordinate-array indexes: true 1-based atom number
-//!   is `|N|/3 + 1` (0-based index `|N|/3`). The chamber sections
-//!   (`CHARMM_UREY_BRADLEY`, `CHARMM_IMPROPERS`, `*CMAP_INDEX`) hold 1-based
-//!   atom numbers instead.
-//! - Dihedral: 3rd pointer negative → ignore end-group (1-4) interactions;
-//!   4th pointer negative → improper torsion (whose 1-4 pair sander never
-//!   prices, whatever its 3rd pointer). Atom index uses absolute value.
-//!   Pointer `0` denotes atom 1 — the sign, not the value, carries the flags.
-//! - `ATOM_NAME` / `AMBER_ATOM_TYPE` / residue labels are Fortran `20a4`
-//!   (exactly 4-char fields; may not be whitespace-delimited).
-//! - `%COMMENT` lines are optional and skipped; section order is not required
-//!   to be fixed (we index by `%FLAG` name).
-//! - Charges are Amber internal units (`E = q1*q2/r` with kcal/mol, Å);
-//!   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
-//!   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
+//! AMBER prmtop **structure** reader — AMBER files and the CHARMM files ParmEd's `chamber` writes in the same format (`%FLAG CTITLE`).
 
 use crate::io::invalid_data;
 use std::collections::HashMap;
@@ -1048,6 +962,91 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 // ---------------------------------------------------------------------------
 
 /// Read an AMBER prmtop structure file at `path` into a [`Frame`].
+///
+/// Parses topology/connectivity into a [`Frame`]. Force-field parameter tables
+/// (harmonic constants, LJ coefficients, Fourier terms) are **not** assembled
+/// here — that is the force-field reader's product
+/// ([`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader)), which names its types exactly as the
+/// rows below are labelled (the shared `prmtop_tables` helpers decide both).
+/// What the frame carries of the tables is per-row: which rows a multi-term
+/// improper is. A 1-4 pair's own weight (`SCEE` / `SCNB`) is force-field
+/// meaning: `AmberPrmtopForcefieldReader::read_system`
+/// returns this frame with those `pairs` rows. Structure fields mirror the
+/// historical molpy `AmberPrmtopReader` Frame contract so molpy can thin to a
+/// molrs call.
+///
+/// # Output Frame
+///
+/// - `"atoms"`: `id` (uint, 1-based), `name` (str), `type` (str,
+///   `prmtop_tables::atom_type_names`: the `AMBER_ATOM_TYPE`, or
+///   `<type>~<class>` when one type name stands for two LJ classes or masses —
+///   a chamber file cuts CHARMM's types to four characters), `charge` (float,
+///   electron units — prmtop value / 18.2223, or / √332.0716 in a chamber
+///   file), `mass` (float), optional `atomic_number` (uint) + `element`
+///   (str), `res_id` (uint, 0-based from `RESIDUE_POINTER`), optional
+///   `res_name` (from `RESIDUE_LABEL`), optional `mol_id` (1-based, from
+///   `ATOMS_PER_MOLECULE`; never inferred from bonds). Format-local
+///   unregistered columns — a debt, not a licence, with no cross-format
+///   consumer: `tree` (`TREE_CHAIN_CLASSIFICATION`), `gb_radius` (Å, `RADII`),
+///   `gb_screen` (`SCREEN`). Each is absent when its section is absent.
+/// - `"bonds"` / `"angles"`: connectivity (`atomi`/… 0-based uint), `type`
+///   (the force-field reader's type name: the end atom types in sorted order,
+///   an angle's vertex in the middle), `type_id` (uint, prmtop index), `id`
+///   (uint, 1-based row id).
+/// - `"dihedrals"` (propers) / `"impropers"` (negative 4th pointer):
+///   connectivity, `type` (the force-field reader's type name), `id` and
+///   `exclude_14` (bool: every merged row had a negative 3rd pointer). A
+///   proper is one row per torsion, not per cosine term: the prmtop rows of a
+///   multi-term torsion share one atom quartet and become one row, and the
+///   prmtop parameter index (`type_id`) is dropped because such a torsion has
+///   none. An improper keeps its prmtop atom order (centre third); a
+///   multi-term improper (several rows on its quartet, or a negative-PN chain)
+///   is one row per term, typed `<quartet>@<n>`, since `improper periodic`
+///   holds one term. A chamber file's CHARMM impropers (`CHARMM_IMPROPERS`)
+///   follow, in file order (CHARMM's centre first), `exclude_14` set. Empty
+///   systems still get schema-typed empty blocks; `"impropers"` is absent when
+///   there are none.
+/// - `"cmaps"`: `atomi` … `atomm`, `type` — the CMAP crossterms
+///   (`CHARMM_CMAP_INDEX`, or ff19SB's `CMAP_INDEX`), typed as
+///   `prmtop_tables::cmap_terms` names them; absent without CMAP.
+/// - `"exclusions"`: `atomi`/`atomj` (uint, 0-based, `atomi < atomj`), the
+///   Ewald real-space correction set from `NUMBER_EXCLUDED_ATOMS` /
+///   `EXCLUDED_ATOMS_LIST`. `0` placeholders are dropped. An all-placeholder
+///   list yields a schema-typed empty block.
+/// - `frame.simbox`: from `BOX_DIMENSIONS` when `IFBOX = 1` (ortho) or
+///   `IFBOX = 2` (truncated octahedron at `arccos(-1/3)`). An inpcrd box
+///   takes precedence over a prmtop box: the prmtop cell is the topology-time
+///   default and the inpcrd cell is the current state. The two readers stay
+///   independent — callers who read both files apply that rule.
+/// - `frame.meta`: POINTERS raw fields (`NATOM`, …) plus derived
+///   `n_atoms` / `n_bonds` / `n_angles` / `n_dihedrals` / `n_atomtypes` /
+///   `n_bondtypes` / `n_angletypes` / `n_dihedraltypes`, optional `title`,
+///   and optional `radius_set` / `oldbeta` / `solvent_iptres` /
+///   `solvent_nspm` / `solvent_nspsol`.
+///
+/// Refused by name: perturbed (`IFPERT > 0`), solvent-cap (`IFCAP > 0`),
+/// `IFBOX = 3`, polarizable (`IPOL > 0`), 12-6-4 (`LENNARD_JONES_CCOEF`)
+/// and 10-12 (negative ICO) files. A 1-4 row on a negative-PN chain or on a
+/// bonded / angle-end pair (sander prices both, the IR has no form) is the
+/// force-field reader's refusal, not this one's.
+///
+/// # Encoding notes (Amber [FileFormats](https://ambermd.org/FileFormats.php))
+///
+/// - Bonded atom pointers are coordinate-array indexes: true 1-based atom number
+///   is `|N|/3 + 1` (0-based index `|N|/3`). The chamber sections
+///   (`CHARMM_UREY_BRADLEY`, `CHARMM_IMPROPERS`, `*CMAP_INDEX`) hold 1-based
+///   atom numbers instead.
+/// - Dihedral: 3rd pointer negative → ignore end-group (1-4) interactions;
+///   4th pointer negative → improper torsion (whose 1-4 pair sander never
+///   prices, whatever its 3rd pointer). Atom index uses absolute value.
+///   Pointer `0` denotes atom 1 — the sign, not the value, carries the flags.
+/// - `ATOM_NAME` / `AMBER_ATOM_TYPE` / residue labels are Fortran `20a4`
+///   (exactly 4-char fields; may not be whitespace-delimited).
+/// - `%COMMENT` lines are optional and skipped; section order is not required
+///   to be fixed (we index by `%FLAG` name).
+/// - Charges are Amber internal units (`E = q1*q2/r` with kcal/mol, Å);
+///   we divide by the literal 18.2223 (a chamber file: √332.0716, ParmEd's
+///   `CHARMM_ELECTROSTATIC`) to electron charge for the Frame.
 pub fn read_amber_prmtop<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))

@@ -1,45 +1,4 @@
 //! Legendre reorientational time-correlation functions `C_ℓ(t)`.
-//!
-//! For a molecular **unit vector** `û` (an O–H bond, a dipole axis, …) the
-//! reorientational TCFs are
-//!
-//! ```text
-//!   C_1(t) = ⟨ P_1(û(0)·û(t)) ⟩ = ⟨ cos θ(t) ⟩
-//!   C_2(t) = ⟨ P_2(û(0)·û(t)) ⟩ = ⟨ (3 cos²θ(t) − 1) / 2 ⟩
-//! ```
-//!
-//! averaged over molecules and (multi-)time origins. `C_1` is the dielectric /
-//! IR reorientation observable; the `C_2` decay gives the NMR rotational
-//! correlation time τ_c (Berne & Pecora, *Dynamic Light Scattering*; standard
-//! NMR relaxation theory).
-//!
-//! # Provenance
-//!
-//! Ported from the reference implementation's reorientation-dynamics analyzer `CReorDyn`
-//! (`src/reordyn.cpp`): per-molecule unit vectors (cf. `src/order_vector.cpp`),
-//! the 1st/2nd-Legendre selection (`m_bLegendre2`), and the multi-time-origin
-//! correlation-depth accumulation (`m_iDepth`, the ACF origin sums in
-//! `src/acf.cpp`). The reference implementation evaluates the origin average via FFT; molrs uses the
-//! algebraically-identical **direct** multi-origin double sum here (exact,
-//! O(T²·N)), which the spec permits — the Legendre polynomials are applied to
-//! the dot product *before* averaging, so an FFT factorization does not apply to
-//! `C_2` anyway.
-//!
-//! # Relation to [`RotationalAutocorrelation`](super::rotational_autocorrelation)
-//!
-//! This analyzer is **distinct** from
-//! [`RotationalAutocorrelation`](super::rotational_autocorrelation::RotationalAutocorrelation):
-//! that one is freud's rigid-body **quaternion** autocorrelation (a Wigner-D
-//! character of the full orientation), whereas `LegendreReorientation` correlates
-//! a single molecular **vector** via Legendre polynomials. They measure different
-//! observables and both remain independently usable.
-//!
-//! # Fitting τ_c
-//!
-//! The raw `C_2(t)` curve is `Fit`-ready: feed it to
-//! [`DebyeFit`](crate::compute::DebyeFit) (which fits a normalized
-//! `Φ(t) → τ` decay) to extract the rotational correlation time — no new fitting
-//! code is needed.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -58,6 +17,47 @@ use molrs::core::{Mic, SimBox};
 /// the time-origin stride. The molecular vectors are selected by the `Args`
 /// passed to [`compute`](Compute::compute): one `(a, b)` atom-index pair per
 /// molecule, defining `û = normalize(r_b − r_a)` (minimum-image).
+///
+/// For a molecular **unit vector** `û` (an O–H bond, a dipole axis, …) the
+/// reorientational TCFs are
+///
+/// ```text
+///   C_1(t) = ⟨ P_1(û(0)·û(t)) ⟩ = ⟨ cos θ(t) ⟩
+///   C_2(t) = ⟨ P_2(û(0)·û(t)) ⟩ = ⟨ (3 cos²θ(t) − 1) / 2 ⟩
+/// ```
+///
+/// averaged over molecules and (multi-)time origins. `C_1` is the dielectric /
+/// IR reorientation observable; the `C_2` decay gives the NMR rotational
+/// correlation time τ_c (Berne & Pecora, *Dynamic Light Scattering*; standard
+/// NMR relaxation theory).
+///
+/// # Provenance
+///
+/// Ported from the reference implementation's reorientation-dynamics analyzer `CReorDyn`
+/// (`src/reordyn.cpp`): per-molecule unit vectors (cf. `src/order_vector.cpp`),
+/// the 1st/2nd-Legendre selection (`m_bLegendre2`), and the multi-time-origin
+/// correlation-depth accumulation (`m_iDepth`, the ACF origin sums in
+/// `src/acf.cpp`). The reference implementation evaluates the origin average via FFT; molrs uses the
+/// algebraically-identical **direct** multi-origin double sum here (exact,
+/// O(T²·N)), which the spec permits — the Legendre polynomials are applied to
+/// the dot product *before* averaging, so an FFT factorization does not apply to
+/// `C_2` anyway.
+///
+/// # Relation to [`RotationalAutocorrelation`](crate::compute::RotationalAutocorrelation)
+///
+/// This analyzer is **distinct** from
+/// [`RotationalAutocorrelation`](crate::compute::RotationalAutocorrelation):
+/// that one is freud's rigid-body **quaternion** autocorrelation (a Wigner-D
+/// character of the full orientation), whereas `LegendreReorientation` correlates
+/// a single molecular **vector** via Legendre polynomials. They measure different
+/// observables and both remain independently usable.
+///
+/// # Fitting τ_c
+///
+/// The raw `C_2(t)` curve is `Fit`-ready: feed it to
+/// [`DebyeFit`](crate::compute::DebyeFit) (which fits a normalized
+/// `Φ(t) → τ` decay) to extract the rotational correlation time — no new fitting
+/// code is needed.
 #[derive(Debug, Clone)]
 pub struct LegendreReorientation {
     max_lag: usize,

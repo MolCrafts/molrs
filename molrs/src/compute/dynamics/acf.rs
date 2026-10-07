@@ -1,49 +1,5 @@
 //! Generic time-autocorrelation of a vector series, averaged over every time
 //! origin.
-//!
-//! # The estimator
-//!
-//! For a series `v_i(τ)` of `N` entities carrying a `D`-component vector, over
-//! `T` frames:
-//!
-//! ```text
-//! C(t) = 1 / (N · (T − t)) · Σ_i Σ_{τ=0}^{T−1−t} v_i(τ) · v_i(τ+t)
-//! ```
-//!
-//! The inner product runs over the `D` components, the sum over entities, and
-//! the average over **all** `T − t` time origins — the *unbiased* normalisation.
-//! Dividing by `T` instead (the *biased* form) tapers the tail toward zero; that
-//! is a legitimate choice for spectral work, but it is not this one, and the two
-//! disagree by `(T−t)/T` at every lag. There is deliberately no `biased()`
-//! constructor, for the same reason [`Msd`](crate::compute::Msd) has no per-mode
-//! factory: if a second normalisation is ever wanted it belongs in the argument
-//! bundle, not in a second constructor.
-//!
-//! # Algorithm and references
-//!
-//! Each `(entity, component)` series is correlated by the **Wiener–Khinchin**
-//! route — zero-pad to `≥ 2T`, forward FFT, squared magnitude, inverse FFT —
-//! which gives the *linear* (not circular) autocorrelation in `O(T log T)`
-//! rather than the `O(T · L)` direct double loop. The padding is what makes it
-//! linear; see [`crate::signal::acf_fft`], which this delegates to and which
-//! returns exactly the un-normalised numerator above.
-//!
-//! - Wiener (1930), *Generalized harmonic analysis*; Khinchin (1934).
-//! - Press et al., *Numerical Recipes*, §13.2 — the zero-padded linear-ACF recipe.
-//! - Allen & Tildesley, *Computer Simulation of Liquids*, 2nd ed. (2017), §8.4 —
-//!   the multiple-time-origin correlation estimator for MD, direct and FFT routes.
-//! - Kneller et al., *Comput. Phys. Commun.* **91** (1995) 191 (nMoldyn) — the
-//!   reference implementation of that estimator; the same route
-//!   [`Msd`](crate::compute::Msd) takes in `Window` mode.
-//!
-//! # One estimator
-//!
-//! This is the only multiple-time-origin ACF in molrs. The transport
-//! correlators — [`Vacf`](crate::compute::Vacf) (mean-subtracted, averaged
-//! over degrees of freedom), the dipole ACF of
-//! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) and the current ACF of
-//! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) — are this
-//! function on a reshaped view, not re-derivations.
 
 use ndarray::{Array1, Array3, ArrayView3, s};
 use rustfft::FftPlanner;
@@ -89,6 +45,43 @@ pub type AcfArgs<'a> = (&'a Array3<f64>, usize);
 ///
 /// `max_lag` is clamped to `n_frames − 1`: a longer lag has no time origin to
 /// average over, and returning a `0/0` entry would look like a measurement.
+///
+/// # Normalisation
+///
+/// The inner product runs over the `D` components, the sum over entities, and
+/// the average over **all** `T − t` time origins — the *unbiased* normalisation.
+/// Dividing by `T` instead (the *biased* form) tapers the tail toward zero; that
+/// is a legitimate choice for spectral work, but it is not this one, and the two
+/// disagree by `(T−t)/T` at every lag. There is deliberately no `biased()`
+/// constructor, for the same reason [`Msd`](crate::compute::Msd) has no per-mode
+/// factory: if a second normalisation is ever wanted it belongs in the argument
+/// bundle, not in a second constructor.
+///
+/// # Algorithm and references
+///
+/// Each `(entity, component)` series is correlated by the **Wiener–Khinchin**
+/// route — zero-pad to `≥ 2T`, forward FFT, squared magnitude, inverse FFT —
+/// which gives the *linear* (not circular) autocorrelation in `O(T log T)`
+/// rather than the `O(T · L)` direct double loop. The padding is what makes it
+/// linear; see [`crate::signal::acf_fft`], which this delegates to and which
+/// returns exactly the un-normalised numerator above.
+///
+/// - Wiener (1930), *Generalized harmonic analysis*; Khinchin (1934).
+/// - Press et al., *Numerical Recipes*, §13.2 — the zero-padded linear-ACF recipe.
+/// - Allen & Tildesley, *Computer Simulation of Liquids*, 2nd ed. (2017), §8.4 —
+///   the multiple-time-origin correlation estimator for MD, direct and FFT routes.
+/// - Kneller et al., *Comput. Phys. Commun.* **91** (1995) 191 (nMoldyn) — the
+///   reference implementation of that estimator; the same route
+///   [`Msd`](crate::compute::Msd) takes in `Window` mode.
+///
+/// # The transport correlators
+///
+/// The transport
+/// correlators — [`Vacf`](crate::compute::Vacf) (mean-subtracted, averaged
+/// over degrees of freedom), the dipole ACF of
+/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) and the current ACF of
+/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) — are this
+/// function on a reshaped view, not re-derivations.
 ///
 /// # Errors
 ///

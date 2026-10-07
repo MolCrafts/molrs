@@ -1,43 +1,4 @@
 //! Steinhardt bond-orientational order parameters `q_ℓ` and `w_ℓ`.
-//!
-//! Mirrors `freud.order.Steinhardt`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Steinhardt.cc)).
-//! Implements:
-//!
-//! - per-particle `q_ℓm(i) = (1/N_i) Σ_{j ∈ neigh(i)} Y_ℓm(r̂_ij)`
-//! - the **averaged** variant (``average = true``) `q̄_ℓm(i) = (1/(N_i+1))
-//!   (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j))` — the "near-shell" Steinhardt
-//! - the rotational invariant
-//!   `q_ℓ(i) = √( (4π/(2ℓ+1)) Σ_m |q_ℓm(i)|² )`
-//! - the cubic invariant
-//!   `w_ℓ(i) = Σ_{m1+m2+m3=0} (ℓ ℓ ℓ; m1 m2 m3) q_ℓm1(i) q_ℓm2(i) q_ℓm3(i)`
-//!   with an optional normalization
-//!   `ŵ_ℓ(i) = w_ℓ(i) / ( Σ_m |q_ℓm(i)|² )^{3/2}`.
-//!
-//! # Conventions
-//!
-//! - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
-//!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
-//!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
-//! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
-//!   (see [`molrs::core::ylm_all`]).
-//!
-//! # Required neighbor columns
-//!
-//! `q_ℓm` is built from bond *directions*, so the table must carry the
-//! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::core::NeighborsStorage::FULL). Distances
-//! alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
-//! directions, and reads back `None` rather than zeros, so every entry point
-//! here answers [`ComputeError::BadShape`] naming the missing column instead of
-//! indexing an empty view.
-//!
-//! # References
-//!
-//! - Steinhardt, Nelson & Ronchetti, *Phys. Rev. B* **28**, 784 (1983).
-//! - Lechner & Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — averaged
-//!   variant.
 
 use crate::compute::ComputeResult;
 use std::cmp::Ordering;
@@ -62,8 +23,46 @@ const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 ///
 /// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
 /// per frame, index-aligned with `frames`, each carrying the `disp` column
-/// (Å); see the module docs for why, and
-/// [`ComputeError::BadShape`] for what happens when it is absent.
+/// (Å); see *Required neighbor columns* below.
+///
+/// Mirrors `freud.order.Steinhardt`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Steinhardt.cc)).
+/// Implements:
+///
+/// - per-particle `q_ℓm(i) = (1/N_i) Σ_{j ∈ neigh(i)} Y_ℓm(r̂_ij)`
+/// - the **averaged** variant (``average = true``) `q̄_ℓm(i) = (1/(N_i+1))
+///   (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j))` — the "near-shell" Steinhardt
+/// - the rotational invariant
+///   `q_ℓ(i) = √( (4π/(2ℓ+1)) Σ_m |q_ℓm(i)|² )`
+/// - the cubic invariant
+///   `w_ℓ(i) = Σ_{m1+m2+m3=0} (ℓ ℓ ℓ; m1 m2 m3) q_ℓm1(i) q_ℓm2(i) q_ℓm3(i)`
+///   with an optional normalization
+///   `ŵ_ℓ(i) = w_ℓ(i) / ( Σ_m |q_ℓm(i)|² )^{3/2}`.
+///
+/// # Conventions
+///
+/// - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
+///   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
+///   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
+/// - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
+///   (see [`molrs::core::ylm_all`]).
+///
+/// # Required neighbor columns
+///
+/// `q_ℓm` is built from bond *directions*, so the table must carry the
+/// minimum-image displacement column `disp` (Å) — materialize it with
+/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
+/// or [`FULL`](molrs::core::NeighborsStorage::FULL). Distances
+/// alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
+/// directions, and reads back `None` rather than zeros, so every entry point
+/// here answers [`ComputeError::BadShape`] naming the missing column instead of
+/// indexing an empty view.
+///
+/// # References
+///
+/// - Steinhardt, Nelson & Ronchetti, *Phys. Rev. B* **28**, 784 (1983).
+/// - Lechner & Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — averaged
+///   variant.
 #[derive(Debug, Clone)]
 pub struct Steinhardt {
     l: Vec<u32>,

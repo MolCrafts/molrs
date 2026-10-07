@@ -1,50 +1,4 @@
 //! Gaussian Cube file reader and writer.
-//!
-//! ## File layout
-//!
-//! ```text
-//! <comment line 1>                    ← free text → frame.meta["comment1"]
-//! <comment line 2>                    ← free text → frame.meta["comment2"]
-//! NATOMS  origin_x  origin_y  origin_z
-//!   N1    vx1_x  vx1_y  vx1_z         ← voxel step vector for axis 1
-//!   N2    vx2_x  vx2_y  vx2_z         ← voxel step vector for axis 2
-//!   N3    vx3_x  vx3_y  vx3_z         ← voxel step vector for axis 3
-//!   Z  charge  x  y  z                ← one atom per line
-//!   …
-//! [MO only: NVALS  idx1  idx2  …]     ← present if NATOMS < 0
-//! <val> <val> …                        ← volumetric data, 6 per line
-//! ```
-//!
-//! ## Sign conventions
-//!
-//! - **NATOMS**: negative → MO mode (extra header line after atoms listing
-//!   orbital count and indices).
-//! - **N1** (first voxel count): positive → file units are Bohr; negative →
-//!   Angstrom. The absolute value is the actual grid count.
-//!
-//! ## Data layout
-//!
-//! Volumetric data is stored with x as the outermost loop and z as the
-//! innermost (row-major). This matches the molvis marching-cubes consumer's
-//! `data[ix*ny*nz + iy*nz + iz]` layout, so **no reordering** is needed
-//! (unlike CHGCAR).
-//!
-//! ## Unit handling
-//!
-//! Atom coordinates and the simulation box are normalised to **Å** on read
-//! (Bohr → Å conversion by the private `ANGSTROM_PER_BOHR` constant — the Bohr radius,
-//! 0.529 177 210 67 Å — when the file uses Bohr units).
-//! The original unit system is recorded in `frame.meta["cube_units"]` so
-//! [`write_cube`] can round-trip the file without surprising the
-//! producing toolchain.
-//!
-//! ## Frame contents
-//!
-//! | Block        | Key(s)            | Content                        |
-//! |--------------|-------------------|--------------------------------|
-//! | `"atoms"`    | element, x, y, z, atomic_number, charge | Atom data (Å) |
-//! | `"grid"`     | `"density"` or `"mo_<idx>"`             | Volumetric scalar fields, shape `[nx, ny, nz]` |
-//! | `simbox`     | (h-matrix, origin)                      | Voxel cell × dims, in Å |
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -395,6 +349,52 @@ pub fn write_cube<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<(), MolRsErr
 }
 
 /// Read one Gaussian cube from its text.
+///
+/// # File layout
+///
+/// ```text
+/// <comment line 1>                    ← free text → frame.meta["comment1"]
+/// <comment line 2>                    ← free text → frame.meta["comment2"]
+/// NATOMS  origin_x  origin_y  origin_z
+///   N1    vx1_x  vx1_y  vx1_z         ← voxel step vector for axis 1
+///   N2    vx2_x  vx2_y  vx2_z         ← voxel step vector for axis 2
+///   N3    vx3_x  vx3_y  vx3_z         ← voxel step vector for axis 3
+///   Z  charge  x  y  z                ← one atom per line
+///   …
+/// [MO only: NVALS  idx1  idx2  …]     ← present if NATOMS < 0
+/// <val> <val> …                        ← volumetric data, 6 per line
+/// ```
+///
+/// # Sign conventions
+///
+/// - **NATOMS**: negative → MO mode (extra header line after atoms listing
+///   orbital count and indices).
+/// - **N1** (first voxel count): positive → file units are Bohr; negative →
+///   Angstrom. The absolute value is the actual grid count.
+///
+/// # Data layout
+///
+/// Volumetric data is stored with x as the outermost loop and z as the
+/// innermost (row-major). This matches the molvis marching-cubes consumer's
+/// `data[ix*ny*nz + iy*nz + iz]` layout, so **no reordering** is needed
+/// (unlike CHGCAR).
+///
+/// # Unit handling
+///
+/// Atom coordinates and the simulation box are normalised to **Å** on read
+/// (Bohr → Å conversion by the private `ANGSTROM_PER_BOHR` constant — the Bohr radius,
+/// 0.529 177 210 67 Å — when the file uses Bohr units).
+/// The original unit system is recorded in `frame.meta["cube_units"]` so
+/// [`write_cube`] can round-trip the file without surprising the
+/// producing toolchain.
+///
+/// # Frame contents
+///
+/// | Block        | Key(s)            | Content                        |
+/// |--------------|-------------------|--------------------------------|
+/// | `"atoms"`    | element, x, y, z, atomic_number, charge | Atom data (Å) |
+/// | `"grid"`     | `"density"` or `"mo_<idx>"`             | Volumetric scalar fields, shape `[nx, ny, nz]` |
+/// | `simbox`     | (h-matrix, origin)                      | Voxel cell × dims, in Å |
 pub fn read_cube_str(text: &str) -> Result<Frame, MolRsError> {
     read_frame_from(text.as_bytes())
 }

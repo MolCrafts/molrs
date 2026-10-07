@@ -1,13 +1,5 @@
 //! Placement of template copies: the [`Placer`] trait, the site-anchored
 //! [`SitePlacer`] and the chain-growing [`GrowthPlacer`].
-//!
-//! A placer answers one question for the
-//! [`Assembler`](crate::builder::Assembler): where does this copy go? It
-//! returns the copy's whole pose, a rigid motion ([`Rigid`], `p' = R p + t`)
-//! of the template, and may rotate as well as translate (operator,
-//! 2026-09-28: "the placer puts a fragment at a point"). The assembler calls
-//! it once per site, parents before children, so a placer can build on the
-//! copies already placed.
 
 use std::fmt;
 
@@ -43,6 +35,14 @@ pub struct PlaceSite {
 }
 
 /// Turns one template and one site into the copy's pose.
+///
+/// A placer answers one question for the
+/// [`Assembler`](crate::builder::Assembler): where does this copy go? It
+/// returns the copy's whole pose, a rigid motion ([`Rigid`], `p' = R p + t`)
+/// of the template, and may rotate as well as translate (operator,
+/// 2026-09-28: "the placer puts a fragment at a point"). The assembler calls
+/// it once per site, parents before children, so a placer can build on the
+/// copies already placed.
 ///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.

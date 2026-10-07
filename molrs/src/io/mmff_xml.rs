@@ -1,30 +1,4 @@
-//! The MMFF parameter-set XML: an MMFF force field, and the atom properties
-//! its typifier reads, as `scripts/mmff_to_xml.py` writes them.
-//!
-//! Only the two sections MMFF actually resolves from type rows are tables; its
-//! bonded terms are `ParamSource::PerInstance` styles (the typifier bakes their
-//! parameters into Frame columns), so they are *declared*, through the molrs
-//! force-field XML's style elements, and carry no rows:
-//!
-//! ```xml
-//! <ForceField name="MMFF94">
-//!   <BondStyle name="mmff_bond" />                       <!-- per-instance: no rows -->
-//!   <VdWParams B="0.2" Beta="12.0" DARAD="0.8" DAEPS="0.5">
-//!     <VdW type="1" alpha="1.05" n_eff="2.49" a_i="3.89" g_i="1.282" da="-" />
-//!   </VdWParams>                                         <!-- a real 95-row table -->
-//!   <ElectrostaticParams coulomb="332.0716" dielectric="1.0" delta="0.05" scale14="0.75" />
-//!   <AtomProperties> … </AtomProperties>                 <!-- the typing half -->
-//! </ForceField>
-//! ```
-//!
-//! `<ElectrostaticParams>` declares the **generic** buffered-Coulomb pair style
-//! `coul/cut` — `E = coulomb·qᵢqⱼ / (dielectric·(r + delta))`. MMFF owns no
-//! electrostatic kernel; the section above is a *parameterization* of that one, and
-//! `delta = 0` degenerates it into the textbook Coulomb.
-//!
-//! [`read_mmff_xml_forcefield`] reads the force-field half,
-//! [`read_mmff_xml_params_str`] the typing half (`<AtomProperties>`);
-//! `Mmff94Typifier::from_parts` takes the two.
+//! The MMFF parameter-set XML, as `scripts/mmff_to_xml.py` writes it.
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::mmff::MmffProp;
@@ -41,6 +15,31 @@ pub fn read_mmff_xml_forcefield(path: &str) -> Result<ForceField, String> {
 
 /// Read an MMFF [`ForceField`] from MMFF parameter-set XML text: the declared
 /// styles, `<VdWParams>` and `<ElectrostaticParams>`.
+///
+/// Only the two sections MMFF actually resolves from type rows are tables; its
+/// bonded terms are `ParamSource::PerInstance` styles (the typifier bakes their
+/// parameters into Frame columns), so they are *declared*, through the molrs
+/// force-field XML's style elements, and carry no rows:
+///
+/// ```xml
+/// <ForceField name="MMFF94">
+///   <BondStyle name="mmff_bond" />                       <!-- per-instance: no rows -->
+///   <VdWParams B="0.2" Beta="12.0" DARAD="0.8" DAEPS="0.5">
+///     <VdW type="1" alpha="1.05" n_eff="2.49" a_i="3.89" g_i="1.282" da="-" />
+///   </VdWParams>                                         <!-- a real 95-row table -->
+///   <ElectrostaticParams coulomb="332.0716" dielectric="1.0" delta="0.05" scale14="0.75" />
+///   <AtomProperties> … </AtomProperties>                 <!-- the typing half -->
+/// </ForceField>
+/// ```
+///
+/// `<ElectrostaticParams>` declares the **generic** buffered-Coulomb pair style
+/// `coul/cut` — `E = coulomb·qᵢqⱼ / (dielectric·(r + delta))`. MMFF owns no
+/// electrostatic kernel; the section above is a *parameterization* of that one,
+/// and `delta = 0` degenerates it into the textbook Coulomb.
+///
+/// This reads the force-field half; [`read_mmff_xml_params_str`] reads the
+/// typing half (`<AtomProperties>`), and `Mmff94Typifier::from_parts` takes
+/// the two.
 ///
 /// # Errors
 ///

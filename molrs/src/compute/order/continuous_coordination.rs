@@ -3,26 +3,6 @@
 // Flat qℓm row layout is most readable with explicit (particle, m) indexing.
 #![allow(clippy::needless_range_loop)]
 
-//! Continuous coordination number.
-//!
-//! Mirrors `freud.order.ContinuousCoordination`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/ContinuousCoordination.cc)).
-//!
-//! For each particle `i` we compute a "soft" neighbor count weighted by
-//! how similar each neighbor's Steinhardt qℓm vector is to particle `i`'s.
-//! The weighting function used by freud is
-//!
-//! ```text
-//!   w_ij = ( clamp((d_ij + 1) / 2, 0, 1) )^p
-//! ```
-//!
-//! where `d_ij ∈ [−1, 1]` is the **cosine similarity** of the qℓm vectors
-//! and `p ≥ 1` is the configurable power. Setting `p = 1` reproduces the
-//! "average of `(1 + cos θ)/2`" weighting that smoothly goes from 0
-//! (anti-parallel qℓm) to 1 (identical environments).
-//!
-//! The output is one scalar per particle per requested ℓ value.
-
 use crate::compute::ComputeResult;
 use molrs::core::Complex;
 use molrs::core::FrameAccess;
@@ -35,6 +15,24 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// Continuous-coordination calculator.
+///
+/// Mirrors `freud.order.ContinuousCoordination`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/ContinuousCoordination.cc)).
+///
+/// For each particle `i` we compute a "soft" neighbor count weighted by
+/// how similar each neighbor's Steinhardt qℓm vector is to particle `i`'s.
+/// The weighting function used by freud is
+///
+/// ```text
+///   w_ij = ( clamp((d_ij + 1) / 2, 0, 1) )^p
+/// ```
+///
+/// where `d_ij ∈ [−1, 1]` is the **cosine similarity** of the qℓm vectors
+/// and `p ≥ 1` is the configurable power. Setting `p = 1` reproduces the
+/// "average of `(1 + cos θ)/2`" weighting that smoothly goes from 0
+/// (anti-parallel qℓm) to 1 (identical environments).
+///
+/// The output is one scalar per particle per requested ℓ value.
 #[derive(Debug, Clone)]
 pub struct ContinuousCoordination {
     l: Vec<u32>,

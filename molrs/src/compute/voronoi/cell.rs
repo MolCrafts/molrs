@@ -1,18 +1,4 @@
 //! Per-cell geometry for the radical (Laguerre) Voronoi tessellation.
-//!
-//! A cell is built by *successive half-space clipping* of an initially
-//! box-sized convex polyhedron against the radical plane of each candidate
-//! neighbour — the same plane-cut semantics as voro++'s
-//! `voronoicell_base::nplane` (`src/v_cell.cpp`), with the radical (power)
-//! offset from `radius_poly` (`src/v_rad_option.h`). voro++ maintains an
-//! incremental vertex/edge structure for speed; molrs uses a direct
-//! convex-polyhedron clip (deliberate deviation, documented in
-//! [`super::radical`]) — slower but numerically identical: the cut plane,
-//! the kept half-space, and the resulting face/area/neighbour relations match.
-//!
-//! # References
-//! - Rycroft, *Chaos* **2009**, 19, 041111 (voro++ cell-by-cell algorithm).
-//! - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 
 use crate::op::vec3::{cross, dot, norm, sub};
 use molrs::op::F;
@@ -33,6 +19,20 @@ pub struct VoronoiFace {
 pub const VORONOI_BOUNDARY: i64 = -1;
 
 /// Result of a radical-Voronoi tessellation: one entry per generator.
+///
+/// A cell is built by *successive half-space clipping* of an initially
+/// box-sized convex polyhedron against the radical plane of each candidate
+/// neighbour — the same plane-cut semantics as voro++'s
+/// `voronoicell_base::nplane` (`src/v_cell.cpp`), with the radical (power)
+/// offset from `radius_poly` (`src/v_rad_option.h`). voro++ maintains an
+/// incremental vertex/edge structure for speed; molrs uses a direct
+/// convex-polyhedron clip (deliberate deviation, documented on
+/// [`RadicalVoronoi`](crate::compute::RadicalVoronoi)) — slower but numerically identical: the cut plane,
+/// the kept half-space, and the resulting face/area/neighbour relations match.
+///
+/// # References
+/// - Rycroft, *Chaos* **2009**, 19, 041111 (voro++ cell-by-cell algorithm).
+/// - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 #[derive(Debug, Clone)]
 pub struct VoronoiCells {
     /// Cell volume per generator (Å³).
@@ -201,7 +201,7 @@ impl Poly {
     /// Distance from the generator (the cell-local origin) to the farthest
     /// vertex. A candidate neighbour whose radical plane lies beyond this
     /// radius cannot cut the cell — the basis for the O(N) candidate-search
-    /// termination bound in [`super::radical`].
+    /// termination bound of [`RadicalVoronoi`](crate::compute::RadicalVoronoi).
     pub(crate) fn max_vertex_dist(&self) -> F {
         self.verts
             .iter()

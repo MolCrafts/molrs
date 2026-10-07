@@ -1,8 +1,4 @@
 //! [`Plateau`] — windowed mean (and spread) of a curve.
-//!
-//! Reads a plateau value off a curve by averaging it over a fractional window.
-//! Typical use: reading the Green–Kubo running-integral plateau, where the
-//! transport coefficient is the converged tail value of the running integral.
 
 use ndarray::Array1;
 
@@ -27,6 +23,10 @@ impl ComputeResult for PlateauResult {}
 ///
 /// The window `(a, b)` maps to the inclusive index range
 /// `[round(a·(n−1)), round(b·(n−1))]`, where `n` is the curve length.
+///
+/// Reads a plateau value off a curve by averaging it over a fractional window.
+/// Typical use: reading the Green–Kubo running-integral plateau, where the
+/// transport coefficient is the converged tail value of the running integral.
 #[derive(Debug, Clone, Copy)]
 pub struct Plateau {
     /// `(a, b)` window as fractions of the last index, `0 ≤ a < b ≤ 1`.

@@ -1,12 +1,4 @@
 //! Rotatable bond detection and downstream atom BFS.
-//!
-//! Identifies the rotatable bonds of an [`Atomistic`] and the atoms downstream
-//! of a bond (the set rotated during a torsion move). Connectivity, degree, ring
-//! membership, and traversal are all delegated to the canonical
-//! [`Topology`] snapshot built from the graph
-//! bonds — this module no longer re-implements ring perception or BFS, so the
-//! result tracks `Topology`'s SSSR (correct for fused/bridged rings) instead of
-//! the previous hand-rolled union-find heuristic.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -159,6 +151,10 @@ fn downstream_indices(topo: &Topology, j: usize, k: usize) -> Vec<usize> {
 /// Returns a list of `(NodeId, NodeId)` pairs. A bond is rotatable when its
 /// class is single, both endpoints have degree > 1, and it lies on no ring;
 /// `unknown` decides a bond with no class written.
+///
+/// Connectivity, degree, ring membership and traversal all come from the
+/// canonical [`Topology`] snapshot built from the graph's bonds, so ring
+/// membership is `Topology`'s SSSR (correct for fused and bridged rings).
 pub fn perceive_rotatable_bonds(
     graph: &Atomistic,
     unknown: UnknownBondPolicy,

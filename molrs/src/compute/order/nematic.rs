@@ -3,28 +3,6 @@
 // 3×3 tensor traceless adjustment reads cleanest with index loops.
 #![allow(clippy::needless_range_loop)]
 
-//! Nematic order parameter for a set of unit directors.
-//!
-//! Mirrors `freud.order.Nematic`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Nematic.cc)).
-//!
-//! Given a set of unit vectors `{û_i}` (one per particle), build the
-//! traceless symmetric `Q` tensor
-//!
-//! ```text
-//!   Q_ab = (1/N) Σ_i (3/2) û_{i,a} û_{i,b} − (1/2) δ_ab
-//! ```
-//!
-//! The largest eigenvalue `S` of `Q` is the **nematic order parameter** and
-//! the corresponding eigenvector is the **director** of the system.
-//! `S → 0` corresponds to an isotropic ensemble; `S → 1` is perfect
-//! alignment.
-//!
-//! This analyzer is stateless and takes the directors as an `Args` slice
-//! rather than reading them from a `Frame` block — different applications
-//! choose different conventions (atom orientations vs molecular long axes
-//! vs bond directions), so the caller passes them in directly.
-
 use crate::compute::ComputeResult;
 use crate::op::eigh_sym_3x3;
 
@@ -35,6 +13,26 @@ use crate::compute::Compute;
 use crate::compute::ComputeError;
 
 /// Nematic order parameter calculator.
+///
+/// Mirrors `freud.order.Nematic`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Nematic.cc)).
+///
+/// Given a set of unit vectors `{û_i}` (one per particle), build the
+/// traceless symmetric `Q` tensor
+///
+/// ```text
+///   Q_ab = (1/N) Σ_i (3/2) û_{i,a} û_{i,b} − (1/2) δ_ab
+/// ```
+///
+/// The largest eigenvalue `S` of `Q` is the **nematic order parameter** and
+/// the corresponding eigenvector is the **director** of the system.
+/// `S → 0` corresponds to an isotropic ensemble; `S → 1` is perfect
+/// alignment.
+///
+/// This analyzer is stateless and takes the directors as an `Args` slice
+/// rather than reading them from a `Frame` block — different applications
+/// choose different conventions (atom orientations vs molecular long axes
+/// vs bond directions), so the caller passes them in directly.
 #[derive(Debug, Clone, Default)]
 pub struct Nematic;
 

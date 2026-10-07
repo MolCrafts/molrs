@@ -1,11 +1,4 @@
 //! Radius of gyration computation for clusters.
-//!
-//! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
-//! ([`ClusterResult`],
-//! [`CenterOfMassResult`]) pairs — run
-//! [`Cluster`](crate::compute::Cluster) and
-//! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
-//! per-cluster `R_g` (Å).
 
 use crate::compute::{ComputeResult, DescriptorRow};
 use molrs::core::FrameAccess;
@@ -25,6 +18,13 @@ use molrs::core::{Mic, SimBox};
 /// where `s_i = shortest_vector(com_k, r_i)` is the MIC displacement from the
 /// center of mass. Centers of mass come from the [`CenterOfMassResult`] arg — this
 /// Compute does **not** recompute them.
+///
+/// Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
+/// ([`ClusterResult`],
+/// [`CenterOfMassResult`]) pairs — run
+/// [`Cluster`](crate::compute::Cluster) and
+/// [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
+/// per-cluster `R_g` (Å).
 #[derive(Debug, Clone, Default)]
 pub struct RadiusOfGyration {
     masses: Option<Vec<F>>,

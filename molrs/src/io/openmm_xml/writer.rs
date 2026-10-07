@@ -1,77 +1,4 @@
-//! OpenMM force-field XML writer — the inverse of
-//! [`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader).
-//!
-//! The schema is OpenMM's, and so are the units and factors: lengths in
-//! **nm**, energies in **kJ/mol**, angles and phases in **radians**, harmonic
-//! bonds and angles as `½k(x − x0)²`. The force-field IR follows LAMMPS's
-//! definitions (`real`: Å, kcal/mol, degrees, un-halved `K`), so every value
-//! is converted at this boundary, the exact inverse of the reader's table:
-//!
-//! | IR | OpenMM |
-//! |---|---|
-//! | `bond harmonic` | `<HarmonicBondForce>`, `k` × 2 × 418.4, `r0` ÷ 10 |
-//! | `angle harmonic` | `<HarmonicAngleForce>`, `k` × 2 × 4.184, degrees → radians |
-//! | `angle charmm` | the angle row above plus `<AmoebaUreyBradleyForce><UreyBradley k d>`, `k = k_ub` × 418.4 (OpenMM doubles it into a bond), `d = r_ub` ÷ 10 |
-//! | `dihedral periodic`, `charmm` (`w = 0`), `harmonic` (`k[1 + d cos nφ]`: phase 0° / 180°), `class2` (`k[1 − cos(nφ − φₙ)]`: phase φₙ + 180°) | `<PeriodicTorsionForce><Proper>`, one term per term, `k` × 4.184 |
-//! | `dihedral multi/harmonic`, `nharmonic` (N ≤ 6), `opls` | `<RBTorsionForce><Proper c0..c5>`, `Cₙ = (−1)ⁿ Aₙ₊₁` × 4.184 (OPLS through its series), constant included |
-//! | `improper periodic` | `<PeriodicTorsionForce><Improper>`, stored `(i, j, k, l)` (centre `k`) written `class1 = k, class2 = i, class3 = j, class4 = l`: OpenMM prices `(c2, c3, c1, c4)` |
-//! | `improper harmonic` | `<CustomTorsionForce energy="k*(theta-theta0)^2">` (every `chi0 = 0`, CHARMM's form) or `"k*(abs(theta)-theta0)^2"`, `<Improper>` in the stored order (`charmm` ordering prices it as written), `k` × 4.184 |
-//! | `cmap charmm` | `<CMAPTorsionForce>`, OpenMM `(i, j)` = molrs `[(i + N/2) mod N][(j + N/2) mod N]` × 4.184; identical grids share one `<Map>` |
-//! | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>` (`combining_rule` on the root when not `arithmetic`) |
-//! | `pair lj/charmm`, or `lj/cut` (`arithmetic`) with cross rows | `<LennardJonesForce>` (`sigma14` / `epsilon14`, cross rows as `<NBFixPair>`) beside a `<NonbondedForce>` holding the charges at `epsilon = 0` |
-//!
-//! `special_bonds` `[0, 0, s]` is `coulomb14scale` / `lj14scale`; charges are
-//! the atom types' `charge` (none at all: `<UseAttributeFromResidue
-//! name="charge"/>`). The Coulomb constant is OpenMM's own, as LAMMPS's is
-//! LAMMPS's, and is not written. Placeholder atom types (`type_ = "*"`, the
-//! reader's class stand-ins) are not written; the reader makes them again.
-//! A type without a `class` (a prmtop's, a LAMMPS file's) is written as its
-//! own class, which OpenMM requires of every `<Type>`. An endpoint is written `class{n}` when it is an atom class (or no atom
-//! type names it), `type{n}` when it is the name of a type of another class,
-//! and `""` is OpenMM's wildcard.
-//!
-//! # Refusals
-//!
-//! What OpenMM's tags cannot hold is an `Err` naming it, never a silent
-//! approximation or a skipped style:
-//!
-//! - a style of any category outside the table that has no expression
-//!   (`dihedral mmff_torsion`, …); a style outside the table **with** an
-//!   expression — registered (`bond morse`, `angle class2`, `improper
-//!   cvff`, a style registered at run time) or not (an instance's own
-//!   `expression`) — is written as its category's `Custom*Force`, its
-//!   expression rewritten to OpenMM's units and its parameters in the IR's
-//!   (`xml/custom.rs`: `CustomBondForce`, `CustomAngleForce`,
-//!   `CustomTorsionForce`, `CustomNonbondedForce`, and a `<Script>`-built
-//!   `CustomCompoundBondForce` for a compound category), or refused by name
-//!   where that has no exact form;
-//! - a `dihedral charmm` type with `w ≠ 0` (OpenMM has no per-dihedral 1-4
-//!   weight), an `nharmonic` past N = 6, a harmonic improper with a wildcard
-//!   endpoint (OpenMM then re-orders it), a CMAP of odd size;
-//! - `special_bonds` other than `[0, 0, s]`; a `lj/cut` `mixing` of
-//!   `sixthpower`, or `geometric` with cross rows; a `lj/charmm` mixing other
-//!   than `arithmetic`; a cross row with 1-4 parameters of its own (OpenMM
-//!   prices an NBFIX 1-4 pair with the NBFIX row); a `lj/charmm` with
-//!   `one_four = "regular"` (LAMMPS's semantics) whose types have their own
-//!   1-4 parameters at a non-zero 1-4 weight (OpenMM would use them);
-//! - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; charges beside no
-//!   Coulomb style; charges on some types and not others;
-//! - two types OpenMM's generator would match on the same labels (bonds,
-//!   angles, propers and crossterms either way round, impropers by their
-//!   centre and the other three in any order) with other parameters — a
-//!   proper's periodic and RB forms included, since OpenMM would add both;
-//!   the same row twice is written once;
-//! - a shifted or non-12-6 `lj/cut` (`shift`, `n`, `m`);
-//! - a force field declared in units other than `real`.
-//!
-//! # Whole-FF serialization, not coefficient writing
-//!
-//! molrs has two kinds of force-field writer. This one is **whole-FF
-//! serialization**: it writes every type the [`ForceField`] holds, as a
-//! force-field file, and takes no type labels. **Coefficient writing**
-//! ([`super::lammps::LammpsForcefieldWriter`], LAMMPS only) answers "which coefficients
-//! does this system's data file need" and is keyed by the system's
-//! `TypeLabels`.
+//! OpenMM force-field XML writer.
 
 use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use std::collections::{BTreeSet, HashMap};
@@ -96,6 +23,80 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// in the shortest form that reads back to the same `f64`. Expression
 /// styles are looked up in the process-wide registry, or the one
 /// [`with_registry`](Self::with_registry) gives.
+///
+/// The inverse of [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader).
+///
+/// The schema is OpenMM's, and so are the units and factors: lengths in
+/// **nm**, energies in **kJ/mol**, angles and phases in **radians**, harmonic
+/// bonds and angles as `½k(x − x0)²`. The force-field IR follows LAMMPS's
+/// definitions (`real`: Å, kcal/mol, degrees, un-halved `K`), so every value
+/// is converted at this boundary, the exact inverse of the reader's table:
+///
+/// | IR | OpenMM |
+/// |---|---|
+/// | `bond harmonic` | `<HarmonicBondForce>`, `k` × 2 × 418.4, `r0` ÷ 10 |
+/// | `angle harmonic` | `<HarmonicAngleForce>`, `k` × 2 × 4.184, degrees → radians |
+/// | `angle charmm` | the angle row above plus `<AmoebaUreyBradleyForce><UreyBradley k d>`, `k = k_ub` × 418.4 (OpenMM doubles it into a bond), `d = r_ub` ÷ 10 |
+/// | `dihedral periodic`, `charmm` (`w = 0`), `harmonic` (`k[1 + d cos nφ]`: phase 0° / 180°), `class2` (`k[1 − cos(nφ − φₙ)]`: phase φₙ + 180°) | `<PeriodicTorsionForce><Proper>`, one term per term, `k` × 4.184 |
+/// | `dihedral multi/harmonic`, `nharmonic` (N ≤ 6), `opls` | `<RBTorsionForce><Proper c0..c5>`, `Cₙ = (−1)ⁿ Aₙ₊₁` × 4.184 (OPLS through its series), constant included |
+/// | `improper periodic` | `<PeriodicTorsionForce><Improper>`, stored `(i, j, k, l)` (centre `k`) written `class1 = k, class2 = i, class3 = j, class4 = l`: OpenMM prices `(c2, c3, c1, c4)` |
+/// | `improper harmonic` | `<CustomTorsionForce energy="k*(theta-theta0)^2">` (every `chi0 = 0`, CHARMM's form) or `"k*(abs(theta)-theta0)^2"`, `<Improper>` in the stored order (`charmm` ordering prices it as written), `k` × 4.184 |
+/// | `cmap charmm` | `<CMAPTorsionForce>`, OpenMM `(i, j)` = molrs `[(i + N/2) mod N][(j + N/2) mod N]` × 4.184; identical grids share one `<Map>` |
+/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>` (`combining_rule` on the root when not `arithmetic`) |
+/// | `pair lj/charmm`, or `lj/cut` (`arithmetic`) with cross rows | `<LennardJonesForce>` (`sigma14` / `epsilon14`, cross rows as `<NBFixPair>`) beside a `<NonbondedForce>` holding the charges at `epsilon = 0` |
+///
+/// `special_bonds` `[0, 0, s]` is `coulomb14scale` / `lj14scale`; charges are
+/// the atom types' `charge` (none at all: `<UseAttributeFromResidue
+/// name="charge"/>`). The Coulomb constant is OpenMM's own, as LAMMPS's is
+/// LAMMPS's, and is not written. Placeholder atom types (`type_ = "*"`, the
+/// reader's class stand-ins) are not written; the reader makes them again.
+/// A type without a `class` (a prmtop's, a LAMMPS file's) is written as its
+/// own class, which OpenMM requires of every `<Type>`. An endpoint is written
+/// `class{n}` when it is an atom class (or no atom type names it), `type{n}` when it is the name of a type of another class,
+/// and `""` is OpenMM's wildcard.
+///
+/// # Refusals
+///
+/// What OpenMM's tags cannot hold is an `Err` naming it, never a silent
+/// approximation or a skipped style:
+///
+/// - a style of any category outside the table that has no expression
+///   (`dihedral mmff_torsion`, …); a style outside the table **with** an
+///   expression — registered (`bond morse`, `angle class2`, `improper
+///   cvff`, a style registered at run time) or not (an instance's own
+///   `expression`) — is written as its category's `Custom*Force`, its
+///   expression rewritten to OpenMM's units and its parameters in the IR's
+///   (`xml/custom.rs`: `CustomBondForce`, `CustomAngleForce`,
+///   `CustomTorsionForce`, `CustomNonbondedForce`, and a `<Script>`-built
+///   `CustomCompoundBondForce` for a compound category), or refused by name
+///   where that has no exact form;
+/// - a `dihedral charmm` type with `w ≠ 0` (OpenMM has no per-dihedral 1-4
+///   weight), an `nharmonic` past N = 6, a harmonic improper with a wildcard
+///   endpoint (OpenMM then re-orders it), a CMAP of odd size;
+/// - `special_bonds` other than `[0, 0, s]`; a `lj/cut` `mixing` of
+///   `sixthpower`, or `geometric` with cross rows; a `lj/charmm` mixing other
+///   than `arithmetic`; a cross row with 1-4 parameters of its own (OpenMM
+///   prices an NBFIX 1-4 pair with the NBFIX row); a `lj/charmm` with
+///   `one_four = "regular"` (LAMMPS's semantics) whose types have their own
+///   1-4 parameters at a non-zero 1-4 weight (OpenMM would use them);
+/// - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; charges beside no
+///   Coulomb style; charges on some types and not others;
+/// - two types OpenMM's generator would match on the same labels (bonds,
+///   angles, propers and crossterms either way round, impropers by their
+///   centre and the other three in any order) with other parameters — a
+///   proper's periodic and RB forms included, since OpenMM would add both;
+///   the same row twice is written once;
+/// - a shifted or non-12-6 `lj/cut` (`shift`, `n`, `m`);
+/// - a force field declared in units other than `real`.
+///
+/// # Whole-FF serialization, not coefficient writing
+///
+/// molrs has two kinds of force-field writer. This one is **whole-FF
+/// serialization**: it writes every type the [`ForceField`] holds, as a
+/// force-field file, and takes no type labels. **Coefficient writing**
+/// ([`LammpsForcefieldWriter`](crate::io::lammps::LammpsForcefieldWriter), LAMMPS only) answers "which coefficients
+/// does this system's data file need" and is keyed by the system's
+/// `TypeLabels`.
 #[derive(Debug, Clone, Default)]
 pub struct OpenmmXmlWriter {
     pub precision: Option<usize>,

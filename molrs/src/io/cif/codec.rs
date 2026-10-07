@@ -1,27 +1,4 @@
 //! The Crystallographic Information File (CIF) codec — MVP subset.
-//!
-//! This implementation covers the CIF subset most molecular work needs:
-//!
-//! - `data_<id>` blocks. Multi-block files yield one [`Frame`] per
-//!   [`CifReader::read`] call.
-//! - Key-value pairs `_key  value`, including parenthesized esd (`5.917(3)`).
-//! - `loop_` tables. Only `_atom_site_*` (small-molecule CIF) and
-//!   `_atom_site.*` (mmCIF) loops are extracted into an atoms block — all
-//!   other loops are tolerantly skipped.
-//! - Cell parameters: `_cell_length_a/b/c`, `_cell_angle_alpha/beta/gamma`.
-//! - Atom-site columns: `label`, `type_symbol`, `fract_x/y/z`, `Cartn_x/y/z`,
-//!   `occupancy`, `B_iso_or_equiv`.
-//! - Comments (`#`) and blank lines.
-//! - Multi-line strings (`;...;`) are recognised and skipped when they appear
-//!   as a column value — their content is preserved as a single token.
-//! - Quoted strings (`'...'`, `"..."`).
-//! - Special values `?` and `.` (treated as empty).
-//!
-//! Out of scope:
-//! - Full CIF dictionary validation
-//! - `save_` blocks
-//! - `loop_` nesting
-//! - Symmetry expansion (the parsed coordinates are exactly what the file holds)
 
 use crate::io::invalid_data;
 use std::collections::HashMap;
@@ -695,6 +672,27 @@ fn handle_loop<R: BufRead>(src: &mut LineSource<R>, frame: &mut FrameInProgress)
 }
 
 /// `FrameReader`-trait wrapper.
+///
+/// It covers the CIF subset most molecular work needs:
+///
+/// - `data_<id>` blocks. Multi-block files yield one [`Frame`] per
+///   [`CifReader::read`] call.
+/// - Key-value pairs `_key  value`, including parenthesized esd (`5.917(3)`).
+/// - `loop_` tables. Only `_atom_site_*` (small-molecule CIF) and
+///   `_atom_site.*` (mmCIF) loops are extracted into an atoms block — all
+///   other loops are tolerantly skipped.
+/// - Cell parameters: `_cell_length_a/b/c`, `_cell_angle_alpha/beta/gamma`.
+/// - Atom-site columns: `label`, `type_symbol`, `fract_x/y/z`, `Cartn_x/y/z`,
+///   `occupancy`, `B_iso_or_equiv`.
+/// - Comments (`#`) and blank lines.
+/// - Multi-line strings (`;...;`) are recognised and skipped when they appear
+///   as a column value — their content is preserved as a single token.
+/// - Quoted strings (`'...'`, `"..."`).
+/// - Special values `?` and `.` (treated as empty).
+///
+/// Out of scope: full CIF dictionary validation, `save_` blocks, `loop_`
+/// nesting, and symmetry expansion (the parsed coordinates are exactly what the
+/// file holds).
 pub struct CifReader<R: BufRead> {
     src: LineSource<R>,
 }

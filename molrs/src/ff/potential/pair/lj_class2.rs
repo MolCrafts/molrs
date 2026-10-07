@@ -1,8 +1,4 @@
-//! Class2 (9-6) Lennard-Jones pair potential:
-//! E = epsilon * (2*(sigma/r)^9 - 3*(sigma/r)^6)
-//!
-//! The COMPASS/class2 non-bonded form. Parameters per pair type: `epsilon`
-//! (energy), `sigma` (length).
+//! Class2 (9-6) Lennard-Jones pair potential (LAMMPS `pair_style lj/class2`).
 
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
@@ -49,6 +45,11 @@ enum Source {
     },
 }
 
+/// Class2 (9-6) Lennard-Jones pair potential:
+/// E = epsilon * (2*(sigma/r)^9 - 3*(sigma/r)^6)
+///
+/// The COMPASS/class2 non-bonded form. Parameters per pair type: `epsilon`
+/// (energy), `sigma` (length).
 pub struct PairLjClass2 {
     source: Source,
     /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite

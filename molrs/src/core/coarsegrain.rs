@@ -1,31 +1,4 @@
-//! Coarse-grained molecular graph.
-//!
-//! A *coarse-grained* (CG) model describes a molecule with fewer particles
-//! than it has atoms: each particle, a **bead**, stands for a group of atoms
-//! (a monomer, a few CH₂ units, a water cluster) and sits at a representative
-//! position of that group. A **CG bond** says two beads are connected; it has
-//! no chemical bond order.
-//!
-//! [`CoarseGrain`] wraps the domain-agnostic [`MolGraph`] where every node is a
-//! bead. It registers its own `bonds` kind and exposes the
-//! bead / CG-bond vocabulary; `MolGraph` itself stays chemistry-agnostic.
-//!
-//! Generic graph methods (`nodes`, `neighbors`, …) remain available via
-//! `Deref`/`DerefMut`.
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::CoarseGrain;
-//!
-//! let mut cg = CoarseGrain::new();
-//! let b1 = cg.add_bead("W", 0.0, 0.0, 0.0);
-//! let b2 = cg.add_bead("W", 3.0, 0.0, 0.0);
-//! cg.add_bond(b1, b2).unwrap();
-//!
-//! assert_eq!(cg.n_beads(), 2);
-//! assert_eq!(cg.n_bonds(), 1);
-//! ```
+//! Coarse-grained molecular graph: [`CoarseGrain`].
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -59,6 +32,18 @@ pub struct ExtractedCoarseGrain {
 
 /// Coarse-grained molecular graph.
 ///
+/// A *coarse-grained* (CG) model describes a molecule with fewer particles
+/// than it has atoms: each particle, a **bead**, stands for a group of atoms
+/// (a monomer, a few CH₂ units, a water cluster) and sits at a representative
+/// position of that group. A **CG bond** says two beads are connected; it has
+/// no chemical bond order.
+///
+/// `CoarseGrain` wraps the domain-agnostic [`MolGraph`] where every node is a
+/// bead. It registers its own `bonds` kind and exposes the
+/// bead / CG-bond vocabulary; `MolGraph` itself stays chemistry-agnostic.
+/// Generic graph methods (`nodes`, `neighbors`, …) remain available via
+/// `Deref`/`DerefMut`.
+///
 /// Invariant: every node has a `"bead_type"` property.
 ///
 /// A bead additionally owns a **membership**: the set of underlying atom handles
@@ -67,6 +52,20 @@ pub struct ExtractedCoarseGrain {
 /// relation and is stored here as opaque atom handles keyed by bead, not as a
 /// scalar component. Resolving a handle back to an atom view is the caller's job
 /// (it owns the source world); this layer owns only the handle topology.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::CoarseGrain;
+///
+/// let mut cg = CoarseGrain::new();
+/// let b1 = cg.add_bead("W", 0.0, 0.0, 0.0);
+/// let b2 = cg.add_bead("W", 3.0, 0.0, 0.0);
+/// cg.add_bond(b1, b2).unwrap();
+///
+/// assert_eq!(cg.n_beads(), 2);
+/// assert_eq!(cg.n_bonds(), 1);
+/// ```
 #[derive(Debug, Clone)]
 pub struct CoarseGrain {
     graph: MolGraph,

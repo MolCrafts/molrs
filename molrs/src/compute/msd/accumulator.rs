@@ -1,19 +1,4 @@
 //! Streaming (frame-by-frame) MSD accumulation with bounded memory.
-//!
-//! [`MsdAccumulator`] is the streaming counterpart of the batch [`Msd`](super::Msd)
-//! compute. Feed one frame of flat positions at a time; it maintains
-//!
-//! - the **Direct-mode** curve `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` (frame 0 =
-//!   reference, one scalar per frame — exactly [`MsdMode::Direct`](super::MsdMode)),
-//! - **windowed** per-lag sums `Σ_{i,τ} |r_i(τ+k) − r_i(τ)|²` for lags
-//!   `k ≤ window`, over a ring buffer of the last `window` frames — the same
-//!   estimator as [`MsdMode::Window`](super::MsdMode) truncated at `window`.
-//!
-//! Memory is O(`window · n_dof`) for the ring plus O(n_frames) scalars for the
-//! direct curve — never O(trajectory · n_dof). The windowed curve equals the
-//! batch `Msd` `Window`-mode means for every lag `k ≤ window` (the batch path
-//! computes all lags up to `n_frames − 1`; a streaming estimator must cap the
-//! lag to bound the ring).
 
 use std::collections::VecDeque;
 
@@ -25,6 +10,21 @@ use crate::compute::ComputeError;
 ///
 /// Positions are fed as one flat slice per frame, blocked `x[0..n) y[..) z[..)`
 /// (`n_dof = 3 · n_atoms`) — the raw-buffer convention of the FFI computes.
+///
+/// [`MsdAccumulator`] is the streaming counterpart of the batch [`Msd`](super::Msd)
+/// compute. Feed one frame of flat positions at a time; it maintains
+///
+/// - the **Direct-mode** curve `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` (frame 0 =
+///   reference, one scalar per frame — exactly [`MsdMode::Direct`](super::MsdMode)),
+/// - **windowed** per-lag sums `Σ_{i,τ} |r_i(τ+k) − r_i(τ)|²` for lags
+///   `k ≤ window`, over a ring buffer of the last `window` frames — the same
+///   estimator as [`MsdMode::Window`](super::MsdMode) truncated at `window`.
+///
+/// Memory is O(`window · n_dof`) for the ring plus O(n_frames) scalars for the
+/// direct curve — never O(trajectory · n_dof). The windowed curve equals the
+/// batch `Msd` `Window`-mode means for every lag `k ≤ window` (the batch path
+/// computes all lags up to `n_frames − 1`; a streaming estimator must cap the
+/// lag to bound the ring).
 #[derive(Debug, Clone)]
 pub struct MsdAccumulator {
     window: usize,

@@ -1,19 +1,4 @@
-//! Declared precision of an `f64` column: the binary-grid rounding a writer
-//! applies before a value reaches the codec pipeline.
-//!
-//! A column may declare a precision `p`, an absolute tolerance in the column's
-//! own units. From it a writer derives the **quantum** `q`, the largest power
-//! of two not above `p`, and stores every value rounded to a multiple of `q`
-//! (ties to even). Both operations are exact in binary64, so two writers store
-//! the same bits, and `|x − stored(x)| ≤ q/2 ≤ p/2`.
-//!
-//! The grid is binary on purpose: a multiple of `2⁻¹⁰` has zero low-order
-//! mantissa bits, which a byte shuffle gathers into runs a lossless compressor
-//! removes; a multiple of `10⁻³` has a full mantissa and compresses no better
-//! than raw data. See molrec `frame.md` § "Declared precision".
-//!
-//! A reader does nothing with the declaration but carry it: it does not
-//! re-round, re-check or refuse.
+//! Declared precision of an `f64` column: the binary-grid rounding a writer applies before a value reaches the codec pipeline.
 
 use crate::core::MolRsError;
 
@@ -61,6 +46,22 @@ pub(crate) fn inadmissible(precision: f64) -> String {
 ///
 /// Computed on the bits: an admissible precision is a positive normal number,
 /// so clearing its mantissa leaves exactly that power of two.
+///
+/// # Declared precision
+///
+/// A column may declare a precision `p`, an absolute tolerance in the column's
+/// own units. From it a writer derives the **quantum** `q`, the largest power
+/// of two not above `p`, and stores every value rounded to a multiple of `q`
+/// (ties to even, [`quantize`]). Both operations are exact in binary64, so two
+/// writers store the same bits, and `|x − stored(x)| ≤ q/2 ≤ p/2`.
+///
+/// The grid is binary on purpose: a multiple of `2⁻¹⁰` has zero low-order
+/// mantissa bits, which a byte shuffle gathers into runs a lossless compressor
+/// removes; a multiple of `10⁻³` has a full mantissa and compresses no better
+/// than raw data. See molrec `frame.md` § "Declared precision".
+///
+/// A reader does nothing with the declaration but carry it: it does not
+/// re-round, re-check or refuse.
 ///
 /// # Errors
 ///

@@ -1,47 +1,4 @@
-//! The `forcefield` section of a MolRec record — the force-field document and
-//! one table per style, as data.
-//!
-//! Contract: molrec `docs/spec/forcefield.md`. The section is frame-shaped: its
-//! attribute map is the **document** (`name`, `units`, `source`,
-//! `special_bonds`, the ordered `styles` list, and any key a producer adds),
-//! and every style has one [`Block`] — its **table**, one row per type — at
-//! the block name [`style_block_name`] gives it.
-//!
-//! [`ForceFieldSection`] is neutral: it knows nothing of the force-field
-//! kernels. It holds what a store holds, keeps every key and table it does not
-//! interpret, and converts no unit. [`ForceFieldSection::from_forcefield`] /
-//! [`ForceFieldSection::to_forcefield`] map it onto a compilable force field.
-//!
-//! # What [`ForceFieldSection::validate`] refuses
-//!
-//! - a document without a string `name`, or with `units` stating neither a
-//!   preset nor any quantity, or a quantity that is not the preset's own;
-//! - a malformed `source`, `special_bonds` or style entry (a category outside
-//!   `^[a-z][a-z0-9_]*$`, an empty style, a non-finite or non-scalar param, a
-//!   `params.special` other than `lj` / `coul`, a `params.mixing` that is no
-//!   combining rule, a `pair lj/charmm` `params.one_four` other than
-//!   [`ONE_FOUR_VALUES`], an `endpoint_key` other than `type` / `class` /
-//!   `smirks`);
-//! - a `(category, style)` listed twice, or a style without its table;
-//! - a style table with a structural shape, without a unique never-null string
-//!   `name`, with endpoint columns other than its category's (or, keyed by
-//!   `smirks`, any endpoint column or no never-null `smirks`), or with a column
-//!   that is not `f64` / `string` (an annotation column: `string`; a canonical
-//!   key: that key's dtype) or declares a precision;
-//! - an **array parameter** — a parameter column with trailing axes,
-//!   `f64[T, S…]` — that is not `f64`, has an axis of length 0, or holds a
-//!   non-finite value in a non-null row (the name, the endpoints, the
-//!   annotation columns and the canonical keys never have trailing axes); a
-//!   `cmap` table's [`CMAP_GRID`] is further `f64[T, N, N]` with `N ≥ 2`;
-//! - a `class`-keyed style beside an atom table without `class`;
-//! - a `pair` table (endpoint-keyed) with two rows on one unordered
-//!   `{itom, jtom}` that differ in a parameter ([`check_pair_restatements`]).
-//!
-//! A table no style names is unknown content: kept, never checked. A style
-//! of a category outside the chapter's (`pair14` among them: molrec retired
-//! it — 1-4 parameters are `lj/charmm`'s `epsilon14` / `sigma14` and the
-//! frame's per-pair override columns) is kept with its table, checked only
-//! as any table is, its endpoints a prefix of `itom..mtom`.
+//! The `forcefield` section of a MolRec record — the force-field document and one table per style, as data.
 
 use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -217,6 +174,48 @@ impl StyleEntry<'_> {
 /// `document` is the section group's attribute map, verbatim and in its
 /// stored key order; `tables` maps a block name to its table. Both keep what
 /// this build does not interpret.
+///
+/// Contract: molrec `docs/spec/forcefield.md`. The section is frame-shaped: its
+/// attribute map is the **document** (`name`, `units`, `source`,
+/// `special_bonds`, the ordered `styles` list, and any key a producer adds),
+/// and every style has one [`Block`] — its **table**, one row per type — at
+/// the block name [`style_block_name`] gives it.
+///
+/// [`ForceFieldSection`] is neutral: it knows nothing of the force-field
+/// kernels. It holds what a store holds, keeps every key and table it does not
+/// interpret, and converts no unit. [`ForceFieldSection::from_forcefield`] /
+/// [`ForceFieldSection::to_forcefield`] map it onto a compilable force field.
+///
+/// # What [`ForceFieldSection::validate`] refuses
+///
+/// - a document without a string `name`, or with `units` stating neither a
+///   preset nor any quantity, or a quantity that is not the preset's own;
+/// - a malformed `source`, `special_bonds` or style entry (a category outside
+///   `^[a-z][a-z0-9_]*$`, an empty style, a non-finite or non-scalar param, a
+///   `params.special` other than `lj` / `coul`, a `params.mixing` that is no
+///   combining rule, a `pair lj/charmm` `params.one_four` other than
+///   [`ONE_FOUR_VALUES`], an `endpoint_key` other than `type` / `class` /
+///   `smirks`);
+/// - a `(category, style)` listed twice, or a style without its table;
+/// - a style table with a structural shape, without a unique never-null string
+///   `name`, with endpoint columns other than its category's (or, keyed by
+///   `smirks`, any endpoint column or no never-null `smirks`), or with a column
+///   that is not `f64` / `string` (an annotation column: `string`; a canonical
+///   key: that key's dtype) or declares a precision;
+/// - an **array parameter** — a parameter column with trailing axes,
+///   `f64[T, S…]` — that is not `f64`, has an axis of length 0, or holds a
+///   non-finite value in a non-null row (the name, the endpoints, the
+///   annotation columns and the canonical keys never have trailing axes); a
+///   `cmap` table's [`CMAP_GRID`] is further `f64[T, N, N]` with `N ≥ 2`;
+/// - a `class`-keyed style beside an atom table without `class`;
+/// - a `pair` table (endpoint-keyed) with two rows on one unordered
+///   `{itom, jtom}` that differ in a parameter.
+///
+/// A table no style names is unknown content: kept, never checked. A style
+/// of a category outside the chapter's (`pair14` among them: molrec retired
+/// it — 1-4 parameters are `lj/charmm`'s `epsilon14` / `sigma14` and the
+/// frame's per-pair override columns) is kept with its table, checked only
+/// as any table is, its endpoints a prefix of `itom..mtom`.
 #[derive(Debug, Clone, Default)]
 pub struct ForceFieldSection {
     /// The force-field document (`name`, `units`, `styles`, …).

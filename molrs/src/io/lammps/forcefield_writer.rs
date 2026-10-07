@@ -1,112 +1,4 @@
-//! LAMMPS force-field coefficient writer: the `*.ff` include next to a data
-//! file, and the data file's `* Coeffs` sections.
-//!
-//! # Coefficient writing, not whole-FF serialization
-//!
-//! molrs has two kinds of force-field writer:
-//!
-//! - **Coefficient writing** (this module, LAMMPS only) answers "which
-//!   coefficients does this system's data file need". It is keyed by the
-//!   system's type labels ([`TypeLabels`]): one coefficient per label, in label
-//!   id order. A label the [`ForceField`] does not define is an error naming the
-//!   block and the label; a `ForceField` type no label uses is not written
-//!   (assembly retyping legitimately leaves stale types behind).
-//! - **Whole-FF serialization** ([`super::gromacs`], [`super::xml`]) writes
-//!   every type the `ForceField` holds, as a force-field file, and takes no
-//!   labels.
-//!
-//! The data-file writer and this writer are composed by the caller; neither
-//! calls the other.
-//!
-//! # Label matching
-//!
-//! - `atoms` labels select pair coefficients: the self pair named by each label
-//!   (missing → error), plus explicit cross pairs whose two atom types are both
-//!   labels.
-//! - `bonds`, `angles`, `dihedrals` and `impropers` labels match a
-//!   `ForceField` type name exactly: a label is the name of the type it
-//!   stands for, and `h1-c3` does not find a type named `c3-h1`.
-//! - A block whose types carry no labels (pure-integer types) is matched by
-//!   its ids, `"1"`, `"2"`, ….
-//! - A style is written only when it holds a used type; an unsupported style
-//!   is an error only then. Type-less pair styles (`coul/cut`) apply to every
-//!   atom and are always in play.
-//!
-//! # Coefficients through the styles' codecs
-//!
-//! Inverse of [`super::super::readers::lammps::LammpsForcefieldReader`]. The
-//! force-field IR follows the LAMMPS standard — every style's expression,
-//! factors and parameter units, with angle-valued parameters in degrees — so
-//! a coefficient is written as it is stored, by the style's
-//! [`LammpsForm`](crate::ff::ir::LammpsForm) in the registry
-//! (`ff-ir-02-protocol` §8): a positional style writes its spec's `params`
-//! in order, a style whose line is not positional (`fourier`, `nharmonic`,
-//! `lj/charmm`, the `class2` cross-term lines, …) its own codec, and a style
-//! registered at run time with a LAMMPS form is written with nothing else
-//! added. A style without one is refused by name
-//! ([`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm)):
-//!
-//! ```text
-//! pair_style lj/cut/coul/cut 10.0 10.0
-//! pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
-//! bond_style harmonic
-//! bond_coeff c3-c3 228.890000 1.535400        # k r0
-//! angle_style harmonic
-//! angle_coeff c3-c3-oh 76.790000 109.660000   # k theta0(deg)
-//! dihedral_style fourier
-//! dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  k1 periodicity1 phase1 ...
-//! ```
-//!
-//! The file is written in [`LammpsForcefieldWriteOptions::units`] (default `real`). A
-//! force field declared in those units ([`ForceField::units`]) is written
-//! number for number; one declared in another LAMMPS unit style (`real`,
-//! `metal`, `lj`) has every parameter converted by its dimension
-//! ([`ParamDimension`](crate::ff::ir::ParamDimension), [`UnitScale`]) through [`LammpsUnitConverter`]
-//! (`from → lj hub → to`) — never ad-hoc eV/kcal factors, never per style.
-//! Angle values need no conversion in any unit style.
-//!
-//! Two styles are written under another LAMMPS name: molrs's `dihedral
-//! periodic` is LAMMPS's `fourier`, term for term, and AMBER's `improper
-//! periodic` with one term at phase 0° or 180° is LAMMPS's `cvff`
-//! (`d = cos phase`) — the atom order needs no change, because both price the
-//! dihedral I-J-K-L of the stored order (see `improper::periodic`).
-//!
-//! A category whose used types span several LAMMPS styles (say `angle
-//! harmonic` and `angle charmm`) is written as one `angle_style hybrid
-//! harmonic charmm` line, each `angle_coeff` naming its sub-style; a data
-//! file's section is `Angle Coeffs # hybrid` with the sub-style on each row.
-//! Every data-file section names its style in the header comment, as LAMMPS's
-//! `write_data` does.
-//!
-//! # CMAP crossterms (`fix cmap`)
-//!
-//! A `cmaps` block's labels select `cmap charmm` rows the same way, in id
-//! order: [`LammpsForcefieldWriter::write_cmap_str`] writes their grids as the
-//! `fix cmap` file (map `t` is crossterm type `t`, the id the data writer
-//! gives the `CMAP` section), and the include names that file
-//! ([`LammpsForcefieldWriteOptions::cmap_file`]) on a `fix cmap all cmap <file>` line,
-//! with `fix_modify cmap energy yes` so the crossterms count in `pe`. LAMMPS
-//! reads the crossterms with the data file, so the fix must precede
-//! `read_data <data> fix cmap crossterm CMAP` (LAMMPS takes it before the box
-//! exists); the include writes it first, beside `units`.
-//!
-//! # Pair style layout
-//!
-//! The reader splits a combined `lj/cut/coul/*` kernel into `lj/cut` + `coul/cut`
-//! styles. This writer recombines that pair into one `pair_style lj/cut/coul/cut`
-//! line so LAMMPS keeps geometric mixing on LJ (writing them as `hybrid` with a
-//! `pair_coeff * * coul/cut` wildcard marks every cross pair as explicit and
-//! defeats mixing). A force field that already holds a single combined-style
-//! name, or only one of the two halves, is written as-is. `lj/charmm` +
-//! `coul/charmm` is `pair_style lj/charmm/coul/charmm`, its only LAMMPS
-//! spelling, `pair_coeff i j epsilon sigma epsilon14 sigma14`.
-//!
-//! # Per-pair 1-4 overrides
-//!
-//! LAMMPS has no per-pair exception. A frame whose `pairs` block carries an
-//! override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::core::schema::PAIR_OVERRIDE_COLUMNS))
-//! is refused by name — by the data-file writer, and by
-//! [`refuse_pair_overrides`] for a caller writing a force field for it.
+//! LAMMPS force-field coefficient writer: the `*.ff` include next to a data file, and the data file's `* Coeffs` sections.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -499,12 +391,118 @@ impl PairRow<'_> {
 
 /// Label-driven LAMMPS coefficient writer (AMBER/GAFF flavour).
 ///
-/// Holds the system's [`TypeLabels`]; see the module docs for the matching
-/// rules. [`ForceFieldWriter::write_str`] emits the `*.ff` include,
+/// Holds the system's [`TypeLabels`]. [`ForceFieldWriter::write_str`] emits the `*.ff` include,
 /// [`LammpsForcefieldWriter::write_data_coeffs_str`] the data-file `* Coeffs`
 /// sections; both write the same labels with the same numbers, each style
 /// through its LAMMPS codec in the process-wide registry, or in the one
 /// [`with_registry`](Self::with_registry) gives.
+///
+/// # Coefficient writing, not whole-FF serialization
+///
+/// molrs has two kinds of force-field writer:
+///
+/// - **Coefficient writing** (this writer, LAMMPS only) answers "which
+///   coefficients does this system's data file need". It is keyed by the
+///   system's type labels ([`TypeLabels`]): one coefficient per label, in label
+///   id order. A label the [`ForceField`] does not define is an error naming the
+///   block and the label; a `ForceField` type no label uses is not written
+///   (assembly retyping legitimately leaves stale types behind).
+/// - **Whole-FF serialization** ([`crate::io::gromacs`], [`crate::io::openmm_xml`]) writes
+///   every type the `ForceField` holds, as a force-field file, and takes no
+///   labels.
+///
+/// The data-file writer and this writer are composed by the caller; neither
+/// calls the other.
+///
+/// # Label matching
+///
+/// - `atoms` labels select pair coefficients: the self pair named by each label
+///   (missing → error), plus explicit cross pairs whose two atom types are both
+///   labels.
+/// - `bonds`, `angles`, `dihedrals` and `impropers` labels match a
+///   `ForceField` type name exactly: a label is the name of the type it
+///   stands for, and `h1-c3` does not find a type named `c3-h1`.
+/// - A block whose types carry no labels (pure-integer types) is matched by
+///   its ids, `"1"`, `"2"`, ….
+/// - A style is written only when it holds a used type; an unsupported style
+///   is an error only then. Type-less pair styles (`coul/cut`) apply to every
+///   atom and are always in play.
+///
+/// # Coefficients through the styles' codecs
+///
+/// Inverse of [`LammpsForcefieldReader`](crate::io::lammps::LammpsForcefieldReader). The
+/// force-field IR follows the LAMMPS standard — every style's expression,
+/// factors and parameter units, with angle-valued parameters in degrees — so
+/// a coefficient is written as it is stored, by the style's
+/// [`LammpsForm`](crate::ff::ir::LammpsForm) in the registry
+/// (`ff-ir-02-protocol` §8): a positional style writes its spec's `params`
+/// in order, a style whose line is not positional (`fourier`, `nharmonic`,
+/// `lj/charmm`, the `class2` cross-term lines, …) its own codec, and a style
+/// registered at run time with a LAMMPS form is written with nothing else
+/// added. A style without one is refused by name
+/// ([`IrError::NoEngineForm`](crate::ff::ir::IrError::NoEngineForm)):
+///
+/// ```text
+/// pair_style lj/cut/coul/cut 10.0 10.0
+/// pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
+/// bond_style harmonic
+/// bond_coeff c3-c3 228.890000 1.535400        # k r0
+/// angle_style harmonic
+/// angle_coeff c3-c3-oh 76.790000 109.660000   # k theta0(deg)
+/// dihedral_style fourier
+/// dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  k1 periodicity1 phase1 ...
+/// ```
+///
+/// The file is written in [`LammpsForcefieldWriteOptions::units`] (default `real`).
+/// A force field declared in those units ([`ForceField::units`]) is written
+/// number for number; one declared in another LAMMPS unit style (`real`,
+/// `metal`, `lj`) has every parameter converted by its dimension
+/// ([`ParamDimension`](crate::ff::ir::ParamDimension), [`UnitScale`]) through
+/// [`LammpsUnitConverter`] (`from → lj hub → to`) — never ad-hoc eV/kcal factors, never per style.
+/// Angle values need no conversion in any unit style.
+///
+/// Two styles are written under another LAMMPS name: molrs's `dihedral
+/// periodic` is LAMMPS's `fourier`, term for term, and AMBER's `improper
+/// periodic` with one term at phase 0° or 180° is LAMMPS's `cvff`
+/// (`d = cos phase`) — the atom order needs no change, because both price the
+/// dihedral I-J-K-L of the stored order (see `improper::periodic`).
+///
+/// A category whose used types span several LAMMPS styles (say `angle
+/// harmonic` and `angle charmm`) is written as one `angle_style hybrid
+/// harmonic charmm` line, each `angle_coeff` naming its sub-style; a data
+/// file's section is `Angle Coeffs # hybrid` with the sub-style on each row.
+/// Every data-file section names its style in the header comment, as LAMMPS's
+/// `write_data` does.
+///
+/// # CMAP crossterms (`fix cmap`)
+///
+/// A `cmaps` block's labels select `cmap charmm` rows the same way, in id
+/// order: [`LammpsForcefieldWriter::write_cmap_str`] writes their grids as the
+/// `fix cmap` file (map `t` is crossterm type `t`, the id the data writer
+/// gives the `CMAP` section), and the include names that file
+/// ([`LammpsForcefieldWriteOptions::cmap_file`]) on a
+/// `fix cmap all cmap <file>` line, with `fix_modify cmap energy yes` so the crossterms count in `pe`. LAMMPS
+/// reads the crossterms with the data file, so the fix must precede
+/// `read_data <data> fix cmap crossterm CMAP` (LAMMPS takes it before the box
+/// exists); the include writes it first, beside `units`.
+///
+/// # Pair style layout
+///
+/// The reader splits a combined `lj/cut/coul/*` kernel into `lj/cut` +
+/// `coul/cut` styles. This writer recombines that pair into one
+/// `pair_style lj/cut/coul/cut` line so LAMMPS keeps geometric mixing on LJ (writing them as `hybrid` with a
+/// `pair_coeff * * coul/cut` wildcard marks every cross pair as explicit and
+/// defeats mixing). A force field that already holds a single combined-style
+/// name, or only one of the two halves, is written as-is. `lj/charmm` +
+/// `coul/charmm` is `pair_style lj/charmm/coul/charmm`, its only LAMMPS
+/// spelling, `pair_coeff i j epsilon sigma epsilon14 sigma14`.
+///
+/// # Per-pair 1-4 overrides
+///
+/// LAMMPS has no per-pair exception. A frame whose `pairs` block carries an
+/// override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::core::schema::PAIR_OVERRIDE_COLUMNS))
+/// is refused by name — by the data-file writer, and by
+/// [`refuse_pair_overrides`] for a caller writing a force field for it.
 #[derive(Debug, Clone)]
 pub struct LammpsForcefieldWriter<'a> {
     labels: &'a TypeLabels,

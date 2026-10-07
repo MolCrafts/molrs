@@ -1,25 +1,4 @@
-//! Internal column representation for heterogeneous data.
-//!
-//! # Storage model
-//!
-//! `Column` variants wrap `Arc<ColumnArray<T>>` so cloning a Column is an
-//! O(1) refcount bump rather than a deep copy. The [`ColumnArray`] is a thin
-//! wrapper that makes the underlying `ArrayD<T>` either:
-//!
-//! * **Rust-owned** — the normal path; `ArrayD<T>`'s backing `Vec<T>` was
-//!   allocated by Rust's allocator and is dropped normally when the column array
-//!   drops.
-//! * **Foreign-borrowed** — the buffer was allocated by *some other* allocator
-//!   (e.g., numpy's). The column array fakes an `ArrayD<T>` pointing at that memory
-//!   and skips the `Vec::drop` on column array drop. Instead, it holds an opaque
-//!   "keep-alive" object (e.g., a `Py<PyArrayDyn<T>>`) whose own `Drop` is
-//!   responsible for releasing the memory via the foreign allocator.
-//!
-//! Readers don't need to know which storage is active: `as_float()`,
-//! `shape()`, `view()` etc work identically. Writers go through
-//! [`ColumnArray::realize_owned_mut`] which always detaches from foreign
-//! storage (copy-on-write) before returning a mutable reference, so mutation
-//! never reaches into foreign memory.
+//! Column representation for heterogeneous data: [`Column`] over [`ColumnArray`].
 
 use std::any::Any;
 use std::mem::ManuallyDrop;
@@ -57,9 +36,26 @@ macro_rules! map_column {
 /// Wrapper around `ArrayD<T>` that optionally defers buffer ownership to a
 /// foreign allocator.
 ///
-/// See the module-level docs for the full story. Readers access the inner
-/// array via `Deref<Target = ArrayD<T>>`. Writers must go through
-/// `realize_owned_mut` to ensure mutation never touches foreign memory.
+/// # Storage model
+///
+/// [`Column`] variants wrap `Arc<ColumnArray<T>>` so cloning a Column is an
+/// O(1) refcount bump rather than a deep copy. The `ColumnArray` is a thin
+/// wrapper that makes the underlying `ArrayD<T>` either:
+///
+/// * **Rust-owned** — the normal path; `ArrayD<T>`'s backing `Vec<T>` was
+///   allocated by Rust's allocator and is dropped normally when the column array
+///   drops.
+/// * **Foreign-borrowed** — the buffer was allocated by *some other* allocator
+///   (e.g., numpy's). The column array fakes an `ArrayD<T>` pointing at that memory
+///   and skips the `Vec::drop` on column array drop. Instead, it holds an opaque
+///   "keep-alive" object (e.g., a `Py<PyArrayDyn<T>>`) whose own `Drop` is
+///   responsible for releasing the memory via the foreign allocator.
+///
+/// Readers don't need to know which storage is active: they access the inner
+/// array via `Deref<Target = ArrayD<T>>`, and `as_float()`, `shape()`, `view()`
+/// etc work identically. Every mutable getter first detaches from foreign
+/// storage (copy-on-write) before returning a mutable reference, so mutation
+/// never reaches into foreign memory.
 pub struct ColumnArray<T> {
     array: ManuallyDrop<ArrayD<T>>,
     /// Optional keep-alive for a foreign-allocated buffer.

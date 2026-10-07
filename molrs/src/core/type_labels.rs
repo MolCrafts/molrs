@@ -1,9 +1,4 @@
-//! Type names and the Frame's type-id contract.
-//!
-//! One way to build the name of a type (atom, pair, bond, angle, dihedral,
-//! improper) from endpoint labels, [`TypeName`], and one rule for turning a
-//! Frame's per-row type labels into dense 1-based ids, [`TypeLabels`]. Both live in `core` so that
-//! format writers and force-field code share them without naming each other.
+//! Type names and the Frame's type-id contract: [`TypeName`] and [`TypeLabels`].
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -387,6 +382,11 @@ impl BlockTypes {
 
 /// The Frame's type-id contract: per block, the type id of every row, the
 /// ordered labels, and the number of types.
+///
+/// The one rule for turning a Frame's per-row type labels into dense 1-based
+/// ids, as [`TypeName`] is the one way to build a type's name. Both live in
+/// `core` so that format writers and force-field code share them without
+/// naming each other.
 ///
 /// Covered blocks, each with its inventory meta key: `atoms`
 /// ([`keys::ATOM_TYPE_LABELS`]), `bonds` ([`keys::BOND_TYPE_LABELS`]), `angles`

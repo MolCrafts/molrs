@@ -1,19 +1,4 @@
 //! The crate's scalar and array aliases — their one owner.
-//!
-//! Three families live here:
-//!
-//! - The **F-prefix family** of ndarray-backed aliases over the scalar [`F`]
-//!   (always `f64`): [`F3`] (any `Array1<F>`), [`Fnx3`] (any `Array2<F>`) and
-//!   their views — the API types of the crate's column stores. One name per
-//!   type: a 3×3 box matrix is an `Fnx3`, an N-vector an `F3`.
-//! - The **non-float aliases** [`I`] (signed integer), [`Idx`] (an index or
-//!   stable identifier) and [`Pbc3`] (per-axis periodic flags).
-//! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
-//!   kernels compute on. [`to_vec3`] and [`to_mat3`] are where ndarray meets
-//!   them.
-//!
-//! Every alias has exactly one public path, `molrs::op::<Alias>`: this module
-//! is private and `op` re-exports it flat; nothing else re-exports them.
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 

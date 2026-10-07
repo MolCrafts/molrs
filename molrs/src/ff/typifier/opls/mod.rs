@@ -1,51 +1,4 @@
 //! OPLS-AA SMARTS atom typifier.
-//!
-//! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
-//! ([`OplsTypingMetadata`]) is kept *separately* from the potential [`ForceField`].
-//! [`OplsAaTypifier`] owns both and implements [`Typifier`], assigning
-//! `opls_NNN` atom types by SMARTS matching.
-//!
-//! # How atoms are typed
-//!
-//! - **Rules.** The shipped rules ([`crate::ff::params::OPLSAA_TYPING`]) are
-//!   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
-//!   lowercase aromatic atoms, matched with standard semantics against a
-//!   molecule with explicit hydrogens.
-//! - **Aromaticity on a private copy.** The rules run on a clone brought to the
-//!   standard aromatic form by
-//!   [`assign_aromaticity`](molrs::perceive::assign_aromaticity)
-//!   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
-//!   alike, while the caller's bond types and bond numbers are never changed.
-//!   Typifiers built by [`OplsAaTypifier::new`] over a caller's own file do
-//!   the same.
-//! - **Ranking.** A type on a higher `layer`, or on the same layer overriding
-//!   another (directly or transitively), dominates it: it wins on an atom where
-//!   both match, and a later dependency level never replaces it. Candidates
-//!   nothing dominates rank by explicit `priority`, then pattern size, then
-//!   name (see [`layered`]).
-//!
-//! After atom typing, its `assign` ([`Typifier`]) matches every bond /
-//! angle / dihedral against the force field's bonded tables by OPLS
-//! specificity + overlay layer (chain 2).
-//! [`Typing`](crate::ff::typifier::Typing) runs the match: it stamps
-//! the typed copy and defines exactly the types used in its output force field.
-//! Callers compose `Typing::typify` → `to_frame` → pairs →
-//! `PotentialCompiler::new(typing.forcefield()).compile`.
-//!
-//! # B-line reversal
-//!
-//! This reverses the "typifier does not sink (B-line)" decision of
-//! `opls-ef-01-kernels-seam`: OPLS bonded-parameter assignment now happens in
-//! Rust (here), not in a post-typify Python pass over a molpy `ForceField`.
-//!
-//! # Scope
-//!
-//! Only types carrying a SMARTS `def` participate; the united-atom types
-//! (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
-//! matching is out of scope. Uncovered bonded terms follow the [`NoMatch`]
-//! policy; a consumer that wants to fill them can attach its own [`ParameterInterpolator`]
-//! via [`OplsAaTypifier::with_estimator`], or the restored
-//! [`Parmchk2Estimator`] via [`OplsAaTypifier::with_default_estimator`].
 
 use std::collections::HashSet;
 
@@ -75,8 +28,55 @@ use typing::typify_atoms;
 /// caller's typing metadata ([`OplsTypingMetadata`]) and potential parameters
 /// ([`ForceField`]) — read from one OPLS-AA XML file by
 /// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
-/// and [`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader) —
+/// and [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) —
 /// and precomputes the bonded candidate tables once.
+///
+/// Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
+/// ([`OplsTypingMetadata`]) is kept *separately* from the potential [`ForceField`].
+/// [`OplsAaTypifier`] owns both and implements [`Typifier`], assigning
+/// `opls_NNN` atom types by SMARTS matching.
+///
+/// # How atoms are typed
+///
+/// - **Rules.** The shipped rules ([`crate::ff::params::OPLSAA_TYPING`]) are
+///   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
+///   lowercase aromatic atoms, matched with standard semantics against a
+///   molecule with explicit hydrogens.
+/// - **Aromaticity on a private copy.** The rules run on a clone brought to the
+///   standard aromatic form by
+///   [`assign_aromaticity`](molrs::perceive::assign_aromaticity)
+///   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
+///   alike, while the caller's bond types and bond numbers are never changed.
+///   Typifiers built by [`OplsAaTypifier::new`] over a caller's own file do
+///   the same.
+/// - **Ranking.** A type on a higher `layer`, or on the same layer overriding
+///   another (directly or transitively), dominates it: it wins on an atom where
+///   both match, and a later dependency level never replaces it. Candidates
+///   nothing dominates rank by explicit `priority`, then pattern size, then
+///   name.
+///
+/// After atom typing, its `assign` ([`Typifier`]) matches every bond /
+/// angle / dihedral against the force field's bonded tables by OPLS
+/// specificity + overlay layer (chain 2).
+/// [`Typing`](crate::ff::typifier::Typing) runs the match: it stamps
+/// the typed copy and defines exactly the types used in its output force field.
+/// Callers compose `Typing::typify` → `to_frame` → pairs →
+/// `PotentialCompiler::new(typing.forcefield()).compile`.
+///
+/// # B-line reversal
+///
+/// This reverses the "typifier does not sink (B-line)" decision of
+/// `opls-ef-01-kernels-seam`: OPLS bonded-parameter assignment now happens in
+/// Rust (here), not in a post-typify Python pass over a molpy `ForceField`.
+///
+/// # Scope
+///
+/// Only types carrying a SMARTS `def` participate; the united-atom types
+/// (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
+/// matching is out of scope. Uncovered bonded terms follow the `NoMatch`
+/// policy; a consumer that wants to fill them can attach its own [`ParameterInterpolator`]
+/// via [`OplsAaTypifier::with_estimator`], or the restored
+/// [`Parmchk2Estimator`] via [`OplsAaTypifier::with_default_estimator`].
 pub struct OplsAaTypifier {
     meta: OplsTypingMetadata,
     ff: ForceField,

@@ -1,52 +1,4 @@
-//! Domain-agnostic dynamic graph for editing-oriented CRUD operations.
-//!
-//! [`MolGraph`] is a **pure graph** with no chemistry vocabulary: it holds nodes
-//! plus a set of **kind-tagged, fixed-arity relations**. A *kind* is registered
-//! once by an arbitrary name + arity (`register_kind("bond", 2)`) and addressed
-//! thereafter by a dense [`KindId`] (an array index — never a per-access string
-//! hash). Relations of the same arity but different meaning (e.g. a 4-ary
-//! "dihedral" vs a 4-ary "improper") are distinguished by their [`KindId`], not
-//! by arity. The graph itself does not know what a "bond" or an "atom" is —
-//! those domain concepts live in the leaf types
-//! ([`Atomistic`](crate::core::Atomistic) /
-//! [`CoarseGrain`](crate::core::CoarseGrain)) that register their kinds
-//! and expose the named convenience API.
-//!
-//! Storage uses generational arenas ([`slotmap::SlotMap`]) for O(1) insert /
-//! remove / lookup with stable handles, and a [`SmallVec`] for each relation's
-//! endpoints so the common arities (≤4) stay inline / heap-allocation-free.
-//!
-//! Every node is a property bag ([`Atom`]): coordinates live as `"x"`, `"y"`,
-//! `"z"` keys, matching the Python `Entity(UserDict)` convention.
-//!
-//! ## Relations vs. containment
-//!
-//! The `kinds` / relation store is for **fixed-arity peer topology only**.
-//! Hierarchical *containment* (a residue owning atoms, a chain owning residues,
-//! a coarse-grained bead owning its atoms) is variable-size, nested, directed
-//! ownership — **not** a fixed-arity peer relation — and is therefore **not**
-//! modeled as a relation kind (doing so would put group handles into the node
-//! arena and contaminate every consumer that iterates [`MolGraph::nodes`]). When
-//! containment lands it is a separate axis beside nodes and relations.
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::{Atom, MolGraph};
-//!
-//! let mut g = MolGraph::new();
-//! let bond = g.register_kind("bond", 2);
-//!
-//! let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0)).expect("add O");
-//! let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0)).expect("add H");
-//! g.add_relation(bond, &[o, h1]).expect("add bond");
-//!
-//! assert_eq!(g.n_nodes(), 2);
-//! assert_eq!(g.n_relations(bond), 1);
-//!
-//! molrs::op::translate(&mut g, [1.0, 0.0, 0.0]);
-//! assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
-//! ```
+//! Domain-agnostic dynamic graph for editing-oriented CRUD operations: [`MolGraph`].
 
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
@@ -639,6 +591,52 @@ impl RelationKind {
 
 /// A dynamic, domain-agnostic graph: nodes plus kind-tagged, fixed-arity
 /// relations. Knows nothing of "atoms" or "bonds" — those live in leaf types.
+///
+/// `MolGraph` is a **pure graph** with no chemistry vocabulary. A *kind* is
+/// registered once by an arbitrary name + arity (`register_kind("bond", 2)`) and
+/// addressed thereafter by a dense [`KindId`] (an array index — never a
+/// per-access string hash). Relations of the same arity but different meaning
+/// (e.g. a 4-ary "dihedral" vs a 4-ary "improper") are distinguished by their
+/// [`KindId`], not by arity. The domain concepts live in the leaf types
+/// ([`Atomistic`](crate::core::Atomistic) /
+/// [`CoarseGrain`](crate::core::CoarseGrain)) that register their kinds
+/// and expose the named convenience API.
+///
+/// Storage uses generational arenas ([`slotmap::SlotMap`]) for O(1) insert /
+/// remove / lookup with stable handles, and a [`SmallVec`] for each relation's
+/// endpoints so the common arities (≤4) stay inline / heap-allocation-free.
+///
+/// Every node is a property bag ([`Atom`]): coordinates live as `"x"`, `"y"`,
+/// `"z"` keys, matching the Python `Entity(UserDict)` convention.
+///
+/// # Relations vs. containment
+///
+/// The `kinds` / relation store is for **fixed-arity peer topology only**.
+/// Hierarchical *containment* (a residue owning atoms, a chain owning residues,
+/// a coarse-grained bead owning its atoms) is variable-size, nested, directed
+/// ownership — **not** a fixed-arity peer relation — and is therefore **not**
+/// modeled as a relation kind (doing so would put group handles into the node
+/// arena and contaminate every consumer that iterates [`MolGraph::nodes`]). When
+/// containment lands it is a separate axis beside nodes and relations.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::{Atom, MolGraph};
+///
+/// let mut g = MolGraph::new();
+/// let bond = g.register_kind("bond", 2);
+///
+/// let o = g.add_node_with(Atom::xyz("O", 0.0, 0.0, 0.0)).expect("add O");
+/// let h1 = g.add_node_with(Atom::xyz("H", 0.96, 0.0, 0.0)).expect("add H");
+/// g.add_relation(bond, &[o, h1]).expect("add bond");
+///
+/// assert_eq!(g.n_nodes(), 2);
+/// assert_eq!(g.n_relations(bond), 1);
+///
+/// molrs::op::translate(&mut g, [1.0, 0.0, 0.0]);
+/// assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
+/// ```
 #[derive(Debug, Clone)]
 pub struct MolGraph {
     /// Node entities + their components, stored as an aligned column table.

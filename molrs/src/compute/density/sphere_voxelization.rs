@@ -1,15 +1,4 @@
 //! Boolean voxel rasterisation of point particles as hard spheres.
-//!
-//! Mirrors `freud.density.SphereVoxelization`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/SphereVoxelization.cc)).
-//!
-//! For each particle of radius `r_max`, every voxel whose centre lies inside
-//! that sphere is set to `1`. The output is the boolean overlap mask
-//! (stored as a `u32` grid so callers can also use it for "count of
-//! overlapping particles per voxel" by reading the `raw_counts` field).
-//!
-//! Like [`GaussianDensity`](super::gaussian_density::GaussianDensity), this
-//! is orthorhombic-box only and PBC-aware via wrap-around grid indexing.
 
 use super::wrap_index;
 use crate::compute::ComputeResult;
@@ -24,6 +13,17 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// Sphere-voxelisation calculator.
+///
+/// Mirrors `freud.density.SphereVoxelization`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/SphereVoxelization.cc)).
+///
+/// For each particle of radius `r_max`, every voxel whose centre lies inside
+/// that sphere is set to `1`. The output is the boolean overlap mask
+/// (stored as a `u32` grid so callers can also use it for "count of
+/// overlapping particles per voxel" by reading the `raw_counts` field).
+///
+/// Like [`GaussianDensity`](super::gaussian_density::GaussianDensity), this
+/// is orthorhombic-box only and PBC-aware via wrap-around grid indexing.
 #[derive(Debug, Clone, Copy)]
 pub struct SphereVoxelization {
     nx: usize,

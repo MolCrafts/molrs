@@ -1,24 +1,4 @@
 //! Per-particle local number density in a sphere of radius `r_max`.
-//!
-//! Mirrors `freud.density.LocalDensity`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/LocalDensity.cc)).
-//!
-//! For each query point `i` the analyzer counts neighbors within `r_max`
-//! and reports `density_i = count_i / (4/3 π r_max³)` (number per unit
-//! volume).
-//!
-//! freud also supports a `diameter` correction that subtracts the "hard-
-//! sphere fraction" near the edge of the cutoff sphere — for two unit
-//! spheres at distance `r` the overlap on the boundary linearly interpolates
-//! a partial count between 0 and 1. We replicate that smoothing: each
-//! neighbor `j` contributes
-//!
-//! ```text
-//!   weight_j = clamp((r_max + diameter/2 − r_ij) / diameter, 0, 1)
-//! ```
-//!
-//! which collapses to the standard `1.0` count when `diameter = 0`. The
-//! identical formula appears in `LocalDensity::compute` in freud.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -33,6 +13,26 @@ use crate::compute::require_dist_sq;
 const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
 
 /// Local-density calculator.
+///
+/// Mirrors `freud.density.LocalDensity`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/LocalDensity.cc)).
+///
+/// For each query point `i` the analyzer counts neighbors within `r_max`
+/// and reports `density_i = count_i / (4/3 π r_max³)` (number per unit
+/// volume).
+///
+/// freud also supports a `diameter` correction that subtracts the "hard-
+/// sphere fraction" near the edge of the cutoff sphere — for two unit
+/// spheres at distance `r` the overlap on the boundary linearly interpolates
+/// a partial count between 0 and 1. We replicate that smoothing: each
+/// neighbor `j` contributes
+///
+/// ```text
+///   weight_j = clamp((r_max + diameter/2 − r_ij) / diameter, 0, 1)
+/// ```
+///
+/// which collapses to the standard `1.0` count when `diameter = 0`. The
+/// identical formula appears in `LocalDensity::compute` in freud.
 #[derive(Debug, Clone, Copy)]
 pub struct LocalDensity {
     r_max: F,

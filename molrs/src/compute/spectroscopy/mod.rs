@@ -3,28 +3,6 @@
 //! [`Fit`](crate::compute::Fit) transforms that turn them into
 //! frequency-domain spectra.
 //!
-//! Each spectrum is an explicit two-step composition — a raw compute produces
-//! an (unwindowed) correlation function, a fit applies window + FFT (+
-//! physical prefactors):
-//!
-//! | Spectrum | Raw compute | Fit transform |
-//! |----------|-------------|---------------|
-//! | VDOS | [`Vacf`](crate::compute::Vacf) (velocity ACF) | [`PowerSpectrum`] |
-//! | IR | [`IrFlux`] (dipole-flux ACF) | [`IrSpectrum`] |
-//! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
-//! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
-//! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
-//! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
-//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) / [`DipoleRateCross`](crate::compute::DipoleRateCross) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
-//!
-//! # Units
-//!
-//! | quantity   | unit |
-//! |------------|------|
-//! | time / dt  | fs   |
-//! | frequency  | cm⁻¹ |
-//! | intensity  | arb. |
-//!
 //! # Shared spectral primitives
 //!
 //! The window + one-sided-FFT machinery (`window_and_fft`,

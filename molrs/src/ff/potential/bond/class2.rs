@@ -1,7 +1,4 @@
-//! Class2 (quartic) bond potential:
-//! E = k2*(r-r0)^2 + k3*(r-r0)^3 + k4*(r-r0)^4
-//!
-//! The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
+//! Class2 (quartic) bond (LAMMPS `bond_style class2`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::BONDS;
@@ -17,6 +14,11 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Class2 quartic bond potential with pre-resolved flat arrays.
+///
+/// Class2 (quartic) bond potential:
+/// E = k2*(r-r0)^2 + k3*(r-r0)^3 + k4*(r-r0)^4
+///
+/// The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
 pub struct BondClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

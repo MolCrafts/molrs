@@ -1,28 +1,4 @@
 //! Thole dipole-dipole screening (CL&Pol short-range damping).
-//!
-//! Screens the Coulomb interaction between Drude-related point charges at short
-//! range with the exponential Thole function
-//!
-//! ```text
-//! T_ij(r) = 1 - (1 + s_ij r / 2) exp(-s_ij r)
-//! s_ij    = a_ij / (alpha_i alpha_j)^(1/6),   a_ij = (a_i + a_j) / 2
-//! ```
-//!
-//! so the damped energy of a pair is `T_ij(r) * q_i q_j / r`. The screening
-//! `s_ij` depends on **both** endpoints' atomic polarizabilities, so the
-//! constructor resolves per-atom-type `charge` / `alpha` / `damp` from the
-//! `atoms` block and precomputes `(s_ij, q_i q_j)` per pair. `alpha` and
-//! `damp` (the Thole `a`) are LAMMPS `pair_style thole`'s `pair_coeff` names;
-//! the per-type `charge` is molrs's (LAMMPS damps the Drude charges of the
-//! atoms).
-//!
-//! Units: r in A, alpha in A^3, a dimensionless, q in e (energy in the same
-//! Coulomb units as the accompanying electrostatic kernel — Thole is a
-//! multiplicative screen on `q_i q_j / r`).
-//!
-//! Reference: Thole, Chem. Phys. 59 (1981) 341,
-//! DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
-//! polarizer (LAMMPS `pair_style thole`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -69,6 +45,31 @@ enum Source {
     },
 }
 
+/// Thole dipole-dipole screening (CL&Pol short-range damping).
+///
+/// Screens the Coulomb interaction between Drude-related point charges at short
+/// range with the exponential Thole function
+///
+/// ```text
+/// T_ij(r) = 1 - (1 + s_ij r / 2) exp(-s_ij r)
+/// s_ij    = a_ij / (alpha_i alpha_j)^(1/6),   a_ij = (a_i + a_j) / 2
+/// ```
+///
+/// so the damped energy of a pair is `T_ij(r) * q_i q_j / r`. The screening
+/// `s_ij` depends on **both** endpoints' atomic polarizabilities, so the
+/// constructor resolves per-atom-type `charge` / `alpha` / `damp` from the
+/// `atoms` block and precomputes `(s_ij, q_i q_j)` per pair. `alpha` and
+/// `damp` (the Thole `a`) are LAMMPS `pair_style thole`'s `pair_coeff` names;
+/// the per-type `charge` is molrs's (LAMMPS damps the Drude charges of the
+/// atoms).
+///
+/// Units: r in A, alpha in A^3, a dimensionless, q in e (energy in the same
+/// Coulomb units as the accompanying electrostatic kernel — Thole is a
+/// multiplicative screen on `q_i q_j / r`).
+///
+/// Reference: Thole, Chem. Phys. 59 (1981) 341,
+/// DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
+/// polarizer (LAMMPS `pair_style thole`).
 pub struct PairThole {
     source: Source,
 }

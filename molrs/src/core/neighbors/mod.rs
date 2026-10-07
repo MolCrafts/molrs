@@ -1,139 +1,4 @@
-//! Neighbor-list algorithms for pairwise distance queries.
-//!
-//! A **neighbor list** is the table of particle pairs that lie closer together
-//! than a fixed **cutoff** distance. Almost every pairwise quantity in
-//! molecular simulation is computed by walking such a table: short-range
-//! forces; the **radial distribution function** (**RDF**), the average number
-//! of neighbors found at each separation `r`; **bond-order parameters**, which
-//! describe how the *directions* to a particle's neighbors are arranged;
-//! clustering. Building the table by testing every pair costs `O(N²)` distance
-//! evaluations for `N` particles. The algorithms here bucket space so that the
-//! cost falls to `O(N)`.
-//!
-//! ## Minimum image, sign convention, units
-//!
-//! Under periodic boundary conditions the simulation box is tiled infinitely
-//! through space, so two particles have infinitely many separations — one per
-//! periodic copy ("image") of the box. The **minimum-image convention**
-//! (**MIC**) keeps only the shortest of them, and that shortest separation is
-//! the only one this module ever reports.
-//!
-//! For a pair `(i, j)` a search produces two quantities:
-//!
-//! ```text
-//! disp    = MIC(r_j - r_i)   displacement vector, pointing from i to j
-//! dist_sq = |disp|^2         its squared length, from that same image
-//! ```
-//!
-//! `disp` is **not** normalized — it is not divided by the distance, so its
-//! length *is* the pair distance rather than 1. Both quantities come from the
-//! single call [`SimBox::shortest_vector_impl`], so they always describe the
-//! same periodic image and can never disagree. Lengths carry the unit of the
-//! input coordinates, which is Å (ångström) everywhere in molrs; `disp` is
-//! therefore in Å and `dist_sq` in Å².
-//!
-//! ## Searching
-//!
-//! [`NeighborList`] is the entry point: it owns the cutoff and the **backend**
-//! that indexes space, and turns coordinates into pairs. Two backends:
-//!
-//! - [`LinkCell`] (via [`NeighborList::new`]) — O(N) **cell list**: space is
-//!   cut into a grid of cells at least one cutoff wide, so a particle can only
-//!   have neighbors in its own cell and the 26 cells touching it. The default
-//!   backend and the right choice in production. Indexing runs on one thread;
-//!   [`NeighborList::neighbors`] then materializes the table by folding over
-//!   occupied cells with rayon (default feature, above a small-system
-//!   threshold), which is 2–4× faster at molecular-dynamics sizes and is why
-//!   the row order of a materialized table is unspecified.
-//!   [`NeighborList::for_each_pair`] stays single-threaded: it hands pairs to
-//!   an `FnMut` visitor, which cannot be shared across threads.
-//! - [`AabbQuery`] (via [`NeighborList::aabb`]) — a **bounding-volume
-//!   hierarchy**: a binary tree of axis-aligned boxes, descended once per
-//!   lattice image, pruning any subtree whose box is out of reach. `O(N log N)`
-//!   to build. It earns that over the cell list where a cell cannot be sized
-//!   well — markedly non-uniform density, or particle sizes spread wide enough
-//!   that one cutoff makes the cells coarse and the scan mostly empty.
-//! - [`BruteForce`] (via [`NeighborList::brute_force`]) — O(N²) all-pairs
-//!   reference: a test oracle, and adequate for very small systems.
-//!
-//! [`NeighborQuery`] runs a **cross-query**, searching one point set against a
-//! separate reference set. [`AabbQuery`] answers the one question a cutoff
-//! cannot express — *which `k` points are closest*, which has no radius — via
-//! [`AabbQuery::query_knn`]; it is the same tree that serves as the `Aabb`
-//! backend above, so one index answers both.
-//!
-//! ## Streaming a pair versus materializing a table
-//!
-//! Indexing the coordinates and consuming the pairs are separate steps, and the
-//! second step has two shapes. An analysis that touches each pair once and
-//! keeps only a reduction — an RDF histogram, an energy sum — **streams**:
-//! [`NeighborList::build`] followed by [`NeighborList::for_each_pair`], which
-//! hands over one [`NeighborPair`] at a time and allocates nothing. An analysis
-//! that walks the same pairs several times, or wants them as columns — a
-//! bond-order parameter needs the direction to each neighbor, not just the
-//! distance — **materializes** once with [`NeighborList::neighbors`], naming
-//! the columns it will actually read (here [`NeighborsStorage::DISP`]).
-//! Runnable versions of both are on [`NeighborList`].
-//!
-//! No self search allocates a [`Neighbors`] table behind the caller's back.
-//! [`build`](NeighborList::build), [`build_columns`](NeighborList::build_columns)
-//! and [`update`](NeighborList::update) own the spatial index and nothing else —
-//! they enumerate no pairs and store no table — and exactly two calls turn
-//! freshly searched pairs into one: [`NeighborList::neighbors`], and
-//! [`Neighbors::from_pairs`] for a pair stream the caller produced or filtered
-//! itself. A cross-query is a different door and answers with a table directly
-//! ([`NeighborQuery::query`]).
-//!
-//! A streamed pair always carries both physical columns. A materialized table
-//! keeps only the columns [`NeighborsStorage`] asked for, and reports a column
-//! it never stored as `None` — never as a fabricated zero. Two further
-//! conventions pin the table down:
-//!
-//! - A **self-query** searches one point set against itself and is *half-shell*:
-//!   each unordered pair appears exactly once, with `i < j`. A **cross-query**
-//!   searches a set of query points against a separate reference set; it is
-//!   directed and has no ordering constraint.
-//! - [`NeighborsStorage::FULL`] means *every column is present*. It does **not**
-//!   mean a full-shell (bidirectional) pair list. Column policy and pair
-//!   direction are independent choices.
-//!
-//! ## API at a glance
-//!
-//! ```ignore
-//! let mut nl = NeighborList::new(3.0);       // cell-list backend, cutoff 3 Å
-//! nl.build(points.view(), &simbox);          // index only — no pair table
-//! nl.build_columns(&xs, &ys, &zs, &simbox);  // ...same, from x/y/z columns
-//! nl.update(points.view());                  // re-index, reusing that box
-//!
-//! nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
-//! let table = nl.neighbors(NeighborsStorage::FULL);  // ...or materialize them
-//!
-//! let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
-//! let cross = nq.query(query_points.view()); // cross-query, directed
-//!
-//! table.query_point_indices()   // &[u32]           — i of each pair
-//! table.point_indices()         // &[u32]           — j of each pair
-//! table.dist_sq()               // Option<&[F]>     — Å², None if not stored
-//! table.disp()                  // Option<Fnx3View> — Å,  None if not stored
-//! ```
-//!
-//! ## Name mapping from freud
-//!
-//! The API mirrors [freud-analysis](https://freud.readthedocs.io/) closely
-//! enough that freud's documentation transfers, with two deliberate
-//! differences: molrs stores the *squared* distance, and molrs makes the
-//! physical columns opt-in.
-//!
-//! | freud | molrs | difference |
-//! |---|---|---|
-//! | `NeighborList.query_point_indices` | [`Neighbors::query_point_indices()`] | — |
-//! | `NeighborList.point_indices` | [`Neighbors::point_indices()`] | — |
-//! | `NeighborList.distances` (r, Å) | [`Neighbors::dist_sq()`] (r², Å²) | molrs stores the square and never hides a square root inside an accessor; take `.sqrt()` at the call site |
-//! | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
-//! | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
-//! | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
-//! | `freud.locality.AABBQuery` | [`AabbQuery`] | one tree, both questions: the `Aabb` backend of [`NeighborList`] for cutoff searches, [`AabbQuery::query_knn`] for k-nearest |
-//! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
+//! Neighbor-list algorithms for pairwise distance queries; [`NeighborList`] is the entry point.
 
 use crate::core::SimBox;
 use crate::op::{F, Fnx3, Fnx3View};
@@ -339,6 +204,16 @@ pub(crate) trait Backend: std::fmt::Debug {
 
 /// Neighbor search over one point set: index the coordinates, then read pairs.
 ///
+/// A **neighbor list** is the table of particle pairs that lie closer together
+/// than a fixed **cutoff** distance. Almost every pairwise quantity in
+/// molecular simulation is computed by walking such a table: short-range
+/// forces; the **radial distribution function** (**RDF**), the average number
+/// of neighbors found at each separation `r`; **bond-order parameters**, which
+/// describe how the *directions* to a particle's neighbors are arranged;
+/// clustering. Building the table by testing every pair costs `O(N²)` distance
+/// evaluations for `N` particles. The algorithms here bucket space so that the
+/// cost falls to `O(N)`.
+///
 /// This is the door to every self search in molrs. It owns the cutoff, the
 /// backend that indexes space, and the box the index was built for, and it
 /// keeps the two halves of the job apart:
@@ -409,6 +284,74 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// [`NeighborsStorage::FULL`] selects every *column*; it never means a
 /// bidirectional pair list, and nothing here falls back to it implicitly —
 /// [`neighbors`](Self::neighbors) takes the policy as an argument.
+///
+/// # Backends
+///
+/// [`NeighborList`] is the entry point: it owns the cutoff and the **backend**
+/// that indexes space, and turns coordinates into pairs. Two backends:
+///
+/// - [`LinkCell`] (via [`NeighborList::new`]) — O(N) **cell list**: space is
+///   cut into a grid of cells at least one cutoff wide, so a particle can only
+///   have neighbors in its own cell and the 26 cells touching it. The default
+///   backend and the right choice in production. Indexing runs on one thread;
+///   [`NeighborList::neighbors`] then materializes the table by folding over
+///   occupied cells with rayon (default feature, above a small-system
+///   threshold), which is 2–4× faster at molecular-dynamics sizes and is why
+///   the row order of a materialized table is unspecified.
+///   [`NeighborList::for_each_pair`] stays single-threaded: it hands pairs to
+///   an `FnMut` visitor, which cannot be shared across threads.
+/// - [`AabbQuery`] (via [`NeighborList::aabb`]) — a **bounding-volume
+///   hierarchy**: a binary tree of axis-aligned boxes, descended once per
+///   lattice image, pruning any subtree whose box is out of reach. `O(N log N)`
+///   to build. It earns that over the cell list where a cell cannot be sized
+///   well — markedly non-uniform density, or particle sizes spread wide enough
+///   that one cutoff makes the cells coarse and the scan mostly empty.
+/// - [`BruteForce`] (via [`NeighborList::brute_force`]) — O(N²) all-pairs
+///   reference: a test oracle, and adequate for very small systems.
+///
+/// [`NeighborQuery`] runs a **cross-query**, searching one point set against a
+/// separate reference set. [`AabbQuery`] answers the one question a cutoff
+/// cannot express — *which `k` points are closest*, which has no radius — via
+/// [`AabbQuery::query_knn`]; it is the same tree that serves as the `Aabb`
+/// backend above, so one index answers both.
+///
+/// # API at a glance
+///
+/// ```ignore
+/// let mut nl = NeighborList::new(3.0);       // cell-list backend, cutoff 3 Å
+/// nl.build(points.view(), &simbox);          // index only — no pair table
+/// nl.build_columns(&xs, &ys, &zs, &simbox);  // ...same, from x/y/z columns
+/// nl.update(points.view());                  // re-index, reusing that box
+///
+/// nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
+/// let table = nl.neighbors(NeighborsStorage::FULL);  // ...or materialize them
+///
+/// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
+/// let cross = nq.query(query_points.view()); // cross-query, directed
+///
+/// table.query_point_indices()   // &[u32]           — i of each pair
+/// table.point_indices()         // &[u32]           — j of each pair
+/// table.dist_sq()               // Option<&[F]>     — Å², None if not stored
+/// table.disp()                  // Option<Fnx3View> — Å,  None if not stored
+/// ```
+///
+/// # Name mapping from freud
+///
+/// The API mirrors [freud-analysis](https://freud.readthedocs.io/) closely
+/// enough that freud's documentation transfers, with two deliberate
+/// differences: molrs stores the *squared* distance, and molrs makes the
+/// physical columns opt-in.
+///
+/// | freud | molrs | difference |
+/// |---|---|---|
+/// | `NeighborList.query_point_indices` | [`Neighbors::query_point_indices()`] | — |
+/// | `NeighborList.point_indices` | [`Neighbors::point_indices()`] | — |
+/// | `NeighborList.distances` (r, Å) | [`Neighbors::dist_sq()`] (r², Å²) | molrs stores the square and never hides a square root inside an accessor; take `.sqrt()` at the call site |
+/// | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
+/// | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
+/// | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
+/// | `freud.locality.AABBQuery` | [`AabbQuery`] | one tree, both questions: the `Aabb` backend of [`NeighborList`] for cutoff searches, [`AabbQuery::query_knn`] for k-nearest |
+/// | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 #[derive(Debug)]
 pub struct NeighborList {
     /// The algorithm that indexes space and enumerates pairs. Also the single
@@ -759,6 +702,10 @@ impl NeighborsStorage {
 /// - `dist_sq` is taken from the *same* minimum image as `disp`, in the same
 ///   evaluation, so `dist_sq == |disp|²` holds to floating-point rounding and
 ///   the two can never describe different periodic copies.
+///
+/// Both quantities come from the single call [`SimBox::shortest_vector_impl`].
+/// Lengths carry the unit of the input coordinates, which is Å (ångström)
+/// everywhere in molrs; `disp` is therefore in Å and `dist_sq` in Å².
 ///
 /// Columns become optional only on the way into a [`Neighbors`] table; a value
 /// of this type always has all of them.

@@ -1,19 +1,16 @@
 //! CL&Pol parameters: the scaleLJ fragment table and the per-atom-type
 //! Drude polarisation table.
-//!
-//! Source: paduagroup/clandpol (Goloviznina, Canongia Lopes, Costa Gomes &
-//! Pádua, *J. Chem. Theory Comput.* **15** (2019) 5858; *PCCP* **20** (2018)
-//! 10992) — `fragment.ff` (`q`, `mu`) and `alpha.ff` (per-atom
-//! polarisabilities, also summed per fragment for [`CLPOL_FRAGMENTS`]).
-//! [`CLPOL_POLARIZABILITY`] is `alpha.ff` version 2024/06/05 transcribed row
-//! for row; a caller's own `alpha.ff` is read by
-//! [`crate::io::clpol::codec::read_clpol_alpha`].
 
 use std::collections::HashMap;
 
 use crate::ff::clpol_scaling::FragmentScaling;
 
 /// `(name, q, mu, alpha, polarizable)` rows used by CL&Pol scaleLJ.
+///
+/// Source: paduagroup/clandpol (Goloviznina, Canongia Lopes, Costa Gomes &
+/// Pádua, *J. Chem. Theory Comput.* **15** (2019) 5858; *PCCP* **20** (2018)
+/// 10992) — `fragment.ff` (`q`, `mu`) and `alpha.ff` (per-atom
+/// polarisabilities, also summed per fragment for [`CLPOL_FRAGMENTS`]).
 pub const CLPOL_FRAGMENTS: &[(&str, f64, f64, f64, bool)] = &[
     ("c2c1im", 1.0, 1.1558, 12.383, false),
     ("bf4", -1.0, 0.0, 3.078, false),
@@ -53,6 +50,10 @@ impl ClpolPolarizability {
 }
 
 /// `alpha.ff` (version 2024/06/05), one row per atom type, in file order.
+///
+/// [`CLPOL_POLARIZABILITY`] is `alpha.ff` version 2024/06/05 transcribed row
+/// for row; a caller's own `alpha.ff` is read by
+/// [`crate::io::read_clpol_alpha`].
 #[rustfmt::skip]
 pub const CLPOL_POLARIZABILITY: &[ClpolPolarizability] = &[
     // metal cations CHARMM polarizable

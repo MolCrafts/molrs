@@ -1,9 +1,4 @@
 //! Native WebSocket server that broadcasts serialized [`Frame`]s to clients.
-//!
-//! The accept loop and per-client I/O run on a background `std::thread` that
-//! owns a multi-thread tokio runtime. The simulation loop stays synchronous:
-//! [`Publisher::send`] never blocks on network writes; when the bounded
-//! broadcast buffer is full the oldest payload is dropped.
 
 use std::io;
 use std::net::SocketAddr;
@@ -115,6 +110,11 @@ struct Shared {
 }
 
 /// Publishes over a WebSocket and collects control commands back.
+///
+/// The accept loop and per-client I/O run on a background `std::thread` that
+/// owns a multi-thread tokio runtime. The simulation loop stays synchronous:
+/// [`Publisher::send`] never blocks on network writes; when the bounded
+/// broadcast buffer is full the oldest payload is dropped.
 ///
 /// Named for neither its socket nor its payload, because it commits to
 /// neither. It [`bind`](Self::bind)s and waits to be dialed, or

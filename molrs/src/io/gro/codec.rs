@@ -1,52 +1,4 @@
 //! The GRO codec: the GROMACS fixed-column structure / trajectory format.
-//!
-//! GRO is a fixed-column text format used by GROMACS for input structures and
-//! single-precision trajectories. One frame layout:
-//!
-//! ```text
-//! line 1   : title comment                        → frame.meta["title"]
-//! line 2   : atom count `n` (decimal integer)
-//! line 3..3+n : atom records (fixed columns; see below)
-//! line 3+n : box vectors (3 floats orthorhombic; 9 floats triclinic; nm)
-//! ```
-//!
-//! Multi-frame `.gro` files concatenate this layout. [`GroReader::read`]
-//! returns one frame per call.
-//!
-//! ## Atom record columns (1-indexed)
-//!
-//! | Cols | Meaning                | Example       |
-//! |------|------------------------|---------------|
-//! | 1-5  | Residue number (i32)   | `    1`       |
-//! | 6-10 | Residue name (str)     | `LIG  `       |
-//! | 11-15| Atom name (str)        | `   CA`       |
-//! | 16-20| Atom number (i32)      | `    1`       |
-//! | 21-28| x (nm, %8.3f)          | `   0.310`    |
-//! | 29-36| y                      | `   0.862`    |
-//! | 37-44| z                      | `   1.316`    |
-//! | 45-52| vx (optional, %8.4f)   |               |
-//! | 53-60| vy                     |               |
-//! | 61-68| vz                     |               |
-//!
-//! ## GRO triclinic box convention (line 3+n)
-//!
-//! Tokens, in file order: `v1x v2y v3z v1y v1z v2x v2z v3x v3y`. When only 3
-//! tokens are present, the box is orthorhombic: off-diagonals = 0.
-//!
-//! ## Output Frame
-//!
-//! - `"atoms"` block: `res_id` (uint), `res_name` (str), `name` (str),
-//!   `element` (str, inferred from the atom name), `id` (uint),
-//!   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
-//! - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
-//! - `frame.meta["title"]`.
-//!
-//! ## Units
-//!
-//! GRO is nm; molrs is Å. The reader multiplies by 10 and the
-//! writer divides by it, so a frame in memory is never in nm and no consumer
-//! has to ask where it came from. There is no `gro_units` tag: a unit that is
-//! normalised at the boundary is not a property of the frame.
 
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Seek, SeekFrom, Write};
@@ -461,6 +413,54 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
 /// GRO reader: [`FrameReader::read`] streams one frame per call; over a
 /// seekable stream it is also a [`TrajectoryReader`] (random access by frame,
 /// indexed on first use by one pass over the frame headers).
+///
+/// GRO is a fixed-column text format used by GROMACS for input structures and
+/// single-precision trajectories. One frame layout:
+///
+/// ```text
+/// line 1   : title comment                        → frame.meta["title"]
+/// line 2   : atom count `n` (decimal integer)
+/// line 3..3+n : atom records (fixed columns; see below)
+/// line 3+n : box vectors (3 floats orthorhombic; 9 floats triclinic; nm)
+/// ```
+///
+/// Multi-frame `.gro` files concatenate this layout. [`GroReader::read`]
+/// returns one frame per call.
+///
+/// # Atom record columns (1-indexed)
+///
+/// | Cols | Meaning                | Example       |
+/// |------|------------------------|---------------|
+/// | 1-5  | Residue number (i32)   | `    1`       |
+/// | 6-10 | Residue name (str)     | `LIG  `       |
+/// | 11-15| Atom name (str)        | `   CA`       |
+/// | 16-20| Atom number (i32)      | `    1`       |
+/// | 21-28| x (nm, %8.3f)          | `   0.310`    |
+/// | 29-36| y                      | `   0.862`    |
+/// | 37-44| z                      | `   1.316`    |
+/// | 45-52| vx (optional, %8.4f)   |               |
+/// | 53-60| vy                     |               |
+/// | 61-68| vz                     |               |
+///
+/// # GRO triclinic box convention (line 3+n)
+///
+/// Tokens, in file order: `v1x v2y v3z v1y v1z v2x v2z v3x v3y`. When only 3
+/// tokens are present, the box is orthorhombic: off-diagonals = 0.
+///
+/// # Output Frame
+///
+/// - `"atoms"` block: `res_id` (uint), `res_name` (str), `name` (str),
+///   `element` (str, inferred from the atom name), `id` (uint),
+///   `x`/`y`/`z` (F, **Å**), and optional `vx`/`vy`/`vz` (F, **Å/ps**).
+/// - `frame.simbox`: triclinic [`SimBox`] from the box-vector line, in Å.
+/// - `frame.meta["title"]`.
+///
+/// # Units
+///
+/// GRO is nm; molrs is Å. The reader multiplies by 10 and the
+/// writer divides by it, so a frame in memory is never in nm and no consumer
+/// has to ask where it came from. There is no `gro_units` tag: a unit that is
+/// normalised at the boundary is not a property of the frame.
 pub struct GroReader<R: BufRead> {
     reader: R,
     index: Option<FrameIndex>,

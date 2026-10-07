@@ -1,35 +1,4 @@
 //! LAMMPS `fix bond/react` (REACTER) input files.
-//!
-//! A `fix bond/react` reaction is a pre-reaction template, the same atoms
-//! after the reaction, and a *map file* pairing them: which two atoms initiate
-//! the reaction, which template atoms sit on the template's edge (bonded to
-//! atoms the template leaves out), which atoms the reaction deletes, and the
-//! pre ↔ post equivalence of every atom. [`BondReactTemplate`] holds one
-//! reaction; [`write_lammps_bond_react_map`] writes its map file, and
-//! [`write_lammps_bond_react_system`] writes the whole file set a reactive run
-//! reads:
-//!
-//! - `{stem}.data` — the system ([`write_lammps_data`](super::lammps_data::write_lammps_data));
-//! - `{name}_pre.mol` / `{name}_post.mol` — the templates, as LAMMPS molecule
-//!   files ([`write_lammps_molecule`]);
-//! - `{name}.map` — the map file.
-//!
-//! `fix bond/react` matches template atoms to system atoms by **type id**, so
-//! the data file and every template must number types the same way. The
-//! writer collects every type label the system and the templates use (the
-//! string `type` columns) into one inventory per block, declares it in the
-//! data file ([`TypeLabels::declare`]) and numbers the templates from it. The
-//! returned [`BondReactSystem::labels`] is that numbering; write the force
-//! field's coefficients with it (`LammpsForcefieldWriter::new(&labels)` in `ff`) so
-//! the `*.ff` include covers every type, template-only ones included.
-//!
-//! Template atoms are paired by an integer `react_id` atom column, the same
-//! value in the pre and the post template. A template's atom ids are its row
-//! numbers (1-based): the map file speaks in them.
-//!
-//! References: LAMMPS `fix bond/react`, <https://docs.lammps.org/fix_bond_react.html>;
-//! Gissinger, Jensen & Wise, *Polymer* **128** (2017) 211;
-//! *Macromolecules* **53** (2020) 9953.
 
 use crate::io::invalid_data;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -54,6 +23,37 @@ const TYPED_BLOCKS: [&str; 5] = ["atoms", "bonds", "angles", "dihedrals", "impro
 
 /// One `fix bond/react` reaction: the template before and after, and the
 /// atoms the map file names, by `react_id`.
+///
+/// A `fix bond/react` reaction is a pre-reaction template, the same atoms
+/// after the reaction, and a *map file* pairing them: which two atoms initiate
+/// the reaction, which template atoms sit on the template's edge (bonded to
+/// atoms the template leaves out), which atoms the reaction deletes, and the
+/// pre ↔ post equivalence of every atom. [`BondReactTemplate`] holds one
+/// reaction; [`write_lammps_bond_react_map`] writes its map file, and
+/// [`write_lammps_bond_react_system`] writes the whole file set a reactive run
+/// reads:
+///
+/// - `{stem}.data` — the system ([`write_lammps_data`](crate::io::write_lammps_data));
+/// - `{name}_pre.mol` / `{name}_post.mol` — the templates, as LAMMPS molecule
+///   files ([`write_lammps_molecule`]);
+/// - `{name}.map` — the map file.
+///
+/// `fix bond/react` matches template atoms to system atoms by **type id**, so
+/// the data file and every template must number types the same way. The
+/// writer collects every type label the system and the templates use (the
+/// string `type` columns) into one inventory per block, declares it in the
+/// data file ([`TypeLabels::declare`]) and numbers the templates from it. The
+/// returned [`BondReactSystem::labels`] is that numbering; write the force
+/// field's coefficients with it (`LammpsForcefieldWriter::new(&labels)` in `ff`) so
+/// the `*.ff` include covers every type, template-only ones included.
+///
+/// Template atoms are paired by an integer `react_id` atom column, the same
+/// value in the pre and the post template. A template's atom ids are its row
+/// numbers (1-based): the map file speaks in them.
+///
+/// References: LAMMPS `fix bond/react`, <https://docs.lammps.org/fix_bond_react.html>;
+/// Gissinger, Jensen & Wise, *Polymer* **128** (2017) 211;
+/// *Macromolecules* **53** (2020) 9953.
 #[derive(Debug, Clone)]
 pub struct BondReactTemplate {
     /// Pre-reaction template; its `atoms` carry the integer `react_id`.

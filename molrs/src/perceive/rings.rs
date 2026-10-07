@@ -1,21 +1,5 @@
 //! Ring detection for molecular graphs — the **handle-keyed chemistry
 //! decoration** over the core graph primitive.
-//!
-//! This module is the one owner of ring perception in the tree. Its SSSR
-//! search computes the **Smallest Set of Smallest Rings** (equivalently the
-//! minimum cycle basis) over the contiguous `usize` vertex/edge indices of a
-//! [`Topology`]; [`perceive_rings`]:
-//!
-//! 1. projects an [`Atomistic`] onto that index space — atom index `i` is the
-//!    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
-//!    [`Atomistic::bonds`],
-//! 2. runs the SSSR search,
-//! 3. lifts the resulting `usize` indices back onto the [`NodeId`] / [`RelationId`]
-//!    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
-//!    pipeline) actually holds, as a [`RingInfo`].
-//!
-//! [`RingInfo`] keeps RDKit's name (`Chem.RingInfo`) for the same object: the
-//! ring list plus per-atom and per-bond membership.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -31,6 +15,8 @@ use crate::core::{NodeId, RelationId};
 /// All ring information for an [`Atomistic`], produced by [`perceive_rings`]:
 /// the SSSR rings and per-atom / per-bond ring membership, addressed by
 /// [`NodeId`] / [`RelationId`].
+///
+/// It keeps RDKit's name (`Chem.RingInfo`) for the same object.
 #[derive(Debug, Clone)]
 pub struct RingInfo {
     /// Each ring is an ordered list of `NodeId`s forming a closed path.
@@ -327,8 +313,19 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 
 /// Compute the ring information (SSSR / minimum cycle basis) for `mol`.
 ///
-/// Runs the SSSR search over the molecule's index-space [`Topology`] and
-/// lifts its `usize` indices back onto [`NodeId`] / [`RelationId`] handles.
+/// This is the one owner of ring perception in the tree. Its SSSR search
+/// computes the **Smallest Set of Smallest Rings** (equivalently the minimum
+/// cycle basis) over the contiguous `usize` vertex/edge indices of a
+/// [`Topology`]; this function:
+///
+/// 1. projects an [`Atomistic`] onto that index space — atom index `i` is the
+///    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
+///    [`Atomistic::bonds`],
+/// 2. runs the SSSR search,
+/// 3. lifts the resulting `usize` indices back onto the [`NodeId`] / [`RelationId`]
+///    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
+///    pipeline) actually holds, as a [`RingInfo`].
+///
 /// Rings come back smallest-first.
 pub fn perceive_rings(mol: &Atomistic) -> RingInfo {
     // ---- 1. Project onto the core index space ------------------------------

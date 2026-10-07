@@ -1,11 +1,4 @@
-//! OPLS 4-cosine (Fourier) proper dihedral:
-//!
-//! E(φ) = ½[ F1(1+cos φ) + F2(1−cos 2φ) + F3(1+cos 3φ) + F4(1−cos 4φ) ]
-//!
-//! This is the OPLS-AA torsion form (Jorgensen, Maxwell & Tirado-Rives,
-//! J. Am. Chem. Soc. 1996, 118, 11225). Coefficients F1..F4 are in kcal/mol.
-//! The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
-//! and coefficients, mirroring the MMFF torsion kernel.
+//! OPLS 4-cosine (Fourier) proper dihedral.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
@@ -22,6 +15,15 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// OPLS 4-cosine proper dihedral with pre-resolved flat arrays.
+///
+/// OPLS 4-cosine (Fourier) proper dihedral:
+///
+/// E(φ) = ½[ F1(1+cos φ) + F2(1−cos 2φ) + F3(1+cos 3φ) + F4(1−cos 4φ) ]
+///
+/// This is the OPLS-AA torsion form (Jorgensen, Maxwell & Tirado-Rives,
+/// J. Am. Chem. Soc. 1996, 118, 11225). Coefficients F1..F4 are in kcal/mol.
+/// The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
+/// and coefficients, mirroring the MMFF torsion kernel.
 pub struct DihedralOpls {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

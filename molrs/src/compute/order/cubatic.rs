@@ -1,32 +1,4 @@
 //! Cubatic order parameter via simulated annealing.
-//!
-//! Mirrors `freud.order.Cubatic`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Cubatic.cc)).
-//!
-//! For a set of unit director quaternions, finds the cubic-symmetric
-//! global orientation `q*` that maximises the 4-th rank cubatic order
-//! parameter
-//!
-//! ```text
-//!   P_4(q*) = ⟨ Σ_{a,b,c,d} M_{abcd}(q*) · û_{i,a} û_{i,b} û_{i,c} û_{i,d} ⟩_i
-//! ```
-//!
-//! where `M` is the symmetric 4-th rank cubic invariant tensor at
-//! orientation `q*`. The optimisation is a basic simulated annealing
-//! with deterministic RNG seeding.
-//!
-//! For tractability the implementation uses the **reduced scalar form**
-//! commonly used in soft-matter literature: project each director onto
-//! the rotated cubic axes `{e_x, e_y, e_z}` and compute
-//!
-//! ```text
-//!   P_4 = ⟨ (û · e_x)^4 + (û · e_y)^4 + (û · e_z)^4 ⟩ − 3/5
-//! ```
-//!
-//! which is `0` for an isotropic ensemble and `> 0` for cubic alignment.
-//!
-//! The output is `(order, director_basis)` where `director_basis` is the
-//! 3 × 3 rotation matrix sending the lab frame to the optimal cubic frame.
 
 use crate::compute::ComputeResult;
 use rand::RngExt;
@@ -41,6 +13,34 @@ use crate::compute::ComputeError;
 
 /// Cubatic calculator. Stateless: SA seed, schedule, and chain count live
 /// on the struct.
+///
+/// Mirrors `freud.order.Cubatic`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Cubatic.cc)).
+///
+/// For a set of unit director quaternions, finds the cubic-symmetric
+/// global orientation `q*` that maximises the 4-th rank cubatic order
+/// parameter
+///
+/// ```text
+///   P_4(q*) = ⟨ Σ_{a,b,c,d} M_{abcd}(q*) · û_{i,a} û_{i,b} û_{i,c} û_{i,d} ⟩_i
+/// ```
+///
+/// where `M` is the symmetric 4-th rank cubic invariant tensor at
+/// orientation `q*`. The optimisation is a basic simulated annealing
+/// with deterministic RNG seeding.
+///
+/// For tractability the implementation uses the **reduced scalar form**
+/// commonly used in soft-matter literature: project each director onto
+/// the rotated cubic axes `{e_x, e_y, e_z}` and compute
+///
+/// ```text
+///   P_4 = ⟨ (û · e_x)^4 + (û · e_y)^4 + (û · e_z)^4 ⟩ − 3/5
+/// ```
+///
+/// which is `0` for an isotropic ensemble and `> 0` for cubic alignment.
+///
+/// The output is `(order, director_basis)` where `director_basis` is the
+/// 3 × 3 rotation matrix sending the lab frame to the optimal cubic frame.
 #[derive(Debug, Clone, Copy)]
 pub struct Cubatic {
     seed: u64,

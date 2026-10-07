@@ -1,69 +1,4 @@
 //! AMBER frcmod force-field writer.
-//!
-//! The inverse of the force-field half of
-//! [`AmberPrmtopForcefieldReader`](crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader):
-//! it writes a [`ForceField`] as the six parameter sections of an AMBER
-//! frcmod file, so tleap can load a molrs force field with
-//! `loadamberparams`. the force-field IR follows the LAMMPS standard, which for these terms is
-//! AMBER's own — Å, kcal/mol, amu, un-halved `K`, degrees — so every number is
-//! written as stored.
-//!
-//! # Output
-//!
-//! A title line, then `MASS`, `BOND`, `ANGLE`, `DIHE`, `IMPROPER` and
-//! `NONBON`, each closed by a blank line and always present (an empty
-//! section is a header and its blank line).
-//!
-//! | molrs style | Section | Row (file units) |
-//! |---|---|---|
-//! | `atom/full` | `MASS` | `T  mass` |
-//! | `bond/harmonic` | `BOND` | `T1-T2  RK = k  R0 = r0` |
-//! | `angle/harmonic` | `ANGLE` | `T1-T2-T3  TK = k  THETA0 = theta0` |
-//! | `dihedral/periodic` | `DIHE` | one row per term: `T1-T2-T3-T4  IDIVF = 1  PK = k_m  PHASE = phase_m  PN = ±n_m` |
-//! | `improper/periodic` | `IMPROPER` | `T1-T2-T3-T4  PK = k  PHASE = phase  PN = n`, the atoms in the stored (AMBER) order |
-//! | `pair/lj/cut` (self rows) | `NONBON` | `  T  R*/2 = σ·2^(1/6)/2  EPSILON = ε` |
-//!
-//! `dihedral/periodic` takes `k{m}`/`periodicity{m}`/`phase{m}`, or a single
-//! `k`/`periodicity`/`phase` triple; the prmtop reader writes the first, the
-//! GAFF typifier the second. A multi-term torsion is written in AMBER's
-//! convention: `PN` is negative on every term but the last. In the bonded
-//! rows each atom type is padded to frcmod's two-character field, and a
-//! wildcard endpoint (`X` or empty) is written `X `; `MASS` and `NONBON` rows
-//! are whitespace-delimited and take longer types (the ion types `Li+`).
-//!
-//! `pair/coul/cut` has no section: tleap takes the Coulomb constants from
-//! AMBER itself, so only the constants the AMBER readers declare
-//! (`coulomb = AMBER_COULOMB`, `dielectric = 1`, `delta = 0`, no types) are
-//! accepted, and nothing is written.
-//!
-//! # Estimated terms
-//!
-//! A term the GAFF typifier estimated rather than matched carries the four
-//! provenance keys of [`Provenance`] (`estimated`, `estimate_penalty`,
-//! `estimate_method`, `estimate_analog`). They are metadata, not parameters:
-//! the row is written from its parameters and the provenance becomes the
-//! row's trailing comment, as parmchk2 writes it —
-//! `same as c3-os, penalty score= 2.5` (or `estimated (empirical), …` when no
-//! analog was copied). AMBER reads the fixed fields and ignores the rest of
-//! the line.
-//!
-//! # Refusals
-//!
-//! A pair style's `cutoff` is a run setting (AMBER keeps it in the mdin, not in
-//! any parameter file), so it is not force-field data this writer drops: it is
-//! not written. What a frcmod cannot express is an `Err` naming it, never a
-//! silent drop:
-//!
-//! - any other style;
-//! - a style parameter (e.g. an `lj/cut` `shift`), or `lj/cut` mixing other
-//!   than `arithmetic` (AMBER combines by Lorentz–Berthelot);
-//! - a type parameter with no column, or a missing one;
-//! - an explicit `lj/cut` cross row (NBFIX has no frcmod section);
-//! - an atom type longer than two characters;
-//! - a non-positive or non-integer periodicity;
-//! - declared units other than `real`, or declared special-bond weights other
-//!   than AMBER's (1-2 / 1-3 excluded, 1-4 LJ 1/SCNB, Coulomb 1/SCEE), which
-//!   tleap supplies itself.
 
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
@@ -80,8 +15,72 @@ const SECTIONS: [&str; 6] = ["MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBO
 /// Writer for AMBER frcmod parameter files.
 ///
 /// `AmberFrcmodWriter::new()`, then [`ForceFieldWriter::write`] /
-/// [`ForceFieldWriter::write_str`]. The layout, conversions and refusals are
-/// listed in the module documentation.
+/// [`ForceFieldWriter::write_str`].
+///
+/// The inverse of the force-field half of
+/// [`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader):
+/// it writes a [`ForceField`] as the six parameter sections of an AMBER
+/// frcmod file, so tleap can load a molrs force field with
+/// `loadamberparams`. The force-field IR follows the LAMMPS standard, which for these terms is
+/// AMBER's own — Å, kcal/mol, amu, un-halved `K`, degrees — so every number is
+/// written as stored.
+///
+/// # Output
+///
+/// A title line, then `MASS`, `BOND`, `ANGLE`, `DIHE`, `IMPROPER` and
+/// `NONBON`, each closed by a blank line and always present (an empty
+/// section is a header and its blank line).
+///
+/// | molrs style | Section | Row (file units) |
+/// |---|---|---|
+/// | `atom/full` | `MASS` | `T  mass` |
+/// | `bond/harmonic` | `BOND` | `T1-T2  RK = k  R0 = r0` |
+/// | `angle/harmonic` | `ANGLE` | `T1-T2-T3  TK = k  THETA0 = theta0` |
+/// | `dihedral/periodic` | `DIHE` | one row per term: `T1-T2-T3-T4  IDIVF = 1  PK = k_m  PHASE = phase_m  PN = ±n_m` |
+/// | `improper/periodic` | `IMPROPER` | `T1-T2-T3-T4  PK = k  PHASE = phase  PN = n`, the atoms in the stored (AMBER) order |
+/// | `pair/lj/cut` (self rows) | `NONBON` | `  T  R*/2 = σ·2^(1/6)/2  EPSILON = ε` |
+///
+/// `dihedral/periodic` takes `k{m}`/`periodicity{m}`/`phase{m}`, or a single
+/// `k`/`periodicity`/`phase` triple; the prmtop reader writes the first, the
+/// GAFF typifier the second. A multi-term torsion is written in AMBER's
+/// convention: `PN` is negative on every term but the last. In the bonded
+/// rows each atom type is padded to frcmod's two-character field, and a
+/// wildcard endpoint (`X` or empty) is written `X `; `MASS` and `NONBON` rows
+/// are whitespace-delimited and take longer types (the ion types `Li+`).
+///
+/// `pair/coul/cut` has no section: tleap takes the Coulomb constants from
+/// AMBER itself, so only the constants the AMBER readers declare
+/// (`coulomb = AMBER_COULOMB`, `dielectric = 1`, `delta = 0`, no types) are
+/// accepted, and nothing is written.
+///
+/// # Estimated terms
+///
+/// A term the GAFF typifier estimated rather than matched carries the four
+/// provenance keys of [`Provenance`] (`estimated`, `estimate_penalty`,
+/// `estimate_method`, `estimate_analog`). They are metadata, not parameters:
+/// the row is written from its parameters and the provenance becomes the
+/// row's trailing comment, as parmchk2 writes it —
+/// `same as c3-os, penalty score= 2.5` (or `estimated (empirical), …` when no
+/// analog was copied). AMBER reads the fixed fields and ignores the rest of
+/// the line.
+///
+/// # Refusals
+///
+/// A pair style's `cutoff` is a run setting (AMBER keeps it in the mdin, not in
+/// any parameter file), so it is not force-field data this writer drops: it is
+/// not written. What a frcmod cannot express is an `Err` naming it, never a
+/// silent drop:
+///
+/// - any other style;
+/// - a style parameter (e.g. an `lj/cut` `shift`), or `lj/cut` mixing other
+///   than `arithmetic` (AMBER combines by Lorentz–Berthelot);
+/// - a type parameter with no column, or a missing one;
+/// - an explicit `lj/cut` cross row (NBFIX has no frcmod section);
+/// - an atom type longer than two characters;
+/// - a non-positive or non-integer periodicity;
+/// - declared units other than `real`, or declared special-bond weights other
+///   than AMBER's (1-2 / 1-3 excluded, 1-4 LJ 1/SCNB, Coulomb 1/SCEE), which
+///   tleap supplies itself.
 #[derive(Debug, Clone, Default)]
 pub struct AmberFrcmodWriter;
 

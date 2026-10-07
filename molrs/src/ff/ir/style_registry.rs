@@ -1,19 +1,5 @@
 //! The registry of the force-field IR: categories, styles and the kernels
 //! that price them — one table, open to any caller that conforms.
-//!
-//! [`Registry::builtin`] holds molrs's own categories and styles, registered
-//! through the same spec types a third party uses and then **sealed**: a
-//! built-in cannot be overridden or removed ([`IrError::Sealed`]).
-//! Re-registering anything identically is a no-op; registering something
-//! else under a taken name is [`IrError::Conflict`], mirroring the force
-//! field's own conflict rule.
-//!
-//! [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) reads the
-//! process-wide registry ([`register_style`], [`with_global_registry`], …) unless it
-//! is handed one ([`PotentialCompiler::with_registry`]), which is how a test
-//! extends the IR without touching anything another test sees.
-//!
-//! [`PotentialCompiler::with_registry`]: crate::ff::potential::PotentialCompiler::with_registry
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -526,6 +512,20 @@ struct FormEntry {
 /// Categories and styles of the force-field IR, the kernels that price the
 /// styles, and the form codecs that convert between them
 /// ([`crate::ff::ir::FormCodec`]).
+///
+/// [`Registry::builtin`] holds molrs's own categories and styles, registered
+/// through the same spec types a third party uses and then **sealed**: a
+/// built-in cannot be overridden or removed ([`IrError::Sealed`]).
+/// Re-registering anything identically is a no-op; registering something
+/// else under a taken name is [`IrError::Conflict`], mirroring the force
+/// field's own conflict rule.
+///
+/// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) reads the
+/// process-wide registry ([`register_style`], [`with_global_registry`], …) unless it
+/// is handed one ([`PotentialCompiler::with_registry`]), which is how a test
+/// extends the IR without touching anything another test sees.
+///
+/// [`PotentialCompiler::with_registry`]: crate::ff::potential::PotentialCompiler::with_registry
 #[derive(Clone, Default)]
 pub struct Registry {
     categories: BTreeMap<String, RegisteredCategory>,

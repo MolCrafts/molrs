@@ -1,16 +1,4 @@
 //! XSF (XCrySDen Structure File) structure reader and writer.
-//!
-//! Supports crystal and molecular structures:
-//!
-//! - `CRYSTAL` / `MOLECULE` keywords
-//! - `PRIMVEC` / `CONVVEC` — three lattice-vector lines (Å)
-//! - `PRIMCOORD` — atom count / multiplicity, then `Z x y z` rows
-//!
-//! Returned [`Frame`]:
-//!
-//! - `"atoms"` block: `atomic_number` (U), `element` (str), `x`/`y`/`z` (F)
-//! - `frame.simbox` — periodic cell from PRIMVEC (else CONVVEC) for `CRYSTAL`,
-//!   or a free (no-cell) box for `MOLECULE` / unspecified
 
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
@@ -60,6 +48,18 @@ fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()>
 // ---------------------------------------------------------------------------
 
 /// Read one XSF structure file from `path`.
+///
+/// Supports crystal and molecular structures:
+///
+/// - `CRYSTAL` / `MOLECULE` keywords
+/// - `PRIMVEC` / `CONVVEC` — three lattice-vector lines (Å)
+/// - `PRIMCOORD` — atom count / multiplicity, then `Z x y z` rows
+///
+/// The returned [`Frame`] has:
+///
+/// - `"atoms"` block: `atomic_number` (U), `element` (str), `x`/`y`/`z` (F)
+/// - `frame.simbox` — periodic cell from PRIMVEC (else CONVVEC) for `CRYSTAL`,
+///   or a free (no-cell) box for `MOLECULE` / unspecified
 pub fn read_xsf<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     read_frame_from(std::io::BufReader::new(file))

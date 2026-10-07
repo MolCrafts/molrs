@@ -1,30 +1,4 @@
 //! Hydrogen addition for molecular graphs.
-//!
-//! Hydrogen addition ([`add_hydrogens`](crate::perceive::add_hydrogens))
-//! computes the number of implicit hydrogens each heavy atom requires (based on its element's default valences and the sum of its current
-//! bond orders) and returns a **new** [`Atomistic`] with explicit H atoms added.
-//!
-//! [`remove_hydrogens`] does the inverse: it returns a new [`Atomistic`] with
-//! all terminal explicit hydrogen atoms removed — terminal by `bonds`-kind
-//! degree, and never a hydrogen that is the handle of a port.
-//!
-//! # Immutability
-//! The original `MolGraph` is never mutated; a clone is returned.
-//!
-//! # Bond-order convention
-//! Localized bond counts are read from the bond's `bond_number`, and
-//! aromaticity from its `bond_type` — the two are separate questions.
-//! If the property is absent the bond is assumed to be a single bond (1.0).
-//! Aromatic bonds should be stored as 1.5.
-//!
-//! # Formal-charge correction
-//! A formal charge is folded into the element identity, not into the bond
-//! demand: the valence list of `Z − formal_charge` is used. This is RDKit's
-//! `getEffectiveAtomicNum` rule and gets the group-13/14 cation case right
-//! (e.g. `[CH3+]` → C(Z=6) − (+1) = B(Z=5), valence 3 → 3 H, rather than the
-//! naive `bond_order_sum − formal_charge` which over-counts to 5 H). For the
-//! late atoms N/O/F the two formulations happen to agree, but for early atoms
-//! (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 
 use std::collections::HashSet;
 
@@ -50,7 +24,10 @@ const PORTS_KIND: &str = "ports";
 /// Return a new [`Atomistic`] with explicit hydrogen atoms added to every
 /// heavy atom that has unfilled valence.
 ///
-/// Hydrogen atoms already present (symbol == "H") are not modified.
+/// Each heavy atom gets [`implicit_h_count`] hydrogens: its element's default
+/// valences against the sum of its current bond orders, with the formal
+/// charge folded into the element. Hydrogen atoms already present
+/// (symbol == "H") are not modified.
 ///
 /// When a heavy atom has `x`/`y`/`z` components, each new H is placed at a
 /// standard X–H length along a tetrahedral valence-completing direction
@@ -345,6 +322,23 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 ///
 /// Returns `None` if the atom has no recognisable element symbol or if its
 /// element has no defined default valences (e.g. noble gases).
+///
+/// # Bond-order convention
+///
+/// Localized bond counts are read from the bond's `bond_number`, and
+/// aromaticity from its `bond_type` — the two are separate questions.
+/// If the property is absent the bond is assumed to be a single bond (1.0).
+/// Aromatic bonds should be stored as 1.5.
+///
+/// # Formal-charge correction
+///
+/// A formal charge is folded into the element identity, not into the bond
+/// demand: the valence list of `Z − formal_charge` is used. This is RDKit's
+/// `getEffectiveAtomicNum` rule and gets the group-13/14 cation case right
+/// (e.g. `[CH3+]` → C(Z=6) − (+1) = B(Z=5), valence 3 → 3 H, rather than the
+/// naive `bond_order_sum − formal_charge` which over-counts to 5 H). For the
+/// late atoms N/O/F the two formulations happen to agree, but for early atoms
+/// (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
 pub fn implicit_h_count(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
     let atom = mol.get_atom(atom_id).ok()?;
 

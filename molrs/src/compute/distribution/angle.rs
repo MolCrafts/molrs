@@ -1,10 +1,4 @@
 //! Angle observable: the angle θ ∈ [0, π] at the vertex of each atom triple.
-//!
-//! Ported from the reference implementation's angular distribution (`src/df.cpp` ADF mode; the angle
-//! itself is `Angle`/`Angle_Deg` in `src/xdvector3.cpp`, here kept in radians):
-//! for a triple i–j–k with `j` the vertex, `θ = arccos((r_ij · r_kj) /
-//! (|r_ij| |r_kj|))`. The dot-product argument is clamped to `[-1, 1]` so a
-//! collinear triple yields exactly 0 or π instead of a rounding NaN.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -16,6 +10,12 @@ use crate::op::vec3::{dot, norm};
 use molrs::core::{Mic, SimBox};
 
 /// Angle θ ∈ [0, π] (radians) at atom `j` of each triple i–j–k (arity 3).
+///
+/// Ported from the reference implementation's angular distribution (`src/df.cpp` ADF mode; the angle
+/// itself is `Angle`/`Angle_Deg` in `src/xdvector3.cpp`, here kept in radians):
+/// for a triple i–j–k with `j` the vertex, `θ = arccos((r_ij · r_kj) /
+/// (|r_ij| |r_kj|))`. The dot-product argument is clamped to `[-1, 1]` so a
+/// collinear triple yields exactly 0 or π instead of a rounding NaN.
 #[derive(Debug, Clone, Default)]
 pub struct AngleObservable;
 

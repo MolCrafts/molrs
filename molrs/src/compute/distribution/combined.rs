@@ -1,29 +1,4 @@
 //! Combined Distribution Functions (CDF): joint 2-D / 3-D observable histograms.
-//!
-//! A [`CombinedDistribution`] jointly histograms two or three [`Observable`]s
-//! evaluated on aligned per-frame selections, producing a correlated density
-//! (RDF×ADF, distance×dihedral, angle×angle, …) whose marginals recover the
-//! link-01 1-D [`DistributionResult`](super::DistributionResult)s.
-//!
-//! Ported from the reference implementation (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
-//! - The flat **row-major** bin layout `m_pBin[iy*m_iRes[0]+ix]` of `C2DF`
-//!   (axis 0 fastest-varying) — generalized here to N axes with
-//!   `flat = Σ_a idx[a]·stride[a]`, `stride[0]=1`.
-//! - The skip-out-of-range / running-entry bookkeeping of
-//!   `C2DF::AddToBin(double x, double y)` (`m_fSkipEntries` / `m_fBinEntries`).
-//! - The **bilinear / trilinear cloud-in-cell** deposition of
-//!   `C2DF`/`C3DF::AddToBin`: each sample is spread over the `2^N` straddling
-//!   bins as the tensor product of the per-axis cloud-in-cell weights (the
-//!   N-D extension of link-01's [`Histogram1d::add`](super::Histogram1d::add)).
-//!   Because it is the tensor product of the same per-axis CIC scheme, summing
-//!   the joint histogram over the other axes reproduces the link-01 1-D CIC
-//!   distribution *exactly* — the defining CDF marginal-consistency contract
-//!   (ac-001) holds, now bit-for-bit with reference implementation rather than via a nearest-bin
-//!   approximation.
-//!
-//! # References
-//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
-//! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -210,6 +185,31 @@ impl From<DihedralObservable> for InternalCoordinate {
 /// observables must emit the same number of samples per frame (equal
 /// `AtomGroups` lengths), validated as a typed [`ComputeError`] — never a
 /// silent zip-truncation.
+///
+/// A [`CombinedDistribution`] jointly histograms two or three [`Observable`]s
+/// evaluated on aligned per-frame selections, producing a correlated density
+/// (RDF×ADF, distance×dihedral, angle×angle, …) whose marginals recover the
+/// link-01 1-D [`DistributionResult`](super::DistributionResult)s.
+///
+/// Ported from the reference implementation (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
+/// - The flat **row-major** bin layout `m_pBin[iy*m_iRes[0]+ix]` of `C2DF`
+///   (axis 0 fastest-varying) — generalized here to N axes with
+///   `flat = Σ_a idx[a]·stride[a]`, `stride[0]=1`.
+/// - The skip-out-of-range / running-entry bookkeeping of
+///   `C2DF::AddToBin(double x, double y)` (`m_fSkipEntries` / `m_fBinEntries`).
+/// - The **bilinear / trilinear cloud-in-cell** deposition of
+///   `C2DF`/`C3DF::AddToBin`: each sample is spread over the `2^N` straddling
+///   bins as the tensor product of the per-axis cloud-in-cell weights (the
+///   N-D extension of link-01's [`Histogram1d::add`](super::Histogram1d::add)).
+///   Because it is the tensor product of the same per-axis CIC scheme, summing
+///   the joint histogram over the other axes reproduces the link-01 1-D CIC
+///   distribution *exactly* — the defining CDF marginal-consistency contract
+///   (ac-001) holds, now bit-for-bit with reference implementation rather than via a nearest-bin
+///   approximation.
+///
+/// # References
+/// - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
+/// - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 #[derive(Debug, Clone)]
 pub struct CombinedDistribution {
     observables: Vec<InternalCoordinate>,

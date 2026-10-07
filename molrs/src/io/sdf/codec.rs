@@ -1,15 +1,4 @@
 //! The SDF / MDL molfile codec (V2000 CTAB).
-//!
-//! Parses the connection table (CTAB) inside MDL `.mol` files and the
-//! record blocks of `.sdf` files. V2000 only — V3000 records are rejected.
-//! [`read_sdf`] returns the first record of a multi-record SDF,
-//! [`read_sdf_trajectory`] every record.
-//!
-//! Produces a [`Frame`] with:
-//! - `"atoms"` block: `element` (string), `id` (u32, 1-based),
-//!   `x`, `y`, `z` (F, angstrom)
-//! - `"bonds"` block (if any): `atomi`, `atomj` (u32, 0-based indices
-//!   into the atoms block), `order` (u32)
 
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, Reader};
@@ -217,6 +206,15 @@ fn build_frame(atoms: &[SdfAtom], bonds: &[SdfBond]) -> std::io::Result<Frame> {
 ///
 /// Multi-record SDF files are supported; `read_frame` returns one record
 /// per call and advances past the `$$$$` terminator.
+///
+/// Parses the connection table (CTAB) inside MDL `.mol` files and the record
+/// blocks of `.sdf` files. V2000 only — V3000 records are rejected.
+///
+/// Each record is a [`Frame`] with:
+/// - `"atoms"` block: `element` (string), `id` (u32, 1-based),
+///   `x`, `y`, `z` (F, angstrom)
+/// - `"bonds"` block (if any): `atomi`, `atomj` (u32, 0-based indices
+///   into the atoms block), `order` (u32)
 pub struct SdfReader<R: BufRead> {
     reader: R,
 }

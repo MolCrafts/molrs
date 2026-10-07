@@ -1,17 +1,4 @@
 //! The [`ChargeModel`] trait — one seam for every charge method.
-//!
-//! | model | needs QM input? | topology correction? | `needs_equivalencing` |
-//! |---|---|---|---|
-//! | Mulliken | yes | no (pass-through) | `false` (`-eq 0`) |
-//! | AM1-BCC | yes | yes (bond increments) | `true` (`-eq 1`) |
-//! | ABCG2 | yes | yes (bond increments) | `true` (`-eq 1`) |
-//! | Gasteiger | **no** | yes (iterative) | `false` |
-//!
-//! The trait carries all four without any of them being a special case, which is
-//! what says it has not quietly assumed "QM base charges plus a correction": the
-//! QM charges are an `Option`, so a model that needs none simply ignores them, and
-//! the correction is the model's own business, so a model with none returns what it
-//! was handed.
 
 use std::collections::HashMap;
 

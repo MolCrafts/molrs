@@ -1,26 +1,5 @@
 //! One style's kernel over **explicit instances**: the terms and their
 //! parameters given by hand, no typifier and no type table.
-//!
-//! [`ExplicitTerms::compile`] is the generic way to build the kernel of *any*
-//! registered `(category, style)` — a built-in, a custom style priced by its
-//! expression or a Python callable, a style of a custom category — from
-//! atom indices and one parameter row per term. It goes through
-//! [`PotentialCompiler`] (one type per term, labelled by its row), so a hand
-//! assembled kernel is priced by exactly the code a compiled force field is,
-//! with the same registry, fallback and refusals.
-//!
-//! ```
-//! use molrs::ff::forcefield::Params;
-//! use molrs::ff::potential::ExplicitTerms;
-//!
-//! // LAMMPS `bond_style harmonic`, one bond: k (r − r0)².
-//! let pots = ExplicitTerms::new("bond", "harmonic")
-//!     .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
-//!     .compile()
-//!     .unwrap();
-//! let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
-//! assert!((e - 3.0).abs() < 1e-12);
-//! ```
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -41,6 +20,27 @@ use crate::ff::potential::{CompileError, PotentialCompiler, Potentials};
 /// expressions through `q1`, `q2`) is [`charges`](Self::charges). A style
 /// that reads its numbers per instance (`coul/cut`, MMFF) may have terms
 /// without rows ([`atoms`](Self::atoms)).
+///
+/// [`ExplicitTerms::compile`] is the generic way to build the kernel of *any*
+/// registered `(category, style)` — a built-in, a custom style priced by its
+/// expression or a Python callable, a style of a custom category — from
+/// atom indices and one parameter row per term. It goes through
+/// [`PotentialCompiler`] (one type per term, labelled by its row), so a hand
+/// assembled kernel is priced by exactly the code a compiled force field is,
+/// with the same registry, fallback and refusals.
+///
+/// ```
+/// use molrs::ff::forcefield::Params;
+/// use molrs::ff::potential::ExplicitTerms;
+///
+/// // LAMMPS `bond_style harmonic`, one bond: k (r − r0)².
+/// let pots = ExplicitTerms::new("bond", "harmonic")
+///     .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
+///     .compile()
+///     .unwrap();
+/// let e = pots.calc_energy(&[0.0, 0.0, 0.0, 1.6, 0.0, 0.0]);
+/// assert!((e - 3.0).abs() < 1e-12);
+/// ```
 #[derive(Debug, Clone)]
 pub struct ExplicitTerms {
     category: String,

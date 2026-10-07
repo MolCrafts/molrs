@@ -1,42 +1,4 @@
-//! A [`NeighborList`] with Verlet skin — `VerletSkin(search)`.
-//!
-//! This **is** a neighbour list: same job as [`NeighborList`] (find pairs under
-//! a cutoff), plus the LAMMPS `neigh_modify every/delay/check` gate and a skin
-//! margin so the index can stay valid across several steps. Pair *search* is
-//! delegated to the wrapped [`NeighborList`] (LinkCell, BruteForce, …).
-//!
-//! Constructed as `VerletSkin::new(NeighborList::new(cutoff + skin), …)`.
-//!
-//! The list is built at `r_build = cutoff + skin` and stays complete out to
-//! `cutoff` while no atom has moved more than `skin/2` since the last build
-//! (strict `>`).
-//!
-//! **Positions may be wrapped.** Displacements are measured as the
-//! *minimum-image* difference from the held coordinates, which is exact here
-//! rather than merely convenient: the constructor already refuses a
-//! `r_build` above half the smallest perpendicular cell width, and the rebuild
-//! threshold is `skin/2 < r_build/2`, so a displacement the skin tolerates is
-//! always far inside the range where the minimum image is unambiguous. An atom
-//! that crosses a face therefore reads as the small step it actually took, not
-//! as a jump of one cell.
-//!
-//! A displacement that *does* reach half the smallest perpendicular width still
-//! raises, but the meaning has changed: the minimum image can no longer tell
-//! which copy it came from, so the number is not a displacement at all. That is
-//! a blow-up or a cell change, not a wrap.
-//!
-//! Force / analysis callers must use [`for_each_pair_at`](VerletSkin::for_each_pair_at)
-//! (or the stored `(i, j)` edges plus a fresh MIC). Never stream the inner
-//! [`NeighborList::for_each_pair`] for live forces — that reads geometry
-//! frozen at the last rebuild.
-//!
-//! Edge *order* is not part of the contract. The *set* of half-shell `(i, j)`
-//! pairs (`i < j` from the backend) plus the live count is.
-//!
-//! References:
-//!     LAMMPS `neigh_modify` / `Neighbor::decide` / `Neighbor::check_distance`
-//!     / `Neighbor::init`. Nordlund lecture notes for the two-atom skin
-//!     criterion. Allen & Tildesley for cell lists.
+//! A [`NeighborList`] with Verlet skin: [`VerletSkin`].
 
 use std::fmt;
 
@@ -109,6 +71,45 @@ pub struct SkinPair {
 ///
 /// Two entry points: [`rebuild`](Self::rebuild) forces a build,
 /// [`update`](Self::update) applies the `every` / `delay` / `check` policy.
+///
+/// This **is** a neighbour list: same job as [`NeighborList`] (find pairs under
+/// a cutoff), plus the LAMMPS `neigh_modify every/delay/check` gate and a skin
+/// margin so the index can stay valid across several steps. Pair *search* is
+/// delegated to the wrapped [`NeighborList`] (LinkCell, BruteForce, …).
+///
+/// Constructed as `VerletSkin::new(NeighborList::new(cutoff + skin), …)`.
+///
+/// The list is built at `r_build = cutoff + skin` and stays complete out to
+/// `cutoff` while no atom has moved more than `skin/2` since the last build
+/// (strict `>`).
+///
+/// **Positions may be wrapped.** Displacements are measured as the
+/// *minimum-image* difference from the held coordinates, which is exact here
+/// rather than merely convenient: the constructor already refuses a
+/// `r_build` above half the smallest perpendicular cell width, and the rebuild
+/// threshold is `skin/2 < r_build/2`, so a displacement the skin tolerates is
+/// always far inside the range where the minimum image is unambiguous. An atom
+/// that crosses a face therefore reads as the small step it actually took, not
+/// as a jump of one cell.
+///
+/// A displacement that *does* reach half the smallest perpendicular width still
+/// raises, but the meaning has changed: the minimum image can no longer tell
+/// which copy it came from, so the number is not a displacement at all. That is
+/// a blow-up or a cell change, not a wrap.
+///
+/// Force / analysis callers must use [`for_each_pair_at`](VerletSkin::for_each_pair_at)
+/// (or the stored `(i, j)` edges plus a fresh MIC). Never stream the inner
+/// [`NeighborList::for_each_pair`] for live forces — that reads geometry
+/// frozen at the last rebuild.
+///
+/// Edge *order* is not part of the contract. The *set* of half-shell `(i, j)`
+/// pairs (`i < j` from the backend) plus the live count is.
+///
+/// # References
+///
+/// LAMMPS `neigh_modify` / `Neighbor::decide` / `Neighbor::check_distance` /
+/// `Neighbor::init`. Nordlund lecture notes for the two-atom skin criterion.
+/// Allen & Tildesley for cell lists.
 pub struct VerletSkin {
     cutoff: F,
     skin: F,

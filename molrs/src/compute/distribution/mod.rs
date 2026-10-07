@@ -1,19 +1,4 @@
 //! User-defined geometric distribution functions (ADF / DDF / distance DF).
-//!
-//! A [`DistributionFunction`] histograms the scalar stream produced by an
-//! [`Observable`] (distance, angle, dihedral) over a trajectory, reusing the
-//! shared [`Histogram1d`] binning and the `SimBox` minimum-image convention so
-//! the distance DF agrees with [`compute::rdf`](crate::compute::rdf).
-//!
-//! Ported from the reference implementation (`src/tddf.cpp`, `src/geodens.cpp`, `src/df.cpp`); see
-//! each submodule for the specific function each routine derives from. The
-//! angular distribution additionally exposes a sin θ solid-angle correction —
-//! both the raw and corrected densities are returned, because conflating them
-//! is the most common ADF mistake.
-//!
-//! # References
-//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
-//! - Brehm, Thomas, Gehrke, Kirchner, *J. Chem. Phys.* **2020**, 152, 164105.
 
 mod angle;
 mod combined;
@@ -45,6 +30,21 @@ use crate::compute::ComputeResult;
 /// histogram is accumulated inside [`compute`](Compute::compute). For an
 /// angular observable the sin θ-corrected density is computed alongside the raw
 /// one.
+///
+/// A [`DistributionFunction`] histograms the scalar stream produced by an
+/// [`Observable`] (distance, angle, dihedral) over a trajectory, reusing the
+/// shared [`Histogram1d`] binning and the `SimBox` minimum-image convention so
+/// the distance DF agrees with [`Rdf`](crate::compute::Rdf).
+///
+/// Ported from the reference implementation (`src/tddf.cpp`, `src/geodens.cpp`, `src/df.cpp`); see
+/// each submodule for the specific function each routine derives from. The
+/// angular distribution additionally exposes a sin θ solid-angle correction —
+/// both the raw and corrected densities are returned, because conflating them
+/// is the most common ADF mistake.
+///
+/// # References
+/// - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
+/// - Brehm, Thomas, Gehrke, Kirchner, *J. Chem. Phys.* **2020**, 152, 164105.
 #[derive(Debug, Clone)]
 pub struct DistributionFunction<O: Observable> {
     observable: O,

@@ -1,25 +1,4 @@
 //! Direct k-grid evaluation of the static structure factor.
-//!
-//! Mirrors `freud.diffraction.StaticStructureFactorDirect`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDirect.cc)).
-//!
-//! Evaluates
-//!
-//! ```text
-//!   S(k) = (1/N) | Σ_j exp(i k · r_j) |²
-//! ```
-//!
-//! on an explicit array of k-vectors. Two convenience constructors are
-//! offered:
-//!
-//! - [`StaticStructureFactorDirect::new`] — user-supplied k-vectors
-//!   (full freedom).
-//! - [`StaticStructureFactorDirect::isotropic`] — for orthorhombic boxes,
-//!   builds a 3-D reciprocal-lattice grid with k ≤ k_max and spherically
-//!   averages into uniformly spaced k-magnitude bins.
-//!
-//! Unlike [`super::debye`], this analyzer respects the supplied SimBox: the
-//! reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
@@ -41,6 +20,28 @@ enum KMode {
     Isotropic { k_max: F, n_bins: usize },
 }
 
+/// Direct k-grid static-structure-factor calculator.
+///
+/// Mirrors `freud.diffraction.StaticStructureFactorDirect`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDirect.cc)).
+///
+/// Evaluates
+///
+/// ```text
+///   S(k) = (1/N) | Σ_j exp(i k · r_j) |²
+/// ```
+///
+/// on an explicit array of k-vectors. Two convenience constructors are
+/// offered:
+///
+/// - [`StaticStructureFactorDirect::new`] — user-supplied k-vectors
+///   (full freedom).
+/// - [`StaticStructureFactorDirect::isotropic`] — for orthorhombic boxes,
+///   builds a 3-D reciprocal-lattice grid with k ≤ k_max and spherically
+///   averages into uniformly spaced k-magnitude bins.
+///
+/// Unlike [`StaticStructureFactorDebye`](crate::compute::StaticStructureFactorDebye), this analyzer respects the supplied SimBox: the
+/// reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 #[derive(Debug, Clone)]
 pub struct StaticStructureFactorDirect {
     mode: KMode,

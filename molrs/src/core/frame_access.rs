@@ -1,9 +1,4 @@
-//! Unified access trait for owned and borrowed frame types.
-//!
-//! [`FrameAccess`] provides a common read-only interface implemented by both
-//! [`Frame`] and [`FrameView`], enabling generic code that works with either.
-//! A frame read is two steps: [`visit_block`](FrameAccess::visit_block), then
-//! the column.
+//! Unified access trait for owned and borrowed frame types: [`FrameAccess`].
 
 use crate::core::BlockAccess;
 use crate::core::Frame;
@@ -11,9 +6,11 @@ use crate::core::FrameView;
 use crate::core::MetaMap;
 use crate::core::SimBox;
 
-/// Unified read-only access for [`Frame`] and [`FrameView`].
+/// Unified read-only access for [`Frame`] and [`FrameView`], enabling generic
+/// code that works with either.
 ///
-/// Metadata, the simulation box, and one column read as two keys.
+/// A frame read is two steps: [`visit_block`](FrameAccess::visit_block), then
+/// the column. Metadata, the simulation box, and one column read as two keys.
 /// Project a dtype from the returned [`ColumnView`](crate::core::ColumnView).
 pub trait FrameAccess {
     /// The column `col_key` inside block `block_key`, or `None` when either key is absent.

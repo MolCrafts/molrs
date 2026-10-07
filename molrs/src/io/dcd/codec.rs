@@ -1,47 +1,4 @@
 //! DCD binary trajectory file reader and writer.
-//!
-//! DCD is the de-facto binary trajectory format used by CHARMM, NAMD,
-//! OpenMM, and (optionally) LAMMPS. The on-disk layout is a sequence of
-//! Fortran "unformatted" records: each record is `[len][payload][len]`
-//! with two equal length markers framing the payload. Marker width is 4
-//! bytes by default and 8 bytes when CHARMM was compiled with
-//! `-frecord-marker=8`. Both little- and big-endian byte orders are
-//! supported.
-//!
-//! # Supported features
-//!
-//! - 32- and 64-bit Fortran record markers
-//! - Little- and big-endian byte order
-//! - Optional periodic-box record (NAMD/CHARMM "extra block")
-//! - Triclinic boxes encoded as either cosines or degrees
-//! - Optional 4D dynamics (W coordinate)
-//! - Fixed-atom subsets (frame 0 carries full coords; later frames only
-//!   the free atoms)
-//! - O(1) random access via `TrajectoryReader::read_step` (frame size is
-//!   constant, no scan needed)
-//! - Writer (NAMD-style: little-endian, 4-byte markers, cosine angles,
-//!   no fixed atoms, no 4D)
-//!
-//! # Examples
-//!
-//! ```no_run
-//! use molrs::io::{read_dcd_trajectory, write_dcd_trajectory};
-//! use molrs::io::dcd::DcdReader;
-//! use molrs::io::reader::TrajectoryReader;
-//!
-//! # fn main() -> std::io::Result<()> {
-//! // Read all frames
-//! let frames = read_dcd_trajectory("trajectory.dcd")?;
-//!
-//! // Random access via TrajectoryReader
-//! let mut reader = DcdReader::open("trajectory.dcd")?;
-//! let frame_5 = reader.read_step(5)?;
-//!
-//! // Write frames
-//! write_dcd_trajectory("output.dcd", &frames)?;
-//! # Ok(())
-//! # }
-//! ```
 
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
@@ -902,6 +859,49 @@ fn parse_frame_at<R: BufRead + Seek>(
 ///
 /// Header parsing is lazy — performed on the first call to a method that
 /// needs it. This keeps `Reader::new` infallible.
+///
+/// DCD is the de-facto binary trajectory format used by CHARMM, NAMD,
+/// OpenMM, and (optionally) LAMMPS. The on-disk layout is a sequence of
+/// Fortran "unformatted" records: each record is `[len][payload][len]`
+/// with two equal length markers framing the payload. Marker width is 4
+/// bytes by default and 8 bytes when CHARMM was compiled with
+/// `-frecord-marker=8`. Both little- and big-endian byte orders are
+/// supported.
+///
+/// # Supported features
+///
+/// - 32- and 64-bit Fortran record markers
+/// - Little- and big-endian byte order
+/// - Optional periodic-box record (NAMD/CHARMM "extra block")
+/// - Triclinic boxes encoded as either cosines or degrees
+/// - Optional 4D dynamics (W coordinate)
+/// - Fixed-atom subsets (frame 0 carries full coords; later frames only
+///   the free atoms)
+/// - O(1) random access via `TrajectoryReader::read_step` (frame size is
+///   constant, no scan needed)
+/// - Writer (NAMD-style: little-endian, 4-byte markers, cosine angles,
+///   no fixed atoms, no 4D)
+///
+/// # Examples
+///
+/// ```no_run
+/// use molrs::io::{read_dcd_trajectory, write_dcd_trajectory};
+/// use molrs::io::dcd::DcdReader;
+/// use molrs::io::reader::TrajectoryReader;
+///
+/// # fn main() -> std::io::Result<()> {
+/// // Read all frames
+/// let frames = read_dcd_trajectory("trajectory.dcd")?;
+///
+/// // Random access via TrajectoryReader
+/// let mut reader = DcdReader::open("trajectory.dcd")?;
+/// let frame_5 = reader.read_step(5)?;
+///
+/// // Write frames
+/// write_dcd_trajectory("output.dcd", &frames)?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct DcdReader<R: BufRead + Seek> {
     reader: R,
     header: OnceLock<DcdHeader>,

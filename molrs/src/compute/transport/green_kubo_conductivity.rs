@@ -26,6 +26,15 @@ impl ComputeResult for GreenKuboConductivityResult {}
 /// the Green–Kubo conductivity and stops there (no trapezoid, no σ). The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
 /// [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + scale.
+///
+/// Assemble the collective current series \(J(t)=\sum_a q_a v_a(t)\) yourself
+/// (or via an upstream Frame pipeline), then compose:
+///
+/// 1. [`GreenKuboConductivity`](Self) — raw ACF
+/// 2. [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) — ∫C
+/// 3. scale by \(1/(3 V k_B T)\) (SI prefactor in the fit / caller units table)
+///
+/// There is no separate `Jacf` type. molpy must not invent one either.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboConductivity;
 

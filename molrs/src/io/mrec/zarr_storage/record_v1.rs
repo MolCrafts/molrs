@@ -11,65 +11,6 @@
 //! which the section's own validation reads too. The converted section
 //! becomes a force field only through `ForceFieldSection::to_forcefield`,
 //! which reads the current version.
-//!
-//! Contract: molrec `docs/spec/overview.md` (versions) and
-//! `docs/spec/forcefield.md` ("Reading a version-1 record"). Version 2 changed
-//! what some stored numbers mean — the force-field IR adopted LAMMPS's
-//! definitions — so a version-1 record is never read as version 2: every
-//! number whose meaning changed is converted, exactly, or the record is
-//! refused. A store without `molrec_version` predates version 1 and is read
-//! by the same rules.
-//!
-//! # What changed between version 1 and version 2
-//!
-//! In the `forcefield` section (version 1's angle unit `U` is
-//! `units.angle`, else the radian every version-1 preset gives):
-//!
-//! | Style | Version 1 | Version 2 |
-//! |---|---|---|
-//! | `units` | `angle` = `U` (presets: radian) | `angle` = `degree` |
-//! | `bond harmonic`, `drude harmonic` | `k` of ½k(x − x0)² | `k` = k₁ / 2 |
-//! | `angle harmonic` | `k` of ½k(θ − θ0)² per U², `theta0` in U | `k` = k₁ / 2 per rad², `theta0` in degrees |
-//! | `angle class2` | `theta0` in U, `k2..k4` per Uⁿ | degrees, per radⁿ |
-//! | `improper harmonic` | `chi0` in U, `k` per U² | degrees, per rad² |
-//! | `dihedral periodic`, `improper periodic`, `improper trefoil` | `phase`, `phase<m>` in U | degrees |
-//! | `dihedral charmm` | `phase` in U | degrees |
-//! | `dihedral class2` | `phi1..phi3` in U | degrees |
-//! | `bond morse` | `D` | `d0` |
-//!
-//! and molrs ≤ 0.15's own styles (outside the version-1 registry):
-//! `dihedral fourier` is `dihedral periodic`; `pair morse` `D0` is `d0`;
-//! `pair thole` `a_thole` is `damp`; `angle mmff_angle` / `uff_angle`
-//! `theta0` is in degrees; `improper mmff_oop` / `uff_inversion` list the
-//! centre first (it was second), so their `itom` / `jtom` swap.
-//!
-//! In frames (`system`, `frame`, every trajectory frame): a relation row's
-//! parameter columns convert as the parameter of the same name of the row's
-//! style (linking rule 2: its `style` column, else every table of its
-//! category holding its `type`), and a row of an out-of-plane style swaps
-//! `atomi` / `atomj`. A row no style resolves converts its angle-valued
-//! columns (`theta0`, `chi0`, `phase`, `phase<m>`, `phi1..phi3`) from `U`
-//! (the radian when the record has no force field), and an `impropers` row
-//! carrying `koop` (MMFF) or `K` (UFF) is an out-of-plane row.
-//!
-//! # What is refused
-//!
-//! A `pair14` style (version 1 priced 1-4 pairs from it, unweighted; version
-//! 2 has no force-field form for that); an `improper periodic` row with
-//! per-term columns (version 2's is one term); an `expression` on a style
-//! this conversion changes; a style of an angular category (`angle`,
-//! `dihedral`, `improper`) that neither registry nor molrs ≤ 0.15 knows and
-//! that carries parameters (its angle values and per-angle constants cannot
-//! be told apart); `units.angle` beside a preset other than the radian
-//! (version 1 refused it too), or a unit other than the radian and the
-//! degree; a renamed parameter as a relation column; and a relation cell
-//! two resolved styles would convert differently.
-//!
-//! Unchanged: `dihedral charmm` `w` (LAMMPS's 1-4 weight in both; version 2
-//! also prices it), `improper cvff` (cos nχ = cos nφ), every other registered
-//! style, `special_bonds`, `cmap` grids, and the atom order of every other
-//! improper style (each prices the dihedral of its atoms as listed in both
-//! versions).
 
 use std::collections::HashSet;
 

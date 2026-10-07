@@ -1,92 +1,4 @@
-//! OpenMM force-field XML reader (OpenMM's own `<ForceField>` files, and the
-//! OPLS-AA / CL&P / foyer packs in the same schema).
-//!
-//! Parses an OpenMM `<ForceField>` (nm, kJ/mol, radians, OpenMM's factors)
-//! into a molrs [`ForceField`] in the force-field IR, whose definitions follow
-//! LAMMPS's (`real`: Å, kcal/mol, degrees for angle-valued parameters, e; no
-//! hidden ½). Every section OpenMM's `app.ForceField` builds a force from is
-//! either read exactly or refused by name; nothing that carries energy is
-//! skipped.
-//!
-//! ```xml
-//! <ForceField name="OPLS-AA" combining_rule="geometric">
-//!   <AtomTypes>
-//!     <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
-//!   </AtomTypes>
-//!   <HarmonicBondForce>
-//!     <Bond class1="OW" class2="HW" length="0.09572" k="502080.0"/>   <!-- nm, kJ/mol/nm² -->
-//!   </HarmonicBondForce>
-//!   <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
-//!     <Atom type="opls_001" charge="0.5" sigma="0.375" epsilon="0.43932"/> <!-- e, nm, kJ/mol -->
-//!   </NonbondedForce>
-//! </ForceField>
-//! ```
-//!
-//! # Naming vocabularies
-//!
-//! Bonded forces key on the **class** attribute (`class1`, …) or the **type**
-//! attribute (`type1`, …) of a row; the label is stored as written, and an
-//! empty attribute (`class2=""`) is OpenMM's wildcard, stored as `""`. A row
-//! naming neither is ignored by OpenMM and refused here. Nonbonded rows key on
-//! types: a `<NonbondedForce>` / `<LennardJonesForce>` `<Atom class=…>` row
-//! applies to every `<AtomTypes>` type of that class, as in OpenMM.
-//!
-//! # Sections
-//!
-//! | OpenMM | IR | Conversion |
-//! |---|---|---|
-//! | `<HarmonicBondForce><Bond length k>` | `bond harmonic` | `r0 = 10·length`; OpenMM's ½k → `k = k/(2·418.4)` |
-//! | `<HarmonicAngleForce><Angle angle k>` | `angle harmonic` | `theta0` = angle in degrees; `k = k/(2·4.184)` |
-//! | `<AmoebaUreyBradleyForce><UreyBradley k d>` | `angle charmm`, joined with the angle row of the same three labels (either direction) | OpenMM adds a bond of force constant `2k`, so `k` is un-halved: `k_ub = k/418.4`, `r_ub = 10·d`; with no angle row, `k = 0` |
-//! | `<PeriodicTorsionForce><Proper k_m periodicity_m phase_m>` | `dihedral periodic` | `k_m/4.184`, phases in degrees |
-//! | `<PeriodicTorsionForce><Proper c0..c3>` (CL&P / foyer spelling) | `dihedral opls` | `k_n = c_{n−1}/4.184` |
-//! | `<PeriodicTorsionForce><Improper …>` | `improper periodic` (one term) | stored in the order OpenMM prices ([`improper_order`]) |
-//! | `<RBTorsionForce><Proper c0..c5>` | `dihedral multi/harmonic` (`c5 = 0`) or `dihedral nharmonic` (N = 6) | `A_{n+1} = (−1)ⁿ C_n / 4.184` (`cos(φ − 180°) = −cos φ`), exact, constant included |
-//! | `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed, LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused |
-//! | `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`, `chi0` = theta0 in degrees (the writer's form for `chi0 ≠ 0`) |
-//! | `<CMAPTorsionForce><Map>` + `<Torsion map>` | `cmap charmm` | element `(i, j)` of OpenMM's map (`energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N) is molrs `grid[(i + N/2) mod N][(j + N/2) mod N]` (φ-major from −180°), ÷ 4.184; N must be even |
-//! | `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else OpenMM's `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
-//! | `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>` | `pair lj/charmm` (`mixing arithmetic`) + `pair coul/charmm`; `charge` from the `<NonbondedForce>` beside it, whose `epsilon` must be 0 | as above; `sigma14`/`epsilon14` absent → LAMMPS's two-number `pair_coeff` |
-//! | `<LennardJonesForce><NBFixPair sigma epsilon>` | `pair lj/charmm` cross row | as above; OpenMM prices a 1-4 NBFIX pair with the NBFIX row too, which is LAMMPS's cross row without `epsilon14` / `sigma14` |
-//!
-//! Every Coulomb style takes OpenMM's constant, `ONE_4PI_EPS0` =
-//! 138.93545764438198 kJ·nm/(mol·e²) = [`OPENMM_COULOMB`] kcal·Å/(mol·e²)
-//! (LAMMPS `real`'s `qqr2e` is 332.06371, 9.9·10⁻⁹ below it). OpenMM's cutoffs
-//! and switching are `createSystem` arguments, not file values, so no style
-//! here has a `cutoff` (and `lj/charmm` / `coul/charmm` no `inner`): the
-//! caller states them, as for `NoCutoff` a cutoff beyond every pair.
-//!
-//! # 1-4 pairs
-//!
-//! OpenMM prices every bond-graph 1-4 pair once: `<NonbondedForce>` at
-//! `coulomb14scale` (Coulomb) and `lj14scale` (its own Lennard-Jones), and a
-//! `<LennardJonesForce>` at its `lj14scale` with the `sigma14`/`epsilon14`
-//! of the two types mixed Lorentz-Berthelot (the NBFIX row for an NBFIX pair).
-//! That is `special_bonds lj [0, 0, lj14scale] coul [0, 0, coulomb14scale]`
-//! exactly when no type's `sigma14`/`epsilon14` differs from its
-//! `sigma`/`epsilon`. Otherwise the 1-4 Lennard-Jones is not LAMMPS's
-//! `special_bonds` pricing (which takes the regular `epsilon`/`sigma`): the
-//! field keeps `epsilon14`/`sigma14` on `lj/charmm` and its `special_bonds`,
-//! and declares the style param `one_four = "epsilon14"`
-//! ([`ONE_FOUR_EPSILON14`]):
-//! a frame's 1-4 pairs are OpenMM's exceptions, which the IR holds as per-pair
-//! override rows on `pairs`.
-//! [`ForceField::materialize_one_four`](crate::ff::forcefield::ForceField::materialize_one_four)
-//! writes them;
-//! compiling such a field for a frame whose 1-4 pairs lack them is refused.
-//!
-//! # Refused
-//!
-//! `<Script>` / `<InitializationScript>` (code), every `Custom*Force` other
-//! than the harmonic improper above, `<Proper>` rows of a
-//! `<CustomTorsionForce>`, `<Improper>` rows of a `<RBTorsionForce>`,
-//! `ordering="smirnoff"`, a multi-term periodic improper, an odd CMAP size, a
-//! Urey–Bradley row with a wildcard, an `<NBFixPair>` of one type with itself,
-//! a `<NonbondedForce>` with non-zero `epsilon` beside a `<LennardJonesForce>`
-//! (two Lennard-Jones forces), and every force OpenMM's `app.ForceField`
-//! does not build from this schema (AMOEBA multipoles, GBSA, Drude, …). The
-//! residue templates (`<Residues>`, `<Patches>`) and `<Info>` carry no
-//! parameters and are skipped.
+//! OpenMM force-field XML reader (OpenMM's own `<ForceField>` files, and the OPLS-AA / CL&P / foyer packs in the same schema).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -121,6 +33,93 @@ pub fn read_openmm_xml_forcefield_str(text: &str) -> Result<ForceField, String> 
 }
 
 /// Reader for OpenMM `<ForceField>` XML (nm, kJ/mol, radians).
+///
+/// Parses an OpenMM `<ForceField>` (nm, kJ/mol, radians, OpenMM's factors)
+/// into a molrs [`ForceField`] in the force-field IR, whose definitions follow
+/// LAMMPS's (`real`: Å, kcal/mol, degrees for angle-valued parameters, e; no
+/// hidden ½). Every section OpenMM's `app.ForceField` builds a force from is
+/// either read exactly or refused by name; nothing that carries energy is
+/// skipped.
+///
+/// ```xml
+/// <ForceField name="OPLS-AA" combining_rule="geometric">
+///   <AtomTypes>
+///     <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
+///   </AtomTypes>
+///   <HarmonicBondForce>
+///     <Bond class1="OW" class2="HW" length="0.09572" k="502080.0"/>   <!-- nm, kJ/mol/nm² -->
+///   </HarmonicBondForce>
+///   <NonbondedForce coulomb14scale="0.5" lj14scale="0.5">
+///     <Atom type="opls_001" charge="0.5" sigma="0.375" epsilon="0.43932"/> <!-- e, nm, kJ/mol -->
+///   </NonbondedForce>
+/// </ForceField>
+/// ```
+///
+/// # Naming vocabularies
+///
+/// Bonded forces key on the **class** attribute (`class1`, …) or the **type**
+/// attribute (`type1`, …) of a row; the label is stored as written, and an
+/// empty attribute (`class2=""`) is OpenMM's wildcard, stored as `""`. A row
+/// naming neither is ignored by OpenMM and refused here. Nonbonded rows key on
+/// types: a `<NonbondedForce>` / `<LennardJonesForce>` `<Atom class=…>` row
+/// applies to every `<AtomTypes>` type of that class, as in OpenMM.
+///
+/// # Sections
+///
+/// | OpenMM | IR | Conversion |
+/// |---|---|---|
+/// | `<HarmonicBondForce><Bond length k>` | `bond harmonic` | `r0 = 10·length`; OpenMM's ½k → `k = k/(2·418.4)` |
+/// | `<HarmonicAngleForce><Angle angle k>` | `angle harmonic` | `theta0` = angle in degrees; `k = k/(2·4.184)` |
+/// | `<AmoebaUreyBradleyForce><UreyBradley k d>` | `angle charmm`, joined with the angle row of the same three labels (either direction) | OpenMM adds a bond of force constant `2k`, so `k` is un-halved: `k_ub = k/418.4`, `r_ub = 10·d`; with no angle row, `k = 0` |
+/// | `<PeriodicTorsionForce><Proper k_m periodicity_m phase_m>` | `dihedral periodic` | `k_m/4.184`, phases in degrees |
+/// | `<PeriodicTorsionForce><Proper c0..c3>` (CL&P / foyer spelling) | `dihedral opls` | `k_n = c_{n−1}/4.184` |
+/// | `<PeriodicTorsionForce><Improper …>` | `improper periodic` (one term) | stored in the order OpenMM prices |
+/// | `<RBTorsionForce><Proper c0..c5>` | `dihedral multi/harmonic` (`c5 = 0`) or `dihedral nharmonic` (N = 6) | `A_{n+1} = (−1)ⁿ C_n / 4.184` (`cos(φ − 180°) = −cos φ`), exact, constant included |
+/// | `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed, LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused |
+/// | `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`, `chi0` = theta0 in degrees (the writer's form for `chi0 ≠ 0`) |
+/// | `<CMAPTorsionForce><Map>` + `<Torsion map>` | `cmap charmm` | element `(i, j)` of OpenMM's map (`energy[i + N·j]` at φ = 2πi/N, ψ = 2πj/N) is molrs `grid[(i + N/2) mod N][(j + N/2) mod N]` (φ-major from −180°), ÷ 4.184; N must be even |
+/// | `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else OpenMM's `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
+/// | `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>` | `pair lj/charmm` (`mixing arithmetic`) + `pair coul/charmm`; `charge` from the `<NonbondedForce>` beside it, whose `epsilon` must be 0 | as above; `sigma14`/`epsilon14` absent → LAMMPS's two-number `pair_coeff` |
+/// | `<LennardJonesForce><NBFixPair sigma epsilon>` | `pair lj/charmm` cross row | as above; OpenMM prices a 1-4 NBFIX pair with the NBFIX row too, which is LAMMPS's cross row without `epsilon14` / `sigma14` |
+///
+/// Every Coulomb style takes OpenMM's constant, `ONE_4PI_EPS0` =
+/// 138.93545764438198 kJ·nm/(mol·e²) = [`OPENMM_COULOMB`] kcal·Å/(mol·e²)
+/// (LAMMPS `real`'s `qqr2e` is 332.06371, 9.9·10⁻⁹ below it). OpenMM's cutoffs
+/// and switching are `createSystem` arguments, not file values, so no style
+/// here has a `cutoff` (and `lj/charmm` / `coul/charmm` no `inner`): the
+/// caller states them, as for `NoCutoff` a cutoff beyond every pair.
+///
+/// # 1-4 pairs
+///
+/// OpenMM prices every bond-graph 1-4 pair once: `<NonbondedForce>` at
+/// `coulomb14scale` (Coulomb) and `lj14scale` (its own Lennard-Jones), and a
+/// `<LennardJonesForce>` at its `lj14scale` with the `sigma14`/`epsilon14`
+/// of the two types mixed Lorentz-Berthelot (the NBFIX row for an NBFIX pair).
+/// That is `special_bonds lj [0, 0, lj14scale] coul [0, 0, coulomb14scale]`
+/// exactly when no type's `sigma14`/`epsilon14` differs from its
+/// `sigma`/`epsilon`. Otherwise the 1-4 Lennard-Jones is not LAMMPS's
+/// `special_bonds` pricing (which takes the regular `epsilon`/`sigma`): the
+/// field keeps `epsilon14`/`sigma14` on `lj/charmm` and its `special_bonds`,
+/// and declares the style param `one_four = "epsilon14"`
+/// ([`ONE_FOUR_EPSILON14`]):
+/// a frame's 1-4 pairs are OpenMM's exceptions, which the IR holds as per-pair
+/// override rows on `pairs`.
+/// [`ForceField::materialize_one_four`](crate::ff::forcefield::ForceField::materialize_one_four)
+/// writes them;
+/// compiling such a field for a frame whose 1-4 pairs lack them is refused.
+///
+/// # Refused
+///
+/// `<Script>` / `<InitializationScript>` (code), every `Custom*Force` other
+/// than the harmonic improper above, `<Proper>` rows of a
+/// `<CustomTorsionForce>`, `<Improper>` rows of a `<RBTorsionForce>`,
+/// `ordering="smirnoff"`, a multi-term periodic improper, an odd CMAP size, a
+/// Urey–Bradley row with a wildcard, an `<NBFixPair>` of one type with itself,
+/// a `<NonbondedForce>` with non-zero `epsilon` beside a `<LennardJonesForce>`
+/// (two Lennard-Jones forces), and every force OpenMM's `app.ForceField`
+/// does not build from this schema (AMOEBA multipoles, GBSA, Drude, …). The
+/// residue templates (`<Residues>`, `<Patches>`) and `<Info>` carry no
+/// parameters and are skipped.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OpenmmXmlReader;
 

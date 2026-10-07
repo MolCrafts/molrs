@@ -1,19 +1,4 @@
 //! Tang-Toennies charge / induced-dipole damping (CL&Pol short-range damping).
-//!
-//! Damps the Coulomb interaction between a charge and an induced dipole (a Drude
-//! shell) at short range, preventing the polarization catastrophe:
-//!
-//! ```text
-//! f_n(r) = 1 - c exp(-b r) sum_{k=0}^{n} (b r)^k / k!
-//! ```
-//!
-//! so the damped pair energy is `f_n(r) * q_i q_j / r`. The derivative collapses
-//! to a single term: `f'_n(r) = c b exp(-b r) (b r)^n / n!`. CL&Pol canonical
-//! settings: `order = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
-//! params; the per-atom-type `charge` comes from the atoms block.
-//!
-//! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
-//! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -54,6 +39,22 @@ enum Charges {
     },
 }
 
+/// Tang-Toennies charge / induced-dipole damping (CL&Pol short-range damping).
+///
+/// Damps the Coulomb interaction between a charge and an induced dipole (a Drude
+/// shell) at short range, preventing the polarization catastrophe:
+///
+/// ```text
+/// f_n(r) = 1 - c exp(-b r) sum_{k=0}^{n} (b r)^k / k!
+/// ```
+///
+/// so the damped pair energy is `f_n(r) * q_i q_j / r`. The derivative collapses
+/// to a single term: `f'_n(r) = c b exp(-b r) (b r)^n / n!`. CL&Pol canonical
+/// settings: `order = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
+/// params; the per-atom-type `charge` comes from the atoms block.
+///
+/// Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
+/// DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 pub struct PairTangToennies {
     charges: Charges,
     b: F,

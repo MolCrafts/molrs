@@ -1,57 +1,4 @@
 //! GAFF / GAFF2 — a [`Typifier`] over the compiled `parm` tables.
-//!
-//! [`GaffTypifier`] matches a molecule whose atoms already carry GAFF atom types
-//! (what [`AtdTypifier`](crate::ff::typifier::AtdTypifier) with
-//! [`AtdParameterSet::Gff`](crate::ff::typifier::AtdParameterSet::Gff) stamps, or
-//! labels written by any other means): it enumerates the molecule's bonded terms
-//! and looks every one of them up in the [`GAFF`] / [`GAFF2`] static table.
-//! Nothing is parsed: the tables are `&'static` Rust data (see
-//! [`crate::ff::params`]). Typing atoms is not this typifier's job; the caller
-//! composes the two:
-//!
-//! ```ignore
-//! let labelled = Typing::new(AtdTypifier::new(AtdParameterSet::Gff)).typify(&mol)?;
-//! let mut gaff = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
-//! let typed = gaff.typify(&labelled)?;
-//! ```
-//!
-//! # Exact rows first, then parmchk2
-//!
-//! A term is looked up first **only** against rows whose every slot is a
-//! concrete atom type. What no such row covers is estimated exactly as
-//! AmberTools' parmchk2 estimates it: bonds and angles by [`analog`], torsions
-//! by [`torsion`] (whose estimate tleap prefers, then the wildcard row
-//! `X-j-k-X`), impropers by [`improper`]. A wildcard row that covers a term is
-//! a parameter, anything reached by analogy or formula is an estimate and says
-//! so (see `Typifier::assign` on [`GaffTypifier`]). A term parmchk2 cannot
-//! estimate either (it writes a zero marked `ATTN, need revision`) is missing,
-//! and every missing term is reported at once.
-//!
-//! Matching a term in either orientation (`c3-c3-oh` covers `oh-c3-c3`) is not a
-//! fallback but the undirected nature of a bonded term, and the generator
-//! guarantees no table holds both a term and its reverse as separate rows.
-//!
-//! Impropers are the one exception to "missing is an error": which atoms carry an improper, in which
-//! order, and at which barrier is decided by parmchk2's improper search and
-//! tleap's improper matching, and [`improper`] reproduces both exactly. An
-//! improper exists where tleap finds a row (the table's, or parmchk2's
-//! estimate at a centre `PARMCHK.DAT` flags as planar), and nowhere else.
-//!
-//! # Units
-//!
-//! The table holds what `gaff.dat` says; the kernels want molrs's convention,
-//! which is LAMMPS's and, for every bonded term, AMBER's own: un-halved `K`,
-//! degrees. The candidate library ([`Typifier::library`]) is the boundary
-//! between the two, and the only place a value changes:
-//!
-//! | upstream | molrs |
-//! |---|---|
-//! | `E = K(r−r₀)²` | `bond harmonic`, `k = K` |
-//! | `E = K(θ−θ₀)²`, θ₀ in degrees | `angle harmonic`, `k = K`, `theta0` in degrees |
-//! | phases in degrees | degrees |
-//! | one `PK` shared by `IDIVF` torsions | one `k` per torsion: `k = PK/IDIVF` |
-//! | R\*, half the LJ minimum separation | σ = 2·R\*/2^(1/6) |
-//! | an improper in AMBER's atom order, centre third | the same order (see `improper::periodic`) |
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
@@ -158,7 +105,7 @@ fn candidate_forcefield(table: ParmTable) -> ForceField {
 /// The fallible body of [`candidate_forcefield`].
 ///
 /// Every row, wildcards and all, `X` filling a wildcard slot: the library is
-/// what [`Typifier::library`] hands out, and the output declares its styles.
+/// what [`Typifier::source_forcefield`] hands out, and the output declares its styles.
 ///
 /// The library declares AMBER's 1-4 handling — 1-2 / 1-3 excluded outright, 1-4
 /// scaled by 1/SCNB = 1/2 (LJ) and 1/SCEE = 1/1.2 (Coulomb) — so every typing
@@ -443,6 +390,59 @@ impl std::error::Error for GaffError {}
 /// # Ok(())
 /// # }
 /// ```
+///
+/// [`GaffTypifier`] matches a molecule whose atoms already carry GAFF atom types
+/// (what [`AtdTypifier`](crate::ff::typifier::AtdTypifier) with
+/// [`AtdParameterSet::Gff`](crate::ff::typifier::AtdParameterSet::Gff) stamps, or
+/// labels written by any other means): it enumerates the molecule's bonded terms
+/// and looks every one of them up in the [`GAFF`] / [`GAFF2`] static table.
+/// Nothing is parsed: the tables are `&'static` Rust data (see
+/// [`crate::ff::params`]). Typing atoms is not this typifier's job; the caller
+/// composes the two:
+///
+/// ```ignore
+/// let labelled = Typing::new(AtdTypifier::new(AtdParameterSet::Gff)).typify(&mol)?;
+/// let mut gaff = Typing::new(GaffTypifier::new(GaffParameterSet::Gaff));
+/// let typed = gaff.typify(&labelled)?;
+/// ```
+///
+/// # Exact rows first, then parmchk2
+///
+/// A term is looked up first **only** against rows whose every slot is a
+/// concrete atom type. What no such row covers is estimated exactly as
+/// AmberTools' parmchk2 estimates it: bonds and angles by analogy, torsions
+/// by parmchk2's torsion search (whose estimate tleap prefers, then the wildcard row
+/// `X-j-k-X`), impropers by its improper search. A wildcard row that covers a term is
+/// a parameter, anything reached by analogy or formula is an estimate and says
+/// so (see `Typifier::assign` on [`GaffTypifier`]). A term parmchk2 cannot
+/// estimate either (it writes a zero marked `ATTN, need revision`) is missing,
+/// and every missing term is reported at once.
+///
+/// Matching a term in either orientation (`c3-c3-oh` covers `oh-c3-c3`) is not a
+/// fallback but the undirected nature of a bonded term, and the generator
+/// guarantees no table holds both a term and its reverse as separate rows.
+///
+/// Impropers are the one exception to "missing is an error": which atoms carry an improper, in which
+/// order, and at which barrier is decided by parmchk2's improper search and
+/// tleap's improper matching, and this typifier reproduces both exactly. An
+/// improper exists where tleap finds a row (the table's, or parmchk2's
+/// estimate at a centre `PARMCHK.DAT` flags as planar), and nowhere else.
+///
+/// # Units
+///
+/// The table holds what `gaff.dat` says; the kernels want molrs's convention,
+/// which is LAMMPS's and, for every bonded term, AMBER's own: un-halved `K`,
+/// degrees. The candidate library ([`Typifier::source_forcefield`]) is the boundary
+/// between the two, and the only place a value changes:
+///
+/// | upstream | molrs |
+/// |---|---|
+/// | `E = K(r−r₀)²` | `bond harmonic`, `k = K` |
+/// | `E = K(θ−θ₀)²`, θ₀ in degrees | `angle harmonic`, `k = K`, `theta0` in degrees |
+/// | phases in degrees | degrees |
+/// | one `PK` shared by `IDIVF` torsions | one `k` per torsion: `k = PK/IDIVF` |
+/// | R\*, half the LJ minimum separation | σ = 2·R\*/2^(1/6) |
+/// | an improper in AMBER's atom order, centre third | the same order (see [`ImproperPeriodic`](crate::ff::potential::improper::ImproperPeriodic)) |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GaffTypifier {
     set: GaffParameterSet,

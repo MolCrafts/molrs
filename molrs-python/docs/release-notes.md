@@ -274,8 +274,9 @@ lists each one.
 ### Analysis, perception, geometry and dynamics
 
 - **Names that state their job, Python equal to Rust.** Acronyms are cased
-  as words (`Msd`, `Rdf`, `Vacf`, `PmftXy`, `IrSpectrum`, `Lbfgs`), counts
-  are `n_*`, and every `molrs.compute` name is the Rust one: the
+  as words in every subpackage (`Msd`, `Rdf`, `Vacf`, `PmftXy`, `IrSpectrum`,
+  `Lbfgs`, `Kmeans`, `MdState`, the Python driver `molrs.md.MdDriver`),
+  counts are `n_*` (`SmartsPattern.n_query_atoms` too), and every `molrs.compute` name is the Rust one: the
   `Dielectric` / `Persist` namespaces are the functions `dipole_moment`,
   `current_density`, `static_dielectric_constant`, `decompose_current` and
   `pair_survival_tcf`; `Onsager` is `OnsagerCorrelation`; the three
@@ -295,7 +296,7 @@ lists each one.
   the Green–Kubo current ACF; one Einstein `D = slope / (2 n_dims)`
   (`EinsteinDiffusionResult::diffusion_coefficient`, which the C++ binding
   calls); one kinetic energy and temperature (`compute::kinetic_energy`,
-  `kinetic_temperature`, which `md.MD`'s thermo calls); one PMFT orientation
+  `kinetic_temperature`, which `md.MdDriver`'s thermo calls); one PMFT orientation
   reader (`compute::planar_orientation_angles`: quaternion columns or
   head–tail axes, for Python and WASM alike); one exclusion rule for a
   neighbour-table pair list (`ff::potential::intramolecular_pairs_from_neighbors`,

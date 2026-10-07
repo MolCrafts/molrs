@@ -1,10 +1,5 @@
 //! `fit_form`: the least-squares projection onto a style, under a declared
 //! metric, with its residual (`ff-ir-01` P3, design item 6).
-//!
-//! The fit sees each style only through its energy `E(q)` as the registry's
-//! kernel prices it — one term of the category on a synthetic geometry at
-//! each sample point `q` — so it is generic over every tier: native,
-//! expression, Python.
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -28,6 +23,11 @@ use crate::ff::potential::PotentialCompiler;
 /// [`offset`](Self::offset), else `c = 0`). The coordinate is the
 /// category's: `r` (length, > 0) for a bond, `θ` (radians, in [0, π]) for an
 /// angle, the signed dihedral `φ` (radians) for a dihedral or an improper.
+///
+/// The fit sees each style only through its energy `E(q)` as the registry's
+/// kernel prices it — one term of the category on a synthetic geometry at
+/// each sample point `q` — so it is generic over every tier: native,
+/// expression, Python.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FitMetric {
     /// The sample points.

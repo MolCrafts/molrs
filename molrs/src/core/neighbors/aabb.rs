@@ -1,63 +1,6 @@
+//! Axis-Aligned Bounding-Box tree neighbor search: [`AabbQuery`].
 // Tight 3-coord AABB loops read naturally with index-based access.
 #![allow(clippy::needless_range_loop)]
-
-//! Axis-Aligned Bounding-Box tree neighbor search.
-//!
-//! Mirrors `freud.locality.AABBQuery`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/AABBQuery.cc)).
-//!
-//! An *axis-aligned bounding box* (AABB) is the smallest box with faces
-//! parallel to the coordinate axes that contains a set of points; it is cheap
-//! to store (two corners) and cheap to test a distance against. A *bounding
-//! volume hierarchy* (BVH) is a binary tree of such boxes: each leaf wraps a
-//! single point, each internal node owns the union of its two children's boxes.
-//! A query descends from the root and prunes any subtree whose box is farther
-//! from the query point than the worst candidate found so far, so most of the
-//! tree is never visited. Average cost is `O(log N + k)` for `k` neighbors.
-//!
-//! # PBC handling — MIC-based, no ghost atoms
-//!
-//! Under periodic boundary conditions (PBC) the box tiles space, so a particle
-//! near one face may be close to a particle near the opposite face. The
-//! *minimum-image convention* (MIC) is the rule that only the shortest of those
-//! separations counts. Periodicity is handled the same way
-//! [`LinkCell`](crate::core::LinkCell) does it: the tree is built
-//! **only on the original `N` points**, never on a ghost-expanded set. For each
-//! query point we enumerate the lattice-image shifts that could bring a tree
-//! point within reach of the query, run one (non-periodic) descent per shift,
-//! then pin every hit's displacement to the canonical minimum-image vector
-//! returned by [`SimBox::shortest_vector_impl`].
-//!
-//! Both the indexed points and the query are folded into the primary cell
-//! first ([`SimBox::wrap`]), because the image-shift range below is derived
-//! from the cell's own geometry and therefore only reaches the images of a
-//! point that lies in it. Folding is free of consequence: a minimum-image
-//! separation is invariant when either endpoint moves by a lattice vector, so
-//! indices and distances are what they would have been. The
-//! range on a periodic axis is `n_k = ceil(r / d_k)`, where `d_k` is the
-//! **perpendicular plane spacing** [`SimBox::nearest_plane_distance`] and `r`
-//! is the reach being probed, giving `2·n_k + 1` shifts on that axis:
-//!
-//! - `r ≤ d_k` (the typical MD case): `n_k = 1`, so `3` shifts per periodic
-//!   axis and `27` tree queries per particle in a fully periodic 3-D box.
-//! - `r > d_k`: `n_k ≥ 2`, so `125` or more.
-//! - A non-periodic axis contributes only the zero shift, so a fully
-//!   free-boundary system needs exactly one tree query per particle.
-//!
-//! **The range is sized from `d_k`, never from the lattice-vector length
-//! `‖a_k‖`.** For a tilted cell `‖a_k‖` over-estimates the usable width
-//! (`d_k ≤ ‖a_k‖`, with equality only when the cell is orthogonal along `k`),
-//! so dividing the reach by `‖a_k‖` yields *fewer* images than are needed and
-//! pairs go missing with nothing raised. `LinkCell` sizes its cells the same
-//! way, for the same reason.
-//!
-//! Duplicate hits across shifts are collapsed to the shortest separation, so a
-//! point is reported once regardless of how many images found it.
-//!
-//! This keeps memory bounded by the original `N` points (no
-//! `O(N · n_images)` ghost copies) and aligns the PBC story with the rest
-//! of `crate::core::neighbors`: every algorithm gets its periodicity from
-//! `SimBox`, never from a ghost-expanded point set.
 
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
@@ -66,8 +9,7 @@ use crate::op::{F, Fnx3, Fnx3View};
 
 /// AABB-tree k-nearest-neighbor query.
 ///
-/// A bounding-volume hierarchy over one point set (see the module
-/// documentation). [`build`](Self::build) indexes the points, and the index
+/// A bounding-volume hierarchy over one point set. [`build`](Self::build) indexes the points, and the index
 /// then answers two questions.
 ///
 /// [`query_knn`](Self::query_knn) answers *which `k` points lie closest to this
@@ -78,6 +20,64 @@ use crate::op::{F, Fnx3, Fnx3View};
 /// with [`NeighborList::aabb`](crate::core::NeighborList::aabb)),
 /// which is where pair enumeration and table materialization live — this type
 /// exposes neither directly.
+///
+/// # Algorithm
+///
+/// Mirrors `freud.locality.AABBQuery`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/locality/AABBQuery.cc)).
+///
+/// An *axis-aligned bounding box* (AABB) is the smallest box with faces
+/// parallel to the coordinate axes that contains a set of points; it is cheap
+/// to store (two corners) and cheap to test a distance against. A *bounding
+/// volume hierarchy* (BVH) is a binary tree of such boxes: each leaf wraps a
+/// single point, each internal node owns the union of its two children's boxes.
+/// A query descends from the root and prunes any subtree whose box is farther
+/// from the query point than the worst candidate found so far, so most of the
+/// tree is never visited. Average cost is `O(log N + k)` for `k` neighbors.
+///
+/// ## PBC handling — MIC-based, no ghost atoms
+///
+/// Under periodic boundary conditions (PBC) the box tiles space, so a particle
+/// near one face may be close to a particle near the opposite face. The
+/// *minimum-image convention* (MIC) is the rule that only the shortest of those
+/// separations counts. Periodicity is handled the same way
+/// [`LinkCell`](crate::core::LinkCell) does it: the tree is built
+/// **only on the original `N` points**, never on a ghost-expanded set. For each
+/// query point we enumerate the lattice-image shifts that could bring a tree
+/// point within reach of the query, run one (non-periodic) descent per shift,
+/// then pin every hit's displacement to the canonical minimum-image vector
+/// returned by [`SimBox::shortest_vector_impl`].
+///
+/// Both the indexed points and the query are folded into the primary cell
+/// first ([`SimBox::wrap`]), because the image-shift range below is derived
+/// from the cell's own geometry and therefore only reaches the images of a
+/// point that lies in it. Folding is free of consequence: a minimum-image
+/// separation is invariant when either endpoint moves by a lattice vector, so
+/// indices and distances are what they would have been. The
+/// range on a periodic axis is `n_k = ceil(r / d_k)`, where `d_k` is the
+/// **perpendicular plane spacing** [`SimBox::nearest_plane_distance`] and `r`
+/// is the reach being probed, giving `2·n_k + 1` shifts on that axis:
+///
+/// - `r ≤ d_k` (the typical MD case): `n_k = 1`, so `3` shifts per periodic
+///   axis and `27` tree queries per particle in a fully periodic 3-D box.
+/// - `r > d_k`: `n_k ≥ 2`, so `125` or more.
+/// - A non-periodic axis contributes only the zero shift, so a fully
+///   free-boundary system needs exactly one tree query per particle.
+///
+/// **The range is sized from `d_k`, never from the lattice-vector length
+/// `‖a_k‖`.** For a tilted cell `‖a_k‖` over-estimates the usable width
+/// (`d_k ≤ ‖a_k‖`, with equality only when the cell is orthogonal along `k`),
+/// so dividing the reach by `‖a_k‖` yields *fewer* images than are needed and
+/// pairs go missing with nothing raised. `LinkCell` sizes its cells the same
+/// way, for the same reason.
+///
+/// Duplicate hits across shifts are collapsed to the shortest separation, so a
+/// point is reported once regardless of how many images found it.
+///
+/// This keeps memory bounded by the original `N` points (no
+/// `O(N · n_images)` ghost copies) and aligns the PBC story with the rest
+/// of `crate::core::neighbors`: every algorithm gets its periodicity from
+/// `SimBox`, never from a ghost-expanded point set.
 #[derive(Debug, Clone)]
 pub struct AabbQuery {
     cutoff: F,

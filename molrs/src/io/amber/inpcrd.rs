@@ -1,22 +1,4 @@
 //! AMBER ASCII inpcrd / restrt coordinate reader.
-//!
-//! Fixed-width Fortran ``6F12.7`` layout (old-style ``*.inpcrd`` / restart):
-//!
-//! ```text
-//! line 1   : title
-//! line 2   : natom [time]
-//! next     : coordinates — 6 floats per line, 12 chars each
-//! optional : velocities (same layout; only when `time` is present on line 2)
-//! optional : box line — 3–6 floats (first three → orthorhombic diagonal)
-//! ```
-//!
-//! ## Output Frame
-//!
-//! - `"atoms"` block: `id` (uint, 1-based), `name` (str, `"ATM{i}"`),
-//!   `x`/`y`/`z` (F), optional `vel` (F, shape `[n, 3]`)
-//! - `frame.meta["title"]` (string); optional `frame.meta["timestep"]` (i64,
-//!   truncates the header time)
-//! - `frame.simbox`: orthorhombic cell from the first three box floats when present
 
 use crate::io::invalid_data;
 use std::io::{BufRead, Result};
@@ -310,6 +292,25 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 // ---------------------------------------------------------------------------
 
 /// Read an AMBER ASCII inpcrd / restrt from its text.
+///
+/// The layout is fixed-width Fortran ``6F12.7`` (old-style ``*.inpcrd`` /
+/// restart):
+///
+/// ```text
+/// line 1   : title
+/// line 2   : natom [time]
+/// next     : coordinates — 6 floats per line, 12 chars each
+/// optional : velocities (same layout; only when `time` is present on line 2)
+/// optional : box line — 3–6 floats (first three → orthorhombic diagonal)
+/// ```
+///
+/// # Output Frame
+///
+/// - `"atoms"` block: `id` (uint, 1-based), `name` (str, `"ATM{i}"`),
+///   `x`/`y`/`z` (F), optional `vel` (F, shape `[n, 3]`)
+/// - `frame.meta["title"]` (string); optional `frame.meta["timestep"]` (i64,
+///   truncates the header time)
+/// - `frame.simbox`: orthorhombic cell from the first three box floats when present
 pub fn read_amber_inpcrd_str(text: &str) -> Result<Frame> {
     read_frame_from(text.as_bytes())
 }

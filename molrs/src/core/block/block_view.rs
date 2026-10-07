@@ -1,8 +1,4 @@
-//! Zero-copy borrowed view of a [`Block`].
-//!
-//! `BlockView<'a>` borrows columns from a [`Block`] as [`ColumnView`]s without
-//! copying any array data, providing read-only access with the same API surface
-//! as `Block`.
+//! Zero-copy borrowed view of a [`Block`]: [`BlockView`].
 
 use indexmap::IndexMap;
 
@@ -11,7 +7,8 @@ use super::column::Column;
 use super::column_view::ColumnView;
 use super::dtype::DType;
 
-/// A borrowed, read-only view of a [`Block`].
+/// A borrowed, read-only view of a [`Block`], with the same API surface as
+/// `Block` and without copying any array data.
 ///
 /// Keys are `&str` references into the original `Block`'s key strings.
 /// Values are [`ColumnView`]s that borrow the underlying array data.

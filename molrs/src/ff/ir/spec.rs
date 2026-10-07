@@ -1,12 +1,6 @@
 //! What a style is: its ordered per-type parameters, its style parameters,
 //! where its numbers come from, and (optionally) its energy as an
 //! expression.
-//!
-//! The parameter order is the force-field IR's: where LAMMPS has a style of
-//! the name, it is that style's `*_coeff` order and the meanings are
-//! LAMMPS's (the IR adopts the LAMMPS standard). [`builtin_styles`] states it
-//! for every style molrs registers, so an engine codec can write a style it
-//! has no arm for from the spec alone.
 
 use std::borrow::Cow;
 
@@ -150,6 +144,12 @@ pub struct ConformanceSample {
 ///
 /// The kernel that prices it is registered beside it
 /// ([`Registry::register_style`](crate::ff::ir::Registry::register_style)).
+///
+/// The parameter order is the force-field IR's: where LAMMPS has a style of
+/// the name, it is that style's `*_coeff` order and the meanings are
+/// LAMMPS's (the IR adopts the LAMMPS standard). [`builtin_styles`] states it
+/// for every style molrs registers, so an engine codec can write a style it
+/// has no arm for from the spec alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StyleSpec {
     pub category: Cow<'static, str>,

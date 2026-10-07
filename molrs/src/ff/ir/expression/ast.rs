@@ -1,10 +1,5 @@
 //! The syntax tree of an expression: what the parser builds, the printer
 //! prints and the compiler lowers.
-//!
-//! The tree is syntax only. A call keeps its function name as written, so an
-//! unknown function parses and is refused by the compiler with a named error;
-//! a variable is any identifier, resolved against a
-//! [`Binding`](crate::ff::ir::expression::Binding) only at compile time.
 
 use molrs::op::F;
 
@@ -148,6 +143,11 @@ impl Func {
 }
 
 /// An expression tree.
+///
+/// The tree is syntax only. A call keeps its function name as written, so an
+/// unknown function parses and is refused by the compiler with a named error;
+/// a variable is any identifier, resolved against a
+/// [`Binding`](crate::ff::ir::expression::Binding) only at compile time.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     /// A numeric literal. The parser only builds non-negative finite ones (a

@@ -1,21 +1,4 @@
 //! Hybridization and conjugation, as RDKit perceives them.
-//!
-//! A port of RDKit `Code/GraphMol/ConjugHybrid.cpp` (`setConjugation`,
-//! `setHybridization`) and of `countAtomElec` from `Aromaticity.cpp` (BSD-3,
-//! RDKit contributors). Hybridization is counted, not guessed: an atom's
-//! σ-bonds plus its lone pairs (`numBondsPlusLonePairs`) fix its orbital count,
-//! and a four-orbital atom that carries a conjugated bond — the pyrrole
-//! nitrogen, an amide nitrogen, an ester oxygen — drops to sp² because its lone
-//! pair joins the π system.
-//!
-//! This is the one hybridization model in molrs. MMFF aromaticity, UFF atom
-//! labels and the ETKDG bounds builder all read it.
-//!
-//! Hydrogens the graph implies but does not draw count
-//! ([`implicit_h_count`](super::hydrogens::implicit_h_count)), so the answer
-//! does not depend on whether hydrogens were made explicit. Bond orders are the
-//! localized (Kekulé) numbers; a bond whose class is aromatic is also
-//! conjugated, as in RDKit.
 
 use molrs::core::Atomistic;
 use molrs::core::BondNumber;
@@ -44,6 +27,23 @@ pub enum Hybridization {
 }
 
 /// The hybridization of every atom of `mol`, in its atom order.
+///
+/// A port of RDKit `Code/GraphMol/ConjugHybrid.cpp` (`setConjugation`,
+/// `setHybridization`) and of `countAtomElec` from `Aromaticity.cpp` (BSD-3,
+/// RDKit contributors). Hybridization is counted, not guessed: an atom's
+/// σ-bonds plus its lone pairs (`numBondsPlusLonePairs`) fix its orbital count,
+/// and a four-orbital atom that carries a conjugated bond — the pyrrole
+/// nitrogen, an amide nitrogen, an ester oxygen — drops to sp² because its lone
+/// pair joins the π system.
+///
+/// This is the one hybridization model in molrs. MMFF aromaticity, UFF atom
+/// labels and the ETKDG bounds builder all read it.
+///
+/// Hydrogens the graph implies but does not draw count
+/// ([`implicit_h_count`](crate::perceive::implicit_h_count)), so the answer
+/// does not depend on whether hydrogens were made explicit. Bond orders are the
+/// localized (Kekulé) numbers; a bond whose class is aromatic is also
+/// conjugated, as in RDKit.
 pub fn perceive_hybridizations(mol: &Atomistic) -> Vec<Hybridization> {
     let g = Snapshot::new(mol);
     (0..g.atno.len()).map(|i| g.hybridization(i)).collect()

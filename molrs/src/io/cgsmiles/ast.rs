@@ -1,22 +1,4 @@
 //! `CGsmiles` coarse-graph intermediate representation.
-//!
-//! One `CGsmiles` string describes a molecule at one or more *resolutions*:
-//! the coarse level names beads (`{[#PEO][#PEO]}`), and later levels resolve
-//! each bead into a fragment. These types are the parsed form of a coarse
-//! level — named nodes, typed edges, and a byte [`Span`] back into the input
-//! for every one of them.
-//!
-//! They live here, next to their only consumer, rather than in `chem/`: that
-//! module's vocabulary is what SMILES and SMARTS *share*, and a coarse-grained
-//! bead is neither. The one type this module borrows from there is
-//! [`BondingDescriptor`], which the fragment dialect and the coarse graph
-//! genuinely do share.
-//!
-//! Every type here is a value produced by
-//! [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse): the fields are public
-//! to read, there is no public constructor, and there is no supported
-//! mutation — the same shape as
-//! [`SmilesIr`](crate::io::smiles::SmilesIr).
 
 use std::collections::BTreeMap;
 
@@ -239,6 +221,13 @@ pub enum FragmentBody {
 }
 
 /// One resolution level: coarse-grained nodes and the edges between them.
+///
+/// A coarse level is the parsed form of one block such as `{[#PEO][#PEO]}`:
+/// named nodes, typed edges, and a byte [`Span`] back into the input for every
+/// one of them. Like every record of the notation, it is a value produced by
+/// [`CgSmilesIr::parse`]: the fields are public to read, there is no public
+/// constructor, and there is no supported mutation — the same shape as
+/// [`SmilesIr`].
 ///
 /// Both vectors are in **parse order** — nodes in the order their brackets
 /// were read, edges in the order the notation formed them, with a ring-closure

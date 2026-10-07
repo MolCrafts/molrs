@@ -1,15 +1,4 @@
-//! CHARMM angle with Urey–Bradley (LAMMPS `angle_style charmm`):
-//! E = k·(θ − θ0)² + k_ub·(r₁₃ − r_ub)².
-//!
-//! `k` is LAMMPS's `K` (energy/rad², no ½), `theta0` is in **degrees**, `k_ub`
-//! is LAMMPS's `K_ub` (energy/length², no ½) and `r_ub` a length — the four
-//! numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order. The
-//! kernel converts `theta0` to radians once, at construction.
-//!
-//! r₁₃ is the distance between the angle's end atoms `i` and `k`. The
-//! Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it adds
-//! no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
-//! sees is `special_bonds`'s answer, as for any angle).
+//! CHARMM angle with Urey–Bradley (LAMMPS `angle_style charmm`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
@@ -39,6 +28,19 @@ pub struct AngleCharmmParams {
 }
 
 /// CHARMM angle + Urey–Bradley potential with pre-resolved flat arrays.
+///
+/// LAMMPS `angle_style charmm`:
+/// E = k·(θ − θ0)² + k_ub·(r₁₃ − r_ub)².
+///
+/// `k` is LAMMPS's `K` (energy/rad², no ½), `theta0` is in **degrees**, `k_ub`
+/// is LAMMPS's `K_ub` (energy/length², no ½) and `r_ub` a length — the four
+/// numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order. The
+/// kernel converts `theta0` to radians once, at construction.
+///
+/// r₁₃ is the distance between the angle's end atoms `i` and `k`. The
+/// Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it adds
+/// no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
+/// sees is `special_bonds`'s answer, as for any angle).
 pub struct AngleCharmm {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

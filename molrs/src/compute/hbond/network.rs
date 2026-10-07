@@ -1,11 +1,4 @@
 //! Hydrogen-bond network topology.
-//!
-//! Ported from the reference implementation aggregation topology (`src/aggrtopo.cpp` — the connected
-//! aggregate / cluster assembly over the per-step bond graph). molrs assembles
-//! the undirected graph with the native [`Topology`] connectivity
-//! (connected-components BFS) — **no petgraph** (petgraph stays confined to the
-//! `smiles` feature). Nodes are caller-defined (typically one per molecule); each
-//! H-bond contributes a donor-node ↔ acceptor-node edge.
 
 use crate::core::Topology;
 
@@ -23,6 +16,13 @@ pub struct HBondNetworkResult {
 ///
 /// Self-loops (`a == b`) and out-of-range endpoints are ignored. Isolated nodes
 /// each count as a component of size 1.
+///
+/// Ported from the reference implementation aggregation topology (`src/aggrtopo.cpp` — the connected
+/// aggregate / cluster assembly over the per-step bond graph). molrs assembles
+/// the undirected graph with the native [`Topology`] connectivity
+/// (connected-components BFS) — **no petgraph** (petgraph stays confined to the
+/// `smiles` feature). Nodes are caller-defined (typically one per molecule); each
+/// H-bond contributes a donor-node ↔ acceptor-node edge.
 pub fn hbond_components(n_nodes: usize, edges: &[(usize, usize)]) -> HBondNetworkResult {
     let mut topo = Topology::with_atoms(n_nodes);
     for &(a, b) in edges {

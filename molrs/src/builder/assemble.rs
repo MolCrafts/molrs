@@ -1,16 +1,5 @@
 //! [`Assembler`]: one placed, linked world graph from a site graph.
 //!
-//! The assembler holds a library (name → one template [`MolGraph`], with or
-//! without ports — any graph type, handed over as its inner graph), a
-//! [`Placer`] and an [`Orienter`]. Its one verb,
-//! [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
-//! whose beads are the sites and whose bonds say which sites join) and
-//! builds every molecule in it in one call: one template copy per site,
-//! turned and placed, the copies of bonded sites joined through their ports,
-//! each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
-//! Any topology is accepted: chains, branches and rings (operator,
-//! 2026-09-28).
-//!
 //! `assemble` is a composed operation by operator ruling (notes.md
 //! 2026-09-27): it supersedes the 2026-09-26 "primitives only" ruling for
 //! this one concern.
@@ -271,6 +260,17 @@ enum PortChoice {
 
 /// Builds every molecule of a site graph as one placed, linked world graph,
 /// returned as the graph type the caller names.
+///
+/// The assembler holds a library (name → one template [`MolGraph`], with or
+/// without ports — any graph type, handed over as its inner graph), a
+/// [`Placer`] and an [`Orienter`]. Its one verb,
+/// [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
+/// whose beads are the sites and whose bonds say which sites join) and
+/// builds every molecule in it in one call: one template copy per site,
+/// turned and placed, the copies of bonded sites joined through their ports,
+/// each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
+/// Any topology is accepted: chains, branches and rings (operator,
+/// 2026-09-28).
 ///
 /// # Sites
 ///

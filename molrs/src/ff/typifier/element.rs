@@ -1,8 +1,4 @@
 //! Element typing: type labels derived from element symbols alone.
-//!
-//! [`ElementTypifier`] gives every atom and link a `type` label built from the
-//! elements it touches, for writers that need type labels (LAMMPS data Type
-//! Labels) on a molecule no force field has typed.
 
 use std::collections::HashMap;
 
@@ -62,6 +58,10 @@ use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 /// assert_eq!(bond.props["type"], "H-O".into());
 /// assert!(typing.forcefield().styles().is_empty());
 /// ```
+///
+/// [`ElementTypifier`] gives every atom and link a `type` label built from the
+/// elements it touches, for writers that need type labels (LAMMPS data Type
+/// Labels) on a molecule no force field has typed.
 #[derive(Debug, Clone)]
 pub struct ElementTypifier {
     library: ForceField,

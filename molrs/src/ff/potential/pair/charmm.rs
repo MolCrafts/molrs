@@ -1,45 +1,4 @@
-//! The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`, as molrs
-//! splits `lj/cut/coul/cut` into `lj/cut` + `coul/cut`:
-//!
-//! * `pair lj/charmm` — Lennard-Jones 12-6 with CHARMM's energy switch,
-//!   per type `epsilon`, `sigma`, `epsilon14`, `sigma14`;
-//! * `pair coul/charmm` — Coulomb with the same switch.
-//!
-//! Both follow `pair_lj_charmm_coul_charmm.cpp` term for term. With
-//! `r_in` = `inner`, `r_c` = `cutoff` and
-//!
-//! ```text
-//! S(r)  = (r_c² − r²)² (r_c² + 2r² − 3r_in²) / (r_c² − r_in²)³     r_in < r < r_c
-//! ```
-//!
-//! (1 below `r_in`, 0 from `r_c` on):
-//!
-//! ```text
-//! E_lj   = 4ε[(σ/r)¹² − (σ/r)⁶] · S(r)        F_lj = −dE_lj/dr  (consistent)
-//! E_coul = C qᵢqⱼ / r · S(r)                   F_coul = C qᵢqⱼ / r² · S(r)
-//! ```
-//!
-//! The Coulomb force is LAMMPS's: the switched force, **not** the gradient of
-//! the switched energy (LAMMPS's `forcecoul *= switch1` drops the `E·S′`
-//! term). Inside `r_in` the two agree; between `r_in` and `r_c` they differ,
-//! exactly as in LAMMPS. The Lennard-Jones force is the true gradient
-//! (LAMMPS adds `philj · switch2`).
-//!
-//! `epsilon14` / `sigma14` (absent → `epsilon` / `sigma`, as a two-number
-//! `pair_coeff` line in LAMMPS) are not used by this kernel: LAMMPS prices
-//! them only inside `dihedral_style charmm`, which molrs routes to the 1-4
-//! exceptions kernel ([`super::exceptions`]). A 1-4 pair this style meets on
-//! the `pairs` list is weighted by `special_bonds` with the regular `epsilon`
-//! / `sigma`, as LAMMPS's pair style does.
-//!
-//! Cross pairs: an explicit cross row, else the style's `mixing` (LAMMPS's
-//! default for the CHARMM styles is `arithmetic`); `epsilon14` / `sigma14`
-//! mix the same way, as LAMMPS's `init_one` does.
-//!
-//! The switch is part of the style's energy, so **both** compile doors apply
-//! it: the compiled (pair-list) form prices a pair at or beyond `cutoff` at
-//! zero, as LAMMPS does — as every pair style's compiled form truncates at
-//! its `cutoff`.
+//! The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`: `lj/charmm` and `coul/charmm`.
 
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
@@ -196,6 +155,43 @@ enum LjSource {
 }
 
 /// LAMMPS `pair_style lj/charmm/coul/charmm`, van-der-Waals half.
+///
+/// The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`, as molrs
+/// splits `lj/cut/coul/cut` into `lj/cut` + `coul/cut`:
+///
+/// * `pair lj/charmm` — Lennard-Jones 12-6 with CHARMM's energy switch,
+///   per type `epsilon`, `sigma`, `epsilon14`, `sigma14`;
+/// * `pair coul/charmm` — Coulomb with the same switch.
+///
+/// Both follow `pair_lj_charmm_coul_charmm.cpp` term for term. With
+/// `r_in` = `inner`, `r_c` = `cutoff` and
+///
+/// ```text
+/// S(r)  = (r_c² − r²)² (r_c² + 2r² − 3r_in²) / (r_c² − r_in²)³     r_in < r < r_c
+/// ```
+///
+/// (1 below `r_in`, 0 from `r_c` on):
+///
+/// ```text
+/// E_lj   = 4ε[(σ/r)¹² − (σ/r)⁶] · S(r)        F_lj = −dE_lj/dr  (consistent)
+/// E_coul = C qᵢqⱼ / r · S(r)                   F_coul = C qᵢqⱼ / r² · S(r)
+/// ```
+///
+/// `epsilon14` / `sigma14` (absent → `epsilon` / `sigma`, as a two-number
+/// `pair_coeff` line in LAMMPS) are not used by this kernel: LAMMPS prices
+/// them only inside `dihedral_style charmm`, which molrs routes to the 1-4
+/// exceptions kernel ([`PairExceptions`](super::PairExceptions)). A 1-4 pair this style meets on
+/// the `pairs` list is weighted by `special_bonds` with the regular `epsilon`
+/// / `sigma`, as LAMMPS's pair style does.
+///
+/// Cross pairs: an explicit cross row, else the style's `mixing` (LAMMPS's
+/// default for the CHARMM styles is `arithmetic`); `epsilon14` / `sigma14`
+/// mix the same way, as LAMMPS's `init_one` does.
+///
+/// The switch is part of the style's energy, so **both** compile doors apply
+/// it: the compiled (pair-list) form prices a pair at or beyond `cutoff` at
+/// zero, as LAMMPS does — as every pair style's compiled form truncates at
+/// its `cutoff`.
 #[derive(Clone, Debug)]
 pub struct PairLjCharmm {
     switch: Switch,
@@ -370,6 +366,14 @@ enum CoulSource {
 }
 
 /// LAMMPS `pair_style lj/charmm/coul/charmm`, Coulomb half.
+///
+/// The Coulomb force is LAMMPS's: the switched force, **not** the gradient of
+/// the switched energy (LAMMPS's `forcecoul *= switch1` drops the `E·S′`
+/// term). Inside `r_in` the two agree; between `r_in` and `r_c` they differ,
+/// exactly as in LAMMPS. The Lennard-Jones force is the true gradient
+/// (LAMMPS adds `philj · switch2`).
+///
+/// The switch `S(r)` and the cross-pair rules are [`PairLjCharmm`]'s.
 #[derive(Clone, Debug)]
 pub struct PairCoulCharmm {
     switch: Switch,

@@ -1,21 +1,4 @@
-//! CHARMM proper dihedral (LAMMPS `dihedral_style charmm`):
-//!
-//! E(φ) = k·[1 + cos(n·φ − d)]
-//!
-//! `k` is LAMMPS's `K` (energy), `periodicity` its integer `n`, and `phase` its
-//! `d` in **degrees** (LAMMPS takes an integer number of degrees; any value is
-//! accepted here). The kernel converts the phase to radians once.
-//!
-//! # The weight `w`
-//!
-//! LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
-//! *dihedral* computes — its end atoms, with the `epsilon14` / `sigma14` of
-//! the `lj/charmm` pair style and the full Coulomb, beside `special_bonds`
-//! 1-4 weights of zero. This kernel prices the torsion alone; the compiler
-//! routes every dihedral's `w` pair to the 1-4 exceptions kernel
-//! ([`crate::ff::potential::pair::exceptions`]), which also makes LAMMPS's
-//! checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
-//! `w = 0` (or absent) is the AMBER use of the style.
+//! CHARMM proper dihedral (LAMMPS `dihedral_style charmm`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
@@ -32,6 +15,25 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// CHARMM proper dihedral with pre-resolved flat arrays.
+///
+/// CHARMM proper dihedral (LAMMPS `dihedral_style charmm`):
+///
+/// E(φ) = k·[1 + cos(n·φ − d)]
+///
+/// `k` is LAMMPS's `K` (energy), `periodicity` its integer `n`, and `phase` its
+/// `d` in **degrees** (LAMMPS takes an integer number of degrees; any value is
+/// accepted here). The kernel converts the phase to radians once.
+///
+/// # The weight `w`
+///
+/// LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
+/// *dihedral* computes — its end atoms, with the `epsilon14` / `sigma14` of
+/// the `lj/charmm` pair style and the full Coulomb, beside `special_bonds`
+/// 1-4 weights of zero. This kernel prices the torsion alone; the compiler
+/// routes every dihedral's `w` pair to the 1-4 exceptions kernel
+/// ([`PairExceptions`](crate::ff::potential::pair::PairExceptions)), which also makes LAMMPS's
+/// checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
+/// `w = 0` (or absent) is the AMBER use of the style.
 pub struct DihedralCharmm {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -125,8 +127,8 @@ impl IndexedTerms for DihedralCharmm {
 
 /// Construct a [`DihedralCharmm`] from per-type params (`k`, `periodicity`,
 /// `phase` in degrees) and a Frame's `"dihedrals"` block
-/// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see the module
-/// docs).
+/// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see
+/// [`DihedralCharmm`]).
 pub fn dihedral_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],

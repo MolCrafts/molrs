@@ -6,7 +6,7 @@ use js_sys::Int32Array;
 use molrs::compute::Compute;
 use molrs::compute::ComputeResult;
 use molrs::compute::DescriptorRow;
-use molrs::compute::{Kmeans as RsKMeans, Pca as RsPca, PcaResult as RsPcaResult};
+use molrs::compute::{Kmeans as RsKmeans, Pca as RsPca, PcaResult as RsPcaResult};
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
@@ -131,7 +131,7 @@ impl PcaResult {
 /// ```
 #[wasm_bindgen]
 pub struct Kmeans {
-    inner: RsKMeans,
+    inner: RsKmeans,
 }
 
 #[wasm_bindgen(js_class = Kmeans)]
@@ -152,7 +152,7 @@ impl Kmeans {
     #[wasm_bindgen(constructor)]
     pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<Kmeans, JsValue> {
         let seed_u64 = seed as u64;
-        RsKMeans::new(k, max_iter, seed_u64)
+        RsKmeans::new(k, max_iter, seed_u64)
             .map(|inner| Kmeans { inner })
             .map_err(|e| JsValue::from_str(&format!("Kmeans: {e}")))
     }

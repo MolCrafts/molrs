@@ -1,24 +1,4 @@
 //! What an estimate cost, and how it was reached.
-//!
-//! An estimated parameter that does not say it *is* one cannot be audited, so
-//! every estimate this module produces carries a [`Provenance`]: the penalty
-//! parmchk2's weight table charges for it, the [`PenaltyTier`] that lands it in,
-//! the analog it was copied from, and how ([`EstimateMethod`]).
-//!
-//! # The provenance convention
-//!
-//! [`Provenance::write_onto`] writes four keys onto an estimated term's
-//! [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
-//! the parmchk2 oracle test) reads the same four:
-//!
-//! | key | type | meaning |
-//! |---|---|---|
-//! | `estimated` | numeric `1.0` | flag: this term was estimated, not matched |
-//! | `estimate_penalty` | numeric | total additive penalty (f64) |
-//! | `estimate_method` | string | `"analogy"`, `"empirical"`, or `"generic-wildcard"` |
-//! | `estimate_analog` | string | source type name copied from, or `""` |
-//!
-//! A term the table covered outright carries **none** of them — see [`Estimate`].
 
 use crate::ff::forcefield::Params;
 
@@ -80,6 +60,26 @@ impl EstimateMethod {
 }
 
 /// How an estimated term was produced, and what it cost.
+///
+/// An estimated parameter that does not say it *is* one cannot be audited, so
+/// every estimate the estimator produces carries a [`Provenance`]: the penalty
+/// parmchk2's weight table charges for it, the [`PenaltyTier`] that lands it in,
+/// the analog it was copied from, and how ([`EstimateMethod`]).
+///
+/// # The provenance convention
+///
+/// [`Provenance::write_onto`] writes four keys onto an estimated term's
+/// [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
+/// the parmchk2 oracle test) reads the same four:
+///
+/// | key | type | meaning |
+/// |---|---|---|
+/// | `estimated` | numeric `1.0` | flag: this term was estimated, not matched |
+/// | `estimate_penalty` | numeric | total additive penalty (f64) |
+/// | `estimate_method` | string | `"analogy"`, `"empirical"`, or `"generic-wildcard"` |
+/// | `estimate_analog` | string | source type name copied from, or `""` |
+///
+/// A term the table covered outright carries **none** of them — see [`Estimate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     /// The additive penalty score charged for the substitutions made.

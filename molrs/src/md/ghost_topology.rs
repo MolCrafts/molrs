@@ -1,23 +1,5 @@
 //! Bonded topology through the ghost halo: the bonded index lists of a force
 //! evaluation, resolved against the periodic copies that exist now.
-//!
-//! Two periodic régimes reach the same physics by different routes, and a run
-//! picks one by picking a [`ForceProvider`](super::forces::ForceProvider):
-//!
-//! * [`MicPairs`](super::forces::MicPairs) keeps `N` atoms and fixes up every
-//!   displacement with the minimum-image convention. Cheapest, and correct for
-//!   any potential that consumes edge vectors.
-//! * [`GhostPairs`](super::forces::GhostPairs) materialises the periodic copies
-//!   — [`GhostHalo`] (in `core`) owns their lifecycle — and hands the potential an ordinary,
-//!   non-periodic cluster. It costs the copies, and it is the only route that
-//!   is correct for a potential reading *positions*: a many-body or
-//!   machine-learned model cannot be told about a minimum-image fix-up it does
-//!   not know to apply.
-//!
-//! This module owns the bonded indices resolved against the copies
-//! ([`BondedLists`]); the copies themselves are [`GhostHalo`]'s. Which régime an integrator runs is not a
-//! question this module answers — that is the provider's identity, and it is
-//! open rather than enumerated.
 
 use ndarray::{Array2, ArrayView2};
 
@@ -28,6 +10,11 @@ use molrs::op::{F, Fnx3View, I};
 use super::error::MdError;
 
 /// The bonded index lists, resolved against the copies that exist now.
+///
+/// The copies themselves are [`GhostHalo`]'s; this type owns only the bonded
+/// indices resolved against them. Which periodic régime an integrator runs is
+/// not its question — that is the [`ForceProvider`](crate::md::ForceProvider)'s
+/// identity, and it is open rather than enumerated.
 ///
 /// A bonded kernel holds indices, not geometry: it is told *these two atoms are
 /// bonded* and takes the plain difference of their coordinates. For a bond that

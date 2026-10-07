@@ -1,35 +1,4 @@
 //! Frame: a dictionary mapping string keys to heterogeneous [`Block`]s.
-//!
-//! A Frame groups multiple [`Block`]s under string keys. Each `Block` may contain
-//! heterogeneous columns (different scalar dtypes like f32, f64, i64, bool), and
-//! manages its own `nrows` invariant. `Frame` itself only manages the mapping from
-//! names to blocks and does **not** enforce cross-block axis-0 consistency.
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::Frame;
-//! use molrs::core::Block;
-//! use molrs::op::{F, Idx};
-//! use ndarray::Array1;
-//!
-//! let mut frame = Frame::new();
-//!
-//! // Create an atoms block
-//! let mut atoms = Block::new();
-//! atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
-//! atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
-//! atoms.insert("id", Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn()).unwrap();
-//!
-//! frame.insert("atoms", atoms);
-//!
-//! // Access via Index trait
-//! let atoms_ref = &frame["atoms"];
-//! assert_eq!(atoms_ref.nrows(), Some(3));
-//!
-//! // Add metadata
-//! frame.meta.insert("title", "My Molecule");
-//! ```
 
 use indexmap::IndexMap;
 use std::ops::{Index, IndexMut};
@@ -51,6 +20,36 @@ use crate::core::schema::block_names::ATOMS;
 /// [`Block`]'s columns: re-inserting a key keeps its position,
 /// [`remove`](Self::remove) keeps the others in order, and
 /// [`rename_block`](Self::rename_block) keeps the renamed block in place.
+///
+/// Each `Block` manages its own `nrows` invariant; `Frame` itself only manages
+/// the mapping from names to blocks and does **not** enforce cross-block axis-0
+/// consistency.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::Frame;
+/// use molrs::core::Block;
+/// use molrs::op::{F, Idx};
+/// use ndarray::Array1;
+///
+/// let mut frame = Frame::new();
+///
+/// // Create an atoms block
+/// let mut atoms = Block::new();
+/// atoms.insert("x", Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn()).unwrap();
+/// atoms.insert("y", Array1::from_vec(vec![0.0 as F, 1.0 as F, 2.0 as F]).into_dyn()).unwrap();
+/// atoms.insert("id", Array1::from_vec(vec![1 as Idx, 2 as Idx, 3 as Idx]).into_dyn()).unwrap();
+///
+/// frame.insert("atoms", atoms);
+///
+/// // Access via Index trait
+/// let atoms_ref = &frame["atoms"];
+/// assert_eq!(atoms_ref.nrows(), Some(3));
+///
+/// // Add metadata
+/// frame.meta.insert("title", "My Molecule");
+/// ```
 #[derive(Default, Clone)]
 pub struct Frame {
     map: IndexMap<String, Block>,

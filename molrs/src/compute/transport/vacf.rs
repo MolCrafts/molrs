@@ -1,11 +1,5 @@
 //! Raw velocity autocorrelation function — the VDOS / Green–Kubo-diffusion
 //! input.
-//!
-//! [`Vacf`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
-//! removal, then time-origin average `1/(n-τ)`, then DOF average). No windowing
-//! and no integrated D — the fit step is the analyst's choice of
-//! [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) or
-//! [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + `1/d` (D).
 
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2, Axis};
@@ -35,6 +29,12 @@ impl ComputeResult for VacfResult {}
 ///
 /// Lifts the per-DOF mean-subtract + FFT-ACF + DOF-average block from
 /// the VDOS path (the part *before* windowing), returning only the raw ACF.
+///
+/// [`Vacf`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
+/// removal, then time-origin average `1/(n-τ)`, then DOF average). No windowing
+/// and no integrated D — the fit step is the analyst's choice of
+/// [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) or
+/// [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + `1/d` (D).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Vacf;
 

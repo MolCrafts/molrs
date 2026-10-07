@@ -1,28 +1,4 @@
 //! [`CellGrid`] — the PBC-aware lattice cell partition.
-//!
-//! One place answers "which cell does this point fall in, and which cells are
-//! its neighbours". [`LinkCell`](super::LinkCell) uses it, and so can external
-//! consumers that need Packmol-style cell indexing without inheriting the
-//! neighbour-list machinery around it.
-//!
-//! Two properties are load-bearing and are pinned by the tests at the bottom of
-//! this file:
-//!
-//! **Cell sizing uses plane distances.** A cell-list search is valid only if
-//! every cell is at least one cutoff wide along every lattice direction,
-//! measured as a *plane distance*. For a tilted cell `|a_k|` overestimates that
-//! width, so sizing by lattice-vector length would make cells thinner than the
-//! cutoff and pairs would be silently missed. [`CellGrid::for_cutoff`] sizes
-//! from [`SimBox::nearest_plane_distance`], which is correct for orthorhombic
-//! and triclinic alike. Everything downstream then works in *fractional* index
-//! space, where the stencil is identical for both — the lattice re-enters only
-//! through the minimum-image displacement.
-//!
-//! **Wrap on periodic axes, clamp on non-periodic ones.** A point outside the
-//! cell along a non-periodic axis must land in the nearest edge cell, not on
-//! the opposite face. This matters for optimisation workloads (packing) where
-//! intermediate iterates routinely leave the box — wrapping there would hide a
-//! particle from its true neighbours while showing it to unrelated ones.
 
 use crate::core::SimBox;
 use crate::op::F;
@@ -32,6 +8,29 @@ use crate::op::F;
 /// Construct with [`for_cutoff`](Self::for_cutoff) (cells at least one cutoff
 /// wide) or [`with_dims`](Self::with_dims) (explicit dimensions, for tests and
 /// for callers that manage their own sizing).
+///
+/// One place answers "which cell does this point fall in, and which cells are
+/// its neighbours". [`LinkCell`](crate::core::LinkCell) uses it, and so can external
+/// consumers that need Packmol-style cell indexing without inheriting the
+/// neighbour-list machinery around it.
+///
+/// Two properties are load-bearing and are pinned by its tests:
+///
+/// **Cell sizing uses plane distances.** A cell-list search is valid only if
+/// every cell is at least one cutoff wide along every lattice direction,
+/// measured as a *plane distance*. For a tilted cell `|a_k|` overestimates that
+/// width, so sizing by lattice-vector length would make cells thinner than the
+/// cutoff and pairs would be silently missed. [`CellGrid::for_cutoff`] sizes
+/// from [`SimBox::nearest_plane_distance`], which is correct for orthorhombic
+/// and triclinic alike. Everything downstream then works in *fractional* index
+/// space, where the stencil is identical for both — the lattice re-enters only
+/// through the minimum-image displacement.
+///
+/// **Wrap on periodic axes, clamp on non-periodic ones.** A point outside the
+/// cell along a non-periodic axis must land in the nearest edge cell, not on
+/// the opposite face. This matters for optimisation workloads (packing) where
+/// intermediate iterates routinely leave the box — wrapping there would hide a
+/// particle from its true neighbours while showing it to unrelated ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CellGrid {
     celldim: [u32; 3],

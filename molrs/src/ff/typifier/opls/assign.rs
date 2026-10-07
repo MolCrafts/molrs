@@ -24,7 +24,7 @@
 //! # Wildcard vocabulary
 //!
 //! molpy normalizes an empty / absent class attribute to `"*"` at XML read time;
-//! the molrs [`OpenmmXmlReader`](crate::io::openmm_xml::reader::OpenmmXmlReader)
+//! the molrs [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)
 //! transcribes the `class*` attributes verbatim, so an OPLS wildcard end arrives
 //! here as the **empty string** `""`. To stay bit-for-bit compatible with
 //! molpy's matcher, the private `end_score` helper treats `""`, `"*"`, and `"X"`

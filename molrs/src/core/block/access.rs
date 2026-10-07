@@ -1,8 +1,4 @@
-//! Unified access trait for owned and borrowed block types.
-//!
-//! [`BlockAccess`] is the read-only surface shared by [`Block`] and [`BlockView`].
-//! A column comes back whole; project a dtype with [`ColumnView::as_float`] and
-//! the other `as_*` methods.
+//! Unified access trait for owned and borrowed block types: [`BlockAccess`].
 
 use super::Block;
 use super::block_view::BlockView;
@@ -10,6 +6,9 @@ use super::column_view::ColumnView;
 use super::dtype::DType;
 
 /// Unified read-only access for [`Block`] and [`BlockView`].
+///
+/// A column comes back whole; project a dtype with [`ColumnView::as_float`] and
+/// the other `as_*` methods.
 pub trait BlockAccess {
     /// The column for `key`, or `None` when the key is absent.
     ///

@@ -1,9 +1,4 @@
-//! Buckingham pair potential: E = A * exp(-r/rho) - C / r^6
-//!
-//! The exp-6 form used for repulsion/dispersion (e.g. CL&Pol non-bonded cores).
-//! Parameters per pair type: `a` (energy), `rho` (length), `c` (energy*length^6).
-//! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
-//! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
+//! Buckingham pair potential (LAMMPS `pair_style buck`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -51,6 +46,12 @@ enum Source {
     },
 }
 
+/// Buckingham pair potential: E = A * exp(-r/rho) - C / r^6
+///
+/// The exp-6 form used for repulsion/dispersion (e.g. CL&Pol non-bonded cores).
+/// Parameters per pair type: `a` (energy), `rho` (length), `c` (energy*length^6).
+/// Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
+/// GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 pub struct PairBuck {
     source: Source,
     /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite

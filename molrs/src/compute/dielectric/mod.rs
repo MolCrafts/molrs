@@ -1,41 +1,4 @@
 //! Dielectric raw observables + static dielectric constant.
-//!
-//! Computes the **raw/defined** dielectric quantities of a polar fluid from
-//! molecular-dynamics dipole trajectories: the instantaneous dipole moment,
-//! current density, current partition, and the static dielectric constant
-//! ε(0).
-//!
-//! # Routes
-//!
-//! - [`static_dielectric_constant`] / [`static_dielectric_constant_components`]
-//!   — Neumann fluctuation formula (Neumann, *Mol. Phys.* **50**, 841 (1983);
-//!   conducting/tin-foil Ewald boundary conditions assumed).
-//!
-//! The frequency-dependent permittivity ε*(ω) = ε′(ω) − i·ε″(ω) is **no longer
-//! computed here**: the raw fluctuation dipole / current ACFs come from the
-//! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
-//! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
-//! computes, and the window + FFT + prefactor transform is the
-//! [`EinsteinHelfandSpectrum`](crate::compute::EinsteinHelfandSpectrum) /
-//! [`GreenKuboSpectrum`](crate::compute::GreenKuboSpectrum)
-//! [`Fit`](crate::compute::Fit) in `compute::spectroscopy` (windowing +
-//! transforming a raw ACF into ε(ω) is a *fit*).
-//!
-//! # Units
-//!
-//! All inputs and outputs use LAMMPS *real* / project analysis units:
-//!
-//! | quantity        | unit                |
-//! |-----------------|---------------------|
-//! | length          | Å                   |
-//! | charge          | e                   |
-//! | energy          | kcal / mol          |
-//! | time            | **fs**              |
-//! | temperature     | K                   |
-//! | volume          | Å³                  |
-//! | dipole moment   | e · Å               |
-//! | current density | e · Å⁻² · fs⁻¹      |
-//! | ε permittivity  | dimensionless       |
 
 use ndarray::{Array1, Array2, Array3};
 
@@ -186,6 +149,37 @@ pub fn current_density(
 /// Neumann, M. *Mol. Phys.* **50** (4), 841 (1983),
 /// "Dipole moment fluctuation formulas in computer simulations of
 /// polar systems."
+///
+/// One of the raw dielectric quantities of a polar fluid computed from
+/// molecular-dynamics dipole trajectories, beside [`dipole_moment`],
+/// [`current_density`] and [`decompose_current`].
+///
+/// The frequency-dependent permittivity ε*(ω) = ε′(ω) − i·ε″(ω) is **not**
+/// computed by these functions: the raw fluctuation dipole / current ACFs come from the
+/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
+/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
+/// computes, and the window + FFT + prefactor transform is the
+/// [`EinsteinHelfandSpectrum`](crate::compute::EinsteinHelfandSpectrum) /
+/// [`GreenKuboSpectrum`](crate::compute::GreenKuboSpectrum)
+/// [`Fit`](crate::compute::Fit) (windowing + transforming a raw ACF into
+/// ε(ω) is a *fit*).
+///
+/// # Units
+///
+/// All inputs and outputs of these functions use LAMMPS *real* / project
+/// analysis units:
+///
+/// | quantity        | unit                |
+/// |-----------------|---------------------|
+/// | length          | Å                   |
+/// | charge          | e                   |
+/// | energy          | kcal / mol          |
+/// | time            | **fs**              |
+/// | temperature     | K                   |
+/// | volume          | Å³                  |
+/// | dipole moment   | e · Å               |
+/// | current density | e · Å⁻² · fs⁻¹      |
+/// | ε permittivity  | dimensionless       |
 pub fn static_dielectric_constant(
     dipole_moments: &Array2<f64>,
     volume: f64,

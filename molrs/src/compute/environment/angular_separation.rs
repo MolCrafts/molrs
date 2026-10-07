@@ -1,29 +1,4 @@
 //! Pairwise angular separation between unit quaternions.
-//!
-//! Mirrors `freud.environment.AngularSeparationGlobal` and
-//! `AngularSeparationNeighbor`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/AngularSeparation.cc)).
-//!
-//! For two unit quaternions `q₁` and `q₂` the (rotational) angular
-//! distance is
-//!
-//! ```text
-//!   θ = 2 · arccos( |q₁ · q₂| )
-//! ```
-//!
-//! where the absolute value accounts for the double cover (`q` and `−q`
-//! represent the same rotation). The result is in radians, `0 ≤ θ ≤ π/2`
-//! (between rotations), or `0 ≤ θ ≤ π` if the user does *not* want the
-//! double-cover identification (`equivalent_orientations = false` in
-//! freud).
-//!
-//! Two flavours are provided:
-//!
-//! - [`AngularSeparationGlobal`]: dense `(N_query × N_global)` table of
-//!   angular distances between every query orientation and every reference
-//!   orientation.
-//! - [`AngularSeparationNeighbor`]: sparse, one angular distance per
-//!   neighbor pair, driven by a `Neighbors`.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -41,6 +16,31 @@ use crate::op::{quat_dot, quat_norm};
 /// `θ = 2 · arccos(|q₁ · q₂|)` when `equivalent_orientations = true`
 /// (the default), giving values in `[0, π/2]`. When `false`, the absolute
 /// value is dropped and the result lies in `[0, π]`.
+///
+/// Mirrors `freud.environment.AngularSeparationGlobal` and
+/// `AngularSeparationNeighbor`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/AngularSeparation.cc)).
+///
+/// For two unit quaternions `q₁` and `q₂` the (rotational) angular
+/// distance is
+///
+/// ```text
+///   θ = 2 · arccos( |q₁ · q₂| )
+/// ```
+///
+/// where the absolute value accounts for the double cover (`q` and `−q`
+/// represent the same rotation). The result is in radians, `0 ≤ θ ≤ π/2`
+/// (between rotations), or `0 ≤ θ ≤ π` if the user does *not* want the
+/// double-cover identification (`equivalent_orientations = false` in
+/// freud).
+///
+/// Two flavours are provided:
+///
+/// - [`AngularSeparationGlobal`]: dense `(N_query × N_global)` table of
+///   angular distances between every query orientation and every reference
+///   orientation.
+/// - [`AngularSeparationNeighbor`]: sparse, one angular distance per
+///   neighbor pair, driven by a `Neighbors`.
 pub fn angular_distance(q1: Quat, q2: Quat, equivalent_orientations: bool) -> F {
     let n1 = quat_norm(q1);
     let n2 = quat_norm(q2);

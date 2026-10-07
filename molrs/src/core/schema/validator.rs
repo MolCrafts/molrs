@@ -1,12 +1,4 @@
-//! The validator — a standalone judge of a Frame against the vocabulary.
-//!
-//! `Validator` deliberately does **not** live on `Frame`. It is its own type,
-//! it takes a frame as a parameter, and it depends on nothing above
-//! `core::store`: it knows nothing of `io`, `ff` or `compute`.
-//!
-//! It is generic over [`FrameAccess`] rather than tied to `Frame`, so the same
-//! validator judges an owned `Frame` and a borrowed `FrameView` without
-//! changes — including the `FrameView` that crosses the CXX bridge.
+//! The validator — a standalone judge of a Frame against the vocabulary: [`Validator`].
 
 use super::violation::{
     InstancePath, MAX_CELL_VIOLATIONS_PER_COLUMN, SchemaReport, Violation, ViolationKind,
@@ -21,6 +13,14 @@ use std::collections::HashMap;
 /// A key the vocabulary does not know is unconstrained (and refused only in a
 /// closed block); a key it owns has one dtype — `x` is `Float` and no caller
 /// makes it otherwise.
+///
+/// `Validator` deliberately does **not** live on `Frame`. It is its own type,
+/// it takes a frame as a parameter, and it depends on nothing above `core`: it
+/// knows nothing of `io`, `ff` or `compute`.
+///
+/// It is generic over [`FrameAccess`] rather than tied to `Frame`, so the same
+/// validator judges an owned `Frame` and a borrowed `FrameView` without
+/// changes — including the `FrameView` that crosses the CXX bridge.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Validator;
 

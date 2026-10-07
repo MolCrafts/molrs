@@ -1,22 +1,24 @@
-//! Out-of-plane distance improper, LAMMPS `improper_style distance`:
-//!
-//! E = K₂ d² + K₄ d⁴
-//!
-//! where `d` is the distance of the central atom `i` from the plane of the
-//! other three, `j`, `k`, `l`. It is the planarity restraint of the ETKDG
-//! conformer pipeline (RDKit's out-of-plane term at
-//! `oobForceScalingFactor = 10`, `K₂ = 10`, `K₄ = 0`), priced here once so the
-//! conformer stages share the force-field kernels instead of carrying their
-//! own.
-//!
-//! A degenerate plane (the three outer atoms collinear) has no normal; the
-//! term then contributes neither energy nor force.
+//! Out-of-plane distance improper (LAMMPS `improper_style distance`).
 
 use crate::ff::potential::Potential;
 use molrs::op::F;
 use molrs::op::vec3::{add, cross, dot, norm, scale, sub};
 
 /// `K₂ d² + K₄ d⁴` over explicit `[i (centre), j, k, l]` quadruples.
+///
+/// Out-of-plane distance improper, LAMMPS `improper_style distance`:
+///
+/// E = K₂ d² + K₄ d⁴
+///
+/// where `d` is the distance of the central atom `i` from the plane of the
+/// other three, `j`, `k`, `l`. It is the planarity restraint of the ETKDG
+/// conformer pipeline (RDKit's out-of-plane term at
+/// `oobForceScalingFactor = 10`, `K₂ = 10`, `K₄ = 0`), priced here once so the
+/// conformer stages share the force-field kernels instead of carrying their
+/// own.
+///
+/// A degenerate plane (the three outer atoms collinear) has no normal; the
+/// term then contributes neither energy nor force.
 #[derive(Debug, Clone, Default)]
 pub struct ImproperDistance {
     atoms: Vec<[usize; 4]>,

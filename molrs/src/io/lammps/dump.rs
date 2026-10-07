@@ -1,37 +1,4 @@
 //! LAMMPS dump trajectory file reader and writer.
-//!
-//! Implements support for LAMMPS dump files as output by the `dump` command:
-//! <https://docs.lammps.org/dump.html>
-//!
-//! Column names in `ITEM: ATOMS …` are the source of truth (unlike data files,
-//! which encode layout via `atom_style`). Shared helpers — error mapping,
-//! column aliases (`q`→`charge`, `mol`→`mol_id`), SimBox construction — live
-//! in the internal `io::lammps` module and are reused by the data-file reader.
-//!
-//! # Supported Features
-//!
-//! - Multi-frame trajectory reading with random access via `TrajectoryReader`
-//! - Orthogonal and triclinic simulation boxes
-//! - Automatic column type detection (integer vs float) with promote-on-demand
-//! - Boundary condition flag parsing (`pp`, `ff`, `ss`, etc.)
-//! - Gzip-compressed files via `LammpsDumpReader::open`
-//! - Canonical field rename for style-related dump columns (`q`, `mol`, …)
-//!
-//! # Examples
-//!
-//! ```no_run
-//! use molrs::io::{read_lammps_trajectory, write_lammps_trajectory};
-//! use molrs::io::lammps::LammpsDumpReader;
-//!
-//! # fn main() -> std::io::Result<()> {
-//! let frames = read_lammps_trajectory("trajectory.lammpstrj")?;
-//! use molrs::io::reader::TrajectoryReader;
-//! let mut reader = LammpsDumpReader::open("trajectory.lammpstrj")?;
-//! let frame_5 = reader.read_step(5)?;
-//! write_lammps_trajectory("output.lammpstrj", &frames, None)?;
-//! # Ok(())
-//! # }
-//! ```
 
 use crate::io::invalid_data;
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
@@ -699,7 +666,37 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 ///
 /// Supports multi-frame dump files with lazy index building for random access.
 ///
+/// Implements support for LAMMPS dump files as output by the `dump` command:
+/// <https://docs.lammps.org/dump.html>
+///
+/// Column names in `ITEM: ATOMS …` are the source of truth (unlike data files,
+/// which encode layout via `atom_style`). Column aliases (`q`→`charge`,
+/// `mol`→`mol_id`) are shared with the data-file reader.
+///
+/// Supported features:
+///
+/// - Multi-frame trajectory reading with random access via `TrajectoryReader`
+/// - Orthogonal and triclinic simulation boxes
+/// - Automatic column type detection (integer vs float) with promote-on-demand
+/// - Boundary condition flag parsing (`pp`, `ff`, `ss`, etc.)
+/// - Gzip-compressed files via `LammpsDumpReader::open`
+/// - Canonical field rename for style-related dump columns (`q`, `mol`, …)
+///
 /// # Examples
+///
+/// ```no_run
+/// use molrs::io::{read_lammps_trajectory, write_lammps_trajectory};
+/// use molrs::io::lammps::LammpsDumpReader;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let frames = read_lammps_trajectory("trajectory.lammpstrj")?;
+/// use molrs::io::reader::TrajectoryReader;
+/// let mut reader = LammpsDumpReader::open("trajectory.lammpstrj")?;
+/// let frame_5 = reader.read_step(5)?;
+/// write_lammps_trajectory("output.lammpstrj", &frames, None)?;
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// ```no_run
 /// use molrs::io::lammps::LammpsDumpReader;

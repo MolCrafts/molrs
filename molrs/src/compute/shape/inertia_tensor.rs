@@ -1,12 +1,4 @@
 //! Moment of inertia tensor computation for clusters.
-//!
-//! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
-//! ([`ClusterResult`],
-//! [`CenterOfMassResult`]) pairs — run
-//! [`Cluster`](crate::compute::Cluster) and
-//! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
-//! per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
-//! `with_masses` supplies; 1 per particle by default).
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -26,6 +18,14 @@ use molrs::core::{Mic, SimBox};
 /// where `s_i = shortest_vector(com_k, r_i)` is the MIC displacement from the
 /// center of mass. Centers of mass come from the [`CenterOfMassResult`] arg — this
 /// Compute does **not** recompute them.
+///
+/// Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
+/// ([`ClusterResult`],
+/// [`CenterOfMassResult`]) pairs — run
+/// [`Cluster`](crate::compute::Cluster) and
+/// [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
+/// per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
+/// `with_masses` supplies; 1 per particle by default).
 #[derive(Debug, Clone, Default)]
 pub struct InertiaTensor {
     masses: Option<Vec<F>>,

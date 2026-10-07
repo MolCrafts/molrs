@@ -1,7 +1,4 @@
-//! Harmonic bond (LAMMPS `bond_style harmonic`): E = k·(r − r0)².
-//!
-//! `k` is LAMMPS's `K`, energy/length², and carries the usual ½: there is no
-//! hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
+//! Harmonic bond (LAMMPS `bond_style harmonic`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::BONDS;
@@ -16,6 +13,11 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Harmonic bond potential with pre-resolved flat arrays.
+///
+/// LAMMPS `bond_style harmonic`: E = k·(r − r0)².
+///
+/// `k` is LAMMPS's `K`, energy/length², and carries the usual ½: there is no
+/// hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
 pub struct BondHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

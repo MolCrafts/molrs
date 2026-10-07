@@ -1,20 +1,4 @@
 //! Per-particle spherical-harmonic descriptors of the local neighborhood.
-//!
-//! Mirrors `freud.environment.LocalDescriptors`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalDescriptors.cc)).
-//!
-//! For each neighbor pair `(i, j)` computes the complex spherical-harmonic
-//! coefficients `Y_ℓm(θ_ij, φ_ij)` for every ℓ from 0 to `l_max`. The
-//! output is a per-pair table of shape `(n_pairs, n_sphs)` where
-//! `n_sphs = Σ_{ℓ=0}^{l_max} (2ℓ + 1) = (l_max + 1)²`. These features are
-//! the standard input for ML models that classify local environments
-//! (e.g. crystal-vs-liquid classifiers, polymorph identifiers).
-//!
-//! Three modes are supported by freud (`LocalNeighborhood`,
-//! `Global`, `ParticleLocal`); the simplest **LocalNeighborhood** mode is
-//! implemented here, which expresses the bond direction in the lab frame.
-//! `ParticleLocal` (rotate by per-particle quaternion before evaluating
-//! `Y_ℓm`) is a follow-up.
 
 use crate::compute::ComputeResult;
 use molrs::core::Complex;
@@ -27,6 +11,22 @@ use crate::compute::ComputeError;
 use crate::compute::require_disp;
 
 /// `LocalDescriptors` analyzer (Sph-mode).
+///
+/// Mirrors `freud.environment.LocalDescriptors`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalDescriptors.cc)).
+///
+/// For each neighbor pair `(i, j)` computes the complex spherical-harmonic
+/// coefficients `Y_ℓm(θ_ij, φ_ij)` for every ℓ from 0 to `l_max`. The
+/// output is a per-pair table of shape `(n_pairs, n_sphs)` where
+/// `n_sphs = Σ_{ℓ=0}^{l_max} (2ℓ + 1) = (l_max + 1)²`. These features are
+/// the standard input for ML models that classify local environments
+/// (e.g. crystal-vs-liquid classifiers, polymorph identifiers).
+///
+/// Three modes are supported by freud (`LocalNeighborhood`,
+/// `Global`, `ParticleLocal`); the simplest **LocalNeighborhood** mode is
+/// implemented here, which expresses the bond direction in the lab frame.
+/// `ParticleLocal` (rotate by per-particle quaternion before evaluating
+/// `Y_ℓm`) is a follow-up.
 #[derive(Debug, Clone, Copy)]
 pub struct LocalDescriptors {
     l_max: u32,

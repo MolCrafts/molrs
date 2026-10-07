@@ -1,44 +1,4 @@
 //! Van Hove correlation function `G(r, t)` — self and distinct parts.
-//!
-//! The Van Hove function is the space–time generalization of the radial
-//! distribution function (L. van Hove, *Phys. Rev.* **1954**, 95, 249; Hansen
-//! & McDonald, *Theory of Simple Liquids*, 4th ed., §7):
-//!
-//! ```text
-//!   G_s(r,t) = (1/N) Σ_i      ⟨ δ(r − |r_i(t) − r_i(0)|) ⟩          (self)
-//!   G_d(r,t) = (1/N) Σ_i Σ_{j≠i} ⟨ δ(r − |r_j(t) − r_i(0)|) ⟩      (distinct)
-//! ```
-//!
-//! with the structural anchor `G_d(r,0) = ρ g(r)` (ρ = N/V the number density,
-//! `g(r)` the RDF) and the dynamical anchor `∫ r² G_s(r,t) dr = Msd(t)`. The
-//! two thus bridge [`rdf`](crate::compute::rdf) (structure) and
-//! [`msd`](crate::compute::msd) (dynamics).
-//!
-//! # Provenance
-//!
-//! reference implementation (the reference implementation for this `analysis-parity` chain) does
-//! **not** ship a dedicated Van Hove analyzer — only its RDF and ACF machinery.
-//! Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
-//! **distinct-part binning + shell normalization** mirror the RDF pair-binning
-//! convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
-//! reused through [`Histogram1d`](crate::compute::Histogram1d) and
-//! the `4π/3 (r_o³−r_i³)` shell volume of [`rdf`](crate::compute::rdf)), and the
-//! **multi-time-origin averaging** mirrors the ACF origin accumulation in
-//! reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
-//! reference implementation port is therefore unavoidable (no source to port) and is documented
-//! here.
-//!
-//! # Conventions
-//!
-//! - `g_self[t]` is the probability **density of the displacement magnitude**
-//!   `|Δr|` at lag `t`: `∫ g_self dr = 1`, so its second moment
-//!   `∫ r² g_self dr` is the MSD. (It is the radial-weighted self-part
-//!   `4π r² G_s^{3D}`, the directly histogrammable quantity.)
-//! - `g_distinct[t]` is the **number density** of other particles at distance
-//!   `r` from a reference particle, `ρ g(r)` at `t = 0`.
-//! - Self displacements use the raw (unwrapped) coordinate difference — exactly
-//!   as [`msd`](crate::compute::msd) does — so the second-moment bridge holds.
-//!   Distinct distances use the minimum image (matching `rdf`).
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -54,6 +14,46 @@ use crate::compute::positions::get_positions_ref;
 ///
 /// Stateless parameter bag: the r-grid (`n_rbins`, `r_max`), the set of integer
 /// frame-lag times to evaluate, and the time-origin `stride`.
+///
+/// The Van Hove function is the space–time generalization of the radial
+/// distribution function (L. van Hove, *Phys. Rev.* **1954**, 95, 249; Hansen
+/// & McDonald, *Theory of Simple Liquids*, 4th ed., §7):
+///
+/// ```text
+///   G_s(r,t) = (1/N) Σ_i      ⟨ δ(r − |r_i(t) − r_i(0)|) ⟩          (self)
+///   G_d(r,t) = (1/N) Σ_i Σ_{j≠i} ⟨ δ(r − |r_j(t) − r_i(0)|) ⟩      (distinct)
+/// ```
+///
+/// with the structural anchor `G_d(r,0) = ρ g(r)` (ρ = N/V the number density,
+/// `g(r)` the RDF) and the dynamical anchor `∫ r² G_s(r,t) dr = Msd(t)`. The
+/// two thus bridge [`Rdf`](crate::compute::Rdf) (structure) and
+/// [`Msd`](crate::compute::Msd) (dynamics).
+///
+/// # Provenance
+///
+/// reference implementation (the reference implementation for this `analysis-parity` chain) does
+/// **not** ship a dedicated Van Hove analyzer — only its RDF and ACF machinery.
+/// Accordingly the **definition** follows van Hove 1954 / Hansen-McDonald, the
+/// **distinct-part binning + shell normalization** mirror the RDF pair-binning
+/// convention molrs already ports (`CDF::AddToBin`, reference implementation `src/df.cpp`, here
+/// reused through [`Histogram1d`](crate::compute::Histogram1d) and
+/// the `4π/3 (r_o³−r_i³)` shell volume of [`Rdf`](crate::compute::Rdf)), and the
+/// **multi-time-origin averaging** mirrors the ACF origin accumulation in
+/// reference implementation `src/reordyn.cpp` / `src/acf.cpp`. Any deviation from a literal
+/// reference implementation port is therefore unavoidable (no source to port) and is documented
+/// here.
+///
+/// # Conventions
+///
+/// - `g_self[t]` is the probability **density of the displacement magnitude**
+///   `|Δr|` at lag `t`: `∫ g_self dr = 1`, so its second moment
+///   `∫ r² g_self dr` is the MSD. (It is the radial-weighted self-part
+///   `4π r² G_s^{3D}`, the directly histogrammable quantity.)
+/// - `g_distinct[t]` is the **number density** of other particles at distance
+///   `r` from a reference particle, `ρ g(r)` at `t = 0`.
+/// - Self displacements use the raw (unwrapped) coordinate difference — exactly
+///   as [`Msd`](crate::compute::Msd) does — so the second-moment bridge holds.
+///   Distinct distances use the minimum image (matching `rdf`).
 #[derive(Debug, Clone)]
 pub struct VanHove {
     n_rbins: usize,

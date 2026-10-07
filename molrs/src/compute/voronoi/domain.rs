@@ -1,10 +1,4 @@
 //! Domain (microheterogeneity) analysis over a radical-Voronoi tessellation.
-//!
-//! Merges face-adjacent cells that share the same user label into connected
-//! domains via the native connected-components over the cell-adjacency graph —
-//! the aggregation reference implementation performs in `src/domain.cpp` /
-//! `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
-//! Returns the domain size distribution, count, and largest-domain fraction.
 
 use molrs::op::F;
 
@@ -26,6 +20,12 @@ pub struct VoronoiDomainResult {
 }
 
 /// Partition cells into same-label face-adjacent domains.
+///
+/// Merges face-adjacent cells that share the same user label into connected
+/// domains via the native connected-components over the cell-adjacency graph —
+/// the aggregation reference implementation performs in `src/domain.cpp` /
+/// `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
+/// Returns the domain size distribution, count, and largest-domain fraction.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct VoronoiDomainAnalysis;
 

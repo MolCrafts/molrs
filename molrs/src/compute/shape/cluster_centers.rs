@@ -1,11 +1,4 @@
 //! Geometric cluster centers computed with minimum image convention.
-//!
-//! The unweighted counterpart of
-//! [`CenterOfMass`](crate::compute::CenterOfMass). Reads
-//! `atoms.{x,y,z}` (Å); takes one
-//! [`ClusterResult`] per frame as
-//! `Args`. Output: per-cluster geometric centers (Å), one
-//! [`ClusterCentersResult`] per frame.
 
 use crate::compute::{ComputeResult, DescriptorRow};
 use molrs::core::FrameAccess;
@@ -23,6 +16,13 @@ use molrs::core::{Mic, SimBox};
 ///
 /// Algorithm: for each cluster, pick the first particle as reference,
 /// accumulate MIC-corrected displacements, then average.
+///
+/// The unweighted counterpart of
+/// [`CenterOfMass`](crate::compute::CenterOfMass). Reads
+/// `atoms.{x,y,z}` (Å); takes one
+/// [`ClusterResult`] per frame as
+/// `Args`. Output: per-cluster geometric centers (Å), one
+/// [`ClusterCentersResult`] per frame.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterCenters;
 

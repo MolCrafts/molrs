@@ -1,16 +1,4 @@
 //! LAMMPS molecule template files (native text + JSON).
-//!
-//! Native format: header counts + body sections (`Coords`, `Types`, `Charges`,
-//! `Bonds`, …). JSON format follows the LAMMPS molecule JSON schema
-//! (`format: "molecule"`).
-//!
-//! Output Frame (canonical columns):
-//! - `"atoms"`: `id`, `type` (string), optional `x`/`y`/`z`, `charge`, `mass`,
-//!   `mol_id`, `diameter`
-//! - `"bonds"` / `"angles"` / `"dihedrals"` / `"impropers"`: `id`, `type`,
-//!   `atomi`… (0-based indices into atoms)
-//! - meta: `format=lammps_molecule`, `source_format`, counts, optional
-//!   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
 
 use crate::io::invalid_data;
 use std::collections::HashMap;
@@ -60,6 +48,18 @@ fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()>
 // ── public path API ─────────────────────────────────────────────────────────
 
 /// Read a LAMMPS molecule template file (the native text format).
+///
+/// The native format is header counts plus body sections (`Coords`, `Types`,
+/// `Charges`, `Bonds`, …); the JSON format
+/// ([`read_lammps_molecule_json`]) follows the LAMMPS molecule JSON schema
+/// (`format: "molecule"`). Both read into the same canonical columns:
+///
+/// - `"atoms"`: `id`, `type` (string), optional `x`/`y`/`z`, `charge`, `mass`,
+///   `mol_id`, `diameter`
+/// - `"bonds"` / `"angles"` / `"dihedrals"` / `"impropers"`: `id`, `type`,
+///   `atomi`… (0-based indices into atoms)
+/// - meta: `format=lammps_molecule`, `source_format`, counts, optional
+///   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
 pub fn read_lammps_molecule<P: AsRef<Path>>(path: P) -> Result<Frame> {
     read_lammps_molecule_native(path.as_ref())
 }

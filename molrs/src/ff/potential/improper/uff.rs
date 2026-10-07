@@ -1,11 +1,4 @@
 //! UFF inversion (out-of-plane), RDKit `InversionContrib`.
-//!
-//! Per-instance columns on `impropers`: `K`, `c0`, `c1`, `c2`.
-//!
-//! No LAMMPS style has this name; its form is LAMMPS `improper_style fourier`
-//! (`K[C0 + C1 cos ω + C2 cos 2ω]`, ω between the I-L axis and the I-J-K plane)
-//! and so is its atom order: the centre is **first** (`atomi`). RDKit lists the
-//! centre second; the UFF typifier writes it first.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
@@ -18,6 +11,14 @@ use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
 
+/// UFF inversion (out-of-plane), RDKit `InversionContrib`.
+///
+/// Per-instance columns on `impropers`: `K`, `c0`, `c1`, `c2`.
+///
+/// No LAMMPS style has this name; its form is LAMMPS `improper_style fourier`
+/// (`K[C0 + C1 cos ω + C2 cos 2ω]`, ω between the I-L axis and the I-J-K plane)
+/// and so is its atom order: the centre is **first** (`atomi`). RDKit lists the
+/// centre second; the UFF typifier writes it first.
 pub struct ImproperUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

@@ -1,30 +1,4 @@
 //! [`BccModel`] — AM1-BCC and ABCG2, as one model over two parameter sets.
-//!
-//! ```text
-//! QM charges ──▶ equivalence classes ──▶ class-mean ──▶ + BCCPARM increments ──▶ q
-//! ```
-//!
-//! The seam is a **push**: the AM1 charges are an argument
-//! ([`correct`](BccModel::correct) takes them as a slice), not something a backend
-//! trait is asked for. Every implementor that trait ever had was a constant-carrier
-//! that ignored the molecule it was handed and returned a `Vec<f64>` computed
-//! elsewhere — so production had to *fake a backend* to hand molrs a vector, which is
-//! the shape of a seam installed backwards. molrs does not solve AM1 (that is
-//! Atomiverse's job); it corrects the charges AM1 produced.
-//!
-//! # The `type` column is the caller's
-//!
-//! The model perceives its BCC atom and bond types into local `Vec`s and never writes
-//! them into `mol` — nor reads the ones `mol` arrives with. Both halves matter:
-//!
-//! * **write** — the standard AM1-BCC workflow needs GAFF types *and* BCC charges at
-//!   the same time (GAFF for LJ and bonded terms, BCC for the electrostatics). A
-//!   charge pass that relabelled `c3` as `11` would destroy the force field it was
-//!   meant to complete;
-//! * **read** — a molecule read from a LAMMPS data file carries integer *bond type
-//!   ids* in the very prop the BCC bond type lives in. Re-interpreting `1, 2, 3` as
-//!   BCC bond types would split acetate's two carboxylate oxygens by ~0.2 e without a
-//!   word. So the working copy is stripped of both `type` columns before perception.
 
 use std::collections::HashMap;
 
@@ -134,6 +108,24 @@ impl BccParameterSet {
 /// One engine, two parameter sets — [`BccParameterSet::Bcc`] reads `BCCPARM.DAT`
 /// against `ATOMTYPE_BCC.DEF`, [`BccParameterSet::Abcg2`] reads `BCCPARM_ABCG2.DAT`
 /// against `ATOMTYPE_ABCG2.DEF` — and no special case for either.
+///
+/// ```text
+/// QM charges ──▶ equivalence classes ──▶ class-mean ──▶ + BCCPARM increments ──▶ q
+/// ```
+///
+/// # The `type` column is the caller's
+///
+/// The model perceives its BCC atom and bond types into local `Vec`s and never writes
+/// them into `mol` — nor reads the ones `mol` arrives with. Both halves matter:
+///
+/// * **write** — the standard AM1-BCC workflow needs GAFF types *and* BCC charges at
+///   the same time (GAFF for LJ and bonded terms, BCC for the electrostatics). A
+///   charge pass that relabelled `c3` as `11` would destroy the force field it was
+///   meant to complete;
+/// * **read** — a molecule read from a LAMMPS data file carries integer *bond type
+///   ids* in the very prop the BCC bond type lives in. Re-interpreting `1, 2, 3` as
+///   BCC bond types would split acetate's two carboxylate oxygens by ~0.2 e without a
+///   word. So the working copy is stripped of both `type` columns before perception.
 ///
 /// # Examples
 ///

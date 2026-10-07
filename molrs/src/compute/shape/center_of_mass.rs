@@ -1,9 +1,4 @@
 //! Mass-weighted cluster centers (center of mass) with MIC.
-//!
-//! Reads `atoms.{x,y,z}` (Å) from each frame; takes one
-//! [`ClusterResult`] per frame as
-//! `Args` (run [`Cluster`](crate::compute::Cluster) first). Output:
-//! one [`CenterOfMassResult`] per frame — per-cluster COM (Å) + total mass.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -19,6 +14,11 @@ use molrs::core::{Mic, SimBox};
 /// Computes the center of mass of each cluster per frame using MIC.
 ///
 /// Masses are optional — defaults to 1.0 for all particles (uniform).
+///
+/// Reads `atoms.{x,y,z}` (Å) from each frame; takes one
+/// [`ClusterResult`] per frame as
+/// `Args` (run [`Cluster`](crate::compute::Cluster) first). Output:
+/// one [`CenterOfMassResult`] per frame — per-cluster COM (Å) + total mass.
 #[derive(Debug, Clone, Default)]
 pub struct CenterOfMass {
     masses: Option<Vec<F>>,

@@ -1,14 +1,6 @@
 //! The AM1-BCC atom *typifier*: [`BccAtomChargeTypifier`] labels every atom with
 //! the BCC (or ABCG2) atom type of the table a
 //! [`crate::ff::charge::BccParameterSet`] names.
-//!
-//! The atom-type rules are antechamber's ATD language, shared by every
-//! `ATOMTYPE_*.DEF` table, so this drives the one [`atd`](super::atd) engine
-//! with the BCC (or ABCG2) table rather than owning a second copy of it. The
-//! bond charge corrections — the half of AM1-BCC that turns types into
-//! charges — are a charge model's, and live in [`ff::charge`](crate::ff::charge)
-//! (`BccModel`), which perceives its BCC types for itself and never writes them
-//! into the caller's [`keys::TYPE`](molrs::core::keys::TYPE) column.
 
 use molrs::core::Atomistic;
 use std::sync::OnceLock;
@@ -31,6 +23,14 @@ use crate::ff::forcefield::ForceField;
 /// through it: `BccModel` keeps its BCC types to itself precisely so that a molecule
 /// can carry GAFF types and BCC charges at the same time, which is what the standard
 /// AM1-BCC workflow is.
+///
+/// The atom-type rules are antechamber's ATD language, shared by every
+/// `ATOMTYPE_*.DEF` table, so this drives the one ATD engine ([`AtdTypifier`](super::AtdTypifier))
+/// with the BCC (or ABCG2) table rather than owning a second copy of it. The
+/// bond charge corrections — the half of AM1-BCC that turns types into
+/// charges — are a charge model's, and live in [`ff::charge`](crate::ff::charge)
+/// (`BccModel`), which perceives its BCC types for itself and never writes them
+/// into the caller's [`keys::TYPE`](molrs::core::keys::TYPE) column.
 #[derive(Debug, Clone)]
 pub struct BccAtomChargeTypifier {
     model: BccParameterSet,

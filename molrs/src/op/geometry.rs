@@ -2,19 +2,6 @@
 //! coordinates: the in-place transforms [`translate`], [`scale`] and
 //! [`rotate`], and the read-only query [`center`] (the mass-weighted centre of
 //! a chosen set of nodes).
-//!
-//! The vocabulary is that of the entity–component–system (ECS) design molrs
-//! uses for its graphs: a node is an *entity*, its properties (`x`, `mass`, …)
-//! are *components*, and a *system* is a function that runs over the whole
-//! data set (the *world*). The graph is pure data, so spatial transforms and
-//! reductions live here as free functions rather than as methods on the data
-//! structure. Coordinates are read and written through the canonical
-//! [`crate::core::keys`] coordinate convention — no field-name literals — and
-//! are in Å by molrs convention.
-//!
-//! No function here applies a periodic image convention: [`MolGraph`] holds no
-//! box. Callers unwrap and wrap with
-//! [`SimBox`](crate::core::SimBox) themselves.
 
 use std::fmt;
 

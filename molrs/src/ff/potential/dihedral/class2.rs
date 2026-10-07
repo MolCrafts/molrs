@@ -1,15 +1,4 @@
-//! Class2 (COMPASS / PCFF) proper dihedral — core torsion term:
-//!
-//! E(φ) = Σ_{n=1..3} K_n · [1 − cos(n·φ − φ_n)]
-//!
-//! `K_n` are force constants (energy) and `φ_n` the per-term phases in
-//! **degrees**, as LAMMPS `dihedral_style class2` takes them (the kernel
-//! converts once). This kernel covers the *core*
-//! three-term cosine expansion that the
-//! molpy `class2` dihedral data model carries (`k1`,`phi1`,…,`k3`,`phi3`). The
-//! optional class2 cross terms (mbt / ebt / at / aat / bb13), which are emitted
-//! as separate LAMMPS coeff lines and not part of this style's per-type params,
-//! are out of scope here.
+//! Class2 (COMPASS / PCFF) proper dihedral, core torsion term.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
@@ -26,6 +15,19 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Class2 proper dihedral (core 3-term cosine) with pre-resolved flat arrays.
+///
+/// Class2 (COMPASS / PCFF) proper dihedral — core torsion term:
+///
+/// E(φ) = Σ_{n=1..3} K_n · [1 − cos(n·φ − φ_n)]
+///
+/// `K_n` are force constants (energy) and `φ_n` the per-term phases in
+/// **degrees**, as LAMMPS `dihedral_style class2` takes them (the kernel
+/// converts once). This kernel covers the *core*
+/// three-term cosine expansion that the
+/// molpy `class2` dihedral data model carries (`k1`,`phi1`,…,`k3`,`phi3`). The
+/// optional class2 cross terms (mbt / ebt / at / aat / bb13), which are emitted
+/// as separate LAMMPS coeff lines and not part of this style's per-type params,
+/// are out of scope here.
 pub struct DihedralClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

@@ -1,32 +1,13 @@
 //! The estimator's two constant tables — the lookups, not a second copy.
 //!
-//! Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
-//! emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
-//! seven `ATOMTYPE_*.DEF` take. Nothing here is
-//! parsed at runtime; a malformed table is a **compile** error.
-//!
-//! - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
-//!   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
-//!   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
-//!   says which types may be an improper centre.
-//! - [`EmpiricalTable`] ([`EMPIRICAL_GAFF`] / [`EMPIRICAL_GAFF2`]) —
-//!   `PARM_BLBA_GAFF*.DAT`: the Badger bond `ln(Kij)` per element pair and the
-//!   angle `C` / `Z` factors per element (Wang et al. *J. Comput. Chem.* 2004,
-//!   25:1157–1174, Eqs. 3 and 5).
-//!
 //! # One table, one type
 //!
-//! This module adds **inherent methods** to those two types rather than wrapping
+//! This module adds **inherent methods** to `ParmchkTable` and `EmpiricalTable` rather than wrapping
 //! them in views of its own. The wrapper is the thing to avoid: two structs
 //! describing one table drift, and a reader has to learn which of them is the
 //! table. `ff::params` owns each table's *shape* (its rows and columns, verbatim
 //! from upstream); this module owns the *questions the estimator asks it*, which
 //! are the estimator's business and not the table's.
-//!
-//! # Units
-//!
-//! Bond length Å, bond force constant kcal/mol/Å², angle force constant
-//! kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 
 use molrs::core::Element;
 
@@ -39,6 +20,25 @@ use crate::ff::params::{
 ///
 /// The two files differ (`PARM_BLBA_GAFF2.DAT` has 239 rows to GAFF's 146), so
 /// the choice is a parameter rather than a default.
+///
+/// Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
+/// emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
+/// seven `ATOMTYPE_*.DEF` take. Nothing here is
+/// parsed at runtime; a malformed table is a **compile** error.
+///
+/// - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
+///   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
+///   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
+///   says which types may be an improper centre.
+/// - [`EmpiricalTable`] ([`EMPIRICAL_GAFF`] / [`EMPIRICAL_GAFF2`]) —
+///   `PARM_BLBA_GAFF*.DAT`: the Badger bond `ln(Kij)` per element pair and the
+///   angle `C` / `Z` factors per element (Wang et al. *J. Comput. Chem.* 2004,
+///   25:1157–1174, Eqs. 3 and 5).
+///
+/// # Units
+///
+/// Bond length Å, bond force constant kcal/mol/Å², angle force constant
+/// kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmpiricalSet {
     /// `PARM_BLBA_GAFF.DAT`.

@@ -1,12 +1,5 @@
 //! Kinetic observables of one configuration: kinetic energy, kinetic
 //! temperature and the centre-of-mass velocity.
-//!
-//! These are the instantaneous thermodynamic readings of an MD state — what a
-//! `thermo` line prints — and, like every analysis here, they are pure
-//! functions of the arrays handed in. Units are the caller's: with masses in
-//! g/mol and velocities in Å/fs the energy is in g·Å²/(mol·fs²), and the
-//! temperature comes out in K only when `kb` is Boltzmann's constant in that
-//! same energy unit.
 
 use ndarray::{Array1, ArrayView1, ArrayView2, Zip};
 
@@ -32,6 +25,12 @@ fn check_rows(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<(), Com
 
 /// Kinetic energy `K = ½ Σᵢ mᵢ |vᵢ|²` of the `(n_atoms, 3)` velocities `vel`
 /// with per-atom masses `mass`.
+///
+/// An instantaneous thermodynamic reading of an MD state — what a `thermo`
+/// line prints — and a pure function of the arrays handed in. Units are the
+/// caller's: with masses in g/mol and velocities in Å/fs the energy is in
+/// g·Å²/(mol·fs²), and [`kinetic_temperature`] comes out in K only when `kb`
+/// is Boltzmann's constant in that same energy unit.
 ///
 /// # Errors
 ///

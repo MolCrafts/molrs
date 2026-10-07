@@ -2,9 +2,6 @@
 //! (an owned potential, an [`Optimizer`] over a [`Frame`]) and the free
 //! functions [`minimize_lbfgs`] / [`minimize_lbfgs_batch`] (a borrowed one).
 //!
-//! One front door for every potential, including one that rebuilds its own
-//! pairs as the atoms move (`ff::potential::soft::SoftPotential`).
-//!
 //! Gated on `ff` (the potential trait lives there); the [`Optimizer`] trait
 //! they implement is always compiled.
 
@@ -104,6 +101,9 @@ pub fn minimize_lbfgs_batch(
 }
 
 /// Limited-memory BFGS over an owned, molecule-bound [`Potential`].
+///
+/// One front door for every potential, including one that rebuilds its own
+/// pairs as the atoms move (`ff::potential::soft::SoftPotential`).
 ///
 /// Construct with [`Lbfgs::new`] (potential + [`LbfgsSettings`]). Primary call
 /// is [`Optimizer::minimize`] on a [`Frame`], which honours the frame's

@@ -1,114 +1,4 @@
 //! LAMMPS force-field reader (the `*.ff` include next to a data file).
-//!
-//! Parses a LAMMPS force-field include — `pair_style`/`pair_coeff` and the
-//! `*_style`/`*_coeff` lines of every bonded category, a `hybrid` of styles
-//! in any of them — with **type-label** coefficients into a molrs
-//! [`ForceField`]. A LAMMPS style reads as the registered style whose
-//! [`LammpsForm`](crate::ff::ir::LammpsForm) writes its name
-//! ([`Registry::lammps_style`]), through that form's codec
-//! (`ff-ir-02-protocol` §8): a positional style's coefficients are its
-//! spec's `params` in order, so a style registered at run time with a LAMMPS
-//! form reads with nothing else written. Inverse of
-//! [`LammpsForcefieldWriter`](crate::io::lammps::forcefield_writer::LammpsForcefieldWriter), e.g.:
-//!
-//! ```text
-//! pair_style lj/cut/coul/cut 10.0 10.0
-//! pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
-//! bond_style harmonic
-//! bond_coeff c3-c3 228.890000 1.535400        # K r0
-//! angle_style harmonic
-//! angle_coeff c3-c3-oh 76.790000 109.660000   # K theta0(deg)
-//! dihedral_style fourier
-//! dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  K1 n1 d1(deg) [K2 n2 d2 ...]
-//! ```
-//!
-//! # The identity on coefficients
-//!
-//! molrs's convention **is** LAMMPS's (molrs-python docs, "Force-field
-//! conventions"): every style's energy expression, factors and parameter
-//! units are the LAMMPS style's, with angle-valued parameters in degrees. So
-//! this reader converts nothing: each coefficient is stored as written, under
-//! the name of its slot, and the force field declares the file's `units`
-//! (`real` when the file has no `units` line). [`lammps_coeff_params`] is that
-//! one token → params map. The only renames are of style names molrs spells
-//! differently: `dihedral_style fourier` is molrs's `dihedral periodic`.
-//!
-//! A `class2` style's cross-term lines (`angle_coeff t bb …`, `dihedral_coeff
-//! t mbt …`, a data file's `BondBond Coeffs`, …) read when their force
-//! constants are zero, and are refused otherwise: the force-field IR has no
-//! cross terms.
-//!
-//! A coefficient line carries exactly its style's coefficients: an extra
-//! token is an error, as it is in LAMMPS, never a number dropped (an
-//! `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` would
-//! otherwise lose its Urey–Bradley term).
-//!
-//! # Hybrid bonded styles
-//!
-//! `angle_style hybrid harmonic charmm` declares one molrs style per
-//! sub-style, and each `angle_coeff t <sub-style> <coeffs…>` line is a type of
-//! the sub-style it names (which must be one of the declared ones). A data
-//! file's `Angle Coeffs # hybrid` section is the same with the sub-styles
-//! declared by its rows.
-//!
-//! # Pair rows
-//!
-//! `pair_coeff i i ε σ` is atom type `i`'s own `lj/cut` row. A cross
-//! `pair_coeff i j ε σ` (`i ≠ j`; CHARMM NBFIX and the like) is an explicit
-//! pair type between `i` and `j`, which the `lj/cut` kernel uses for that pair
-//! in place of the mixing rule. A later line for the same pair, in either
-//! order, replaces an earlier one, as in LAMMPS. A cross line with a wildcard
-//! (`pair_coeff c3 * …`) is refused rather than expanded.
-//!
-//! # Pair styles
-//!
-//! `pair_style lj/cut` is `lj/cut` alone (LAMMPS prices no charge under it);
-//! `lj/cut/coul/cut` is `lj/cut` with `coul/cut`; `lj/cut/coul/long` is
-//! `lj/cut` with `coul/long/pme` at its cutoff and LAMMPS's Coulomb
-//! constant. Any other pair style reads through its codec (`buck`, `morse`,
-//! `lj/class2`, a style registered with a LAMMPS form), alone, as a `hybrid`
-//! of such styles, or as a `hybrid/overlay` with `coul/cut` / `coul/long` on
-//! `* *`; its `mixing` is `pair_modify mix`, else LAMMPS's `geometric`. The Ewald parameters of the last are the input script's
-//! `kspace_style` accuracy, not an `alpha`, so they are not read and the style
-//! prices nothing until a caller states them. A `hybrid` / `hybrid/overlay`
-//! of `lj/cut` with `coul/cut` or `coul/long` reads the same way; accelerator
-//! suffixes (`/omp`, `/kk`, …) are dropped. Any other Coulomb (`coul/debye`,
-//! `coul/dsf`, `coul/wolf`, …) is refused. `pair_modify mix <rule>` is the
-//! `mixing` and `pair_modify shift yes` the `shift` of `lj/cut` (refused
-//! under the switched CHARMM style).
-//!
-//! # CHARMM pair style
-//!
-//! `pair_style lj/charmm/coul/charmm inner outer [inner2 outer2]` is molrs's
-//! `lj/charmm` (per type `epsilon sigma epsilon14 sigma14`; a two-number
-//! `pair_coeff` stores its 1-4 pair equal to the regular one, as LAMMPS reads
-//! it) plus `coul/charmm`, each with its `inner` / `cutoff`; mixing is
-//! LAMMPS's `arithmetic` unless `pair_modify mix` says otherwise.
-//! `lj/charmm/coul/long` is refused (an Ewald real-space Coulomb).
-//!
-//! # Charges and masses
-//!
-//! Per-atom charge and mass live in the LAMMPS **data** file, not this include,
-//! so they are not read here: the `coul/cut` style draws charges from the
-//! [`Frame`](molrs::core::Frame) at evaluation time, with LAMMPS's own
-//! Coulomb constant (`qqr2e`) for the file's units.
-//!
-//! # CMAP crossterms (`fix cmap`)
-//!
-//! A `fix <id> <group> cmap <file>` line reads `<file>` (relative to the
-//! include's directory when the include is read from a path) with
-//! [`read_lammps_cmap_str`] into a `cmap charmm` style: map `t` of the file is
-//! the row named `"t"` — the crossterm type a data file's `CMAP` section
-//! gives — with the synthetic endpoints `t-t-t-t-t`. A `fix_modify` line for
-//! that fix is accepted and changes nothing; any other fix style is refused.
-//!
-//! 1-4 weights are **declared** on a `special_bonds` line and stored on
-//! [`ForceField::special_bonds`](crate::ff::forcefield::ForceField::special_bonds)
-//! (dimensionless `[1-2, 1-3, 1-4]`). An include that omits the line is an
-//! error — LAMMPS's own default (`0 0 0`) is not AMBER's weights, so this
-//! reader will not invent either. Data-file `read_data_coeffs` synthesizes
-//! an explicit AMBER-like line so those reads keep the 0.5 / 5/6 they have
-//! always produced.
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
@@ -160,6 +50,117 @@ impl LammpsTypeLabelMaps {
 }
 
 /// Reader for a LAMMPS force-field include (`*.ff`), AMBER/GAFF flavour.
+///
+/// Parses a LAMMPS force-field include — `pair_style`/`pair_coeff` and the
+/// `*_style`/`*_coeff` lines of every bonded category, a `hybrid` of styles
+/// in any of them — with **type-label** coefficients into a molrs
+/// [`ForceField`]. A LAMMPS style reads as the registered style whose
+/// [`LammpsForm`](crate::ff::ir::LammpsForm) writes its name
+/// ([`Registry::lammps_style`]), through that form's codec
+/// (`ff-ir-02-protocol` §8): a positional style's coefficients are its
+/// spec's `params` in order, so a style registered at run time with a LAMMPS
+/// form reads with nothing else written. Inverse of
+/// [`LammpsForcefieldWriter`](crate::io::lammps::LammpsForcefieldWriter), e.g.:
+///
+/// ```text
+/// pair_style lj/cut/coul/cut 10.0 10.0
+/// pair_coeff c3 c3 0.107800 3.397710          # epsilon sigma
+/// bond_style harmonic
+/// bond_coeff c3-c3 228.890000 1.535400        # K r0
+/// angle_style harmonic
+/// angle_coeff c3-c3-oh 76.790000 109.660000   # K theta0(deg)
+/// dihedral_style fourier
+/// dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.0 # m  K1 n1 d1(deg) [K2 n2 d2 ...]
+/// ```
+///
+/// # The identity on coefficients
+///
+/// molrs's convention **is** LAMMPS's (molrs-python docs, "Force-field
+/// conventions"): every style's energy expression, factors and parameter
+/// units are the LAMMPS style's, with angle-valued parameters in degrees. So
+/// this reader converts nothing: each coefficient is stored as written, under
+/// the name of its slot, and the force field declares the file's `units`
+/// (`real` when the file has no `units` line). One token → params
+/// map does that for every reader. The only renames are of style names molrs spells
+/// differently: `dihedral_style fourier` is molrs's `dihedral periodic`.
+///
+/// A `class2` style's cross-term lines (`angle_coeff t bb …`, `dihedral_coeff
+/// t mbt …`, a data file's `BondBond Coeffs`, …) read when their force
+/// constants are zero, and are refused otherwise: the force-field IR has no
+/// cross terms.
+///
+/// A coefficient line carries exactly its style's coefficients: an extra
+/// token is an error, as it is in LAMMPS, never a number dropped (an
+/// `angle_coeff t K theta0 K_ub r_ub` line under `angle_style harmonic` would
+/// otherwise lose its Urey–Bradley term).
+///
+/// # Hybrid bonded styles
+///
+/// `angle_style hybrid harmonic charmm` declares one molrs style per
+/// sub-style, and each `angle_coeff t <sub-style> <coeffs…>` line is a type of
+/// the sub-style it names (which must be one of the declared ones). A data
+/// file's `Angle Coeffs # hybrid` section is the same with the sub-styles
+/// declared by its rows.
+///
+/// # Pair rows
+///
+/// `pair_coeff i i ε σ` is atom type `i`'s own `lj/cut` row. A cross
+/// `pair_coeff i j ε σ` (`i ≠ j`; CHARMM NBFIX and the like) is an explicit
+/// pair type between `i` and `j`, which the `lj/cut` kernel uses for that pair
+/// in place of the mixing rule. A later line for the same pair, in either
+/// order, replaces an earlier one, as in LAMMPS. A cross line with a wildcard
+/// (`pair_coeff c3 * …`) is refused rather than expanded.
+///
+/// # Pair styles
+///
+/// `pair_style lj/cut` is `lj/cut` alone (LAMMPS prices no charge under it);
+/// `lj/cut/coul/cut` is `lj/cut` with `coul/cut`; `lj/cut/coul/long` is
+/// `lj/cut` with `coul/long/pme` at its cutoff and LAMMPS's Coulomb
+/// constant. Any other pair style reads through its codec (`buck`, `morse`,
+/// `lj/class2`, a style registered with a LAMMPS form), alone, as a `hybrid`
+/// of such styles, or as a `hybrid/overlay` with `coul/cut` / `coul/long` on
+/// `* *`; its `mixing` is `pair_modify mix`, else LAMMPS's `geometric`. The
+/// Ewald parameters of the last are the input script's
+/// `kspace_style` accuracy, not an `alpha`, so they are not read and the style
+/// prices nothing until a caller states them. A `hybrid` / `hybrid/overlay`
+/// of `lj/cut` with `coul/cut` or `coul/long` reads the same way; accelerator
+/// suffixes (`/omp`, `/kk`, …) are dropped. Any other Coulomb (`coul/debye`,
+/// `coul/dsf`, `coul/wolf`, …) is refused. `pair_modify mix <rule>` is the
+/// `mixing` and `pair_modify shift yes` the `shift` of `lj/cut` (refused
+/// under the switched CHARMM style).
+///
+/// # CHARMM pair style
+///
+/// `pair_style lj/charmm/coul/charmm inner outer [inner2 outer2]` is molrs's
+/// `lj/charmm` (per type `epsilon sigma epsilon14 sigma14`; a two-number
+/// `pair_coeff` stores its 1-4 pair equal to the regular one, as LAMMPS reads
+/// it) plus `coul/charmm`, each with its `inner` / `cutoff`; mixing is
+/// LAMMPS's `arithmetic` unless `pair_modify mix` says otherwise.
+/// `lj/charmm/coul/long` is refused (an Ewald real-space Coulomb).
+///
+/// # Charges and masses
+///
+/// Per-atom charge and mass live in the LAMMPS **data** file, not this include,
+/// so they are not read here: the `coul/cut` style draws charges from the
+/// [`Frame`](molrs::core::Frame) at evaluation time, with LAMMPS's own
+/// Coulomb constant (`qqr2e`) for the file's units.
+///
+/// # CMAP crossterms (`fix cmap`)
+///
+/// A `fix <id> <group> cmap <file>` line reads `<file>` (relative to the
+/// include's directory when the include is read from a path) with
+/// [`read_lammps_cmap_str`] into a `cmap charmm` style: map `t` of the file is
+/// the row named `"t"` — the crossterm type a data file's `CMAP` section
+/// gives — with the synthetic endpoints `t-t-t-t-t`. A `fix_modify` line for
+/// that fix is accepted and changes nothing; any other fix style is refused.
+///
+/// 1-4 weights are **declared** on a `special_bonds` line and stored on
+/// [`ForceField::special_bonds`](crate::ff::forcefield::ForceField::special_bonds)
+/// (dimensionless `[1-2, 1-3, 1-4]`). An include that omits the line is an
+/// error — LAMMPS's own default (`0 0 0`) is not AMBER's weights, so this
+/// reader will not invent either. Data-file `read_data_coeffs` synthesizes
+/// an explicit AMBER-like line so those reads keep the 0.5 / 5/6 they have
+/// always produced.
 #[derive(Debug, Clone)]
 pub struct LammpsForcefieldReader {
     /// Used when the file has no `units` line. Molecular includes default to

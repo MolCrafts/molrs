@@ -1,12 +1,4 @@
 //! Kekulé assignment: a legal localized bond number for every aromatic bond.
-//!
-//! An aromatic ring states no single/double phase of its own; a Kekulé
-//! structure is the matching that gives each aromatic atom at most one double
-//! bond while every valence stays legal. [`assign_kekule_bond_orders`] writes
-//! one, graph in / graph out; the search ([`kekulize`]) minimises AmberTools'
-//! `APS.DAT` valence-state penalty, so the BCC bond typing of
-//! [`bcc_bond_class`](super::bcc_bond_class), which types an aromatic bond by
-//! its Kekulé phase, reads the same structure.
 
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -29,6 +21,14 @@ const FORBIDDEN: u32 = 1000;
 
 /// Assign a legal localized [`BondNumber`] to every aromatic bond, graph in /
 /// graph out.
+///
+/// An aromatic ring states no single/double phase of its own; a Kekulé
+/// structure is the matching that gives each aromatic atom at most one double
+/// bond while every valence stays legal. This writes
+/// one, graph in / graph out; the search minimises AmberTools'
+/// `APS.DAT` valence-state penalty, so the BCC bond typing of
+/// [`assign_bcc_bond_types`](crate::perceive::assign_bcc_bond_types), which types an aromatic bond by
+/// its Kekulé phase, reads the same structure.
 ///
 /// The non-mutating face of `assign_kekule_numbers`, which carries the full
 /// contract. It **only** kekulizes: it does not perceive aromaticity, so a

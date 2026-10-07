@@ -1,11 +1,5 @@
 //! [`Coarsener`] — map disjoint node groups of a source graph onto the sites
 //! of a new [`CoarseGrain`].
-//!
-//! This is the centre-of-mass mapping operator of coarse-grained modelling
-//! (Noid, *J. Chem. Phys.* **139**, 090901 (2013), doi:10.1063/1.4818908):
-//! site I stands for group G_I and sits at its centre of mass. The groups
-//! typically come from [`SubgraphMatcher::find`](crate::perceive::SubgraphMatcher::find)
-//! after the caller has made them disjoint.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -82,6 +76,12 @@ impl std::error::Error for CoarsenError {
 }
 
 /// Maps groups of a borrowed source graph onto coarse-grained sites.
+///
+/// This is the centre-of-mass mapping operator of coarse-grained modelling
+/// (Noid, *J. Chem. Phys.* **139**, 090901 (2013), doi:10.1063/1.4818908):
+/// site I stands for group G_I and sits at its centre of mass. The groups
+/// typically come from [`SubgraphMatcher::find`](crate::perceive::SubgraphMatcher::find)
+/// after the caller has made them disjoint.
 ///
 /// The source is borrowed, not copied: any [`MolGraph`] works (a
 /// [`CoarseGrain`] or an `Atomistic` derefs to one). The one verb is

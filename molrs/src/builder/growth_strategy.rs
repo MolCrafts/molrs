@@ -1,13 +1,5 @@
 //! The [`GrowthStrategy`] trait — how a self-avoiding walk places each
 //! monomer — and its two built-in implementations.
-//!
-//! Both are plain structs injected into
-//! [`SelfAvoidingWalk`](super::self_avoiding_walk::SelfAvoidingWalk) — there
-//! are no factory functions. Overlap is judged by occupancy cells, never by distance:
-//! [`FccLattice`] steps onto a global FCC lattice and uses
-//! [`OccupancyMode::SameCell`] (distinct sites are already `>= bond_length`
-//! apart); [`OffLattice`] grows in continuous space and uses
-//! [`OccupancyMode::BlockClear`] with cell edge `excluded_radius`.
 
 use rand::RngExt;
 use rand::rngs::StdRng;
@@ -18,6 +10,12 @@ use crate::op::F;
 use crate::op::unit_vector_from_uniform;
 
 /// A monomer-placement policy for the self-avoiding walk.
+///
+/// Overlap is judged by occupancy cells, never by distance. The two built-in
+/// strategies: [`FccLattice`] steps onto a global FCC lattice and uses
+/// [`OccupancyMode::SameCell`] (distinct sites are already `>= bond_length`
+/// apart); [`OffLattice`] grows in continuous space and uses
+/// [`OccupancyMode::BlockClear`] with cell edge `excluded_radius`.
 ///
 /// Implementors are plain structs injected into [`SelfAvoidingWalk`](super::self_avoiding_walk::SelfAvoidingWalk) as the
 /// generic `strategy` field — there are no factory functions. A strategy

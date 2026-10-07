@@ -1,15 +1,4 @@
 //! Particle Mesh Ewald (PME) electrostatic potential.
-//!
-//! Implements the full PME algorithm: self-energy, direct-space, exclusion
-//! correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
-//!
-//! Registered in [`BuiltinKernels`](crate::ff::potential::BuiltinKernels) as
-//! `("pair", "coul/long/pme")`.
-//! The constructor reads charges from `frame["atoms"]["charge"]` (float),
-//! the periodic cell from the frame's own box ([`Frame::simbox`]) — frame
-//! data, as LAMMPS's kspace reads its simulation box, never a force-field
-//! parameter — and exclusion pairs from `frame["exclusions"]` (`atomi`,
-//! `atomj` columns).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, EXCLUSIONS};
@@ -87,6 +76,17 @@ struct PmeScratch {
 // ---------------------------------------------------------------------------
 
 /// Full PME electrostatic potential implementing [`Potential`].
+///
+/// Implements the full PME algorithm: self-energy, direct-space, exclusion
+/// correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
+///
+/// Registered as the built-in kernel
+/// `("pair", "coul/long/pme")`.
+/// The constructor reads charges from `frame["atoms"]["charge"]` (float),
+/// the periodic cell from the frame's own box ([`Frame::simbox`]) — frame
+/// data, as LAMMPS's kspace reads its simulation box, never a force-field
+/// parameter — and exclusion pairs from `frame["exclusions"]` (`atomi`,
+/// `atomj` columns).
 pub struct PairCoulLongPme {
     params: PairCoulLongPmeParams,
     n_atoms: usize,

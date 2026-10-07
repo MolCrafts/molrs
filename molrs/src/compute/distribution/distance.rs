@@ -1,11 +1,4 @@
 //! Distance observable: minimum-image separation of selected atom pairs.
-//!
-//! The pairwise distance distribution generalizes the RDF to arbitrary
-//! user-selected pairs (reference implementation distance DF, `src/tddf.cpp` /
-//! `CTimeDiff`/`CDF` distance mode). The minimum-image convention is delegated
-//! to [`SimBox::delta`](molrs::core::SimBox::delta) so a
-//! distance DF and [`compute::rdf`](crate::compute::rdf) return the same value
-//! for the same pair under PBC.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -17,6 +10,13 @@ use crate::op::vec3::norm;
 use molrs::core::{Mic, SimBox};
 
 /// Distance between the two atoms of each pair (arity 2), minimum-image under PBC.
+///
+/// The pairwise distance distribution generalizes the RDF to arbitrary
+/// user-selected pairs (reference implementation distance DF, `src/tddf.cpp` /
+/// `CTimeDiff`/`CDF` distance mode). The minimum-image convention is delegated
+/// to [`SimBox::delta`](molrs::core::SimBox::delta) so a
+/// distance DF and [`Rdf`](crate::compute::Rdf) return the same value
+/// for the same pair under PBC.
 #[derive(Debug, Clone, Default)]
 pub struct DistanceObservable;
 

@@ -1,21 +1,4 @@
 //! Shared Cartesian correlators and the raw [`DipoleRateCross`] compute.
-//!
-//! # Why this module exists
-//!
-//! Several dielectric / transport raw Computes need the same recipe:
-//!
-//! 1. optional per-component mean subtraction,
-//! 2. FFT linear ACF / xcorr via [`molrs::signal`] accumulate primitives,
-//! 3. sum over Cartesian axes,
-//! 4. unbiased `1/(n − τ)` normalisation.
-//!
-//! | Helper / Compute | Correlator | Downstream Fit |
-//! |------------------|------------|----------------|
-//! | [`autocorrelation`](crate::compute::autocorrelation) | `Σ_α ⟨δa_α(0) δa_α(t)⟩` | Debye / PACF / JACF / VACF |
-//! | [`unbiased_cartesian_xcorr`] | `Σ_α ⟨δa_α(0) δb_α(t)⟩` | cross spectra |
-//! | [`DipoleRateCross`] | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum) |
-//!
-//! Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 
 use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
@@ -81,6 +64,21 @@ fn fill_column(series: &Array2<f64>, d: usize, mean: f64, out: &mut [f64]) {
 /// `C(τ) = Σ_α ⟨a_α(0) b_α(τ)⟩` (optionally of fluctuations).
 ///
 /// Both series must share shape `(n_frames, n_comp)`.
+///
+/// Several dielectric / transport raw Computes need the same recipe:
+///
+/// 1. optional per-component mean subtraction,
+/// 2. FFT linear ACF / xcorr via [`molrs::signal`] accumulate primitives,
+/// 3. sum over Cartesian axes,
+/// 4. unbiased `1/(n − τ)` normalisation.
+///
+/// | Helper / Compute | Correlator | Downstream Fit |
+/// |------------------|------------|----------------|
+/// | [`autocorrelation`](crate::compute::autocorrelation) | `Σ_α ⟨δa_α(0) δa_α(t)⟩` | Debye / PACF / JACF / VACF |
+/// | this function | `Σ_α ⟨δa_α(0) δb_α(t)⟩` | cross spectra |
+/// | [`DipoleRateCross`](crate::compute::DipoleRateCross) | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum) |
+///
+/// Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 pub fn unbiased_cartesian_xcorr(
     a: &Array2<f64>,
     b: &Array2<f64>,

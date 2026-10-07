@@ -1,14 +1,4 @@
-//! Engine-neutral unit-system presets.
-//!
-//! A [`UnitPreset`] is a named view of the constants in [`crate::core::constants`]
-//! plus the ten base-unit names of a LAMMPS-style unit system. Preset **names**
-//! keep the familiar `"real"` / `"metal"` / `"lj"` tokens; the type and module
-//! names do not mention LAMMPS. Callers compose conversions themselves —
-//! there is no `convert(value, from, to)` façade.
-//!
-//! Reference: LAMMPS `units` command,
-//! <https://docs.lammps.org/units.html>; Thompson et al.,
-//! *Comput. Phys. Commun.* **271** (2022) 108171.
+//! Engine-neutral unit-system presets: [`UnitPreset`].
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -89,6 +79,16 @@ impl PresetDim {
 
 /// One unit-system view: ten unit names plus the Boltzmann and Coulomb
 /// constants expressed in that system.
+///
+/// A `UnitPreset` is a named view of the constants in [`crate::core::constants`]
+/// plus the ten base-unit names of a LAMMPS-style unit system. Preset **names**
+/// keep the familiar `"real"` / `"metal"` / `"lj"` tokens; the type names do not
+/// mention LAMMPS. Callers compose conversions themselves — there is no
+/// `convert(value, from, to)` façade.
+///
+/// Reference: LAMMPS `units` command,
+/// <https://docs.lammps.org/units.html>; Thompson et al.,
+/// *Comput. Phys. Commun.* **271** (2022) 108171.
 #[derive(Clone, Debug)]
 pub struct UnitPreset {
     name: String,

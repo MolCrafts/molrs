@@ -1,29 +1,5 @@
 //! Engine codecs: how a style of the force-field IR is written to, and read
 //! from, an engine's format (`ff-ir-02-protocol` §8).
-//!
-//! Engine I/O is driven by the protocol, not by a table per writer:
-//!
-//! * **LAMMPS** — a style carries a [`LammpsForm`] on its [`StyleSpec`].
-//!   [`LammpsForm::Positional`] is derived from the spec alone:
-//!   `<category>_style <name>` (`pair_style <name> <cutoff>`) and
-//!   `<category>_coeff <type> v₁ … vₙ` in `params` order, each value
-//!   converted by its [`ParamDimension`] ([`UnitScale`]) from the force field's units
-//!   to the file's — so a style registered with a spec reads and writes
-//!   with nothing else written. A line LAMMPS does not spell positionally
-//!   (`fourier`'s term count, `nharmonic`'s `N`, `lj/charmm`'s 1-4 pair and
-//!   switch, `class2`'s cross-term lines, `fix cmap`) has a
-//!   [`LammpsForm::Custom`] codec ([`LammpsCodec`]). A style with
-//!   [`LammpsForm::None`] is refused by name; an expression-only one
-//!   because the installed LAMMPS has no `LEPTON` package.
-//! * **OpenMM XML** — an expression style needs no codec: its expression is
-//!   the `Custom*Force` energy, rewritten so the parameters stay in IR units
-//!   (`4.184*(E[r → 10*r])`); see
-//!   [`OpenmmXmlWriter`](crate::io::openmm_xml::writer::OpenmmXmlWriter).
-//! * **GROMACS, AMBER prmtop and frcmod** hold the built-in styles they have
-//!   directives for and refuse every other style.
-//!
-//! Every refusal is [`IrError::NoEngineForm`] naming the engine, the
-//! category, the style and why.
 
 pub(crate) mod lammps;
 
@@ -36,6 +12,30 @@ use crate::ff::ir::{IrError, ParamDimension, ParamKind, ParamSpec, ParamValue, S
 use molrs::op::F;
 
 /// The engine formats molrs reads or writes.
+///
+/// Engine I/O is driven by the protocol, not by a table per writer:
+///
+/// * **LAMMPS** — a style carries a [`LammpsForm`] on its [`StyleSpec`].
+///   [`LammpsForm::Positional`] is derived from the spec alone:
+///   `<category>_style <name>` (`pair_style <name> <cutoff>`) and
+///   `<category>_coeff <type> v₁ … vₙ` in `params` order, each value
+///   converted by its [`ParamDimension`] ([`UnitScale`]) from the force field's units
+///   to the file's — so a style registered with a spec reads and writes
+///   with nothing else written. A line LAMMPS does not spell positionally
+///   (`fourier`'s term count, `nharmonic`'s `N`, `lj/charmm`'s 1-4 pair and
+///   switch, `class2`'s cross-term lines, `fix cmap`) has a
+///   [`LammpsForm::Custom`] codec ([`LammpsCodec`]). A style with
+///   [`LammpsForm::None`] is refused by name; an expression-only one
+///   because the installed LAMMPS has no `LEPTON` package.
+/// * **OpenMM XML** — an expression style needs no codec: its expression is
+///   the `Custom*Force` energy, rewritten so the parameters stay in IR units
+///   (`4.184*(E[r → 10*r])`); see
+///   [`OpenmmXmlWriter`](crate::io::openmm_xml::OpenmmXmlWriter).
+/// * **GROMACS, AMBER prmtop and frcmod** hold the built-in styles they have
+///   directives for and refuse every other style.
+///
+/// Every refusal is [`IrError::NoEngineForm`] naming the engine, the
+/// category, the style and why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Engine {
     Lammps,

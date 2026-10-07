@@ -1,10 +1,4 @@
 //! A `.smi` file — one SMILES per line — as a [`FrameReader`].
-//!
-//! SMILES parses to an [`Atomistic`] — that is what the notation *is*, a
-//! connectivity graph — so the stateless parser returns one and
-//! [`SmilesReader::read_as::<Atomistic>`] hands it straight over. Only
-//! [`read`](FrameReader::read) pays for the `Atomistic -> Frame` conversion,
-//! and only when the caller asked for a frame.
 
 use std::io::{BufRead, Result};
 
@@ -26,6 +20,12 @@ fn parse_atomistic(smiles: &str) -> Result<Atomistic> {
 }
 
 /// Reads one molecule per non-empty line.
+///
+/// SMILES parses to an [`Atomistic`] — that is what the notation *is*, a
+/// connectivity graph — so the stateless parser returns one and
+/// [`SmilesReader::read_as::<Atomistic>`] hands it straight over. Only
+/// [`read`](FrameReader::read) pays for the `Atomistic -> Frame` conversion,
+/// and only when the caller asked for a frame.
 pub struct SmilesReader<R: BufRead> {
     reader: R,
 }

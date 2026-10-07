@@ -1,11 +1,4 @@
 //! LAMMPS data file format reader and writer.
-//!
-//! Specs: <https://docs.lammps.org/read_data.html>,
-//! <https://docs.lammps.org/atom_style.html>
-//!
-//! Atom-style layouts and shared helpers live in the internal `io::lammps` module.
-//! Atoms are streamed straight into typed column buffers (no intermediate
-//! per-atom struct), which cuts peak memory on large systems.
 
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
@@ -1335,6 +1328,11 @@ fn dispatch_section<R: BufRead>(
 /// any charge the atom style supplied.
 ///
 /// [`with_skipped_section`]: LammpsDataReader::with_skipped_section
+///
+/// Specs: <https://docs.lammps.org/read_data.html>,
+/// <https://docs.lammps.org/atom_style.html>. Atoms are streamed straight into
+/// typed column buffers (no intermediate per-atom struct), which cuts peak
+/// memory on large systems.
 pub struct LammpsDataReader<R: BufRead + Seek> {
     reader: R,
     frame: OnceLock<Option<Frame>>,

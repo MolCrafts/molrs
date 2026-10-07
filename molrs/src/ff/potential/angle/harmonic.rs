@@ -1,8 +1,4 @@
-//! Harmonic angle (LAMMPS `angle_style harmonic`): E = k·(θ − θ0)².
-//!
-//! `k` is LAMMPS's `K` (energy/rad², the ½ included) and `theta0` is in
-//! **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
-//! to radians once, at construction.
+//! Harmonic angle (LAMMPS `angle_style harmonic`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
@@ -18,6 +14,12 @@ use molrs::op::F;
 
 /// Harmonic angle potential with pre-resolved flat arrays. Its own `theta0`
 /// array is in radians (the parameter is degrees; see [`angle_harmonic_constructor`]).
+///
+/// LAMMPS `angle_style harmonic`: E = k·(θ − θ0)².
+///
+/// `k` is LAMMPS's `K` (energy/rad², the ½ included) and `theta0` is in
+/// **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
+/// to radians once, at construction.
 pub struct AngleHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

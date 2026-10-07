@@ -1,26 +1,4 @@
-//! Wigner 3-j symbols for integer angular momenta.
-//!
-//! Computes
-//!
-//! ```text
-//!     ⎛ j1  j2  j3 ⎞
-//!     ⎝ m1  m2  m3 ⎠
-//! ```
-//!
-//! via the Racah single-sum form, evaluated through `lgamma` to stay
-//! well-conditioned for ℓ up to ~30. Matches `freud/order/Wigner3j.cc`
-//! conventions exactly.
-//!
-//! # Selection rules (all must hold; otherwise the symbol is 0):
-//!
-//! - `m1 + m2 + m3 = 0`
-//! - `|m_i| ≤ j_i`
-//! - `|j1 − j2| ≤ j3 ≤ j1 + j2`
-//!
-//! # References
-//!
-//! - Edmonds, *Angular Momentum in Quantum Mechanics*, eq. (3.7.3).
-//! - Racah, *Phys. Rev.* 62, 438 (1942).
+//! Wigner 3-j symbols for integer angular momenta: [`wigner_3j`].
 
 use libm::lgamma;
 
@@ -32,9 +10,27 @@ fn lfact(n: i64) -> F {
     lgamma(n as F + 1.0)
 }
 
-/// Integer Wigner 3-j symbol.
+/// Integer Wigner 3-j symbol
 ///
-/// Returns 0 for any input violating the selection rules.
+/// ```text
+///     ⎛ j1  j2  j3 ⎞
+///     ⎝ m1  m2  m3 ⎠
+/// ```
+///
+/// via the Racah single-sum form, evaluated through `lgamma` to stay
+/// well-conditioned for ℓ up to ~30. Matches `freud/order/Wigner3j.cc`
+/// conventions exactly.
+///
+/// Returns 0 for any input violating the selection rules (all must hold):
+///
+/// - `m1 + m2 + m3 = 0`
+/// - `|m_i| ≤ j_i`
+/// - `|j1 − j2| ≤ j3 ≤ j1 + j2`
+///
+/// # References
+///
+/// - Edmonds, *Angular Momentum in Quantum Mechanics*, eq. (3.7.3).
+/// - Racah, *Phys. Rev.* 62, 438 (1942).
 pub fn wigner_3j(j1: u32, j2: u32, j3: u32, m1: i32, m2: i32, m3: i32) -> F {
     if m1 + m2 + m3 != 0 {
         return 0.0;

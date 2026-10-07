@@ -1,31 +1,4 @@
 //! Block: dict-like keyed arrays with consistent axis-0 length and heterogeneous types.
-//!
-//! A Block stores heterogeneous arrays (float, int, bool) keyed by strings,
-//! enforcing that all stored arrays share the same axis-0 length (nrows).
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::Block;
-//! use molrs::op::{F, Idx};
-//! use ndarray::Array1;
-//!
-//! let mut block = Block::new();
-//!
-//! // Insert different types - generic dispatch handles the conversion
-//! let pos = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
-//! let ids = Array1::from_vec(vec![10 as Idx, 20 as Idx, 30 as Idx]).into_dyn();
-//!
-//! block.insert("pos", pos).unwrap();
-//! block.insert("id", ids).unwrap();
-//!
-//! // The column comes back whole. dtype is a property of that column.
-//! let pos_ref = block.get("pos").and_then(|c| c.as_float()).unwrap();
-//! let ids_ref = block.get("id").and_then(|c| c.as_uint()).unwrap();
-//!
-//! assert_eq!(block.nrows(), Some(3));
-//! assert_eq!(block.len(), 2);
-//! ```
 
 mod column;
 mod dtype;
@@ -76,6 +49,30 @@ use std::ops::{Index, IndexMut};
 /// [`remove`](Self::remove) keeps the remaining columns in their relative
 /// order, and [`rename_column`](Self::rename_column) keeps the renamed column
 /// where it was.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::Block;
+/// use molrs::op::{F, Idx};
+/// use ndarray::Array1;
+///
+/// let mut block = Block::new();
+///
+/// // Insert different types - generic dispatch handles the conversion
+/// let pos = Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn();
+/// let ids = Array1::from_vec(vec![10 as Idx, 20 as Idx, 30 as Idx]).into_dyn();
+///
+/// block.insert("pos", pos).unwrap();
+/// block.insert("id", ids).unwrap();
+///
+/// // The column comes back whole. dtype is a property of that column.
+/// let pos_ref = block.get("pos").and_then(|c| c.as_float()).unwrap();
+/// let ids_ref = block.get("id").and_then(|c| c.as_uint()).unwrap();
+///
+/// assert_eq!(block.nrows(), Some(3));
+/// assert_eq!(block.len(), 2);
+/// ```
 #[derive(Default, Clone)]
 pub struct Block {
     map: IndexMap<String, Column>,

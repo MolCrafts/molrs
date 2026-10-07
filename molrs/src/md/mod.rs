@@ -32,6 +32,21 @@
 //!   ([`crate::compute::kinetic_energy`] and its siblings); `md` holds
 //!   integrators and force providers only.
 //!
+//! # Periodic régimes
+//!
+//! Two periodic régimes reach the same physics by different routes, and a run
+//! picks one by picking a [`ForceProvider`](crate::md::ForceProvider):
+//!
+//! * [`MicPairs`](crate::md::MicPairs) keeps `N` atoms and fixes up every
+//!   displacement with the minimum-image convention. Cheapest, and correct for
+//!   any potential that consumes edge vectors.
+//! * [`GhostPairs`](crate::md::GhostPairs) materialises the periodic copies
+//!   — [`GhostHalo`](crate::core::GhostHalo) (in `core`) owns their
+//!   lifecycle — and hands the potential an ordinary, non-periodic cluster. It costs the copies, and it is the only route that
+//!   is correct for a potential reading *positions*: a many-body or
+//!   machine-learned model cannot be told about a minimum-image fix-up it does
+//!   not know to apply.
+//!
 //! No `bind_*` façades. Compose required pieces in the constructor.
 
 mod error;

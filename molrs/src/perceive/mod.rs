@@ -68,6 +68,7 @@ mod equivalence;
 mod hybridization;
 mod hydrogens;
 mod kekule;
+#[cfg(feature = "ff")]
 pub(crate) mod mmff_aromaticity;
 mod ring_class;
 mod rings;

@@ -1,15 +1,4 @@
-//! A solid bounded by a watertight triangle mesh.
-//!
-//! Where the mesh came from is not this type's concern: an STL read by
-//! `crate::io::stl::read_stl` (feature `io`), a marching-cubes extraction, a
-//! hand-built [`TriMesh`] — anything closed. Unit conversion is the caller's
-//! composition, `Polyhedron::new(mesh.scaled(s))`.
-//!
-//! Containment is the even-odd rule along one fixed ray, which for a closed
-//! 2-manifold is the Jordan–Brouwer separation: a point is inside iff a ray
-//! from it crosses the surface an odd number of times. The distance is the
-//! Euclidean distance to the closest point on any triangle, signed by that
-//! parity. Both walk a bounding-volume hierarchy built once at construction.
+//! A solid bounded by a watertight triangle mesh: [`Polyhedron`].
 
 use std::f64::consts::{PI, SQRT_2};
 
@@ -73,6 +62,17 @@ impl std::fmt::Display for PolyhedronError {
 impl std::error::Error for PolyhedronError {}
 
 /// The solid bounded by a watertight [`TriMesh`].
+///
+/// Where the mesh came from is not this type's concern: an STL read by
+/// `molrs::io::read_stl` (feature `io`), a marching-cubes extraction, a
+/// hand-built [`TriMesh`] — anything closed. Unit conversion is the caller's
+/// composition, `Polyhedron::new(mesh.scaled(s))`.
+///
+/// Containment is the even-odd rule along one fixed ray, which for a closed
+/// 2-manifold is the Jordan–Brouwer separation: a point is inside iff a ray
+/// from it crosses the surface an odd number of times. The distance is the
+/// Euclidean distance to the closest point on any triangle, signed by that
+/// parity. Both walk a bounding-volume hierarchy built once at construction.
 #[derive(Debug, Clone)]
 pub struct Polyhedron {
     mesh: TriMesh,

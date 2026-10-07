@@ -4,28 +4,6 @@
 // also needs explicit row/column index ordering.
 #![allow(clippy::needless_range_loop)]
 
-//! 2-D diffraction pattern (FFT of a projected density image).
-//!
-//! Mirrors `freud.diffraction.DiffractionPattern`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/DiffractionPattern.cc)).
-//!
-//! Builds a 2-D Gaussian-smeared image of the projected particle positions,
-//! takes a 2-D FFT (composed from `rustfft`'s 1-D plans), and returns the
-//! power spectrum `|F(k)|²`. Projection axis defaults to `+z`, mapping
-//! particles onto the `xy` plane.
-//!
-//! This is the first analyzer in the port to use `rustfft 6` for real 2-D
-//! Fourier work; the FFT planner is built once per frame and reused for
-//! both row and column passes.
-//!
-//! # Conventions
-//!
-//! - The output image is FFT-shifted so that `k = 0` sits at the centre
-//!   `(n_grid / 2, n_grid / 2)`, matching freud (and the usual
-//!   `numpy.fft.fftshift` convention).
-//! - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
-//! - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
-
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
@@ -39,6 +17,26 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// `DiffractionPattern` analyzer.
+///
+/// Mirrors `freud.diffraction.DiffractionPattern`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/DiffractionPattern.cc)).
+///
+/// Builds a 2-D Gaussian-smeared image of the projected particle positions,
+/// takes a 2-D FFT (composed from `rustfft`'s 1-D plans), and returns the
+/// power spectrum `|F(k)|²`. Projection axis defaults to `+z`, mapping
+/// particles onto the `xy` plane.
+///
+/// This is the first analyzer in the port to use `rustfft 6` for real 2-D
+/// Fourier work; the FFT planner is built once per frame and reused for
+/// both row and column passes.
+///
+/// # Conventions
+///
+/// - The output image is FFT-shifted so that `k = 0` sits at the centre
+///   `(n_grid / 2, n_grid / 2)`, matching freud (and the usual
+///   `numpy.fft.fftshift` convention).
+/// - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
+/// - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
 #[derive(Debug, Clone, Copy)]
 pub struct DiffractionPattern {
     n_grid: usize,

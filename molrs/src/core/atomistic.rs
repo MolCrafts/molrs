@@ -1,29 +1,4 @@
-//! All-atom molecular graph with element-level chemistry semantics.
-//!
-//! [`Atomistic`] wraps the domain-agnostic [`MolGraph`] and owns **all** atom /
-//! bond / angle / dihedral / improper vocabulary: it registers those relation
-//! kinds at construction (caching their [`KindId`]s) and exposes the typed
-//! convenience API (`add_bond`, `bonds`, `get_bond`, …). `MolGraph` itself knows
-//! nothing of bonds — the chemistry lives here.
-//!
-//! Generic graph methods (`nodes`, `neighbors`, `add_relation`, …) remain
-//! available via `Deref`/`DerefMut`; the coordinate transforms and
-//! [`Atomistic::center`] are inherent methods delegating to
-//! [`crate::core::geometry`].
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::Atomistic;
-//!
-//! let mut mol = Atomistic::new();
-//! let c = mol.add_atom_bare("C");
-//! let h = mol.add_atom_bare("H");
-//! mol.add_bond(c, h).unwrap();
-//!
-//! assert_eq!(mol.n_atoms(), 2);
-//! assert_eq!(mol.n_bonds(), 1);
-//! ```
+//! All-atom molecular graph: [`Atomistic`].
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -50,9 +25,34 @@ pub struct ExtractedAtomistic {
     pub node_map: HashMap<NodeId, NodeId>,
 }
 
-/// All-atom molecular graph.
+/// All-atom molecular graph with element-level chemistry semantics.
+///
+/// `Atomistic` wraps the domain-agnostic [`MolGraph`] and owns **all** atom /
+/// bond / angle / dihedral / improper vocabulary: it registers those relation
+/// kinds at construction (caching their [`KindId`]s) and exposes the typed
+/// convenience API (`add_bond`, `bonds`, `get_bond`, …). `MolGraph` itself knows
+/// nothing of bonds — the chemistry lives here.
+///
+/// Generic graph methods (`nodes`, `neighbors`, `add_relation`, …) remain
+/// available via `Deref`/`DerefMut`; the coordinate transforms are
+/// [`crate::op::translate`], [`crate::op::rotate`], [`crate::op::scale`] and
+/// [`crate::op::center`] on the graph.
 ///
 /// Invariant: every atom carries the canonical [`keys::ELEMENT`] property.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::Atomistic;
+///
+/// let mut mol = Atomistic::new();
+/// let c = mol.add_atom_bare("C");
+/// let h = mol.add_atom_bare("H");
+/// mol.add_bond(c, h).unwrap();
+///
+/// assert_eq!(mol.n_atoms(), 2);
+/// assert_eq!(mol.n_bonds(), 1);
+/// ```
 #[derive(Debug, Clone)]
 pub struct Atomistic {
     graph: MolGraph,

@@ -1,11 +1,4 @@
 //! The currency of the interpolation seam: one bonded term, named by its atoms.
-//!
-//! [`BondedTerm`] used to live inside the OPLS typifier, which made it read as an
-//! OPLS thing ("the two endpoint `opls_NNN` types"). It never was: it is the query
-//! type of the generic [`ParameterInterpolator`](super::ParameterInterpolator)
-//! seam, and GAFF speaks it too. A term is its **atom-type names**, in the order
-//! the force field writes them; which force field named them is not this type's
-//! business.
 
 use molrs::core::TypeName;
 
@@ -19,6 +12,13 @@ use molrs::core::TypeName;
 /// [`Dihedral`](Self::Dihedral)) are **reversal-symmetric** — `i-j-k-l` and
 /// `l-k-j-i` are the same term — and their slot order is the chain along the
 /// bonds. An [`Improper`](Self::Improper) is not: see its own note.
+///
+/// [`BondedTerm`] used to live inside the OPLS typifier, which made it read as an
+/// OPLS thing ("the two endpoint `opls_NNN` types"). It never was: it is the query
+/// type of the generic [`ParameterInterpolator`](super::ParameterInterpolator)
+/// seam, and GAFF speaks it too. A term is its **atom-type names**, in the order
+/// the force field writes them; which force field named them is not this type's
+/// business.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BondedTerm {
     /// A bond: the two endpoint atom types.

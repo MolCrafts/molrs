@@ -1,50 +1,5 @@
 //! The 1-4 exceptions kernel: every non-bonded pair whose pricing is not the
 //! pair styles' own, as one list.
-//!
-//! LAMMPS has three ways to price a close (1-4) pair, and molrs represents
-//! each with LAMMPS's parameters (the conventions guide, "1-4 interactions"):
-//!
-//! 1. **`special_bonds`** — the pair styles price the pair at their own
-//!    parameters, scaled by the force field's 1-4 weights. Nothing here.
-//! 2. **`dihedral_style charmm` `w`** — each dihedral prices the pair of its
-//!    end atoms, `w·[LJ(ε₁₄, σ₁₄) + C qᵢqⱼ/r]` (`dihedral_charmm.cpp`), with
-//!    the `epsilon14` / `sigma14` of the `lj/charmm` pair style mixed as
-//!    LAMMPS's `init_one` mixes them, no cutoff and no switch. LAMMPS refuses
-//!    `w > 0` beside non-zero `special_bonds` 1-4 weights, and so does molrs.
-//!    A pair at the ends of several dihedrals takes the sum of their `w`.
-//! 3. **Per-pair overrides** — columns on the frame's `pairs` block for what
-//!    LAMMPS cannot express (a GROMACS `[ pairs ]` row with parameters, an
-//!    OpenMM exception, an AMBER dihedral's own SCEE / SCNB):
-//!    [`PAIR_OVERRIDE_COLUMNS`] = `epsilon`, `sigma`, `charge_product`,
-//!    `lj_scale`, `coul_scale`.
-//!
-//! **Precedence**, per pair and per quantity: a per-pair override cell is
-//! final; a null cell takes what the pair would have without the row — the
-//! dihedral's `w` pricing when its ends carry `w > 0`, the pair style's
-//! parameters at the `special_bonds` weight of the pair's bond-distance class
-//! otherwise. So `lj_scale` / `coul_scale` replace `w` or the global weight,
-//! and `epsilon` / `sigma` / `charge_product` replace the style's (or the
-//! dihedral's 1-4) values. A cell is priced only by the style it belongs to:
-//! `epsilon` / `sigma` / `lj_scale` under a Lennard-Jones style,
-//! `charge_product` / `coul_scale` under a Coulomb style. A field without
-//! that style ignores them, so a bonded-only field on a frame with
-//! materialized 1-4 cells prices no pair at all.
-//!
-//! Every such pair is priced here, once:
-//!
-//! ```text
-//! E = lj_w · 4ε[(σ/r)¹² − (σ/r)⁶]  +  coul_w · C qᵢqⱼ / r
-//! ```
-//!
-//! with no cutoff (as LAMMPS's dihedral 1-4 term, and an OpenMM exception),
-//! `C` the Coulomb style's `coulomb / dielectric`. The regular pair kernels
-//! price an **override** pair at weight 0 — the compiled door drops its
-//! `pairs` row, the neighbour-driven door zeroes its weight
-//! ([`PairWeights`](crate::ff::potential::PairWeights)). A `w` pair needs no
-//! such step: `special_bonds` 1-4 is 0 for it, as LAMMPS requires.
-//!
-//! The kernel is a fixed list of atom pairs, so it is an indexed (bond-like)
-//! member at both compile doors: a periodic régime rebinds it like a bond.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -69,6 +24,51 @@ use molrs::op::F;
 const MIN_R2: F = 1e-24;
 
 /// The 1-4 exceptions of one molecule: LJ 12-6 plus Coulomb, no cutoff.
+///
+/// LAMMPS has three ways to price a close (1-4) pair, and molrs represents
+/// each with LAMMPS's parameters (the conventions guide, "1-4 interactions"):
+///
+/// 1. **`special_bonds`** — the pair styles price the pair at their own
+///    parameters, scaled by the force field's 1-4 weights. Nothing here.
+/// 2. **`dihedral_style charmm` `w`** — each dihedral prices the pair of its
+///    end atoms, `w·[LJ(ε₁₄, σ₁₄) + C qᵢqⱼ/r]` (`dihedral_charmm.cpp`), with
+///    the `epsilon14` / `sigma14` of the `lj/charmm` pair style mixed as
+///    LAMMPS's `init_one` mixes them, no cutoff and no switch. LAMMPS refuses
+///    `w > 0` beside non-zero `special_bonds` 1-4 weights, and so does molrs.
+///    A pair at the ends of several dihedrals takes the sum of their `w`.
+/// 3. **Per-pair overrides** — columns on the frame's `pairs` block for what
+///    LAMMPS cannot express (a GROMACS `[ pairs ]` row with parameters, an
+///    OpenMM exception, an AMBER dihedral's own SCEE / SCNB):
+///    [`PAIR_OVERRIDE_COLUMNS`] = `epsilon`, `sigma`, `charge_product`,
+///    `lj_scale`, `coul_scale`.
+///
+/// **Precedence**, per pair and per quantity: a per-pair override cell is
+/// final; a null cell takes what the pair would have without the row — the
+/// dihedral's `w` pricing when its ends carry `w > 0`, the pair style's
+/// parameters at the `special_bonds` weight of the pair's bond-distance class
+/// otherwise. So `lj_scale` / `coul_scale` replace `w` or the global weight,
+/// and `epsilon` / `sigma` / `charge_product` replace the style's (or the
+/// dihedral's 1-4) values. A cell is priced only by the style it belongs to:
+/// `epsilon` / `sigma` / `lj_scale` under a Lennard-Jones style,
+/// `charge_product` / `coul_scale` under a Coulomb style. A field without
+/// that style ignores them, so a bonded-only field on a frame with
+/// materialized 1-4 cells prices no pair at all.
+///
+/// Every such pair is priced here, once:
+///
+/// ```text
+/// E = lj_w · 4ε[(σ/r)¹² − (σ/r)⁶]  +  coul_w · C qᵢqⱼ / r
+/// ```
+///
+/// with no cutoff (as LAMMPS's dihedral 1-4 term, and an OpenMM exception),
+/// `C` the Coulomb style's `coulomb / dielectric`. The regular pair kernels
+/// price an **override** pair at weight 0 — the compiled door drops its
+/// `pairs` row, the neighbour-driven door zeroes its weight
+/// ([`PairWeights`](crate::ff::potential::PairWeights)). A `w` pair needs no
+/// such step: `special_bonds` 1-4 is 0 for it, as LAMMPS requires.
+///
+/// The kernel is a fixed list of atom pairs, so it is an indexed (bond-like)
+/// member at both compile doors: a periodic régime rebinds it like a bond.
 pub struct PairExceptions {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

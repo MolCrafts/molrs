@@ -1,26 +1,4 @@
-//! Aligned columnar component store for the ECS world.
-//!
-//! [`EntityTable`] stores entities — identified by stable generational
-//! [`slotmap`] handles — as **rows**, and their components as **shared-row
-//! aligned dense columns + per-column validity masks** (the Arrow / dataframe
-//! model):
-//!
-//! - One `handle → row` map ([`keys`](EntityTable)) is shared by every column,
-//!   so column `i` and column `i` always describe the *same* entity. That makes
-//!   a column a contiguous `&[T]` of length `n_rows` — directly mappable to a
-//!   zero-copy numpy view *and* already aligned for tabular projection
-//!   (`to_frame`), with no gather.
-//! - Sparsity is expressed by a per-column [`Validity`] mask: an entity may
-//!   have `charge` but not `port`; the row's validity bit is simply unset.
-//! - Columns are created lazily on first write and their element type is fixed
-//!   at that point; a later write of a different type is a hard error (no
-//!   silent coercion).
-//! - Deletion is swap-remove: the moved row's *handle* is unchanged (handles
-//!   are the stable identity), only its internal row index compacts.
-//!
-//! This is the storage substrate for [`crate::core::MolGraph`] under the
-//! ECS refactor; it is generic over the slotmap key type so the same machinery
-//! backs both the node table and each relation-kind table.
+//! Aligned columnar component store for the ECS world: [`EntityTable`].
 
 use indexmap::IndexMap;
 
@@ -295,8 +273,27 @@ fn cell_at(col: &EntityColumn, row: usize) -> EntityCell<'_> {
 
 /// A stable-handle, aligned-column entity table — the ECS storage substrate.
 ///
-/// Generic over the slotmap key type `K`, so the same machinery backs both the
-/// node table and each relation-kind table.
+/// `EntityTable` stores entities — identified by stable generational
+/// [`slotmap`] handles — as **rows**, and their components as **shared-row
+/// aligned dense columns + per-column validity masks** (the Arrow / dataframe
+/// model):
+///
+/// - One `handle → row` map is shared by every column, so column `i` and
+///   column `i` always describe the *same* entity. That makes a column a
+///   contiguous `&[T]` of length `n_rows` — directly mappable to a zero-copy
+///   numpy view *and* already aligned for tabular projection (`to_frame`), with
+///   no gather.
+/// - Sparsity is expressed by a per-column [`Validity`] mask: an entity may
+///   have `charge` but not `port`; the row's validity bit is simply unset.
+/// - Columns are created lazily on first write and their element type is fixed
+///   at that point; a later write of a different type is a hard error (no
+///   silent coercion).
+/// - Deletion is swap-remove: the moved row's *handle* is unchanged (handles
+///   are the stable identity), only its internal row index compacts.
+///
+/// This is the storage substrate for [`crate::core::MolGraph`]; it is generic
+/// over the slotmap key type `K`, so the same machinery backs both the node
+/// table and each relation-kind table.
 #[derive(Debug, Clone)]
 pub struct EntityTable<K: Key> {
     /// `handle → row index`.

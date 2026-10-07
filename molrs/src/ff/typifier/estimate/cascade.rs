@@ -1,35 +1,4 @@
 //! The cascade: exact → equivalent → wildcard row → corresponding → empirical.
-//!
-//! One set of tiers, modelled on parmchk2's order, for every arity (the
-//! generic estimator — GAFF itself reproduces parmchk2 exactly in
-//! `typifier::gaff`; see the [module](super) table for how this scoring
-//! differs). The tiers are what the whole estimator is:
-//!
-//! 1. **exact / class match** — the row is written for these very types. Penalty 0.
-//! 2. **equivalent-type substitution** (`EQUA`) — `gaff2`'s `ns` *is* `n`, so the
-//!    specific row `o-c-n -hn` covers `o-c-ns-hn` and costs **nothing**. This tier
-//!    outranks the next: a specific row for an equivalent type beats a generic row
-//!    for this one.
-//! 3. **a wildcard row that matches outright** (`X -c3-c3-X ` over ethane's
-//!    `hc-c3-c3-hc`) — the table *covers* the term, so this is a **parameter, not
-//!    an estimate**: nothing is substituted, no penalty is charged, and the result
-//!    carries no provenance ([`Estimate::covered`]). This is the half that stops an
-//!    estimator fabricating an analogy for the ~145 terms per molecule AMBER simply
-//!    looks up.
-//! 4. **corresponding-type substitution** (`CORR`) — scored. Specific rows are
-//!    searched before wildcard ones, then by how badly the substitution disturbs
-//!    the term's inner atoms, then in file order.
-//! 5. **empirical formula** — nothing left to copy; see [`empirical`](super::empirical).
-//!
-//! # Impropers are not a fourth kind of proper term
-//!
-//! A proper term is a walk along bonds and reads the same backwards, so a row is
-//! tried in both orientations. An improper is a planarity constraint on a
-//! **centre** whose three peripherals are an unordered *set*, so its row is tried
-//! against all six assignments of peripherals to slots and the cheapest is paid
-//! for. And a **specific** improper row is an exact match or nothing — so
-//! methyl methacrylate's `c -c2-ce-c3` comes out as the default rather than as
-//! a substituted `c -c2-c2-c3`.
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::ParmchkPenalty;

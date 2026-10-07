@@ -1,47 +1,4 @@
 //! Pair-survival (persistence) time-correlation functions.
-//!
-//! Measures how long pairs of particles remain "bonded" — i.e. within a
-//! distance cutoff — as a function of time lag. For a reference species `i` and
-//! a partner species `j`, the persistence correlation at lag `τ` is the average
-//! number of surviving partners per reference particle:
-//!
-//! ```text
-//!     C(τ) = ⟨ (1/N_i) Σ_i Σ_j S_{ij}(t, t+τ) ⟩_t ,
-//! ```
-//!
-//! where `S_{ij}(t, t+τ) ∈ {0, 1}` is the survival indicator for the pair
-//! `(i, j)` born at time `t` and observed at `t + τ`. `C(0)` is the mean
-//! coordination number (partners within the birth cutoff).
-//!
-//! Three survival definitions are supported, following the residence-time /
-//! hydrogen-bond-dynamics literature (Rapaport 1983; Luzar & Chandler 1996):
-//!
-//! - **[`SurvivalMethod::Continuous`]** — `S = 1` only if the pair stayed
-//!   within the survival cutoff `r1` at *every* frame in `[t, t+τ]` (continuous
-//!   survival; the pair is removed the first time it breaks).
-//! - **[`SurvivalMethod::Intermittent`]** — `S = 1` if the pair is within `r1`
-//!   at `t + τ`, regardless of whether it left in between (re-formation allowed).
-//! - **[`SurvivalMethod::Ssp`]** — stable-state picture: born within the inner
-//!   cutoff `r0` and continuously within the outer cutoff `r1` ever since
-//!   (`r1 ≥ r0`). A pair must leave `r1` to be considered broken, which
-//!   suppresses rattling across a single cutoff.
-//!
-//! In all cases a pair is *born* at `t` only if it is within the inner cutoff
-//! `r0` at `t`. For `Continuous` / `Intermittent` set `r1 = r0` for the usual
-//! single-cutoff behaviour.
-//!
-//! This is the molrs port of the `persist` recipe / `tpairsurvive` operator
-//! from the *tame* library (<https://github.com/Roy-Kid/tame>). The *tame*
-//! `persist.py` recipe is non-functional as published (undefined names); this
-//! port implements the intended pair-survival correlation with explicit,
-//! well-defined survival criteria. Minimum-image distances use the
-//! orthorhombic convention `d −= round(d / L)·L` per axis, matching *tame*'s
-//! `tpairsurvive`.
-//!
-//! # Units
-//!
-//! Unit-agnostic for the correlation (a dimensionless count). Cutoffs and
-//! coordinates share the same length unit (Å); `dt` sets the `lag_times` axis.
 
 use ndarray::{Array1, Array2, Array3};
 
@@ -93,6 +50,49 @@ fn mic_dist2(mic: &Mic, a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 /// Pair-survival time-correlation function between two species.
+///
+/// Measures how long pairs of particles remain "bonded" — i.e. within a
+/// distance cutoff — as a function of time lag. For a reference species `i` and
+/// a partner species `j`, the persistence correlation at lag `τ` is the average
+/// number of surviving partners per reference particle:
+///
+/// ```text
+///     C(τ) = ⟨ (1/N_i) Σ_i Σ_j S_{ij}(t, t+τ) ⟩_t ,
+/// ```
+///
+/// where `S_{ij}(t, t+τ) ∈ {0, 1}` is the survival indicator for the pair
+/// `(i, j)` born at time `t` and observed at `t + τ`. `C(0)` is the mean
+/// coordination number (partners within the birth cutoff).
+///
+/// Three survival definitions are supported, following the residence-time /
+/// hydrogen-bond-dynamics literature (Rapaport 1983; Luzar & Chandler 1996):
+///
+/// - **[`SurvivalMethod::Continuous`]** — `S = 1` only if the pair stayed
+///   within the survival cutoff `r1` at *every* frame in `[t, t+τ]` (continuous
+///   survival; the pair is removed the first time it breaks).
+/// - **[`SurvivalMethod::Intermittent`]** — `S = 1` if the pair is within `r1`
+///   at `t + τ`, regardless of whether it left in between (re-formation allowed).
+/// - **[`SurvivalMethod::Ssp`]** — stable-state picture: born within the inner
+///   cutoff `r0` and continuously within the outer cutoff `r1` ever since
+///   (`r1 ≥ r0`). A pair must leave `r1` to be considered broken, which
+///   suppresses rattling across a single cutoff.
+///
+/// In all cases a pair is *born* at `t` only if it is within the inner cutoff
+/// `r0` at `t`. For `Continuous` / `Intermittent` set `r1 = r0` for the usual
+/// single-cutoff behaviour.
+///
+/// This is the molrs port of the `persist` recipe / `tpairsurvive` operator
+/// from the *tame* library (<https://github.com/Roy-Kid/tame>). The *tame*
+/// `persist.py` recipe is non-functional as published (undefined names); this
+/// port implements the intended pair-survival correlation with explicit,
+/// well-defined survival criteria. Minimum-image distances use the
+/// orthorhombic convention `d −= round(d / L)·L` per axis, matching *tame*'s
+/// `tpairsurvive`.
+///
+/// # Units
+///
+/// Unit-agnostic for the correlation (a dimensionless count). Cutoffs and
+/// coordinates share the same length unit (Å); `dt` sets the `lag_times` axis.
 ///
 /// # Arguments
 /// * `coords_i` — reference-species coordinates, shape `(n_frames, n_i, 3)`.

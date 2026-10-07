@@ -1,11 +1,4 @@
 //! Reader of a CL&Pol `alpha.ff` polarisation table.
-//!
-//! The file is whitespace-separated rows `type m_D q_D k_D alpha a_thole`;
-//! `#` starts a comment, and a line with fewer than six fields (blank, a
-//! header) is not a row. molrs ships the paduagroup/clandpol table itself as
-//! [`CLPOL_POLARIZABILITY`](crate::ff::params::CLPOL_POLARIZABILITY); this
-//! reads a caller's own (an edited or newer `alpha.ff`) into the same row
-//! shape, with owned type names.
 
 use std::path::Path;
 
@@ -29,6 +22,13 @@ pub struct ClpolAlphaRow {
 
 /// Parse `alpha.ff` text, rows in file order (a type given twice keeps both
 /// rows; the later one is the file's last word).
+///
+/// The file is whitespace-separated rows `type m_D q_D k_D alpha a_thole`;
+/// `#` starts a comment, and a line with fewer than six fields (blank, a
+/// header) is not a row. molrs ships the paduagroup/clandpol table itself as
+/// [`CLPOL_POLARIZABILITY`](crate::ff::params::CLPOL_POLARIZABILITY); this
+/// reads a caller's own (an edited or newer `alpha.ff`) into the same row
+/// shape, with owned type names.
 ///
 /// # Errors
 ///

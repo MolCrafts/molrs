@@ -1,34 +1,4 @@
-//! Buffered Coulomb pair potential with a hard distance cutoff — `pair/coul/cut`:
-//!
-//! ```text
-//! E(r) = k · qᵢqⱼ / (D · (r + δ))      r < r_cut,  else 0
-//! ```
-//!
-//! Every constant in that formula is **force-field data, read from the style**:
-//! the Coulomb constant `k`, the dielectric `D` and the buffering distance `δ`.
-//! The kernel holds none of them.
-//!
-//! # One kernel, two force fields
-//!
-//! `δ = 0` degenerates the buffered form into the textbook Coulomb `k·qᵢqⱼ/r`,
-//! which is what OPLS, LAMMPS and every other non-buffered force field mean. MMFF's
-//! electrostatics (Halgren, *MMFF.I* eq. 5) is the *same kernel* at
-//! `k = 332.0716`, `D = 1.0`, `δ = 0.05 Å` — a parameterization, not a kernel of
-//! its own. The buffer is what keeps `E` finite at `r = 0`, where MMFF's charges
-//! sit on the nuclei.
-//!
-//! # Why `k` is a style param and not a shared constant
-//!
-//! MMFF uses Halgren's **332.0716**; OPLS/LAMMPS use CODATA's
-//! [`COULOMB_REAL`](molrs::core::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
-//! relative difference is worth 0.0036 kcal/mol on caffeine's −150.48 kcal/mol
-//! electrostatic term — **above** the 1e-3 RDKit parity tolerance. Both values are
-//! correct; the force field decides. A kernel holding either one would be choosing a
-//! force field for its caller, so there is no default: a style that does not say is
-//! an [`Err`].
-//!
-//! The kernel is topology-blind: it consumes a pre-resolved pair list whose per-pair
-//! charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
+//! Buffered Coulomb pair potential with a hard distance cutoff (`pair coul/cut`).
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::flat_coords::validate_coords;
@@ -48,8 +18,39 @@ const R_MIN2: F = 1e-24;
 
 /// Buffered Coulomb with cutoff, over pre-resolved flat arrays.
 ///
-/// `E = k·qᵢqⱼ / (D·(r + δ))`. All four scalars come from the force field; see the
-/// module docs.
+/// `E = k·qᵢqⱼ / (D·(r + δ))`. All four scalars come from the force field.
+///
+/// Buffered Coulomb pair potential with a hard distance cutoff — `pair/coul/cut`:
+///
+/// ```text
+/// E(r) = k · qᵢqⱼ / (D · (r + δ))      r < r_cut,  else 0
+/// ```
+///
+/// Every constant in that formula is **force-field data, read from the style**:
+/// the Coulomb constant `k`, the dielectric `D` and the buffering distance `δ`.
+/// The kernel holds none of them.
+///
+/// # One kernel, two force fields
+///
+/// `δ = 0` degenerates the buffered form into the textbook Coulomb `k·qᵢqⱼ/r`,
+/// which is what OPLS, LAMMPS and every other non-buffered force field mean. MMFF's
+/// electrostatics (Halgren, *MMFF.I* eq. 5) is the *same kernel* at
+/// `k = 332.0716`, `D = 1.0`, `δ = 0.05 Å` — a parameterization, not a kernel of
+/// its own. The buffer is what keeps `E` finite at `r = 0`, where MMFF's charges
+/// sit on the nuclei.
+///
+/// # Why `k` is a style param and not a shared constant
+///
+/// MMFF uses Halgren's **332.0716**; OPLS/LAMMPS use CODATA's
+/// [`COULOMB_REAL`](molrs::core::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
+/// relative difference is worth 0.0036 kcal/mol on caffeine's −150.48 kcal/mol
+/// electrostatic term — **above** the 1e-3 RDKit parity tolerance. Both values are
+/// correct; the force field decides. A kernel holding either one would be choosing a
+/// force field for its caller, so there is no default: a style that does not say is
+/// an [`Err`].
+///
+/// The kernel is topology-blind: it consumes a pre-resolved pair list whose per-pair
+/// charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
 pub struct PairCoulCut {
     charges: Charges,
     /// Coulomb constant `k` in kcal·Å·mol⁻¹·e⁻² — the force field's, not the kernel's.

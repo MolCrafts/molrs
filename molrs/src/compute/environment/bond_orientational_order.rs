@@ -1,19 +1,4 @@
 //! Bond-orientation 2-D histogram on the unit sphere.
-//!
-//! Mirrors `freud.environment.BondOrientationalOrder`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/BondOrientationalOrder.cc)).
-//!
-//! For every neighbor pair `(i, j)` the bond vector `r̂ = (r_j − r_i) / |…|`
-//! is converted to spherical angles `(θ, φ)` and accumulated into a
-//! `(n_θ × n_φ)` histogram on the unit sphere. We normalise by the solid
-//! angle of each pixel (`sin(θ_c) · dθ · dφ`) so that, in the random-bond
-//! limit, the output approaches a constant.
-//!
-//! freud supports four normalisation modes (BOD, LBOD, OBCD, ABCD); only
-//! the **Bond Order Diagram (BOD)** is implemented here, which is the
-//! default mode. The remaining three flavours require either per-particle
-//! orientations or per-pair query orientations and can be added in
-//! follow-up phases.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -30,6 +15,21 @@ const PI: F = std::f64::consts::PI;
 const TWO_PI: F = 2.0 * PI;
 
 /// Bond-order diagram calculator.
+///
+/// Mirrors `freud.environment.BondOrientationalOrder`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/BondOrientationalOrder.cc)).
+///
+/// For every neighbor pair `(i, j)` the bond vector `r̂ = (r_j − r_i) / |…|`
+/// is converted to spherical angles `(θ, φ)` and accumulated into a
+/// `(n_θ × n_φ)` histogram on the unit sphere. We normalise by the solid
+/// angle of each pixel (`sin(θ_c) · dθ · dφ`) so that, in the random-bond
+/// limit, the output approaches a constant.
+///
+/// freud supports four normalisation modes (BOD, LBOD, OBCD, ABCD); only
+/// the **Bond Order Diagram (BOD)** is implemented here, which is the
+/// default mode. The remaining three flavours require either per-particle
+/// orientations or per-pair query orientations and can be added in
+/// follow-up phases.
 #[derive(Debug, Clone, Copy)]
 pub struct BondOrientationalOrder {
     n_theta: usize,

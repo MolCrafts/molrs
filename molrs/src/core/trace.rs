@@ -1,13 +1,15 @@
-//! A trace is an ordered path of 3D points. It has no chemistry: it says
-//! *where* consecutive samples of a structure lie, not *what* sits there.
-//! Points are in the caller's length unit, Å throughout molrs.
-//!
-//! `builder::SelfAvoidingWalk` generates one trace per chain; the generator is
-//! not the trace.
+//! An ordered path of 3D points: [`Trace`].
 
 use crate::op::Vec3;
 
 /// An ordered path of 3D points.
+///
+/// A trace has no chemistry: it says *where* consecutive samples of a structure
+/// lie, not *what* sits there. Points are in the caller's length unit, Å
+/// throughout molrs.
+///
+/// `builder::SelfAvoidingWalk` generates one trace per chain; the generator is
+/// not the trace.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Trace {
     points: Vec<Vec3>,

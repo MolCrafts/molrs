@@ -1,14 +1,4 @@
-//! O(N^2) brute-force neighbor search — reference implementation.
-//!
-//! Checks every pair `(i, j)` with `i < j` — the half-shell convention, so each
-//! unordered pair is examined exactly once. Useful for correctness testing
-//! against the cell-list algorithm and for very small systems where the
-//! overhead of cell construction is not worthwhile.
-//!
-//! Because it consults the simulation box directly for every pair and shares no
-//! cell-assignment code with [`LinkCell`](crate::core::LinkCell),
-//! a defect in the cell partition cannot cancel against a defect here; that is
-//! what makes it usable as an oracle in tests.
+//! O(N^2) brute-force neighbor search — reference implementation: [`BruteForce`].
 
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
@@ -27,6 +17,16 @@ use crate::op::{F, Fnx3, Fnx3View};
 /// a materialized table keeps is named by the caller at
 /// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors),
 /// exactly as it is for the cell list.
+///
+/// Checks every pair `(i, j)` with `i < j` — the half-shell convention, so each
+/// unordered pair is examined exactly once. Useful for correctness testing
+/// against the cell-list algorithm and for very small systems where the
+/// overhead of cell construction is not worthwhile.
+///
+/// Because it consults the simulation box directly for every pair and shares no
+/// cell-assignment code with [`LinkCell`](crate::core::LinkCell),
+/// a defect in the cell partition cannot cancel against a defect here; that is
+/// what makes it usable as an oracle in tests.
 #[derive(Debug, Clone)]
 pub struct BruteForce {
     /// Interaction cutoff distance (Å). Pairs are kept when their minimum-image

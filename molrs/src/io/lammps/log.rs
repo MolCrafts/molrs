@@ -1,10 +1,4 @@
 //! LAMMPS log file parser.
-//!
-//! Parses the standard LAMMPS run output structure documented in
-//! `Run_output.html`: thermo tables, loop timing, performance summaries,
-//! CPU/MPI timing, load-balance statistics, neighbor statistics, and warnings.
-//! Unrecognized lines are preserved so callers can still inspect information
-//! that does not yet have a structured representation.
 
 use serde::Serialize;
 use std::fs;
@@ -160,6 +154,12 @@ pub struct LammpsRun {
 }
 
 /// Parsed LAMMPS log with one structured entry per run.
+///
+/// The parser follows the standard LAMMPS run output documented in
+/// `Run_output.html`: thermo tables, loop timing, performance summaries,
+/// CPU/MPI timing, load-balance statistics, neighbor statistics, and warnings.
+/// Unrecognized lines are preserved so callers can still inspect information
+/// that does not yet have a structured representation.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LammpsLog {
     pub path: String,

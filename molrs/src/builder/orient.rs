@@ -1,12 +1,5 @@
 //! Rotation of template copies: the [`Orienter`] trait and the
 //! [`AxisOrienter`].
-//!
-//! An orienter answers the question a [`Placer`](crate::builder::Placer)
-//! leaves open (operator, 2026-09-28: the placer only translates, the
-//! orienter rotates): which rotation, about the template's centre of mass,
-//! turns a copy before it is moved onto its site? The
-//! [`Assembler`](crate::builder::Assembler) holds one of each and applies the
-//! orienter's motion first, then the placer's.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -42,6 +35,13 @@ pub struct SiteView<'a> {
 }
 
 /// Turns one template and a list of sites into one rotation per site.
+///
+/// An orienter answers the question a [`Placer`](crate::builder::Placer)
+/// leaves open (operator, 2026-09-28: the placer only translates, the
+/// orienter rotates): which rotation, about the template's centre of mass,
+/// turns a copy before it is moved onto its site? The
+/// [`Assembler`](crate::builder::Assembler) holds one of each and applies the
+/// orienter's motion first, then the placer's.
 ///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.

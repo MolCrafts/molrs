@@ -1,23 +1,15 @@
 //! Rigid motions `p' = R p + t` and the quaternion kernels.
-//!
-//! [`Rigid`] is a plain value; the operations on it are free functions
-//! (the functional style scoped to `molrs::op`). Rotations are proper
-//! orthogonal [`Mat3`]s: `Rᵀ R = I` and `det R = +1`, so lengths and angles
-//! are kept and no mirror image is made.
-//!
-//! A **quaternion** is a four-component number `q = w + x i + y j + z k`,
-//! stored as [`Quat`] `(w, x, y, z)`, multiplied with the Hamilton rules
-//! `i² = j² = k² = ijk = −1` (so `i j = k` but `j i = −k`). Its conjugate is
-//! `q* = w − x i − y j − z k`. A *unit* quaternion (`|q| = 1`) encodes a
-//! rotation: writing a vector `v` as the pure quaternion `0 + vₓ i + v_y j +
-//! v_z k`, the rotated vector is `q v q*`; the rotation by angle `θ` about the
-//! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
 
 use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular, scale, sub, unit_or_zero};
 use crate::op::{F, Mat3, Quat, Vec3};
 
 /// A rigid motion `p' = R p + t`: rotate by `rotation`, then translate by
 /// `translation`.
+///
+/// [`Rigid`] is a plain value; the operations on it are free functions
+/// (the functional style scoped to `molrs::op`). Rotations are proper
+/// orthogonal [`Mat3`]s: `Rᵀ R = I` and `det R = +1`, so lengths and angles
+/// are kept and no mirror image is made.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rigid {
     /// Proper rotation `R` (orthogonal, `det = +1`), row-major.

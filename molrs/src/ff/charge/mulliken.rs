@@ -1,14 +1,4 @@
 //! [`MullikenModel`] — the QM charges, unchanged.
-//!
-//! The model with no topology correction at all: `antechamber -c mul` writes `sqm`'s
-//! Mulliken populations straight out, with `-eq 0` (no equivalencing, because that is
-//! per charge method and Mulliken's default is off).
-//!
-//! It exists in molrs for two reasons, and only one of them is that users ask for
-//! Mulliken charges. The other is that it is the corner of the 2×2 that keeps
-//! [`ChargeModel`] honest: a trait that could not carry a model with *no* correction
-//! would be a trait that had quietly assumed "QM base charges plus a correction", and
-//! the correction stage would have leaked into the seam.
 
 use molrs::core::Atomistic;
 
@@ -16,6 +6,10 @@ use super::error::ChargeError;
 use super::model::{ChargeModel, check_count};
 
 /// Mulliken populations, passed through.
+///
+/// The model with no topology correction at all: `antechamber -c mul` writes `sqm`'s
+/// Mulliken populations straight out, with `-eq 0` (no equivalencing, because that is
+/// per charge method and Mulliken's default is off).
 ///
 /// # Examples
 ///

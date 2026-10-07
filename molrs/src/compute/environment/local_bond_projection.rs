@@ -1,17 +1,4 @@
 //! Projection of neighbor bond vectors onto a set of reference directions.
-//!
-//! Mirrors `freud.environment.LocalBondProjection`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalBondProjection.cc)).
-//!
-//! For each neighbor pair `(i, j)` and each reference direction `ê_k`,
-//! compute `dot_k = r̂_ij · ê_k` where `r̂_ij = (r_j − r_i) / |r_j − r_i|`.
-//! The result is a `(n_pairs × n_proj_vectors)` table of cosines, returned
-//! alongside its complement `1 − dot` for callers that prefer the
-//! "deviation from the reference" reading.
-//!
-//! freud additionally supports per-particle orientations (rotating each
-//! reference direction by the particle's quaternion before projection);
-//! that flavour is exposed via the `with_query_orientations` builder.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -25,6 +12,19 @@ use crate::compute::require_disp;
 use crate::op::rotate_by_quat;
 
 /// `LocalBondProjection` analyzer.
+///
+/// Mirrors `freud.environment.LocalBondProjection`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalBondProjection.cc)).
+///
+/// For each neighbor pair `(i, j)` and each reference direction `ê_k`,
+/// compute `dot_k = r̂_ij · ê_k` where `r̂_ij = (r_j − r_i) / |r_j − r_i|`.
+/// The result is a `(n_pairs × n_proj_vectors)` table of cosines, returned
+/// alongside its complement `1 − dot` for callers that prefer the
+/// "deviation from the reference" reading.
+///
+/// freud additionally supports per-particle orientations (rotating each
+/// reference direction by the particle's quaternion before projection);
+/// that flavour is exposed via the `with_query_orientations` builder.
 #[derive(Debug, Clone, Default)]
 pub struct LocalBondProjection {
     /// If true, rotate each reference direction by the query-point's

@@ -1,16 +1,4 @@
 //! Streaming (frame-by-frame) RDF accumulation.
-//!
-//! [`RdfAccumulator`] is the bounded-memory streaming counterpart of the batch
-//! [`Rdf`](super::Rdf) compute: feed one frame + neighbor list at a time via
-//! [`accumulate`](RdfAccumulator::accumulate), then read the normalized g(r)
-//! from [`finalize`](RdfAccumulator::finalize). State is O(`n_bins`) — never
-//! O(trajectory) — so an arbitrarily long MD run can stream through it.
-//!
-//! It folds exactly the per-frame sums the batch path folds (`n_r`, point
-//! counts, volume), in the same order, so `finalize()` reproduces
-//! `Rdf::compute` over the same frames bit-for-bit. The batch compute is
-//! itself implemented on top of this accumulator — one source of truth for
-//! the accumulation math.
 
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
@@ -23,8 +11,19 @@ use crate::compute::ComputeError;
 /// Streaming g(r) accumulator (bounded memory).
 ///
 /// Construct from a configured [`Rdf`], feed frames one at a time, finalize
-/// once. See the module docs for the equivalence guarantee with the batch
-/// [`Rdf::compute`](crate::compute::Compute::compute).
+/// once.
+///
+/// [`RdfAccumulator`] is the bounded-memory streaming counterpart of the batch
+/// [`Rdf`](super::Rdf) compute: feed one frame + neighbor list at a time via
+/// [`accumulate`](RdfAccumulator::accumulate), then read the normalized g(r)
+/// from [`finalize`](RdfAccumulator::finalize). State is O(`n_bins`) — never
+/// O(trajectory) — so an arbitrarily long MD run can stream through it.
+///
+/// It folds exactly the per-frame sums the batch path folds (`n_r`, point
+/// counts, volume), in the same order, so `finalize()` reproduces
+/// `Rdf::compute` over the same frames bit-for-bit. The batch compute is
+/// itself implemented on top of this accumulator — one source of truth for
+/// the accumulation math.
 #[derive(Debug, Clone)]
 pub struct RdfAccumulator {
     rdf: Rdf,

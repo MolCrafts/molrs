@@ -1,122 +1,4 @@
 //! BCC bond-type perception — the bond typing AM1-BCC is keyed on.
-//!
-//! AM1-BCC does not correct charges per *bond order*; it corrects them per **BCC
-//! bond type**, a richer alphabet that distinguishes an aromatic single bond from
-//! an aliphatic one and, crucially, marks *delocalized* bonds (a carboxylate's two
-//! C–O bonds are neither "single" nor "double" — they are the same bond). Both the
-//! `ATOMTYPE_BCC.DEF` atom-type rules (which count `sb`/`db`/`ab`/`DL` bonds) and
-//! the `BCCPARM.DAT` correction table are keyed on it, so getting it wrong
-//! silently corrupts every downstream charge.
-//!
-//! # The alphabet
-//!
-//! | Type | Meaning | Produced by |
-//! |---|---|---|
-//! | 1 | single | bond order 1 |
-//! | 2 | double | bond order 2 |
-//! | 3 | triple | bond order 3 |
-//! | 6 | N–O/S on a **non-delocalized** N carrying a second terminal chalcogen (nitrite) | part 3 |
-//! | 7 | aromatic single | part 1 — aromatic promotion |
-//! | 8 | aromatic double | part 1 — aromatic promotion |
-//! | 9 | delocalized (carboxylate, nitro, sulfonate, phosphate) | parts 2, 4 and 5 |
-//!
-//! The part numbering is antechamber's own (`bondtype.c::finalize()`), kept so the
-//! rules here can be read against the source they came from.
-//!
-//! # Two entry points: the input's orders, or antechamber's
-//!
-//! * `assign_bcc_bond_types_from_connectivity` is `bondtype -j full`, what
-//!   antechamber runs by default (`-j 4`, and always for `-c bcc`): the bond
-//!   orders are judged from the connectivity alone ([`perceive_bond_orders`]),
-//!   the input's ignored; aromatic rings for part 1 are antechamber's own
-//!   ring classes ([`perceive_ring_classes`]) of the input's bond types; and part 3 is
-//!   written as `bondtype` writes it.
-//!   On the file antechamber reads, the bond types are antechamber's, bond
-//!   for bond — including the Kekulé structure of a molecule that has two
-//!   (azulene, cyclooctatetraene), which the order of the atoms and bonds
-//!   decides, as it does for antechamber.
-//! * `assign_bcc_bond_types` keeps the input's orders: a localized bond is typed
-//!   by the number it states, an aromatic one by the Kekulé structure molrs
-//!   derives for it (below), promoted on molrs's own aromaticity, with part 3
-//!   repaired (below). Its answer does not depend on the order of the bonds.
-//!
-//! The alphabet both emit is `{1, 2, 3, 6, 7, 8, 9}`. Two further values exist
-//! in the tables:
-//!
-//! * **10** is not a peer of 7/8 — it is the *unresolved* aromatic precursor (the
-//!   SYBYL `ar` input token). `assign_bcc_bond_types` resolves it into 7 or 8;
-//!   `assign_bcc_bond_types_from_connectivity` keeps it only where antechamber
-//!   does: an `ar` bond of a molecule no valence state closes.
-//! * **11** occupies 26 same-type diagonal rows of `BCCPARM.DAT`, all with a
-//!   correction of exactly `0.0000`, and no rule reaches it.
-//!
-//! # Aromatic promotion is not "is the bond aromatic?"
-//!
-//! A bond is promoted to 7/8 only when **both** endpoints are aromatic *and* they
-//! share a ring of size **5 or 6 in which every ring atom is aromatic**. So
-//! biphenyl's inter-ring bond and every bond of a 7-membered aromatic ring stay
-//! 1/2 (part 1 of the perception). antechamber's "aromatic" is a ring class
-//! (AR1 / AR2) rather than Hückel aromaticity: a quinone ring read from a
-//! connectivity-only file is AR1 and promoted; the five-ring of an indole is
-//! taken out by the AM1-BCC indole rule and is not.
-//!
-//! # Kekulé structures, when the input's orders are kept
-//!
-//! An aromatic input carries no Kekulé structure (order 1.5), so
-//! `assign_bcc_bond_types` derives one by minimising the valence-state penalty
-//! (`APS.DAT`) over the aromatic subsystem. Which of 7/8 a given ring bond ends
-//! up with is *charge-invariant* — `BCCPARM` stores identical corrections for
-//! types 7, 8 and 10 — but the **atom types** are not: a heteroaromatic ring
-//! with two degenerate Kekulé structures (imidazolium) puts the N–C double bond
-//! on a different nitrogen in each, and those two nitrogens type differently.
-//! The tie-break is calibrated to AmberTools on the simple heteroaromatics; for
-//! antechamber's own answer on any input, use
-//! `assign_bcc_bond_types_from_connectivity`.
-//!
-//! # Provenance
-//!
-//! A reimplementation of the perception in AmberTools' `antechamber/bondtype.c`
-//! (`finalize()` and the `conjatom[]` flags), written by reading that source with
-//! the AmberTools developers' permission; see `.claude/notes/notes.md`
-//! (2026-07-12) for the licensing posture.
-//!
-//! # Type 6 — the order-dependence fix of `assign_bcc_bond_types`
-//!
-//! `bondtype.c`'s type-6 rule (`/*part3*/`) has two defects that make its output
-//! depend on the order the bonds appear in the input file:
-//!
-//! 1. the neighbour scan's `break` is unbraced, so it stops after the *first*
-//!    non-partner neighbour — the answer depends on `con[]` order;
-//! 2. the mirrored branch (partner stored first) assigns `type = 6`
-//!    *unconditionally*, above a loop whose result it then ignores.
-//!
-//! Measured consequences, against AmberTools25: **nitrate**'s two topologically
-//! identical single-bonded O⁻ receive *different* types (6 and 9), splitting their
-//! final charges by 0.28 e; and **pyridine-N-oxide**'s N–O bond types as 6 or 9
-//! purely according to whether the file wrote that bond as `O-N` or `N-O`.
-//!
-//! `assign_bcc_bond_types` repairs both: the neighbour scan is **exhaustive**, and
-//! the rule is **symmetric in the bond's endpoints** (nitrite stays 6/6,
-//! nitromethane 9/9, nitrobenzene 9/9, TMAO 9).
-//! `assign_bcc_bond_types_from_connectivity` keeps both defects: its answer already
-//! follows the input's order, as antechamber's does, and reproducing antechamber
-//! means reproducing them.
-//!
-//! # The perceived type is a *perceived fact*, and lives in its own key
-//!
-//! The type is written to [`BCC_BOND_TYPE`] — never to the bond's [`keys::TYPE`](crate::core::keys::TYPE),
-//! which belongs to the **caller**: it is where a bond's force-field type *name*
-//! (`c3-c3`) or a reader's LAMMPS bond-type id lives, and it is what `to_frame` puts
-//! in the `bonds` block's `type` column for every bonded kernel to resolve its
-//! parameters by. Two facts, two keys — a
-//! component column is typed by its first write and molrs (deliberately) refuses to
-//! coerce it, so an `i32` BCC code sitting in `type` makes the molecule unusable for
-//! the force field that must later put a `String` name there.
-//!
-//! This is the same rule the charge models keep (`ff::charge`, ac-004): perception
-//! neither reads nor writes `keys::TYPE`, so a molecule's own labels — GAFF names,
-//! hostile LAMMPS ids, nothing at all — survive perception **byte-identical** and
-//! cannot steer its answer.
 
 use super::aromaticity::mark_aromaticity;
 use super::kekule::{BondGraph, has_aromatic_marking, kekulize};
@@ -153,7 +35,8 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
 /// returned. Bond `order` is *not* rewritten — the perceived Kekulé structure is
 /// consumed internally and does not leak into the graph. Neither is the bond's
-/// [`keys::TYPE`](crate::core::keys::TYPE), which is the caller's (see the module docs of `perceive::bcc_bond_class`).
+/// [`keys::TYPE`](crate::core::keys::TYPE), which is the caller's (see *The
+/// perceived type is a perceived fact* below).
 ///
 /// The type is always (re)derived from structure: a [`BCC_BOND_TYPE`] already on
 /// the input is read only as an aromaticity *hint* (7, 8 and 10 mark an aromatic
@@ -164,6 +47,124 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// (a truthy `is_aromatic` bond prop, an `order` of 1.5, or a [`BCC_BOND_TYPE`] of
 /// 7/8/10); when it carries none, `mark_aromaticity` is run on the clone to
 /// supply it.
+///
+/// AM1-BCC does not correct charges per *bond order*; it corrects them per **BCC
+/// bond type**, a richer alphabet that distinguishes an aromatic single bond from
+/// an aliphatic one and, crucially, marks *delocalized* bonds (a carboxylate's two
+/// C–O bonds are neither "single" nor "double" — they are the same bond). Both the
+/// `ATOMTYPE_BCC.DEF` atom-type rules (which count `sb`/`db`/`ab`/`DL` bonds) and
+/// the `BCCPARM.DAT` correction table are keyed on it, so getting it wrong
+/// silently corrupts every downstream charge.
+///
+/// # The alphabet
+///
+/// | Type | Meaning | Produced by |
+/// |---|---|---|
+/// | 1 | single | bond order 1 |
+/// | 2 | double | bond order 2 |
+/// | 3 | triple | bond order 3 |
+/// | 6 | N–O/S on a **non-delocalized** N carrying a second terminal chalcogen (nitrite) | part 3 |
+/// | 7 | aromatic single | part 1 — aromatic promotion |
+/// | 8 | aromatic double | part 1 — aromatic promotion |
+/// | 9 | delocalized (carboxylate, nitro, sulfonate, phosphate) | parts 2, 4 and 5 |
+///
+/// The part numbering is antechamber's own (`bondtype.c::finalize()`), kept so the
+/// rules here can be read against the source they came from.
+///
+/// # Two entry points: the input's orders, or antechamber's
+///
+/// * [`assign_bcc_bond_types_from_connectivity`] is `bondtype -j full`, what
+///   antechamber runs by default (`-j 4`, and always for `-c bcc`): the bond
+///   orders are judged from the connectivity alone ([`perceive_bond_orders`]),
+///   the input's ignored; aromatic rings for part 1 are antechamber's own
+///   ring classes ([`perceive_ring_classes`]) of the input's bond types; and part 3 is
+///   written as `bondtype` writes it.
+///   On the file antechamber reads, the bond types are antechamber's, bond
+///   for bond — including the Kekulé structure of a molecule that has two
+///   (azulene, cyclooctatetraene), which the order of the atoms and bonds
+///   decides, as it does for antechamber.
+/// * `assign_bcc_bond_types` (this function) keeps the input's orders: a localized bond is typed
+///   by the number it states, an aromatic one by the Kekulé structure molrs
+///   derives for it (below), promoted on molrs's own aromaticity, with part 3
+///   repaired (below). Its answer does not depend on the order of the bonds.
+///
+/// The alphabet both emit is `{1, 2, 3, 6, 7, 8, 9}`. Two further values exist
+/// in the tables:
+///
+/// * **10** is not a peer of 7/8 — it is the *unresolved* aromatic precursor (the
+///   SYBYL `ar` input token). `assign_bcc_bond_types` resolves it into 7 or 8;
+///   `assign_bcc_bond_types_from_connectivity` keeps it only where antechamber
+///   does: an `ar` bond of a molecule no valence state closes.
+/// * **11** occupies 26 same-type diagonal rows of `BCCPARM.DAT`, all with a
+///   correction of exactly `0.0000`, and no rule reaches it.
+///
+/// # Aromatic promotion is not "is the bond aromatic?"
+///
+/// A bond is promoted to 7/8 only when **both** endpoints are aromatic *and* they
+/// share a ring of size **5 or 6 in which every ring atom is aromatic**. So
+/// biphenyl's inter-ring bond and every bond of a 7-membered aromatic ring stay
+/// 1/2 (part 1 of the perception). antechamber's "aromatic" is a ring class
+/// (AR1 / AR2) rather than Hückel aromaticity: a quinone ring read from a
+/// connectivity-only file is AR1 and promoted; the five-ring of an indole is
+/// taken out by the AM1-BCC indole rule and is not.
+///
+/// # Kekulé structures, when the input's orders are kept
+///
+/// An aromatic input carries no Kekulé structure (order 1.5), so
+/// `assign_bcc_bond_types` derives one by minimising the valence-state penalty
+/// (`APS.DAT`) over the aromatic subsystem. Which of 7/8 a given ring bond ends
+/// up with is *charge-invariant* — `BCCPARM` stores identical corrections for
+/// types 7, 8 and 10 — but the **atom types** are not: a heteroaromatic ring
+/// with two degenerate Kekulé structures (imidazolium) puts the N–C double bond
+/// on a different nitrogen in each, and those two nitrogens type differently.
+/// The tie-break is calibrated to AmberTools on the simple heteroaromatics; for
+/// antechamber's own answer on any input, use
+/// `assign_bcc_bond_types_from_connectivity`.
+///
+/// # Provenance
+///
+/// A reimplementation of the perception in AmberTools' `antechamber/bondtype.c`
+/// (`finalize()` and the `conjatom[]` flags), written by reading that source with
+/// the AmberTools developers' permission; see `.claude/notes/notes.md`
+/// (2026-07-12) for the licensing posture.
+///
+/// # Type 6 — the order-dependence fix of this function
+///
+/// `bondtype.c`'s type-6 rule (`/*part3*/`) has two defects that make its output
+/// depend on the order the bonds appear in the input file:
+///
+/// 1. the neighbour scan's `break` is unbraced, so it stops after the *first*
+///    non-partner neighbour — the answer depends on `con[]` order;
+/// 2. the mirrored branch (partner stored first) assigns `type = 6`
+///    *unconditionally*, above a loop whose result it then ignores.
+///
+/// Measured consequences, against AmberTools25: **nitrate**'s two topologically
+/// identical single-bonded O⁻ receive *different* types (6 and 9), splitting their
+/// final charges by 0.28 e; and **pyridine-N-oxide**'s N–O bond types as 6 or 9
+/// purely according to whether the file wrote that bond as `O-N` or `N-O`.
+///
+/// `assign_bcc_bond_types` repairs both: the neighbour scan is **exhaustive**, and
+/// the rule is **symmetric in the bond's endpoints** (nitrite stays 6/6,
+/// nitromethane 9/9, nitrobenzene 9/9, TMAO 9).
+/// `assign_bcc_bond_types_from_connectivity` keeps both defects: its answer already
+/// follows the input's order, as antechamber's does, and reproducing antechamber
+/// means reproducing them.
+///
+/// # The perceived type is a *perceived fact*, and lives in its own key
+///
+/// The type is written to [`BCC_BOND_TYPE`] — never to the bond's [`keys::TYPE`](crate::core::keys::TYPE),
+/// which belongs to the **caller**: it is where a bond's force-field type *name*
+/// (`c3-c3`) or a reader's LAMMPS bond-type id lives, and it is what `to_frame` puts
+/// in the `bonds` block's `type` column for every bonded kernel to resolve its
+/// parameters by. Two facts, two keys — a
+/// component column is typed by its first write and molrs (deliberately) refuses to
+/// coerce it, so an `i32` BCC code sitting in `type` makes the molecule unusable for
+/// the force field that must later put a `String` name there.
+///
+/// This is the same rule the charge models keep (`ff::charge`, ac-004): perception
+/// neither reads nor writes `keys::TYPE`, so a molecule's own labels — GAFF names,
+/// hostile LAMMPS ids, nothing at all — survive perception **byte-identical** and
+/// cannot steer its answer.
 ///
 /// # Arguments
 ///
@@ -268,7 +269,9 @@ pub fn assign_bcc_bond_types(mol: &Atomistic) -> Atomistic {
 /// it discards the file's bond orders and re-derives them, so on a molecule with
 /// more than one Kekulé structure (azulene, cyclooctatetraene) the structure —
 /// and every atom type that follows it — is the one its search settles on.
-/// `assign_bcc_bond_types` keeps the input's orders instead.
+/// [`assign_bcc_bond_types`] keeps the input's orders instead; the BCC bond-type
+/// alphabet, the aromatic-promotion rule and the provenance of both entry
+/// points are documented there.
 ///
 /// Two things still read the input's bond types, because `bondtype` reads them
 /// from its file — taken here as the stated number, `ar` (10) for an aromatic

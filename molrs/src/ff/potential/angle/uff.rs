@@ -1,7 +1,4 @@
 //! UFF angle bend (RDKit `AngleBendContrib`).
-//!
-//! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
-//! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
@@ -15,6 +12,8 @@ use crate::op::vec3::{dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
 
+/// Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
+/// coefficients `c0`/`c1`/`c2` derived from θ₀.
 pub struct AngleUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

@@ -1,92 +1,5 @@
 //! Charge equivalencing — the topological-equivalence classes AM1 charges are
 //! averaged over before the BCC stage (antechamber's `-eq`).
-//!
-//! A semi-empirical calculation is done on **one conformer**, so its Mulliken
-//! charges are not symmetric: methanol's three methyl hydrogens come out of `sqm`
-//! as `(0.053, 0.098, 0.053)` purely because one of them eclipses the O–H. Feeding
-//! that straight into a force field yields **conformer-dependent, symmetry-broken**
-//! charges — the same molecule, re-embedded, would type differently. Averaging over
-//! the topological-equivalence classes removes the artefact (all three become
-//! `0.068`, the mean) and is what `antechamber -c bcc` does by default, *before*
-//! applying any bond-charge correction.
-//!
-//! # The algorithm: path scores, **not** automorphism orbits
-//!
-//! For every atom, enumerate **all simple paths starting at it**, score each path,
-//! sort the scores ascending, and compare. Two atoms are equivalent iff they have
-//! the **same number of paths** and their sorted score arrays are **elementwise
-//! exactly equal** (`f64` equality — there is no tolerance; see
-//! [`EquivalenceClasses`]).
-//!
-//! The score of a path is the Antechamber paper's Eq. (I) — position index `j`
-//! (0-based) and atomic number `Z_j` of the atom at that position:
-//!
-//! ```text
-//! score = Σ_j [ (j + 1)·0.11 + Z_j·0.08 ]
-//! ```
-//!
-//! **This is not a graph-automorphism partition, and using one would be wrong.**
-//! In exact arithmetic the sum collapses to
-//!
-//! ```text
-//! score = 0.11·L(L+1)/2 + 0.08·(Σ Z along the path)
-//! ```
-//!
-//! so a path enters the score only through its **length** and its **sum of atomic
-//! numbers**. Two things follow, and both are load-bearing.
-//!
-//! **It reads no bond orders and no formal charges.** A Kekulé carboxylate's two
-//! oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
-//! antechamber **merges** them and averages their charges. Any partition that
-//! respects bond order or formal charge (Morgan / Weisfeiler-Leman /
-//! [`crate::core::structural_hash`], which folds both into its colours) **splits**
-//! them. Orbits are therefore a **strictly finer** partition: the path score never
-//! splits an orbit — an automorphism maps a path to a path with the same ordered
-//! atomic numbers, hence the same score, bit for bit — but it does merge atoms that
-//! lie in different orbits. Averaging by orbits leaves acetate's two oxygens at the
-//! `sqm` values `-0.595 / -0.597` where antechamber returns `-0.596 / -0.596`: a
-//! symmetry-broken carboxylate, and a `1e-3` e divergence from the oracle. A graph
-//! hash may be used as a *pre-filter* (same orbit ⇒ same class) but never as the
-//! class engine.
-//!
-//! **It is order-blind only in exact arithmetic.** The score is accumulated
-//! left to right along the path in `f64`, and the comparison is exact, so two paths
-//! that are mathematically tied (same length, same `Σ Z`, different order — C–N–O
-//! and C–O–N) can still land one ULP apart: `H–H–C` sums to `1.2999999999999998`
-//! where `C–H–H` sums to `1.3`. The accumulation order is therefore part of the
-//! contract, not an implementation detail — the scorer accumulates left to right
-//! exactly as `scorepath()` does, so that the equality tested here is the equality
-//! antechamber tested. (A *tolerant* comparison would merge such a pair. That is
-//! the bug this exactness exists to prevent, and it is pinned by
-//! `two_atoms_a_tolerance_would_merge_are_kept_apart`.)
-//!
-//! # `-eq` levels
-//!
-//! | Level | antechamber | Meaning |
-//! |---|---|---|
-//! | [`EquivalenceLevel::Off`] | `-eq 0` | no equivalencing; every atom is its own class |
-//! | [`EquivalenceLevel::Paths`] | `-eq 1` | the path score above — **the default for `-c bcc` / `-c abcg2` / `-c resp`** (and *only* for those; every other charge method defaults to `0`) |
-//! | [`EquivalenceLevel::PathsAndGeometry`] | `-eq 2` | the path score with an E/Z coefficient per position, making the partition **strictly finer** than level 1 — never coarser |
-//!
-//! Because the default is per-charge-method, equivalencing is a **declaration of
-//! the charge model**, not a global pipeline stage: see the `needs_equivalencing`
-//! flag in the `ChargeModel` trait.
-//!
-//! [`EquivalenceOptions::max_path_length`] is antechamber's `-pl`: paths longer
-//! than the cap are not scored. The default is unlimited, matching `-pl -1`.
-//!
-//! # Averaging is a separate step
-//!
-//! Perception ends at the classes. The class-mean is a charge-model step
-//! (`ff::charge`), applied by a model that declares it wants equivalencing, so a
-//! model which does *not* simply never asks for the classes.
-//!
-//! # Provenance
-//!
-//! A reimplementation of the perception in AmberTools' `antechamber/equatom.c`
-//! (`scorepath()` / `equatom()`) and the class-mean in `charge.c::bccharge()`,
-//! written by reading that source with the AmberTools developers' permission; see
-//! `.claude/notes/notes.md` (2026-07-12) for the licensing posture.
 
 use std::collections::HashMap;
 
@@ -119,6 +32,19 @@ const CIS_COEF: f64 = 0.99;
 const MAX_CON: usize = 6;
 
 /// antechamber's `-eq`: which topological-equivalence model to use.
+///
+/// | Level | antechamber | Meaning |
+/// |---|---|---|
+/// | [`EquivalenceLevel::Off`] | `-eq 0` | no equivalencing; every atom is its own class |
+/// | [`EquivalenceLevel::Paths`] | `-eq 1` | the path score of [`perceive_equivalence_classes`] — **the default for `-c bcc` / `-c abcg2` / `-c resp`** (and *only* for those; every other charge method defaults to `0`) |
+/// | [`EquivalenceLevel::PathsAndGeometry`] | `-eq 2` | the path score with an E/Z coefficient per position, making the partition **strictly finer** than level 1 — never coarser |
+///
+/// Because the default is per-charge-method, equivalencing is a **declaration of
+/// the charge model**, not a global pipeline stage: see the `needs_equivalencing`
+/// flag in the `ChargeModel` trait.
+///
+/// [`EquivalenceOptions::max_path_length`] is antechamber's `-pl`: paths longer
+/// than the cap are not scored. The default is unlimited, matching `-pl -1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EquivalenceLevel {
     /// `-eq 0` — no equivalencing. Every atom is its own class, so averaging
@@ -244,9 +170,67 @@ impl EquivalenceClasses {
 
 /// Partition a molecule's atoms into charge-equivalence classes.
 ///
-/// The path-score algorithm described in the module docs of `perceive::equivalence`. At
-/// [`EquivalenceLevel::Off`] every atom is placed in a class of its own, so the
-/// caller can keep the pipeline shape and still opt out.
+/// At [`EquivalenceLevel::Off`] every atom is placed in a class of its own, so
+/// the caller can keep the pipeline shape and still opt out.
+///
+/// A semi-empirical calculation is done on **one conformer**, so its Mulliken
+/// charges are not symmetric: methanol's three methyl hydrogens come out of `sqm`
+/// as `(0.053, 0.098, 0.053)` purely because one of them eclipses the O–H. Feeding
+/// that straight into a force field yields **conformer-dependent, symmetry-broken**
+/// charges — the same molecule, re-embedded, would type differently. Averaging over
+/// the topological-equivalence classes removes the artefact (all three become
+/// `0.068`, the mean) and is what `antechamber -c bcc` does by default, *before*
+/// applying any bond-charge correction.
+///
+/// # The algorithm: path scores, **not** automorphism orbits
+///
+/// For every atom, enumerate **all simple paths starting at it**, score each path,
+/// sort the scores ascending, and compare. Two atoms are equivalent iff they have
+/// the **same number of paths** and their sorted score arrays are **elementwise
+/// exactly equal** (`f64` equality — there is no tolerance; see
+/// [`EquivalenceClasses`]).
+///
+/// The score of a path is the Antechamber paper's Eq. (I) — position index `j`
+/// (0-based) and atomic number `Z_j` of the atom at that position:
+///
+/// ```text
+/// score = Σ_j [ (j + 1)·0.11 + Z_j·0.08 ]
+/// ```
+///
+/// **This is not a graph-automorphism partition, and using one would be wrong.**
+/// In exact arithmetic the sum collapses to
+///
+/// ```text
+/// score = 0.11·L(L+1)/2 + 0.08·(Σ Z along the path)
+/// ```
+///
+/// so a path enters the score only through its **length** and its **sum of atomic
+/// numbers**. Two things follow, and both are load-bearing.
+///
+/// **It reads no bond orders and no formal charges.** A Kekulé carboxylate's two
+/// oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
+/// antechamber **merges** them and averages their charges. Any partition that
+/// respects bond order or formal charge (Morgan / Weisfeiler-Leman /
+/// [`crate::core::structural_hash`], which folds both into its colours) **splits**
+/// them. Orbits are therefore a **strictly finer** partition: the path score never
+/// splits an orbit — an automorphism maps a path to a path with the same ordered
+/// atomic numbers, hence the same score, bit for bit — but it does merge atoms that
+/// lie in different orbits. Averaging by orbits leaves acetate's two oxygens at the
+/// `sqm` values `-0.595 / -0.597` where antechamber returns `-0.596 / -0.596`: a
+/// symmetry-broken carboxylate, and a `1e-3` e divergence from the oracle. A graph
+/// hash may be used as a *pre-filter* (same orbit ⇒ same class) but never as the
+/// class engine.
+///
+/// **It is order-blind only in exact arithmetic.** The score is accumulated
+/// left to right along the path in `f64`, and the comparison is exact, so two paths
+/// that are mathematically tied (same length, same `Σ Z`, different order — C–N–O
+/// and C–O–N) can still land one ULP apart: `H–H–C` sums to `1.2999999999999998`
+/// where `C–H–H` sums to `1.3`. The accumulation order is therefore part of the
+/// contract, not an implementation detail — the scorer accumulates left to right
+/// exactly as `scorepath()` does, so that the equality tested here is the equality
+/// antechamber tested. (A *tolerant* comparison would merge such a pair. That is
+/// the bug this exactness exists to prevent, and it is pinned by
+/// `two_atoms_a_tolerance_would_merge_are_kept_apart`.)
 ///
 /// # Arguments
 ///
@@ -264,6 +248,13 @@ impl EquivalenceClasses {
 /// 37 molecules peak at 28 paths for a single atom), but a large fused-ring system
 /// can blow up; [`EquivalenceOptions::max_path_length`] is the escape hatch, and is
 /// why antechamber ships `-pl`.
+///
+/// # Provenance
+///
+/// A reimplementation of the perception in AmberTools' `antechamber/equatom.c`
+/// (`scorepath()` / `equatom()`) and the class-mean in `charge.c::bccharge()`,
+/// written by reading that source with the AmberTools developers' permission; see
+/// `.claude/notes/notes.md` (2026-07-12) for the licensing posture.
 pub fn perceive_equivalence_classes(
     mol: &Atomistic,
     opts: EquivalenceOptions,

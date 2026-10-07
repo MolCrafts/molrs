@@ -1,20 +1,4 @@
-//! Triangle meshes — a surface as shared vertices plus indexed faces.
-//!
-//! Sits beside [`region`](super::region) because that is what consumes it:
-//! molpack's `StlRegion` is a watertight [`TriMesh`] plus a containment rule,
-//! and molvis paints the same mesh as the container a trajectory plays inside.
-//! Reading one out of a file is `crate::io::stl`'s job (feature `io`); this
-//! is the geometry it hands back.
-//!
-//! Coordinates carry no units of their own — they are whatever the file said.
-//! Callers that know the file's unit convert with [`TriMesh::scaled`] (molpack
-//! reads STL as Å per file unit).
-//!
-//! The type is deliberately permissive: it stores whatever triangles it was
-//! given and answers questions about them ([`TriMesh::is_watertight`],
-//! [`TriMesh::first_degenerate_face`]). Refusing a mesh is the consumer's
-//! call — a packing region needs a closed surface to ask `contains`, a viewer
-//! only needs something to paint.
+//! Triangle meshes — a surface as shared vertices plus indexed faces: [`TriMesh`].
 
 use std::collections::HashMap;
 
@@ -29,6 +13,22 @@ use crate::op::vec3::{cross, sub};
 pub const DEGENERATE_AREA2: F = 1e-12;
 
 /// A triangle surface: shared vertices, and faces indexing into them.
+///
+/// Sits beside [`Region`](crate::core::Region) because that is what consumes it:
+/// molpack's `StlRegion` is a watertight `TriMesh` plus a containment rule,
+/// and molvis paints the same mesh as the container a trajectory plays inside.
+/// Reading one out of a file is `molrs::io::stl`'s job (feature `io`); this
+/// is the geometry it hands back.
+///
+/// Coordinates carry no units of their own — they are whatever the file said.
+/// Callers that know the file's unit convert with [`TriMesh::scaled`] (molpack
+/// reads STL as Å per file unit).
+///
+/// The type is deliberately permissive: it stores whatever triangles it was
+/// given and answers questions about them ([`TriMesh::is_watertight`],
+/// [`TriMesh::first_degenerate_face`]). Refusing a mesh is the consumer's
+/// call — a packing region needs a closed surface to ask `contains`, a viewer
+/// only needs something to paint.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TriMesh {
     vertices: Vec<[F; 3]>,

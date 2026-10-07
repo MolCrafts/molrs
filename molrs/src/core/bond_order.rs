@@ -1,22 +1,4 @@
-//! Bond class and localized bond number — the two orthogonal facts about a bond.
-//!
-//! A bond carries **two** independent properties, and conflating them is the
-//! defect this module exists to prevent:
-//!
-//! * [`BondOrder`] — what *kind* of bond it is. Aromatic is one of the kinds,
-//!   peer to single / double / triple. A class, never a number.
-//! * [`BondNumber`] — the integer bond number a localized Lewis / Kekulé
-//!   structure gives it. Always an integer.
-//!
-//! An aromatic bond is therefore `BondOrder::Aromatic` **and** a `BondNumber` of
-//! `Single` or `Double`: benzene's ring is six `Aromatic` types over an
-//! alternating `1,2,1,2,1,2` of numbers. There is no fractional bond number —
-//! `1.5` said "aromatic" and "one-and-a-half bonds" at once, so a consumer
-//! reading the number could not tell which was meant and drew six double bonds.
-//!
-//! Fractional bond orders from electronic structure (Wiberg, Mayer, resonance
-//! averages) are real quantities, but they are *computed properties* with their
-//! own keys — never these two.
+//! Bond class and localized bond number — the two orthogonal facts about a bond: [`BondOrder`] and [`BondNumber`].
 
 use crate::core::MolRsError;
 use crate::core::keys;
@@ -26,6 +8,24 @@ use crate::core::{KindId, MolGraph, PropValue, RelationId};
 ///
 /// Stored under [`keys::BOND_TYPE`] as its
 /// [`code`](BondOrder::code).
+///
+/// A bond carries **two** independent properties, and conflating them is the
+/// defect this pair of types exists to prevent:
+///
+/// * `BondOrder` — what *kind* of bond it is. Aromatic is one of the kinds,
+///   peer to single / double / triple. A class, never a number.
+/// * [`BondNumber`] — the integer bond number a localized Lewis / Kekulé
+///   structure gives it. Always an integer.
+///
+/// An aromatic bond is therefore `BondOrder::Aromatic` **and** a `BondNumber` of
+/// `Single` or `Double`: benzene's ring is six `Aromatic` types over an
+/// alternating `1,2,1,2,1,2` of numbers. There is no fractional bond number —
+/// `1.5` said "aromatic" and "one-and-a-half bonds" at once, so a consumer
+/// reading the number could not tell which was meant and drew six double bonds.
+///
+/// Fractional bond orders from electronic structure (Wiberg, Mayer, resonance
+/// averages) are real quantities, but they are *computed properties* with their
+/// own keys — never these two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BondOrder {
     /// The input did not say, and perception has not run.
@@ -42,7 +42,9 @@ pub enum BondOrder {
 /// The integer bond number of a localized Lewis / Kekulé structure.
 ///
 /// Stored under [`keys::BOND_NUMBER`] as its
-/// [`code`](BondNumber::code).
+/// [`code`](BondNumber::code). Orthogonal to the bond's class, [`BondOrder`]:
+/// an aromatic bond is `BondOrder::Aromatic` with a number of `Single` or
+/// `Double`, never a fractional one (see [`BondOrder`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
 pub enum BondNumber {
     /// Not yet assigned — an aromatic bond before kekulization, or an input

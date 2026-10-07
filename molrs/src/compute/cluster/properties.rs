@@ -3,25 +3,6 @@
 #![allow(clippy::needless_range_loop)]
 
 //! Per-cluster scalar / tensor properties, freud-compatible aggregator.
-//!
-//! Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
-//! reports its size, geometric center, mass-weighted center, the (mass-
-//! weighted) gyration tensor, and the scalar radius of gyration. All
-//! quantities are PBC-aware via [`Mic`](molrs::core::Mic): the first atom assigned to
-//! each cluster is used as the local reference and subsequent atom positions
-//! are accumulated through minimum-image displacements, so a cluster that
-//! wraps across the box boundary is handled correctly.
-//!
-//! # Conventions (matching `freud.cluster.ClusterProperties`)
-//!
-//! - `center`             unweighted mean position
-//! - `center_of_mass`     mass-weighted mean position (equal to `center`
-//!   when no masses are supplied)
-//! - `gyration_tensors`   `G_ab = (1/M) Σ_i m_i (r_i − r_com)_a (r_i − r_com)_b`
-//! - `radii_of_gyration`  `√(trace G)`
-//! - `sizes`              particle counts per cluster
-//!
-//! Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -55,6 +36,28 @@ impl ComputeResult for ClusterPropertiesResult {}
 
 /// freud-style `ClusterProperties`: bundles size, center, COM, gyration
 /// tensor, and RG into a single per-cluster pass.
+///
+/// Run [`Cluster`](crate::compute::Cluster) first and pass its
+/// [`ClusterResult`](crate::compute::ClusterResult) as `Args`.
+///
+/// Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
+/// reports its size, geometric center, mass-weighted center, the (mass-
+/// weighted) gyration tensor, and the scalar radius of gyration. All
+/// quantities are PBC-aware via [`Mic`](molrs::core::Mic): the first atom assigned to
+/// each cluster is used as the local reference and subsequent atom positions
+/// are accumulated through minimum-image displacements, so a cluster that
+/// wraps across the box boundary is handled correctly.
+///
+/// # Conventions (matching `freud.cluster.ClusterProperties`)
+///
+/// - `center`             unweighted mean position
+/// - `center_of_mass`     mass-weighted mean position (equal to `center`
+///   when no masses are supplied)
+/// - `gyration_tensors`   `G_ab = (1/M) Σ_i m_i (r_i − r_com)_a (r_i − r_com)_b`
+/// - `radii_of_gyration`  `√(trace G)`
+/// - `sizes`              particle counts per cluster
+///
+/// Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterProperties {
     masses: Option<Vec<F>>,

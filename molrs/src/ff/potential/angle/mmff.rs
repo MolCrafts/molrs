@@ -1,17 +1,4 @@
 //! MMFF94 angle bending and stretch-bend coupling kernels.
-//!
-//! `theta0` is a per-instance column in **degrees**, as MMFF's own tables and
-//! every molrs angle parameter are; the kernels convert it to radians once.
-//!
-//! # Linear centres
-//!
-//! At a linear centre (acetylene, nitrile, allene — MMFF atom-property
-//! `linh != 0`) the cubic bend is not merely inaccurate, it is the wrong
-//! functional form: it is a Taylor expansion about `theta0`, and there is no
-//! `theta0` to expand about when the equilibrium is 180 degrees and the angle is
-//! free to bend either way. MMFF switches to a cosine form there and skips the
-//! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
-//! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
@@ -60,6 +47,20 @@ const CB_RAD: f64 = -0.4;
 /// `ka` is in md·Å·rad⁻² and `theta0` in radians (143.9325 converts md·Å →
 /// kcal·mol⁻¹). `linear[idx]` selects the cosine form for angles whose *central*
 /// atom is a linear centre.
+///
+/// `theta0` is a per-instance column in **degrees**, as MMFF's own tables and
+/// every molrs angle parameter are; the kernels convert it to radians once.
+///
+/// # Linear centres
+///
+/// At a linear centre (acetylene, nitrile, allene — MMFF atom-property
+/// `linh != 0`) the cubic bend is not merely inaccurate, it is the wrong
+/// functional form: it is a Taylor expansion about `theta0`, and there is no
+/// `theta0` to expand about when the equilibrium is 180 degrees and the angle is
+/// free to bend either way. MMFF switches to a cosine form there and skips the
+/// stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
+/// angle row (from the *central* atom's `linh`), and this kernel and
+/// [`AngleMmffStretchBend`] both read it.
 pub struct AngleMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

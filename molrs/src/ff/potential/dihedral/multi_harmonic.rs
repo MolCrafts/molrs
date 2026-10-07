@@ -1,12 +1,4 @@
-//! Polynomial-in-cos φ proper dihedrals: LAMMPS `dihedral_style
-//! multi/harmonic` and `dihedral_style nharmonic`,
-//!
-//! E(φ) = Σ_{i=1..N} A_i · cos^(i−1)(φ)
-//!
-//! `multi/harmonic` is the N = 5 case (`a1..a5`, an absent one 0);
-//! `nharmonic` takes any N ≥ 1 (`a1..aN`, contiguous — LAMMPS's
-//! `dihedral_coeff t N A1 … AN`). The coefficients are energies. One kernel
-//! prices both.
+//! Polynomial-in-cos φ proper dihedrals (LAMMPS `multi/harmonic`, `nharmonic`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
@@ -24,6 +16,16 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Multi/harmonic (or nharmonic) proper dihedral with pre-resolved flat arrays.
+///
+/// Polynomial-in-cos φ proper dihedrals: LAMMPS `dihedral_style
+/// multi/harmonic` and `dihedral_style nharmonic`,
+///
+/// E(φ) = Σ_{i=1..N} A_i · cos^(i−1)(φ)
+///
+/// `multi/harmonic` is the N = 5 case (`a1..a5`, an absent one 0);
+/// `nharmonic` takes any N ≥ 1 (`a1..aN`, contiguous — LAMMPS's
+/// `dihedral_coeff t N A1 … AN`). The coefficients are energies. One kernel
+/// prices both.
 pub struct DihedralMultiHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

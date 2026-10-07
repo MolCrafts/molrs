@@ -1,13 +1,6 @@
 //! Result type for the radial distribution function [`Rdf`](super::Rdf):
 //! binned pair counts plus the normalized `g(r)` curve (bin edges/centers in
 //! Å).
-//!
-//! `g(r)` is the ratio of the number of neighbor pairs found at separation `r`
-//! to the number an ideal gas of the same number density would have there, so
-//! it is dimensionless and tends to 1 at large `r`. Turning raw counts into
-//! that ratio is what [`finalize`](ComputeResult::finalize) below does, and
-//! [`RdfMode`] is the one input to it that depends on *how* the pairs were
-//! searched rather than on where the particles are.
 
 use molrs::core::QueryMode;
 use molrs::op::F;
@@ -72,6 +65,13 @@ impl From<QueryMode> for RdfMode {
 /// meaningless — only `n_r`, `volume`, `n_points`, and `n_query_points` carry
 /// information. `Graph::run` calls `finalize` automatically; direct users of
 /// `Rdf::compute` must call it themselves before reading `rdf`.
+///
+/// `g(r)` is the ratio of the number of neighbor pairs found at separation `r`
+/// to the number an ideal gas of the same number density would have there, so
+/// it is dimensionless and tends to 1 at large `r`. Turning raw counts into
+/// that ratio is what [`finalize`](ComputeResult::finalize) below does, and
+/// [`RdfMode`] is the one input to it that depends on *how* the pairs were
+/// searched rather than on where the particles are.
 #[derive(Debug, Clone)]
 pub struct RdfResult {
     /// Bin edges in angstrom (n_bins + 1).

@@ -18,6 +18,53 @@
 //! | superposition | [`superpose`] → [`Superposition`]: the rigid motion that best lays one set of matched points onto another (least squares), and the weighted [`centroid`] |
 //! | molecule geometry | [`translate`], [`scale`], [`rotate`] and [`center`] on a `MolGraph`'s coordinates |
 //! | sampling | uniform directions on S² ([`unit_vector_from_uniform`]) and the standard normal ([`standard_normal`]) |
+//!
+//! # Numeric aliases
+//!
+//! Three families, each alias with exactly one public path, `molrs::op::<Alias>`:
+//!
+//! - The **F-prefix family** of ndarray-backed aliases over the scalar [`F`]
+//!   (always `f64`): [`F3`] (any `Array1<F>`), [`Fnx3`] (any `Array2<F>`) and
+//!   their views — the API types of the crate's column stores. One name per
+//!   type: a 3×3 box matrix is an `Fnx3`, an N-vector an `F3`.
+//! - The **non-float aliases** [`I`] (signed integer), [`Idx`] (an index or
+//!   stable identifier) and [`Pbc3`] (per-axis periodic flags).
+//! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
+//!   kernels compute on. [`to_vec3`] and [`to_mat3`] are where ndarray meets
+//!   them.
+//!
+//! # Molecule geometry
+//!
+//! The vocabulary is that of the entity–component–system (ECS) design molrs
+//! uses for its graphs: a node is an *entity*, its properties (`x`, `mass`, …)
+//! are *components*, and a *system* is a function that runs over the whole
+//! data set (the *world*). The graph is pure data, so spatial transforms and
+//! reductions live here as free functions rather than as methods on the data
+//! structure. Coordinates are read and written through the canonical
+//! [`crate::core::keys`] coordinate convention — no field-name literals — and
+//! are in Å by molrs convention.
+//!
+//! No function here applies a periodic image convention: [`MolGraph`](crate::core::MolGraph) holds no
+//! box. Callers unwrap and wrap with
+//! [`SimBox`](crate::core::SimBox) themselves.
+//!
+//! # Quaternions
+//!
+//! A **quaternion** is a four-component number `q = w + x i + y j + z k`,
+//! stored as [`Quat`] `(w, x, y, z)`, multiplied with the Hamilton rules
+//! `i² = j² = k² = ijk = −1` (so `i j = k` but `j i = −k`). Its conjugate is
+//! `q* = w − x i − y j − z k`. A *unit* quaternion (`|q| = 1`) encodes a
+//! rotation: writing a vector `v` as the pure quaternion `0 + vₓ i + v_y j +
+//! v_z k`, the rotated vector is `q v q*`; the rotation by angle `θ` about the
+//! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
+//!
+//! # Linear algebra tolerances
+//!
+//! Every tolerance of [`inv3`], [`eigh_sym_3x3`] and [`eigh_sym_4x4`] is
+//! **relative** to the matrix norm, so each result is
+//! invariant under a uniform rescaling of the input: a structure in nm and the
+//! same structure in Å give the same eigenvectors, and a well-conditioned
+//! matrix of small entries is never declared singular.
 mod geometry;
 mod linalg;
 mod numeric;

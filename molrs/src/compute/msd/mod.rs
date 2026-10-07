@@ -1,26 +1,4 @@
 //! Mean squared displacement analysis (stateless).
-//!
-//! # Hard precondition — unwrapped coordinates
-//!
-//! Positions must be **continuous / unwrapped** across the trajectory (or
-//! unwrapped by the caller with image flags + box **before** MSD). This
-//! kernel does **not** apply the minimum-image convention: MIC inside MSD
-//! re-wraps jumps and destroys the Einstein diffusion signal. Wrapped PBC
-//! dumps silently saturate MSD ~ \(L^2\) and yield meaningless \(D\).
-//! Same contract as freud `Msd` / MDAnalysis EinsteinMSD.
-//!
-//! Given a slice of frames, produces one [`MsdResult`] per lag-time. Two
-//! modes are supported, matching the conventions in `freud.msd`:
-//!
-//! - [`MsdMode::Direct`] — `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` with frame 0 as
-//!   the single time origin. The original molrs behaviour.
-//! - [`MsdMode::Window`] — `Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩_{i, τ}` averaged
-//!   over all time origins τ. Implemented in O(N log N) via the
-//!   Wiener–Khinchin identity (zero-padded autocorrelation through
-//!   `rustfft`) — the nMoldyn / Allen-Tildesley algorithm.
-//!
-//! Both modes produce the same `MsdTimeSeries` output shape; callers select
-//! via [`Msd::with_mode`] (default is `Direct` for backward compatibility).
 
 mod accumulator;
 mod result;
@@ -50,6 +28,28 @@ pub enum MsdMode {
 }
 
 /// Mean squared displacement analysis.
+///
+/// # Hard precondition — unwrapped coordinates
+///
+/// Positions must be **continuous / unwrapped** across the trajectory (or
+/// unwrapped by the caller with image flags + box **before** MSD). This
+/// kernel does **not** apply the minimum-image convention: MIC inside MSD
+/// re-wraps jumps and destroys the Einstein diffusion signal. Wrapped PBC
+/// dumps silently saturate MSD ~ \(L^2\) and yield meaningless \(D\).
+/// Same contract as freud `Msd` / MDAnalysis EinsteinMSD.
+///
+/// Given a slice of frames, produces one [`MsdResult`] per lag-time. Two
+/// modes are supported, matching the conventions in `freud.msd`:
+///
+/// - [`MsdMode::Direct`] — `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` with frame 0 as
+///   the single time origin. The original molrs behaviour.
+/// - [`MsdMode::Window`] — `Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩_{i, τ}` averaged
+///   over all time origins τ. Implemented in O(N log N) via the
+///   Wiener–Khinchin identity (zero-padded autocorrelation through
+///   `rustfft`) — the nMoldyn / Allen-Tildesley algorithm.
+///
+/// Both modes produce the same `MsdTimeSeries` output shape; callers select
+/// via [`Msd::with_mode`] (default is `Direct` for backward compatibility).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Msd {
     mode: MsdMode,

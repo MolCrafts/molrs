@@ -4,32 +4,6 @@
 
 //! Small dense linear algebra on the stack: 3×3 determinant and inverse, and
 //! the symmetric 3×3 / 4×4 eigensolvers.
-//!
-//! Every tolerance here is **relative** to the matrix norm, so each result is
-//! invariant under a uniform rescaling of the input: a structure in nm and the
-//! same structure in Å give the same eigenvectors, and a well-conditioned
-//! matrix of small entries is never declared singular.
-//!
-//! # Eigensolver
-//!
-//! Cyclic Jacobi rotations (Press et al., *Numerical Recipes*, §11.1): each
-//! step applies a plane rotation that zeroes one off-diagonal pair, and
-//! sweeping over all pairs repeatedly drives the matrix to diagonal form, the
-//! eigenvalues on the diagonal and the accumulated rotations as the
-//! eigenvectors. For these sizes the closed-form (cubic / quartic root)
-//! solutions are faster but numerically delicate near degenerate eigenvalues
-//! (a liquid-crystal order tensor, the gyration tensor of a sphere, the Horn
-//! superposition matrix of a symmetric point set); Jacobi converges in a
-//! handful of sweeps and is robust there. Both solvers return **all**
-//! eigenvalues sorted descending with unit eigenvectors as the columns of an
-//! orthogonal `V`, so `Vᵀ A V = diag(λ)`. Only the upper triangle of the
-//! input is read.
-//!
-//! `‖A‖_F = √(Σᵢⱼ Aᵢⱼ²)` is the Frobenius norm. The Jacobi tolerance is
-//! `tol = 1e-15·‖A‖_F`, used for the sweep stop, for
-//! skipping an already-small off-diagonal pair and for the equal-diagonal
-//! branch. (An absolute tolerance stops early on a small-scale matrix: at
-//! 1e-8 scale the former absolute 1e-14 returned a basis rotated by 0.93 rad.)
 
 use crate::op::{F, Mat3, Vec3};
 
@@ -88,6 +62,22 @@ pub fn inv3(m: &Mat3) -> Option<Mat3> {
 /// Returns `(λ, V)` with `λ` sorted descending and column `V[·][i]` the unit
 /// eigenvector of `λ[i]`. Only the upper triangle of `a` is read. A zero matrix
 /// returns zero eigenvalues and the identity basis.
+///
+/// Cyclic Jacobi rotations (Press et al., *Numerical Recipes*, §11.1): each
+/// step applies a plane rotation that zeroes one off-diagonal pair, and
+/// sweeping over all pairs repeatedly drives the matrix to diagonal form, the
+/// eigenvalues on the diagonal and the accumulated rotations as the
+/// eigenvectors. For these sizes the closed-form (cubic / quartic root)
+/// solutions are faster but numerically delicate near degenerate eigenvalues
+/// (a liquid-crystal order tensor, the gyration tensor of a sphere, the Horn
+/// superposition matrix of a symmetric point set); Jacobi converges in a
+/// handful of sweeps and is robust there.
+///
+/// `‖A‖_F = √(Σᵢⱼ Aᵢⱼ²)` is the Frobenius norm. The Jacobi tolerance is
+/// `tol = 1e-15·‖A‖_F`, used for the sweep stop, for
+/// skipping an already-small off-diagonal pair and for the equal-diagonal
+/// branch. (An absolute tolerance stops early on a small-scale matrix: at
+/// 1e-8 scale the former absolute 1e-14 returned a basis rotated by 0.93 rad.)
 pub fn eigh_sym_3x3(a: &Mat3) -> (Vec3, Mat3) {
     jacobi(a)
 }

@@ -1,14 +1,4 @@
 //! MolRec record aggregate — L2 of the MolRec contract.
-//!
-//! A [`MolRec`] is one openable root carrying `meta` plus at least one of
-//! `frame`, `system`, `trajectory`, `forcefield`, or `status`. It is backend-neutral: this
-//! module is the in-memory aggregate, not a file format. Reading and writing
-//! a record as a `*.mrec` directory is `molrs::io::mrec` (feature `zarr`).
-//!
-//! Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/overview.md`).
-//! `meta.molrec_version` is the **sole** version key of a record; there is
-//! no parallel per-frame schema version and no `format_name` key — the
-//! scientific path brand is the `*.mrec/` suffix.
 
 use std::collections::BTreeMap;
 
@@ -99,6 +89,15 @@ impl Observables {
 /// Sections map one-to-one onto the contract's root layout. `meta` is always
 /// written; the remaining sections are optional. A root section the reader does
 /// not interpret is ignored, never reinterpreted.
+///
+/// It is backend-neutral: the in-memory aggregate, not a file format. Reading
+/// and writing a record as a `*.mrec` directory is [`crate::io::mrec`]'s
+/// (feature `zarr`).
+///
+/// Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/overview.md`).
+/// `meta.molrec_version` is the **sole** version key of a record; there is no
+/// parallel per-frame schema version and no `format_name` key — the scientific
+/// path brand is the `*.mrec/` suffix.
 #[derive(Debug, Clone, Default)]
 pub struct MolRec {
     /// Record-level metadata. The writer adds the reserved contract keys

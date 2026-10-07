@@ -1,10 +1,4 @@
 //! CSV tables as a [`Block`] — hand-written, no external crate.
-//!
-//! `read_csv_block` / `read_csv_block_str` parse CSV text into a `Block`, inferring each column's
-//! dtype as int → float → str (the first that parses every cell wins).
-//! `write_csv_block` / `write_csv_block_str` serialize a `Block` back to CSV text. Fields are split /
-//! joined on a single-character delimiter; values are trimmed on read. Quoting
-//! and escaping are intentionally not handled (simple numeric/label tables).
 
 use ndarray::Array1;
 
@@ -17,6 +11,9 @@ use crate::op::{F, I};
 /// If `header` is `Some`, the text is treated as headerless and those names are
 /// used; otherwise the first non-empty line provides the column names. Blank
 /// lines are skipped. Per-column dtype is inferred int → float → str.
+///
+/// Fields are split on a single-character delimiter and trimmed; quoting and
+/// escaping are intentionally not handled (simple numeric / label tables).
 pub fn read_csv_block_str(
     text: &str,
     delimiter: char,
@@ -89,6 +86,9 @@ fn insert_inferred(block: &mut Block, name: String, raw: Vec<String>) -> Result<
 }
 
 /// Serialize `block` to CSV text (inverse of [`read_csv_block_str`]).
+///
+/// Fields are joined on a single-character delimiter; quoting and escaping
+/// are intentionally not handled.
 pub fn write_csv_block_str(block: &Block, delimiter: char, header: bool) -> String {
     let names: Vec<&str> = block.keys().collect();
     let nrows = block.nrows().unwrap_or(0);

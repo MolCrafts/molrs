@@ -1,41 +1,5 @@
 //! General aromaticity perception aligned to RDKit's default model
 //! (`AROMATICITY_RDKIT`).
-//!
-//! This is a BSD-3 port of RDKit's `setAromaticity` default-model code path,
-//! re-expressed against `MolGraph`. It perceives aromaticity from scratch
-//! (Kekulé bond orders + element + formal charge), writing back an
-//! `is_aromatic` atom property and a `bond_type` of `Aromatic` so that
-//! [`crate::perceive::smarts::SmartsPattern`]'s `a` / `c` / `:` primitives match RDKit after
-//! native perception (rather than relying on transplanted flags).
-//!
-//! # Algorithm (RDKit `aromaticityHelper(mol, srings, 0, 0, true)`)
-//!
-//! 1. Compute SSSR rings ([`crate::perceive::perceive_rings`]).
-//! 2. For each ring atom, classify its π-electron donor type
-//!    (`getAtomDonorTypeArom` → `ElectronDonor`) using a per-atom electron
-//!    count (`countAtomElec`) plus exocyclic / cyclic multiple-bond rules, and
-//!    test atom candidacy (`isAtomCandForArom`).
-//! 3. Keep rings where *every* atom is a candidate (and not all dummy).
-//! 4. Over each fused system (rings sharing a bond), enumerate ring
-//!    combinations up to size 6, union the atoms present in exactly one or two
-//!    of the chosen rings, and apply the Hückel `4n+2` test on the min/max
-//!    electron range (`applyHuckel`).
-//! 5. Bonds appearing in exactly one of the aromatic ring set are marked
-//!    `bond_type = Aromatic`; their atoms get `is_aromatic = 1`.
-//!
-//! # Scope
-//!
-//! Only the RDKit default model is ported (not MDL / Simple / MMFF94). The
-//! MMFF-specific aromaticity model in `molrs-ff` is intentionally independent.
-//!
-//! # Reference
-//!
-//! RDKit `Code/GraphMol/Aromaticity.cpp` (`setAromaticity`, `aromaticityHelper`,
-//! `applyHuckel`, `applyHuckelToFused`, `getMinMaxAtomElecs`,
-//! `getAtomDonorTypeArom`, `isAtomCandForArom`, `countAtomElec`,
-//! `incidentNonCyclicMultipleBond`, `incidentCyclicMultipleBond`,
-//! `markAtomsBondsArom`). BSD 3-Clause, © 2001-2024 RDKit contributors.
-//! <https://github.com/rdkit/rdkit>
 
 use std::collections::{HashMap, HashSet};
 
@@ -710,6 +674,44 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>])
 /// Hydrogens are neither added nor required: implicit hydrogens are read off
 /// each atom's valence, so running
 /// [`add_hydrogens`](crate::perceive::add_hydrogens) first changes no answer.
+///
+/// # Perception
+///
+/// The perception is a BSD-3 port of RDKit's `setAromaticity` default-model code path,
+/// re-expressed against `MolGraph`. It perceives aromaticity from scratch
+/// (Kekulé bond orders + element + formal charge), writing back an
+/// `is_aromatic` atom property and a `bond_type` of `Aromatic` so that
+/// [`SmartsPattern`](crate::perceive::smarts::SmartsPattern)'s `a` / `c` / `:` primitives match RDKit after
+/// native perception (rather than relying on transplanted flags).
+///
+/// # Algorithm (RDKit `aromaticityHelper(mol, srings, 0, 0, true)`)
+///
+/// 1. Compute SSSR rings ([`crate::perceive::perceive_rings`]).
+/// 2. For each ring atom, classify its π-electron donor type
+///    (`getAtomDonorTypeArom` → `ElectronDonor`) using a per-atom electron
+///    count (`countAtomElec`) plus exocyclic / cyclic multiple-bond rules, and
+///    test atom candidacy (`isAtomCandForArom`).
+/// 3. Keep rings where *every* atom is a candidate (and not all dummy).
+/// 4. Over each fused system (rings sharing a bond), enumerate ring
+///    combinations up to size 6, union the atoms present in exactly one or two
+///    of the chosen rings, and apply the Hückel `4n+2` test on the min/max
+///    electron range (`applyHuckel`).
+/// 5. Bonds appearing in exactly one of the aromatic ring set are marked
+///    `bond_type = Aromatic`; their atoms get `is_aromatic = 1`.
+///
+/// # Scope
+///
+/// Only the RDKit default model is ported (not MDL / Simple / MMFF94). The
+/// MMFF-specific aromaticity model (crate-private, read by the MMFF typifier) is intentionally independent.
+///
+/// # Reference
+///
+/// RDKit `Code/GraphMol/Aromaticity.cpp` (`setAromaticity`, `aromaticityHelper`,
+/// `applyHuckel`, `applyHuckelToFused`, `getMinMaxAtomElecs`,
+/// `getAtomDonorTypeArom`, `isAtomCandForArom`, `countAtomElec`,
+/// `incidentNonCyclicMultipleBond`, `incidentCyclicMultipleBond`,
+/// `markAtomsBondsArom`). BSD 3-Clause, © 2001-2024 RDKit contributors.
+/// <https://github.com/rdkit/rdkit>
 pub fn assign_aromaticity(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     if !out.bonds().any(|(bid, _)| out.bond_type(bid).is_aromatic()) {

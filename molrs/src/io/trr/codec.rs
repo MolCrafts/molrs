@@ -1,66 +1,4 @@
 //! GROMACS TRR binary trajectory reader and writer.
-//!
-//! TRR is the full-precision GROMACS trajectory format: an XDR (big-endian)
-//! stream of self-describing per-frame records carrying any subset of box,
-//! coordinates, velocities, and forces, in single **or** double precision.
-//!
-//! # Per-frame layout (XDR, big-endian)
-//!
-//! ```text
-//! magic        i32 = 1993
-//! ver_len      i32              (strlen+1 allocation hint; ignored)
-//! version      XDR string       ("GMX_trn_file")
-//! ir_size      i32              (legacy; must be 0)
-//! e_size       i32              (legacy; must be 0)
-//! box_size     i32 (bytes)      (>0 ⇒ a 3×3 box follows)
-//! vir_size     i32 (bytes)      (virial; skipped)
-//! pres_size    i32 (bytes)      (pressure; skipped)
-//! top_size     i32              (legacy; must be 0)
-//! sym_size     i32              (legacy; must be 0)
-//! x_size       i32 (bytes)      (>0 ⇒ coordinates follow)
-//! v_size       i32 (bytes)      (>0 ⇒ velocities follow)
-//! f_size       i32 (bytes)      (>0 ⇒ forces follow)
-//! natoms       i32
-//! step         i32
-//! nre          i32
-//! t            real             (time, ps)
-//! lambda       real
-//! [box]   3×3 reals             if box_size  != 0
-//! [vir]   3×3 reals             if vir_size  != 0   (skipped)
-//! [pres]  3×3 reals             if pres_size != 0   (skipped)
-//! [x]     natoms×3 reals (nm)   if x_size    != 0
-//! [v]     natoms×3 reals        if v_size    != 0
-//! [f]     natoms×3 reals        if f_size    != 0
-//! ```
-//!
-//! `real` is `f32` or `f64` per frame; the width is inferred from a known
-//! block's byte size (`box_size / 9`, falling back to `x_size / (natoms*3)`).
-//!
-//! # Output Frame
-//!
-//! - `atoms` block: `id` (1-based), `x`/`y`/`z` (nm), plus `vx`/`vy`/`vz` and
-//!   `fx`/`fy`/`fz` when the frame carries velocities / forces.
-//! - `frame.simbox`: from the box (GROMACS row-stored vectors → column-stored
-//!   `SimBox` H matrix). Absent when `box_size == 0`.
-//! - `frame.meta`: `step`, `time`, `lambda`.
-//!
-//! Coordinates stay in **nm** (GROMACS-native), matching the GRO reader.
-//!
-//! # Examples
-//!
-//! ```no_run
-//! use molrs::io::{read_trr_trajectory, write_trr_trajectory};
-//! use molrs::io::trr::TrrReader;
-//! use molrs::io::reader::TrajectoryReader;
-//!
-//! # fn main() -> std::io::Result<()> {
-//! let frames = read_trr_trajectory("traj.trr")?;          // sequential, all frames
-//! let mut r = TrrReader::open("traj.trr")?;            // random access
-//! let frame_5 = r.read_step(5)?;
-//! write_trr_trajectory("out.trr", &frames)?;
-//! # Ok(())
-//! # }
-//! ```
 
 use crate::core::constants::ANGSTROM_PER_NM;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
@@ -393,6 +331,69 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 ///   does **not** build the offset index (one pass over the file).
 /// - [`TrajectoryReader::read_step`] / [`TrajectoryReader::len`] build the index
 ///   on demand for random access and known length.
+///
+/// TRR is the full-precision GROMACS trajectory format: an XDR (big-endian)
+/// stream of self-describing per-frame records carrying any subset of box,
+/// coordinates, velocities, and forces, in single **or** double precision.
+///
+/// # Per-frame layout (XDR, big-endian)
+///
+/// ```text
+/// magic        i32 = 1993
+/// ver_len      i32              (strlen+1 allocation hint; ignored)
+/// version      XDR string       ("GMX_trn_file")
+/// ir_size      i32              (legacy; must be 0)
+/// e_size       i32              (legacy; must be 0)
+/// box_size     i32 (bytes)      (>0 ⇒ a 3×3 box follows)
+/// vir_size     i32 (bytes)      (virial; skipped)
+/// pres_size    i32 (bytes)      (pressure; skipped)
+/// top_size     i32              (legacy; must be 0)
+/// sym_size     i32              (legacy; must be 0)
+/// x_size       i32 (bytes)      (>0 ⇒ coordinates follow)
+/// v_size       i32 (bytes)      (>0 ⇒ velocities follow)
+/// f_size       i32 (bytes)      (>0 ⇒ forces follow)
+/// natoms       i32
+/// step         i32
+/// nre          i32
+/// t            real             (time, ps)
+/// lambda       real
+/// [box]   3×3 reals             if box_size  != 0
+/// [vir]   3×3 reals             if vir_size  != 0   (skipped)
+/// [pres]  3×3 reals             if pres_size != 0   (skipped)
+/// [x]     natoms×3 reals (nm)   if x_size    != 0
+/// [v]     natoms×3 reals        if v_size    != 0
+/// [f]     natoms×3 reals        if f_size    != 0
+/// ```
+///
+/// `real` is `f32` or `f64` per frame; the width is inferred from a known
+/// block's byte size (`box_size / 9`, falling back to `x_size / (natoms*3)`).
+///
+/// # Output Frame
+///
+/// - `atoms` block: `id` (1-based), `x`/`y`/`z` (Å), plus `vx`/`vy`/`vz` (Å/ps)
+///   and `fx`/`fy`/`fz` (kJ/mol/Å) when the frame carries velocities / forces.
+/// - `frame.simbox`: from the box (GROMACS row-stored vectors → column-stored
+///   `SimBox` H matrix, in Å). Absent when `box_size == 0`.
+/// - `frame.meta`: `step`, `time`, `lambda`.
+///
+/// The file is in **nm**; the reader converts to Å and the writer back, as the
+/// GRO reader does.
+///
+/// # Examples
+///
+/// ```no_run
+/// use molrs::io::{read_trr_trajectory, write_trr_trajectory};
+/// use molrs::io::trr::TrrReader;
+/// use molrs::io::reader::TrajectoryReader;
+///
+/// # fn main() -> std::io::Result<()> {
+/// let frames = read_trr_trajectory("traj.trr")?;          // sequential, all frames
+/// let mut r = TrrReader::open("traj.trr")?;            // random access
+/// let frame_5 = r.read_step(5)?;
+/// write_trr_trajectory("out.trr", &frames)?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct TrrReader<R: BufRead + Seek> {
     reader: R,
     offsets: OnceLock<Vec<u64>>,

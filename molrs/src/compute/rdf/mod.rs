@@ -1,12 +1,4 @@
 //! Radial distribution function g(r) computation.
-//!
-//! Accumulates pair distances from neighbor lists (one per frame) into a
-//! histogram between `r_min` and `r_max`, then normalizes by the ideal-gas
-//! shell volume at the system number density during
-//! [`ComputeResult::finalize`](crate::compute::ComputeResult::finalize).
-//!
-//! Each frame contributes its own `SimBox` volume; non-periodic frames error
-//! out — the compute never fabricates a bounding box.
 
 mod accumulator;
 mod result;
@@ -31,6 +23,14 @@ use crate::compute::require_dist_sq;
 /// Stateless parameter container: bin count, radial cutoffs, and precomputed
 /// bin edges/centers. Actual histograms are built inside each
 /// [`compute`](Compute::compute) call.
+///
+/// Accumulates pair distances from neighbor lists (one per frame) into a
+/// histogram between `r_min` and `r_max`, then normalizes by the ideal-gas
+/// shell volume at the system number density during
+/// [`ComputeResult::finalize`](crate::compute::ComputeResult::finalize).
+///
+/// Each frame contributes its own `SimBox` volume; non-periodic frames error
+/// out — the compute never fabricates a bounding box.
 #[derive(Debug, Clone)]
 pub struct Rdf {
     n_bins: usize,

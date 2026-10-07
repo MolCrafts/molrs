@@ -1,8 +1,4 @@
-//! UFF van der Waals: E = D · [(x/r)¹² − 2·(x/r)⁶] (RDKit `vdWContrib`).
-//!
-//! Per-instance columns on the `pairs` block: `xij`, `Dij` (baked by the
-//! typifier after the neighbour list is built — but the typifier only sets
-//! atom `x1`/`D1`; this ctor combines them geometrically like RDKit).
+//! UFF van der Waals (RDKit `vdWContrib`).
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::flat_coords::validate_coords;
@@ -41,6 +37,11 @@ enum Source {
     },
 }
 
+/// UFF van der Waals: E = D · [(x/r)¹² − 2·(x/r)⁶] (RDKit `vdWContrib`).
+///
+/// Per-instance columns on the `pairs` block: `xij`, `Dij` (baked by the
+/// typifier after the neighbour list is built — but the typifier only sets
+/// atom `x1`/`D1`; this ctor combines them geometrically like RDKit).
 pub struct PairUffVdw {
     source: Source,
 }

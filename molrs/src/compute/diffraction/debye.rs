@@ -1,30 +1,4 @@
 //! Closed-form Debye static structure factor.
-//!
-//! Mirrors `freud.diffraction.StaticStructureFactorDebye`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDebye.cc)).
-//!
-//! The spherically-averaged Debye scattering equation reads
-//!
-//! ```text
-//!   S(k) = (1/N) Σ_{i, j} sin(k r_ij) / (k r_ij)
-//! ```
-//!
-//! where the sum runs over **all ordered pairs** including `i = j`
-//! (which contributes `1` each, i.e. `N`). The implementation walks every
-//! pair once via an `O(N²)` loop — there is no cutoff in Debye's form, so
-//! a neighbor list does not help here. For sparse systems the upcoming
-//! Phase 9 `StaticStructureFactorDirect` (FFT-based) is preferred.
-//!
-//! # Conventions
-//!
-//! - `k` values are passed in as an explicit array of magnitudes (`Å⁻¹`).
-//! - `S(0) = N` exactly (per `lim_{k→0} sin(k r) / (k r) = 1`).
-//! - The asymptote `S(k → ∞) → 1` is approached as the off-diagonal sum
-//!   averages to zero.
-//! - Periodic boxes: distances are *not* minimum-imaged here. freud's
-//!   `Debye` uses the raw inter-particle distance and warns the user that
-//!   PBC should usually be turned off for a meaningful Debye calculation
-//!   (the formula assumes an open system).
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -36,6 +10,32 @@ use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 
 /// Debye structure-factor calculator.
+///
+/// Mirrors `freud.diffraction.StaticStructureFactorDebye`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDebye.cc)).
+///
+/// The spherically-averaged Debye scattering equation reads
+///
+/// ```text
+///   S(k) = (1/N) Σ_{i, j} sin(k r_ij) / (k r_ij)
+/// ```
+///
+/// where the sum runs over **all ordered pairs** including `i = j`
+/// (which contributes `1` each, i.e. `N`). The implementation walks every
+/// pair once via an `O(N²)` loop — there is no cutoff in Debye's form, so
+/// a neighbor list does not help here. For sparse systems the upcoming
+/// Phase 9 `StaticStructureFactorDirect` (FFT-based) is preferred.
+///
+/// # Conventions
+///
+/// - `k` values are passed in as an explicit array of magnitudes (`Å⁻¹`).
+/// - `S(0) = N` exactly (per `lim_{k→0} sin(k r) / (k r) = 1`).
+/// - The asymptote `S(k → ∞) → 1` is approached as the off-diagonal sum
+///   averages to zero.
+/// - Periodic boxes: distances are *not* minimum-imaged here. freud's
+///   `Debye` uses the raw inter-particle distance and warns the user that
+///   PBC should usually be turned off for a meaningful Debye calculation
+///   (the formula assumes an open system).
 #[derive(Debug, Clone)]
 pub struct StaticStructureFactorDebye {
     k_values: Array1<F>,

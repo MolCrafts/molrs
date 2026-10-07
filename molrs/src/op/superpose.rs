@@ -1,62 +1,5 @@
 //! Weighted least-squares superposition of matched point sets (Horn's
 //! quaternion method), and the weighted centroid.
-//!
-//! **Superposition** answers: given two copies of the same set of points,
-//! `reference` rows `rᵢ` and `target` rows `yᵢ` (row `i` of one matched to row
-//! `i` of the other), which rotation `R` and translation `t` lay the reference
-//! onto the target as closely as possible? "Proper" means `R` is a true
-//! rotation (determinant +1), never a mirror image. With weights `wᵢ ≥ 0`,
-//! [`superpose`] returns the proper rigid motion `p' = R p + t` minimising
-//! `Σ wᵢ |R rᵢ + t − yᵢ|²`, its weighted RMSD (root-mean-square deviation,
-//! `√(Σ wᵢ |R rᵢ + t − yᵢ|² / Σ wᵢ)`, in the coordinates' length unit, Å in
-//! molrs), and how well the data fix the rotation ([`Freedom`]).
-//!
-//! # Method
-//!
-//! Horn, *J. Opt. Soc. Am. A* **4**, 629 (1987), doi:10.1364/JOSAA.4.000629,
-//! §2.C and App. A2/A3; Coutsias, Seok & Dill, *J. Comput. Chem.* **25**, 1849
-//! (2004), doi:10.1002/jcc.20110; Kabsch, *Acta Cryst. A* **32**, 922 (1976),
-//! doi:10.1107/S0567739476001873.
-//!
-//! - Points of weight 0 are dropped. With `c_r = Σ w r / Σ w` and `c_y` alike,
-//!   `p = r − c_r` and `x = y − c_y`.
-//! - `S = Σ w p xᵀ`. The weight enters once (Coutsias's "multiply by `w_k`"
-//!   means `√w` on each factor).
-//! - Horn's symmetric 4×4 key matrix `N(S)` has the optimal rotation quaternion
-//!   `q₁` as its top eigenvector ([`eigh_sym_4x4`]). A unit quaternion always
-//!   encodes a proper rotation, so there is no `det = −1` branch: the
-//!   reflection check Kabsch's singular-value method needs (to reject a
-//!   mirror-image `det = −1` solution) is automatic here.
-//! - `t = c_y − R c_r`.
-//! - `RMSD_w² = Σ w |R p − x|² / Σ w`, evaluated from the residuals. The
-//!   algebraically equal `(Σw|p|² + Σw|x|² − 2λ₁)/Σw` cancels catastrophically
-//!   near a perfect fit (a 1e-16 error in `λ₁` is a 1e-8 RMSD).
-//!
-//! # Uniqueness
-//!
-//! The eigenvalues of `N` are `{σ₁+σ₂+χσ₃, σ₁−σ₂−χσ₃, −σ₁+σ₂−χσ₃,
-//! −σ₁−σ₂+χσ₃}` with `σ` the singular values of `S` and `χ = sgn det S`, so
-//! `λ₁ − λ₂ = 2(σ₂ + χσ₃)` and the fit is unique iff `λ₁ > λ₂`. The robust
-//! test is on the scale-free gap `ρ = (λ₁ − λ₂)/(2σ₁)` with
-//! `σ₁ = √λ_max(SᵀS)`:
-//!
-//! - `σ₁ ≈ 0` (one point, or a target collapsed to a point): no rotation is
-//!   determined, [`Freedom::Free`], and `R = I`.
-//! - `ρ ≥ gap_tol`: [`Freedom::Unique`].
-//! - otherwise (two points, collinear points, correspondence-rank loss, mirror
-//!   data with `det S < 0` and `σ₂ = σ₃`): [`Freedom::Spin`]. With
-//!   `λ₁ = λ₂` every `q(φ) = q₁ cos φ + q₂ sin φ` is optimal, and
-//!   `q₁* ⊗ q₂ = (0, v)` with `|v| = 1`, so `R(φ) = Rot(R₁v, 2φ)·R₁`, where
-//!   `Rot(a, α)` is the rotation by `α` about the unit axis `a`: a free
-//!   spin about the axis `R₁v` through `c_y`. The returned `rigid` is the
-//!   `φ = 0` member; choosing another is the caller's job.
-//!
-//! Under-determination is **reported, not refused**.
-//!
-//! # Errors
-//!
-//! [`SuperpositionError`], a local enum: mismatched lengths, a negative or
-//! non-finite weight, a non-finite coordinate, or no positive weight.
 
 use crate::op::vec3::{dot, norm, sub};
 use crate::op::{F, Mat3, Vec3};
@@ -188,7 +131,58 @@ pub fn centroid(points: &[Vec3], weights: &[F]) -> Option<Vec3> {
 /// `weights`, with the rotation's [`Freedom`] judged against `gap_tol` on `ρ`
 /// (use [`DEFAULT_GAP_TOL`] unless a caller has its own error budget).
 ///
-/// Points of weight 0 are dropped (their coordinates are not read further).
+/// **Superposition** answers: given two copies of the same set of points,
+/// `reference` rows `rᵢ` and `target` rows `yᵢ` (row `i` of one matched to row
+/// `i` of the other), which rotation `R` and translation `t` lay the reference
+/// onto the target as closely as possible? "Proper" means `R` is a true
+/// rotation (determinant +1), never a mirror image. With weights `wᵢ ≥ 0`,
+/// [`superpose`] returns the proper rigid motion `p' = R p + t` minimising
+/// `Σ wᵢ |R rᵢ + t − yᵢ|²`, its weighted RMSD (root-mean-square deviation,
+/// `√(Σ wᵢ |R rᵢ + t − yᵢ|² / Σ wᵢ)`, in the coordinates' length unit, Å in
+/// molrs), and how well the data fix the rotation ([`Freedom`]).
+///
+/// # Method
+///
+/// Horn, *J. Opt. Soc. Am. A* **4**, 629 (1987), doi:10.1364/JOSAA.4.000629,
+/// §2.C and App. A2/A3; Coutsias, Seok & Dill, *J. Comput. Chem.* **25**, 1849
+/// (2004), doi:10.1002/jcc.20110; Kabsch, *Acta Cryst. A* **32**, 922 (1976),
+/// doi:10.1107/S0567739476001873.
+///
+/// - Points of weight 0 are dropped (their coordinates are not read
+///   further). With `c_r = Σ w r / Σ w` and `c_y` alike,
+///   `p = r − c_r` and `x = y − c_y`.
+/// - `S = Σ w p xᵀ`. The weight enters once (Coutsias's "multiply by `w_k`"
+///   means `√w` on each factor).
+/// - Horn's symmetric 4×4 key matrix `N(S)` has the optimal rotation quaternion
+///   `q₁` as its top eigenvector ([`eigh_sym_4x4`]). A unit quaternion always
+///   encodes a proper rotation, so there is no `det = −1` branch: the
+///   reflection check Kabsch's singular-value method needs (to reject a
+///   mirror-image `det = −1` solution) is automatic here.
+/// - `t = c_y − R c_r`.
+/// - `RMSD_w² = Σ w |R p − x|² / Σ w`, evaluated from the residuals. The
+///   algebraically equal `(Σw|p|² + Σw|x|² − 2λ₁)/Σw` cancels catastrophically
+///   near a perfect fit (a 1e-16 error in `λ₁` is a 1e-8 RMSD).
+///
+/// # Uniqueness
+///
+/// The eigenvalues of `N` are `{σ₁+σ₂+χσ₃, σ₁−σ₂−χσ₃, −σ₁+σ₂−χσ₃,
+/// −σ₁−σ₂+χσ₃}` with `σ` the singular values of `S` and `χ = sgn det S`, so
+/// `λ₁ − λ₂ = 2(σ₂ + χσ₃)` and the fit is unique iff `λ₁ > λ₂`. The robust
+/// test is on the scale-free gap `ρ = (λ₁ − λ₂)/(2σ₁)` with
+/// `σ₁ = √λ_max(SᵀS)`:
+///
+/// - `σ₁ ≈ 0` (one point, or a target collapsed to a point): no rotation is
+///   determined, [`Freedom::Free`], and `R = I`.
+/// - `ρ ≥ gap_tol`: [`Freedom::Unique`].
+/// - otherwise (two points, collinear points, correspondence-rank loss, mirror
+///   data with `det S < 0` and `σ₂ = σ₃`): [`Freedom::Spin`]. With
+///   `λ₁ = λ₂` every `q(φ) = q₁ cos φ + q₂ sin φ` is optimal, and
+///   `q₁* ⊗ q₂ = (0, v)` with `|v| = 1`, so `R(φ) = Rot(R₁v, 2φ)·R₁`, where
+///   `Rot(a, α)` is the rotation by `α` about the unit axis `a`: a free
+///   spin about the axis `R₁v` through `c_y`. The returned `rigid` is the
+///   `φ = 0` member; choosing another is the caller's job.
+///
+/// Under-determination is **reported, not refused**.
 ///
 /// # Errors
 ///

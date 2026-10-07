@@ -1,49 +1,4 @@
 //! Antechamber's `ATD` / `WILDATOM` atom-type engine — one engine, N tables.
-//!
-//! All seven `ATOMTYPE_*.DEF` files share one rule language, so they share one
-//! interpreter: [`AtdTypifier`] is that interpreter, and [`AtdParameterSet`]
-//! chooses the table it walks. The tables are `&'static` Rust data generated
-//! from the upstream `.DEF` files (see [`crate::ff::params`]), so a typifier
-//! carries no state beyond which table it names, and matching parses nothing.
-//!
-//! The engine holds **no** per-table knowledge. That is a testable claim rather
-//! than a stylistic one: the three tables disagree exactly where typing is hard
-//! (imidazole's pyridine-type N is `24` under BCC, `28` under ABCG2 and `n2`
-//! under GAS), so a table-specific special case that satisfied one column would
-//! break another.
-//!
-//! ```no_run
-//! use molrs::core::Atomistic;
-//! use molrs::ff::typifier::Typing;
-//! use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
-//!
-//! # fn main() -> Result<(), String> {
-//! let mol = Atomistic::new();
-//! let mut typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
-//! let typed = typing.typify(&mol)?;       // every atom's `type` stamped
-//! assert!(typing.forcefield().styles().is_empty()); // ATD defines no type
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! # Layering
-//!
-//! Bond types are always **perceived** here, never read off the input: the rules
-//! count `sb` / `db` / `ab` / `DL` bonds, which need the delocalized (9) and
-//! aromatic (7/8) types that a bond *order* cannot express.
-//!
-//! # Which bond orders the types follow
-//!
-//! antechamber (its default `-j 4`) discards the bond orders of its input and
-//! judges new ones from the connectivity (`bondtype -j full`), and the atom
-//! types follow that structure: on a molecule with two Kekulé structures
-//! (azulene, cyclooctatetraene) the `cc` / `cd` colouring is the one its search
-//! settles on, not the one the input drew. [`AtdBondOrders::Perceive`], the
-//! default, does the same — `find_bond_types_from_connectivity` — so a
-//! molecule read from the file antechamber reads types as antechamber types it,
-//! whatever orders the molrs graph carries. [`AtdBondOrders::Input`] keeps the
-//! graph's own orders instead (aromatic bonds without one are kekulized), for a
-//! caller whose bond orders are the chemistry it wants typed.
 
 mod conjugate;
 mod facts;
@@ -182,6 +137,51 @@ pub enum AtdBondOrders {
 /// the facts each rule can ask about, and labels every atom with the first rule
 /// of the table that matches it. An atom no rule matches is an **error**, not an
 /// untyped or defaulted atom.
+///
+/// All seven `ATOMTYPE_*.DEF` files share one rule language, so they share one
+/// interpreter: [`AtdTypifier`] is that interpreter, and [`AtdParameterSet`]
+/// chooses the table it walks. The tables are `&'static` Rust data generated
+/// from the upstream `.DEF` files (see [`crate::ff::params`]), so a typifier
+/// carries no state beyond which table it names, and matching parses nothing.
+///
+/// The engine holds **no** per-table knowledge. That is a testable claim rather
+/// than a stylistic one: the three tables disagree exactly where typing is hard
+/// (imidazole's pyridine-type N is `24` under BCC, `28` under ABCG2 and `n2`
+/// under GAS), so a table-specific special case that satisfied one column would
+/// break another.
+///
+/// ```no_run
+/// use molrs::core::Atomistic;
+/// use molrs::ff::typifier::Typing;
+/// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
+///
+/// # fn main() -> Result<(), String> {
+/// let mol = Atomistic::new();
+/// let mut typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
+/// let typed = typing.typify(&mol)?;       // every atom's `type` stamped
+/// assert!(typing.forcefield().styles().is_empty()); // ATD defines no type
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Layering
+///
+/// Bond types are always **perceived** here, never read off the input: the rules
+/// count `sb` / `db` / `ab` / `DL` bonds, which need the delocalized (9) and
+/// aromatic (7/8) types that a bond *order* cannot express.
+///
+/// # Which bond orders the types follow
+///
+/// antechamber (its default `-j 4`) discards the bond orders of its input and
+/// judges new ones from the connectivity (`bondtype -j full`), and the atom
+/// types follow that structure: on a molecule with two Kekulé structures
+/// (azulene, cyclooctatetraene) the `cc` / `cd` colouring is the one its search
+/// settles on, not the one the input drew. [`AtdBondOrders::Perceive`], the
+/// default, does the same — `find_bond_types_from_connectivity` — so a
+/// molecule read from the file antechamber reads types as antechamber types it,
+/// whatever orders the molrs graph carries. [`AtdBondOrders::Input`] keeps the
+/// graph's own orders instead (aromatic bonds without one are kekulized), for a
+/// caller whose bond orders are the chemistry it wants typed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AtdTypifier {
     set: AtdParameterSet,

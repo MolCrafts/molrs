@@ -1,34 +1,4 @@
 //! Stereochemistry support for molecular graphs.
-//!
-//! Provides:
-//! * [`TetrahedralStereo`] — CW / CCW / Unspecified chirality at a tetrahedral centre.
-//! * [`BondStereo`] — E / Z / Either / None for double-bond stereochemistry.
-//! * [`chiral_volume`] — signed scalar triple product from 3-D coordinates.
-//! * [`perceive_chiral_centers`] — atoms with 4 distinct neighbours.
-//! * [`perceive_tetrahedral_stereo`] — infer tetrahedral chirality from coordinates.
-//! * [`perceive_bond_stereo`] — infer E/Z from coordinates.
-//!
-//! # Storage convention
-//! Stereochemistry labels may be persisted in atom/bond properties:
-//! * atom `"stereo"` → `"CW"` | `"CCW"` | `"unspecified"`
-//! * bond `"stereo"` → `"E"` | `"Z"` | `"either"` | `"none"`
-//!
-//! Two of those strings are *sentinels* rather than descriptors: `"unspecified"`
-//! ([`TetrahedralStereo::Unspecified`]) means "this atom is not a stereocentre",
-//! and `"none"` ([`BondStereo::None`]) means "this bond is not a stereo bond".
-//! They record the **absence** of a stereochemical fact, not a perceived one.
-//! Accordingly, the builder [`assign_stereo`](crate::perceive::assign_stereo)
-//! writes **only** the real descriptors — `"CW"` / `"CCW"` on atoms and `"E"` /
-//! `"Z"` / `"either"` on bonds — and omits the sentinels entirely, so a `"stereo"`
-//! prop is present exactly where stereochemistry was perceived and absent
-//! everywhere else. The full four-way vocabulary above still applies to graphs
-//! written by other producers (a file reader, or a caller persisting the maps
-//! returned by [`perceive_tetrahedral_stereo`] / [`perceive_bond_stereo`], both of
-//! which are total and do carry the sentinel variants).
-//!
-//! # Chiral-volume sign convention
-//! Positive volume → CCW (S configuration when substituents are in CIP order).
-//! Negative volume → CW  (R configuration).
 
 use std::collections::HashMap;
 
@@ -76,8 +46,9 @@ pub enum BondStereo {
 /// determines the sign convention you want to test (typically CIP priority
 /// order, lowest last).
 ///
-/// * Positive return → CCW arrangement of n1→n2→n3 when viewed from n4.
-/// * Negative return → CW arrangement.
+/// * Positive return → CCW arrangement of n1→n2→n3 when viewed from n4 (S
+///   configuration when the substituents are in CIP order).
+/// * Negative return → CW arrangement (R configuration).
 /// * Zero → the four atoms are coplanar (degenerate).
 ///
 /// Returns `0.0` if any atom lacks `x`/`y`/`z` coordinates.
@@ -309,6 +280,24 @@ const STEREO: &str = "stereo";
 /// [`TetrahedralStereo::Unspecified`]. A `stereo` prop appears only where a real
 /// descriptor was perceived: `"CW"` / `"CCW"` on atoms, `"E"` / `"Z"` /
 /// `"either"` on bonds. `mol` is left untouched.
+///
+/// # Storage convention
+///
+/// Stereochemistry labels may be persisted in atom/bond properties:
+/// * atom `"stereo"` → `"CW"` | `"CCW"` | `"unspecified"`
+/// * bond `"stereo"` → `"E"` | `"Z"` | `"either"` | `"none"`
+///
+/// Two of those strings are *sentinels* rather than descriptors: `"unspecified"`
+/// ([`TetrahedralStereo::Unspecified`]) means "this atom is not a stereocentre",
+/// and `"none"` ([`BondStereo::None`]) means "this bond is not a stereo bond".
+/// They record the **absence** of a stereochemical fact, not a perceived one.
+/// Accordingly, this function writes **only** the real descriptors — `"CW"` /
+/// `"CCW"` on atoms and `"E"` / `"Z"` / `"either"` on bonds — and omits the sentinels entirely, so a `"stereo"`
+/// prop is present exactly where stereochemistry was perceived and absent
+/// everywhere else. The full four-way vocabulary above still applies to graphs
+/// written by other producers (a file reader, or a caller persisting the maps
+/// returned by [`perceive_tetrahedral_stereo`] / [`perceive_bond_stereo`], both of
+/// which are total and do carry the sentinel variants).
 pub fn assign_stereo(mol: &Atomistic) -> Atomistic {
     let atom_stereo = perceive_tetrahedral_stereo(mol);
     let bond_stereo = perceive_bond_stereo(mol);

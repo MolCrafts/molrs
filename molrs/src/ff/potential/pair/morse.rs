@@ -1,11 +1,4 @@
-//! Morse pair potential (LAMMPS `pair_style morse`):
-//! E = d0 * ((1 - exp(-alpha*(r-r0)))^2 - 1) = d0 [e^{-2α(r-r0)} - 2e^{-α(r-r0)}]
-//!
-//! Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
-//! minimum is `-d0` at `r = r0`). Parameters per pair type, as LAMMPS names
-//! them: `d0` (LAMMPS `D0`), `alpha`, `r0`. The compiled and the
-//! neighbour-driven constructors read the same keys (the compiled one read
-//! `D0` until 0.16, so one field could not price under both).
+//! Morse pair potential (LAMMPS `pair_style morse`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -53,6 +46,14 @@ enum Source {
     },
 }
 
+/// Morse pair potential (LAMMPS `pair_style morse`):
+/// E = d0 * ((1 - exp(-alpha*(r-r0)))^2 - 1) = d0 [e^{-2α(r-r0)} - 2e^{-α(r-r0)}]
+///
+/// Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
+/// minimum is `-d0` at `r = r0`). Parameters per pair type, as LAMMPS names
+/// them: `d0` (LAMMPS `D0`), `alpha`, `r0`. The compiled and the
+/// neighbour-driven constructors read the same keys (the compiled one read
+/// `D0` until 0.16, so one field could not price under both).
 pub struct PairMorse {
     source: Source,
     /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite

@@ -37,7 +37,7 @@
 //! Closed **metrics** densify to Zarr series arrays; live append uses a
 //! write-ahead log (WAL) in JSON Lines form — one JSON document per line, so a
 //! record can be appended without rewriting the file
-//! (`metrics/metrics.jsonl`). See the `record_io` module docs and molrec
+//! (`metrics/metrics.jsonl`). See [`write_mrec`] and molrec
 //! `docs/spec/metrics.md`. This crate does not implement the WAL / densify path.
 //!
 //! # Spike verdicts (zarrs 0.23.13)

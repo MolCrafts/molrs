@@ -1,10 +1,4 @@
 //! The `Observable` abstraction: frame + atom-group selection → scalar samples.
-//!
-//! Mirrors the reference implementation's separation between *what* atoms an analysis runs over
-//! (`CAtomGroup` / the observation list assembled in `src/tddf.cpp` and
-//! `src/geodens.cpp`) and the geometric quantity extracted per tuple. Here the
-//! selection is the frozen [`AtomGroups`] index container and the extractor is
-//! any [`Observable`] (distance / angle / dihedral).
 
 use molrs::core::FrameAccess;
 use molrs::core::Mic;
@@ -150,6 +144,12 @@ impl AtomGroups {
 /// The contract mirrors the stateless [`Compute`](crate::compute::Compute)
 /// trait: `&self` is an immutable parameter bag and identical inputs yield
 /// identical samples.
+///
+/// Mirrors the reference implementation's separation between *what* atoms an analysis runs over
+/// (`CAtomGroup` / the observation list assembled in `src/tddf.cpp` and
+/// `src/geodens.cpp`) and the geometric quantity extracted per tuple. Here the
+/// selection is the frozen [`AtomGroups`] index container and the extractor is
+/// any [`Observable`] (distance / angle / dihedral).
 pub trait Observable {
     /// Atom indices consumed per sample (2 / 3 / 4).
     fn arity(&self) -> usize;
@@ -225,7 +225,7 @@ pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, Comp
 /// the caller (built once with [`SimBox::mic`](molrs::core::SimBox::mic) rather than resolved per
 /// pair). Free boundaries fall back to the raw separation. This is the one
 /// minimum-image implementation across `compute`, so distance DFs agree with
-/// [`compute::rdf`](crate::compute::rdf) on the same pair (ac-003).
+/// [`Rdf`](crate::compute::Rdf) on the same pair (ac-003).
 #[inline]
 pub(crate) fn displacement(mic: &Mic, xs: &[F], ys: &[F], zs: &[F], a: usize, b: usize) -> [F; 3] {
     let from = [xs[a], ys[a], zs[a]];

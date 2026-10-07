@@ -1,15 +1,4 @@
-//! Periodic / Fourier proper dihedral (AMBER / GAFF):
-//!
-//! E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
-//!
-//! AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
-//! encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
-//! (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
-//! writes it — the kernel converts it to radians once),
-//! scanned upward from `m = 1` until a term is absent. A single unindexed
-//! `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
-//! GAFF default), keeping the form identical to one CHARMM term. This is the
-//! canonical encoding the molpy → molrs ForceField bridge emits.
+//! Periodic / Fourier proper dihedral (AMBER / GAFF).
 
 use crate::ff::ir::IrError;
 use crate::ff::potential::param_reads;
@@ -35,6 +24,19 @@ struct Term {
 }
 
 /// Periodic / Fourier proper dihedral with pre-resolved flat arrays.
+///
+/// Periodic / Fourier proper dihedral (AMBER / GAFF):
+///
+/// E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
+///
+/// AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
+/// encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
+/// (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
+/// writes it — the kernel converts it to radians once),
+/// scanned upward from `m = 1` until a term is absent. A single unindexed
+/// `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
+/// GAFF default), keeping the form identical to one CHARMM term. This is the
+/// canonical encoding the molpy → molrs ForceField bridge emits.
 pub struct DihedralPeriodic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

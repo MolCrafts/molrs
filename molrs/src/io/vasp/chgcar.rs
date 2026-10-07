@@ -1,48 +1,4 @@
 //! VASP CHGCAR / CHGDIF volumetric data file reader.
-//!
-//! ## File layout
-//!
-//! ```text
-//! <comment>                        ← system name → frame.meta["title"]
-//! <scale>                          ← uniform scaling factor
-//! <a1x> <a1y> <a1z>               ← lattice vector a1 (Å after scaling)
-//! <a2x> <a2y> <a2z>               ← lattice vector a2
-//! <a3x> <a3y> <a3z>               ← lattice vector a3
-//! <Elem1> <Elem2> …               ← element symbols
-//! <n1> <n2> …                     ← element counts
-//! Direct | Cartesian               ← coordinate mode
-//! <s1> <s2> <s3>                  ← one atom per line
-//! …
-//!                                  ← blank line
-//! <nx> <ny> <nz>                  ← grid dimensions
-//! <val> <val> …                   ← nx*ny*nz values, 5 per line, VASP column-major (x fastest)
-//!                                  ← optional: augmentation occupancies (skipped)
-//!                                  ← optional: blank line + nx ny nz + spin data
-//! ```
-//!
-//! ## Grid stored in Frame
-//!
-//! The returned [`Frame`] carries a `"grid"` [`Block`] with `set_shape([nx,
-//! ny, nz])` and one f64 column per scalar field:
-//!
-//! | Column     | Content                                   | Always? |
-//! |------------|-------------------------------------------|---------|
-//! | `"total"`  | Total charge density (raw: ρ·V_cell, e)  | yes     |
-//! | `"diff"`   | Spin density α−β (raw: ρ·V_cell, e)      | ISPIN=2 |
-//!
-//! The values are stored **as-is** from the file (ρ × V_cell).
-//! To convert to charge density in e/Å³: divide by `simbox.volume()`.
-//!
-//! ## Grid axis convention
-//!
-//! The VASP/FORTRAN data is x-fastest (column-major).
-//! `read_vasp_chgcar` converts to C row-major `(ix, iy, iz)` order so that
-//! the column data at index `ix*ny*nz + iy*nz + iz` is `ρ(ix, iy, iz) × V`.
-//!
-//! ## Atom positions
-//!
-//! Atom positions are returned in Cartesian Å.  If the file uses `Direct`
-//! coordinates they are multiplied by the lattice matrix on read.
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -65,7 +21,7 @@ use molrs::op::F;
 /// - `"atoms"` block: `symbol` (str), `x`/`y`/`z` (float, Å Cartesian)
 /// - `simbox`: triclinic periodic box derived from the POSCAR header
 /// - `"grid"` block: a [`Block`] of shape `[nx, ny, nz]` carrying the `"total"`
-///   column and, for spin-polarized files, `"diff"` (see the module docs)
+///   column and, for spin-polarized files, `"diff"` (see [`read_vasp_chgcar_str`])
 ///
 /// # Errors
 ///
@@ -353,6 +309,50 @@ fn is_dim_line(line: &str, nx: usize, ny: usize, nz: usize) -> bool {
 // ---------------------------------------------------------------------------
 
 /// Read one CHGCAR / CHGDIF volumetric file from its text.
+///
+/// # File layout
+///
+/// ```text
+/// <comment>                        ← system name → frame.meta["title"]
+/// <scale>                          ← uniform scaling factor
+/// <a1x> <a1y> <a1z>               ← lattice vector a1 (Å after scaling)
+/// <a2x> <a2y> <a2z>               ← lattice vector a2
+/// <a3x> <a3y> <a3z>               ← lattice vector a3
+/// <Elem1> <Elem2> …               ← element symbols
+/// <n1> <n2> …                     ← element counts
+/// Direct | Cartesian               ← coordinate mode
+/// <s1> <s2> <s3>                  ← one atom per line
+/// …
+///                                  ← blank line
+/// <nx> <ny> <nz>                  ← grid dimensions
+/// <val> <val> …                   ← nx*ny*nz values, 5 per line, VASP column-major (x fastest)
+///                                  ← optional: augmentation occupancies (skipped)
+///                                  ← optional: blank line + nx ny nz + spin data
+/// ```
+///
+/// # Grid stored in Frame
+///
+/// The returned [`Frame`] carries a `"grid"` [`Block`] with `set_shape([nx,
+/// ny, nz])` and one f64 column per scalar field:
+///
+/// | Column     | Content                                   | Always? |
+/// |------------|-------------------------------------------|---------|
+/// | `"total"`  | Total charge density (raw: ρ·V_cell, e)  | yes     |
+/// | `"diff"`   | Spin density α−β (raw: ρ·V_cell, e)      | ISPIN=2 |
+///
+/// The values are stored **as-is** from the file (ρ × V_cell).
+/// To convert to charge density in e/Å³: divide by `simbox.volume()`.
+///
+/// # Grid axis convention
+///
+/// The VASP/FORTRAN data is x-fastest (column-major).
+/// `read_vasp_chgcar` converts to C row-major `(ix, iy, iz)` order so that
+/// the column data at index `ix*ny*nz + iy*nz + iz` is `ρ(ix, iy, iz) × V`.
+///
+/// # Atom positions
+///
+/// Atom positions are returned in Cartesian Å.  If the file uses `Direct`
+/// coordinates they are multiplied by the lattice matrix on read.
 pub fn read_vasp_chgcar_str(text: &str) -> Result<Frame, MolRsError> {
     read_frame_from(text.as_bytes())
 }

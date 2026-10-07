@@ -1,18 +1,18 @@
 //! The [`ElementGraph`] bound behind the generic
 //! [`Conformer::generate`](super::Conformer::generate).
-//!
-//! An embedding is only defined for a graph whose nodes are chemical elements:
-//! ETKDG reads `element` for bond-length estimation, ring geometry and
-//! force-field selection. This module names that requirement once, as a trait,
-//! so the single entry point can hand the caller back the same typed world it
-//! was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
-//! `frag_id` properties intact.
 
 use molrs::core::Atomistic;
 use molrs::core::MolGraph;
 use molrs::core::MolRsError;
 
 /// A typed wrapper over a [`MolGraph`] whose every node carries an `element`.
+///
+/// An embedding is only defined for a graph whose nodes are chemical elements:
+/// ETKDG reads `element` for bond-length estimation, ring geometry and
+/// force-field selection. This module names that requirement once, as a trait,
+/// so the single entry point can hand the caller back the same typed world it
+/// was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
+/// `frag_id` properties intact.
 ///
 /// # Contract
 ///

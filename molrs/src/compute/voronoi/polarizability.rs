@@ -1,20 +1,4 @@
 //! Finite-field molecular polarizability from Voronoi dipoles.
-//!
-//! Ported from the reference implementation's polarizability workflow (`src/dpol.cpp`): three external
-//! field directions, each a ±E pair of Voronoi-integrated dipole sets, combined
-//! by central difference. The `2.0` denominator here is the same central-finite
-//! difference reference implementation uses (`dpol.cpp`, the `... / estrength ... * 2.0 ...`
-//! prefactor, stripped of the reference implementation's Debye/SI unit conversions — molrs stays in
-//! `e·Å` / `e·Å²·V⁻¹`-style natural units).
-//!
-//! # Definition
-//!
-//! `α_ij = ∂μ_i/∂E_j ≈ (μ_i(+E ê_j) − μ_i(−E ê_j)) / (2E)`.
-//!
-//! One call handles **one** field direction `j` and returns the column
-//! `∂μ/∂E_j` (a 3-vector per molecule); assemble the full 3×3 tensor from three
-//! orthogonal field runs (see the test). For a linear response
-//! `μ(E) = μ₀ + α E`, the central difference is exact.
 
 use molrs::op::F;
 use ndarray::Array2;
@@ -28,6 +12,22 @@ use crate::compute::ComputeError;
 /// `moments_zero` (the field-off set) is accepted for API symmetry with
 /// the reference implementation's three-point workflow and to validate molecule alignment; the
 /// central difference itself uses only `plus`/`minus`.
+///
+/// Ported from the reference implementation's polarizability workflow (`src/dpol.cpp`): three external
+/// field directions, each a ±E pair of Voronoi-integrated dipole sets, combined
+/// by central difference. The `2.0` denominator here is the same central-finite
+/// difference reference implementation uses (`dpol.cpp`, the `... / estrength ... * 2.0 ...`
+/// prefactor, stripped of the reference implementation's Debye/SI unit conversions — molrs stays in
+/// `e·Å` / `e·Å²·V⁻¹`-style natural units).
+///
+/// # Definition
+///
+/// `α_ij = ∂μ_i/∂E_j ≈ (μ_i(+E ê_j) − μ_i(−E ê_j)) / (2E)`.
+///
+/// One call handles **one** field direction `j` and returns the column
+/// `∂μ/∂E_j` (a 3-vector per molecule); assemble the full 3×3 tensor from three
+/// orthogonal field runs (see the test). For a linear response
+/// `μ(E) = μ₀ + α E`, the central difference is exact.
 pub fn polarizability_finite_field(
     moments_zero: &MolecularMoments,
     plus: &MolecularMoments,

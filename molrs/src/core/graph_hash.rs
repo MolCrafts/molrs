@@ -1,36 +1,4 @@
-//! Isomorphism-invariant structural graph hash, canonical ordering, and
-//! whole-graph isomorphism over a [`MolGraph`].
-//!
-//! All three primitives are built on the generic [`MolGraph`] adjacency (arity-2
-//! relations are the graph edges), so they serve both
-//! [`Atomistic`](crate::core::Atomistic) and
-//! [`CoarseGrain`](crate::core::CoarseGrain) unchanged — the leaf
-//! only supplies its node vocabulary (`element` / `bead_type`).
-//!
-//! # Algorithm — Weisfeiler–Lehman color refinement
-//!
-//! - **Initial node color** = a deterministic hash of the node's *label*: element
-//!   symbol (atoms) or bead type (CG) + degree (incident edge count) + formal
-//!   charge (the `charge` component, `0` when absent) + an aromatic flag (the
-//!   `is_aromatic` component when set, else inferred from any incident bond of
-//!   order `1.5`, matching the project aromaticity convention).
-//! - **Refinement round**: a node's new color = hash of its current color plus the
-//!   *sorted multiset* of `(edge label = bond order, neighbor's current color)`.
-//!   Rounds repeat until the color partition stops refining (the count of
-//!   distinct colors — which is monotone non-decreasing under WL — stabilizes),
-//!   bounded by the node count.
-//! - [`structural_hash`] = a hash of the *sorted multiset of final colors*, so it
-//!   is invariant under any node permutation.
-//! - [`canonical_order`] = nodes sorted by `(final color, initial color, stable
-//!   handle tiebreak)` — deterministic within a graph, and consistent across two
-//!   isomorphic graphs (tied nodes share a color, hence share every label
-//!   attribute).
-//! - [`is_isomorphic`] = a quick reject on `structural_hash` / edge-count
-//!   mismatch, then a WL-color-pruned backtracking bijective match.
-//!
-//! The hasher is a fixed-constant FNV-1a over little-endian bytes — **not** the
-//! std `DefaultHasher` (random-seeded) — so a hash is reproducible across runs
-//! and processes and can be trusted as a persistent cache key.
+//! Isomorphism-invariant structural graph hash, canonical ordering, and whole-graph isomorphism over a [`MolGraph`].
 
 use std::collections::HashMap;
 
@@ -264,6 +232,37 @@ fn distinct_count(colors: &[u64]) -> usize {
 ///
 /// Identical for a node-permuted copy; sensitive to element/bead-type, degree,
 /// charge, aromatic flag, bond order, and connectivity.
+///
+/// This, [`canonical_order`] and [`is_isomorphic`] are built on the generic
+/// [`MolGraph`] adjacency (arity-2 relations are the graph edges), so they serve
+/// both [`Atomistic`](crate::core::Atomistic) and
+/// [`CoarseGrain`](crate::core::CoarseGrain) unchanged — the leaf only supplies
+/// its node vocabulary (`element` / `bead_type`).
+///
+/// # Algorithm — Weisfeiler–Lehman color refinement
+///
+/// - **Initial node color** = a deterministic hash of the node's *label*: element
+///   symbol (atoms) or bead type (CG) + degree (incident edge count) + formal
+///   charge (the `charge` component, `0` when absent) + an aromatic flag (the
+///   `is_aromatic` component when set, else inferred from any incident bond of
+///   order `1.5`, matching the project aromaticity convention).
+/// - **Refinement round**: a node's new color = hash of its current color plus the
+///   *sorted multiset* of `(edge label = bond order, neighbor's current color)`.
+///   Rounds repeat until the color partition stops refining (the count of
+///   distinct colors — which is monotone non-decreasing under WL — stabilizes),
+///   bounded by the node count.
+/// - `structural_hash` = a hash of the *sorted multiset of final colors*, so it
+///   is invariant under any node permutation.
+/// - [`canonical_order`] = nodes sorted by `(final color, initial color, stable
+///   handle tiebreak)` — deterministic within a graph, and consistent across two
+///   isomorphic graphs (tied nodes share a color, hence share every label
+///   attribute).
+/// - [`is_isomorphic`] = a quick reject on `structural_hash` / edge-count
+///   mismatch, then a WL-color-pruned backtracking bijective match.
+///
+/// The hasher is a fixed-constant FNV-1a over little-endian bytes — **not** the
+/// std `DefaultHasher` (random-seeded) — so a hash is reproducible across runs
+/// and processes and can be trusted as a persistent cache key.
 pub fn structural_hash(g: &MolGraph) -> u64 {
     let view = GraphView::build(g);
     let colors = wl_colors(&view);
@@ -281,6 +280,8 @@ pub fn structural_hash(g: &MolGraph) -> u64 {
 /// Nodes are sorted by `(final color, initial color, stable handle)`. Two
 /// isomorphic graphs induce a consistent node bijection by pairing their
 /// `canonical_order` lists position-by-position.
+///
+/// The refinement is described at [`structural_hash`].
 pub fn canonical_order(g: &MolGraph) -> Vec<NodeId> {
     let view = GraphView::build(g);
     let colors = wl_colors(&view);
@@ -301,6 +302,8 @@ pub fn canonical_order(g: &MolGraph) -> Vec<NodeId> {
 /// Quick-rejects on node-count, edge-count, or `structural_hash` mismatch, then
 /// runs a WL-color-pruned backtracking bijective match to resolve the rare hash
 /// collision before equality is trusted.
+///
+/// The refinement is described at [`structural_hash`].
 pub fn is_isomorphic(a: &MolGraph, b: &MolGraph) -> bool {
     if a.n_nodes() != b.n_nodes() {
         return false;

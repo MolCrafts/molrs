@@ -1,18 +1,4 @@
 //! 3-D `(x, y, z)` Pair Mode Fourier Transform.
-//!
-//! Mirrors `freud.pmft.PmftXyz`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyz.cc)).
-//!
-//! For every neighbor pair the bond vector `(dx, dy, dz)` is binned into
-//! a 3-D histogram on
-//! `[−x_max, x_max] × [−y_max, y_max] × [−z_max, z_max]`. PMF is
-//! `−ln(ρ(x, y, z) / ρ_ref)` with `ρ_ref = N² / V_box`. Empty bins → `+∞`.
-//!
-//! When per-particle orientations are supplied as quaternions via
-//! [`PmftXyzArgs::query_orientations`], every bond is rotated into the
-//! query particle's local frame before binning (matches freud's
-//! `query_orientations` argument). Without orientations the analyzer
-//! works in the lab frame.
 
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
@@ -27,6 +13,20 @@ use crate::compute::require_disp;
 use crate::op::{quat_conj, rotate_by_quat};
 
 /// `PmftXyz` analyzer.
+///
+/// Mirrors `freud.pmft.PmftXyz`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyz.cc)).
+///
+/// For every neighbor pair the bond vector `(dx, dy, dz)` is binned into
+/// a 3-D histogram on
+/// `[−x_max, x_max] × [−y_max, y_max] × [−z_max, z_max]`. PMF is
+/// `−ln(ρ(x, y, z) / ρ_ref)` with `ρ_ref = N² / V_box`. Empty bins → `+∞`.
+///
+/// When per-particle orientations are supplied as quaternions via
+/// [`PmftXyzArgs::query_orientations`], every bond is rotated into the
+/// query particle's local frame before binning (matches freud's
+/// `query_orientations` argument). Without orientations the analyzer
+/// works in the lab frame.
 #[derive(Debug, Clone, Copy)]
 pub struct PmftXyz {
     x_max: F,

@@ -1,17 +1,4 @@
 //! Dihedral observable: the IUPAC-signed torsion φ ∈ (−π, π] of atom quadruples.
-//!
-//! Ported from the reference implementation `Dihedral(vec1, vec2, norm, absolute)` in
-//! `src/xdvector3.cpp`: reference implementation projects the two outer bond vectors onto the
-//! plane perpendicular to the central bond and takes their angle, flipping the
-//! sign by the half-plane test `|angle(p1, t2)| > 90°`. The algebraically
-//! equivalent `atan2` form used here reproduces the same signed value while
-//! staying branch-free and NaN-safe:
-//!
-//! `φ = atan2((b1 × b2)·(b2/|b2|), (b1 × b2)·(b2 × b3))` with
-//! `b1 = r_j − r_i`, `b2 = r_k − r_j`, `b3 = r_l − r_k`.
-//!
-//! This is the Blondel–Karplus convention; φ = 0 for a cis/eclipsed (planar)
-//! arrangement and ±π for trans, matching the reference implementation's signed DDF output.
 
 use molrs::core::FrameAccess;
 use molrs::op::F;
@@ -23,6 +10,19 @@ use crate::op::vec3::{cross, dot, norm};
 use molrs::core::{Mic, SimBox};
 
 /// Signed dihedral φ ∈ (−π, π] (radians) over each quadruple i–j–k–l (arity 4).
+///
+/// Ported from the reference implementation `Dihedral(vec1, vec2, norm, absolute)` in
+/// `src/xdvector3.cpp`: reference implementation projects the two outer bond vectors onto the
+/// plane perpendicular to the central bond and takes their angle, flipping the
+/// sign by the half-plane test `|angle(p1, t2)| > 90°`. The algebraically
+/// equivalent `atan2` form used here reproduces the same signed value while
+/// staying branch-free and NaN-safe:
+///
+/// `φ = atan2((b1 × b2)·(b2/|b2|), (b1 × b2)·(b2 × b3))` with
+/// `b1 = r_j − r_i`, `b2 = r_k − r_j`, `b3 = r_l − r_k`.
+///
+/// This is the Blondel–Karplus convention; φ = 0 for a cis/eclipsed (planar)
+/// arrangement and ±π for trans, matching the reference implementation's signed DDF output.
 #[derive(Debug, Clone, Default)]
 pub struct DihedralObservable;
 

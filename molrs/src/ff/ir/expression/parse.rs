@@ -1,28 +1,5 @@
 //! A hand-written lexer and precedence-climbing parser for molrec's Lepton
 //! subset.
-//!
-//! The grammar is molrec's (`docs/spec/forcefield.md` § Expressions,
-//! normative), which is Lepton's precedence and associativity:
-//!
-//! ```text
-//! expression := formula (";" definition)*
-//! definition := name "=" formula
-//! formula    := term (("+" | "-") term)*                  left-associative
-//! term       := factor (("*" | "/") factor)*              left-associative
-//! factor     := "-" factor | power
-//! power      := primary ("^" factor)?                     right-associative
-//! primary    := number | name | call | "(" formula ")"
-//! call       := name "(" formula ("," formula)* ")"
-//! number     := digits ["." [digits]] [exponent] | "." digits [exponent]
-//! exponent   := ("e" | "E") ["+" | "-"] digits
-//! name       := [A-Za-z_][A-Za-z0-9_]*
-//! ```
-//!
-//! So `-x^2` is `-(x^2)`, `-x*y` is `(-x)*y`, `2^3^2` is `2^(3^2)` and
-//! `x^-2` is `x^(-2)`. Whitespace between tokens is ignored. An empty
-//! segment after a `;` (a trailing `;`) is no definition and is refused. A
-//! call with no argument parses and is refused by the compiler as a wrong
-//! number of arguments, naming the function.
 
 use super::ast::{BinOp, Definition, Expr, NEG_PRECEDENCE, Parsed};
 use super::error::ExpressionError;
@@ -256,6 +233,29 @@ impl Parser<'_> {
 }
 
 /// Parse an expression. The result keeps `src` byte for byte.
+///
+/// The grammar is molrec's (`docs/spec/forcefield.md` § Expressions,
+/// normative), which is Lepton's precedence and associativity:
+///
+/// ```text
+/// expression := formula (";" definition)*
+/// definition := name "=" formula
+/// formula    := term (("+" | "-") term)*                  left-associative
+/// term       := factor (("*" | "/") factor)*              left-associative
+/// factor     := "-" factor | power
+/// power      := primary ("^" factor)?                     right-associative
+/// primary    := number | name | call | "(" formula ")"
+/// call       := name "(" formula ("," formula)* ")"
+/// number     := digits ["." [digits]] [exponent] | "." digits [exponent]
+/// exponent   := ("e" | "E") ["+" | "-"] digits
+/// name       := [A-Za-z_][A-Za-z0-9_]*
+/// ```
+///
+/// So `-x^2` is `-(x^2)`, `-x*y` is `(-x)*y`, `2^3^2` is `2^(3^2)` and
+/// `x^-2` is `x^(-2)`. Whitespace between tokens is ignored. An empty
+/// segment after a `;` (a trailing `;`) is no definition and is refused. A
+/// call with no argument parses and is refused by the compiler as a wrong
+/// number of arguments, naming the function.
 pub fn parse(src: &str) -> Result<Parsed, ExpressionError> {
     let toks = lex(src)?;
     let mut segments = toks.split(|(_, t)| *t == Tok::Semi);

@@ -1,82 +1,4 @@
 //! Ports: named attachment points on any [`MolGraph`].
-//!
-//! A **port** marks one not-yet-used bonding site of a molecular graph: it is
-//! an arity-2 relation `(anchor, handle)` of the kind `ports`. The **anchor**
-//! is the node that keeps its place in the product molecule; the **handle** is
-//! a real node bonded to it, the root of the leaving group a paired
-//! descriptor's bond replaces. A **descriptor** is the bracketed site marker
-//! of the BigSMILES / CGsmiles line notations (`[$]`, `[<]`, `[>]`, `[!]`)
-//! that says where a unit may bond to another. The handle may be any element:
-//! an unconsumed descriptor is a capping hydrogen, and a hydroxyl leaving group
-//! roots at its O. The leaving group is the handle's branch — what stays
-//! connected to the handle once the anchor–handle bond is cut. A **valence**
-//! is one specific anchor–handle bond, the bonding slot a port occupies. The
-//! descriptor itself is a [`PortKind`] (the closed four-glyph vocabulary), a
-//! free-form `label` and a [`BondNumber`] order.
-//!
-//! Ports are a capability of every graph type — [`Atomistic`], [`CoarseGrain`]
-//! or a bare [`MolGraph`] — not a type of their own (operator, 2026-09-28):
-//! the `ports` kind is registered on the first [`MolGraph::add_port`] and read
-//! back by every graph's `from_frame`. [`MolGraph::link`] joins two
-//! compatible ports: it removes both leaving groups, folds their charge onto
-//! the anchors and bonds the anchors (see [`crate::core::link`]).
-//!
-//! References: Lin, T.-S. et al., *BigSMILES: A Structurally-Based Line Notation
-//! for Describing Macromolecules*, ACS Cent. Sci. **5**, 1523–1531 (2019),
-//! DOI [10.1021/acscentsci.9b00476](https://doi.org/10.1021/acscentsci.9b00476);
-//! the CGsmiles documentation, <https://cgsmiles.readthedocs.io>.
-//!
-//! # Reserved open properties
-//!
-//! | Name | Where | Meaning |
-//! |---|---|---|
-//! | `frag_id` | node prop, `Int` | the unit instance a node came from |
-//! | `port_kind` | `ports` relation prop, `Str` | the descriptor glyph |
-//! | `port_label` | `ports` relation prop, `Str` | the descriptor label |
-//! | `port_order` | `ports` relation prop, `Int` | the [`BondNumber`] code |
-//! | `ports` | relation kind / frame block | the port table |
-//!
-//! None is declared by the Frame schema; they round-trip as plain columns. The
-//! prefix on the port triple is deliberate: bare `order` is already written as
-//! an `F64` relation prop by the UFF typifier and bare `label` by the graph
-//! itself, and a frame schema binds a key across *every* block.
-//!
-//! # Two enums for four roles
-//!
-//! [`PortKind`] and the notation-side `crate::io::smiles::DescriptorKind`
-//! (feature `smiles`) name the same four roles and are deliberately distinct
-//! types, mirroring the split between the SMILES AST's `BondKind` and this
-//! layer's [`BondOrder`] / [`BondNumber`]: the AST names what was *written*,
-//! `core` names what is *stored*.
-//!
-//! # Examples
-//!
-//! ```
-//! use molrs::core::Atomistic;
-//! use molrs::core::BondNumber;
-//! use molrs::core::PortKind;
-//!
-//! // C–C with one capping hydrogen on the first carbon, and a symmetric
-//! // descriptor `[$A]` sitting on that C–H valence.
-//! let mut mol = Atomistic::new();
-//! let c0 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-//! let c1 = mol.add_atom_xyz("C", 1.54, 0.0, 0.0);
-//! let h = mol.add_atom_bare("H");
-//! mol.add_bond(c0, c1)?;
-//! mol.add_bond(c0, h)?;
-//! let port = mol.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)?;
-//! mol.set_frag_id(c0, 1)?;
-//!
-//! assert_eq!(mol.n_ports(), 1);
-//! let port = mol.port(port)?;
-//! assert_eq!(port.kind, PortKind::Symmetric);
-//! assert_eq!(port.label, "A");
-//! assert_eq!(mol.frag_id(c0), Some(1));
-//! # Ok::<(), molrs::core::MolRsError>(())
-//! ```
-//!
-//! [`Atomistic`]: crate::core::Atomistic
-//! [`CoarseGrain`]: crate::core::CoarseGrain
 
 use std::collections::{BTreeSet, HashMap};
 use std::str::FromStr;
@@ -100,13 +22,13 @@ use crate::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
 ///
 /// **Storage form.** Unlike [`BondOrder`], whose stored form is a numeric
 /// [`code`](BondOrder::code), a `PortKind` is stored as its glyph in a `Str`
-/// column (see the module docs on `port_kind`): the glyph is the only spelling
+/// column (see the reserved properties on [`Port`]): the glyph is the only spelling
 /// a user ever writes or reads, and `port_kind` is an open column with no
 /// declared dtype to pin a code table to.
 ///
 /// This enum is the **stored** vocabulary; the notation-side
 /// `crate::io::smiles::DescriptorKind` is the *written* one, and the two are
-/// distinct types by design (see the module docs).
+/// distinct types by design (see [`Port`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortKind {
     /// `$` — self-complementary: bonds any `$` carrying the same label.
@@ -176,6 +98,86 @@ impl FromStr for PortKind {
 /// (a bare `$` / `<` / `>` with no label after it). `order` is the multiplicity
 /// the bond formed from this port will have; it is recorded here and never
 /// interpreted — forming the bond belongs to the caller that pairs two ports.
+///
+/// # Ports
+///
+/// A **port** marks one not-yet-used bonding site of a molecular graph: it is
+/// an arity-2 relation `(anchor, handle)` of the kind `ports`. The **anchor**
+/// is the node that keeps its place in the product molecule; the **handle** is
+/// a real node bonded to it, the root of the leaving group a paired
+/// descriptor's bond replaces. A **descriptor** is the bracketed site marker
+/// of the BigSMILES / CGsmiles line notations (`[$]`, `[<]`, `[>]`, `[!]`)
+/// that says where a unit may bond to another. The handle may be any element:
+/// an unconsumed descriptor is a capping hydrogen, and a hydroxyl leaving group
+/// roots at its O. The leaving group is the handle's branch — what stays
+/// connected to the handle once the anchor–handle bond is cut. A **valence**
+/// is one specific anchor–handle bond, the bonding slot a port occupies. The
+/// descriptor itself is a [`PortKind`] (the closed four-glyph vocabulary), a
+/// free-form `label` and a [`BondNumber`] order.
+///
+/// Ports are a capability of every graph type — [`Atomistic`], [`CoarseGrain`]
+/// or a bare [`MolGraph`] — not a type of their own (operator, 2026-09-28):
+/// the `ports` kind is registered on the first [`MolGraph::add_port`] and read
+/// back by every graph's `from_frame`. [`MolGraph::link`] joins two
+/// compatible ports: it removes both leaving groups, folds their charge onto
+/// the anchors and bonds the anchors.
+///
+/// References: Lin, T.-S. et al., *BigSMILES: A Structurally-Based Line Notation
+/// for Describing Macromolecules*, ACS Cent. Sci. **5**, 1523–1531 (2019),
+/// DOI [10.1021/acscentsci.9b00476](https://doi.org/10.1021/acscentsci.9b00476);
+/// the CGsmiles documentation, <https://cgsmiles.readthedocs.io>.
+///
+/// # Reserved open properties
+///
+/// | Name | Where | Meaning |
+/// |---|---|---|
+/// | `frag_id` | node prop, `Int` | the unit instance a node came from |
+/// | `port_kind` | `ports` relation prop, `Str` | the descriptor glyph |
+/// | `port_label` | `ports` relation prop, `Str` | the descriptor label |
+/// | `port_order` | `ports` relation prop, `Int` | the [`BondNumber`] code |
+/// | `ports` | relation kind / frame block | the port table |
+///
+/// None is declared by the Frame schema; they round-trip as plain columns. The
+/// prefix on the port triple is deliberate: bare `order` is already written as
+/// an `F64` relation prop by the UFF typifier and bare `label` by the graph
+/// itself, and a frame schema binds a key across *every* block.
+///
+/// # Two enums for four roles
+///
+/// [`PortKind`] and the notation-side `crate::io::smiles::DescriptorKind`
+/// (feature `smiles`) name the same four roles and are deliberately distinct
+/// types, mirroring the split between the SMILES AST's `BondKind` and this
+/// layer's [`BondOrder`] / [`BondNumber`]: the AST names what was *written*,
+/// `core` names what is *stored*.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::Atomistic;
+/// use molrs::core::BondNumber;
+/// use molrs::core::PortKind;
+///
+/// // C–C with one capping hydrogen on the first carbon, and a symmetric
+/// // descriptor `[$A]` sitting on that C–H valence.
+/// let mut mol = Atomistic::new();
+/// let c0 = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
+/// let c1 = mol.add_atom_xyz("C", 1.54, 0.0, 0.0);
+/// let h = mol.add_atom_bare("H");
+/// mol.add_bond(c0, c1)?;
+/// mol.add_bond(c0, h)?;
+/// let port = mol.add_port(c0, h, PortKind::Symmetric, "A", BondNumber::Single)?;
+/// mol.set_frag_id(c0, 1)?;
+///
+/// assert_eq!(mol.n_ports(), 1);
+/// let port = mol.port(port)?;
+/// assert_eq!(port.kind, PortKind::Symmetric);
+/// assert_eq!(port.label, "A");
+/// assert_eq!(mol.frag_id(c0), Some(1));
+/// # Ok::<(), molrs::core::MolRsError>(())
+/// ```
+///
+/// [`Atomistic`]: crate::core::Atomistic
+/// [`CoarseGrain`]: crate::core::CoarseGrain
 #[derive(Debug, Clone, PartialEq)]
 pub struct Port {
     /// The atom that keeps its place in the product molecule.
@@ -202,7 +204,7 @@ impl Port {
     /// [`MolGraph::link`] pairs ports through it. The CGsmiles
     /// resolver keeps its own private rule on the notation-side
     /// `DescriptorKind` (in `io::smiles`); the two enums are distinct by
-    /// design (module docs, "Two enums for four roles").
+    /// design (see "Two enums for four roles" on [`Port`]).
     ///
     /// Symmetric in its arguments, because [`PortKind::complement`] is an
     /// involution. The anchor and handle atoms are not compared.

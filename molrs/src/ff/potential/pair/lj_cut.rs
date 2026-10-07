@@ -1,12 +1,4 @@
 //! Unique LJ / Mie pair kernel (`lj/cut`).
-//!
-//! Pair source is fixed at construction:
-//! - [`PairLjCut::new`] / [`PairLjCut::lj126`] — uniform ε/σ, loop-fed pairs (MD)
-//! - [`PairLjCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block,
-//!   truncated (and shifted) at the style's `cutoff` by [`PairLjCut::truncated`]
-//!
-//! Every source prices a pair only at `r < cutoff`, as LAMMPS does.
-//! Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
 
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
@@ -94,6 +86,14 @@ fn shift_constants(
 }
 
 /// LAMMPS `pair_style lj/cut`.
+///
+/// Pair source is fixed at construction:
+/// - [`PairLjCut::new`] / [`PairLjCut::lj126`] — uniform ε/σ, loop-fed pairs (MD)
+/// - [`PairLjCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block,
+///   truncated (and shifted) at the style's `cutoff` by [`PairLjCut::truncated`]
+///
+/// Every source prices a pair only at `r < cutoff`, as LAMMPS does.
+/// Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
 #[derive(Clone, Debug)]
 pub struct PairLjCut {
     epsilon: F,

@@ -1,13 +1,6 @@
 //! Self-avoiding random walk (SARW) configuration and the multi-chain
 //! `generate` driver; the monomer-placement policy it is generic over is
 //! [`GrowthStrategy`](super::growth_strategy::GrowthStrategy).
-//!
-//! Self-avoidance is decided entirely by an [`OccupancyGrid`](super::occupancy)
-//! — cell occupancy, never pairwise distance. Boundaries are per-axis: a
-//! periodic axis wraps a step to the opposite side; a non-periodic axis
-//! reflects the step elastically off the wall (its normal component flips,
-//! preserving the bond length). Output coordinates therefore always lie inside
-//! the box.
 
 use std::fmt;
 
@@ -92,6 +85,13 @@ pub(crate) fn apply_boundary(tip: [F; 3], mut cand: [F; 3], a: [F; 3], pbc: Pbc3
 /// Configuration for a periodic/reflective, fixed-bond-length self-avoiding
 /// random walk that grows `n_chains` independent chains of `chain_length`
 /// monomers each.
+///
+/// Self-avoidance is decided entirely by an occupancy grid
+/// — cell occupancy, never pairwise distance. Boundaries are per-axis: a
+/// periodic axis wraps a step to the opposite side; a non-periodic axis
+/// reflects the step elastically off the wall (its normal component flips,
+/// preserving the bond length). Output coordinates therefore always lie inside
+/// the box.
 ///
 /// Construct it as a struct literal and inject a [`GrowthStrategy`] via the
 /// `strategy` field, then call [`generate`](SelfAvoidingWalk::generate):

@@ -1,15 +1,4 @@
-//! CVFF improper (LAMMPS `improper_style cvff`):
-//!
-//! E(χ) = k · [1 + s · cos(n·χ)]
-//!
-//! `sign` is s = ±1 (a sign, **not** a phase — hence its own canonical name)
-//! and `periodicity` is the integer multiplicity n. The improper angle χ is the
-//! dihedral angle defined by the quadruple I-J-K-L of the stored order, I the
-//! centre (LAMMPS's symmetry atom for this style), so the geometry reuses the
-//! shared dihedral routines.
-//!
-//! The same function of the dihedral is LAMMPS's `dihedral_style harmonic`
-//! (`K[1 + d cos(nφ)]`); [`signed_cosine_constructor`] builds either from its block.
+//! CVFF improper (LAMMPS `improper_style cvff`).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
@@ -26,6 +15,19 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// CVFF improper with pre-resolved flat arrays.
+///
+/// CVFF improper (LAMMPS `improper_style cvff`):
+///
+/// E(χ) = k · [1 + s · cos(n·χ)]
+///
+/// `sign` is s = ±1 (a sign, **not** a phase — hence its own canonical name)
+/// and `periodicity` is the integer multiplicity n. The improper angle χ is the
+/// dihedral angle defined by the quadruple I-J-K-L of the stored order, I the
+/// centre (LAMMPS's symmetry atom for this style), so the geometry reuses the
+/// shared dihedral routines.
+///
+/// The same function of the dihedral is LAMMPS's `dihedral_style harmonic`
+/// (`K[1 + d cos(nφ)]`); one shared constructor builds either from its block.
 pub struct ImproperCvff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,

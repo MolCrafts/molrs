@@ -1,21 +1,4 @@
-//! Geometric regions: shapes with a signed distance to their boundary.
-//!
-//! A region is a solid. Every shape here describes its *inside*; "outside a
-//! sphere" is [`NotRegion`] over a [`Sphere`], a shell is a sphere `&` the
-//! complement of a smaller one. There are no `Inside*` / `Outside*` pairs.
-//!
-//! Pure geometry — **not** the periodic simulation cell. For `SimBox`
-//! (PBC / MIC / wrap), see [`crate::core::simbox`].
-//!
-//! Built-in shapes:
-//! - [`Sphere`]
-//! - [`Cuboid`] — axis-aligned box (including cubes)
-//! - [`Parallelepiped`] — general triclinic cell volume (origin + edge matrix)
-//! - Boolean composition: [`AndRegion`], [`OrRegion`], [`NotRegion`]
-//!
-//! Type layout conventions:
-//! - Points: N×3 row-major [`Fnx3`], each row is `(x, y, z)`, Å.
-//! - Bounds: 3×2 [`Fnx3`], col 0 = min, col 1 = max, rows = x/y/z.
+//! Geometric regions: the [`Region`] trait, the primitive shapes and their Boolean composition.
 
 use crate::op::to_mat3;
 use crate::op::{F, F3, Fnx3};
@@ -28,6 +11,22 @@ use std::sync::Arc;
 const FD_STEP: F = 1e-6;
 
 /// A solid with a signed distance to its boundary.
+///
+/// A region is a solid. Every shape describes its *inside* ([`Sphere`],
+/// [`Cuboid`], [`Parallelepiped`], [`HalfSpace`](crate::core::HalfSpace),
+/// [`Cylinder`](crate::core::Cylinder), [`Ellipsoid`](crate::core::Ellipsoid),
+/// [`Polyhedron`](crate::core::Polyhedron),
+/// [`SphereUnion`](crate::core::SphereUnion)); outside, shells and voids are
+/// Boolean compositions ([`AndRegion`], [`OrRegion`], [`NotRegion`]): "outside a
+/// sphere" is [`NotRegion`] over a [`Sphere`], a shell is a sphere `&` the
+/// complement of a smaller one. There are no `Inside*` / `Outside*` pairs.
+///
+/// Pure geometry — **not** the periodic simulation cell, which is
+/// [`SimBox`](crate::core::SimBox) (PBC / MIC / wrap); it is not a region type.
+///
+/// Type layout conventions:
+/// - Points: N×3 row-major [`Fnx3`], each row is `(x, y, z)`, Å.
+/// - Bounds: 3×2 [`Fnx3`], col 0 = min, col 1 = max, rows = x/y/z.
 ///
 /// `distance` is the one method a shape has to write. It is **negative
 /// inside, positive outside, zero on the boundary**, and its sign together

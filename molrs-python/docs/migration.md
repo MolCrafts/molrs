@@ -2132,7 +2132,7 @@ likewise `assignAromaticity`, `addHydrogens`, `removeHydrogens`,
 | `md::Direct` | `md::SelfPairedForces` |
 | `md::scalar_mass` | `md::uniform_masses` |
 | `md::{kinetic_energy, com_velocity}` | `compute::{kinetic_energy, center_of_mass_velocity}` |
-| Python `MD.num_edges` | `MD.n_edges`; `MD.run(thermo=…)` prices KE and T in Rust |
+| Python `MD.num_edges` | `MdDriver.n_edges`; `MdDriver.run(thermo=…)` prices KE and T in Rust |
 
 **`optimize`**:
 
@@ -2175,6 +2175,20 @@ the `rdf.*` / `voronoi.*` id prefixes are gone: `density.radial_distribution`,
 `locality.radical_voronoi`, `locality.voronoi_domain_analysis`,
 `locality.voronoi_void_analysis`; `dynamics.pair_persistence` is
 `dynamics.pair_survival`.
+
+**Acronyms and counts, every subpackage** (after S2 and S3 met S4): the
+casing rule now holds in every Python subpackage, and `test_public_paths`
+checks all of them (numpy's `DType` and `HBond`, where H is the element,
+are kept).
+
+| Before | Now |
+|---|---|
+| `md::MDState` (Python `molrs.md.MDState`) | `md::MdState` (`molrs.md.MdState`) |
+| Python `molrs.md.MD` (the driver) | `molrs.md.MdDriver` |
+| `compute::{KMeans, KMeansResult}` (Python and WASM `KMeans`) | `Kmeans`, `KmeansResult` (the module is `kmeans`) |
+| `op::{FNx3, FNx3View}` | `op::{Fnx3, Fnx3View}` |
+| `SmartsPattern::num_query_atoms` (Python `SmartsPattern.num_query_atoms`) | `n_query_atoms` |
+| Python `RingInfo.num_rings()` | `RingInfo.n_rings()` |
 
 ### Python: kernels live in `molrs.ff.potential`
 

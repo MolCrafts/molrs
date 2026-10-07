@@ -1,25 +1,4 @@
-//! Periodic improper (AMBER / GAFF / OpenMM impropers):
-//!
-//! E(φ) = k · [1 + cos(n·φ − γ)]
-//!
-//! `k` is the force constant (energy), `periodicity` the multiplicity, and
-//! `phase` the phase γ in **degrees**; the kernel converts it to radians once.
-//! No LAMMPS style has this name: one term with γ ∈ {0°, 180°} is LAMMPS
-//! `improper_style cvff` (`K = k`, `d = cos γ`, `n`), which is how the LAMMPS
-//! writer emits it.
-//!
-//! # Atom order
-//!
-//! The improper angle φ is the dihedral I-J-K-L **of the stored order**, as in
-//! every LAMMPS improper style that is a dihedral (`cvff`, `harmonic`), and as
-//! AMBER, GROMACS and LAMMPS each compute it from their topology files. An
-//! AMBER-family improper is stored in AMBER's order — the centre **third**
-//! (`atomk`) — because that is the order whose dihedral is AMBER's angle: no
-//! order with the centre first has the same dihedral (the axis of an AMBER
-//! improper runs through the centre). It is therefore also the order a LAMMPS
-//! data file lists such an improper in for `cvff` to reproduce AMBER's energy.
-//! OpenMM's XML lists the centre first and evaluates `(c2, c3, c1, c4)`; its
-//! reader and writer map between the two.
+//! Periodic improper (AMBER / GAFF / OpenMM impropers).
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
@@ -36,6 +15,29 @@ use molrs::core::Frame;
 use molrs::op::F;
 
 /// Periodic improper with pre-resolved flat arrays.
+///
+/// Periodic improper (AMBER / GAFF / OpenMM impropers):
+///
+/// E(φ) = k · [1 + cos(n·φ − γ)]
+///
+/// `k` is the force constant (energy), `periodicity` the multiplicity, and
+/// `phase` the phase γ in **degrees**; the kernel converts it to radians once.
+/// No LAMMPS style has this name: one term with γ ∈ {0°, 180°} is LAMMPS
+/// `improper_style cvff` (`K = k`, `d = cos γ`, `n`), which is how the LAMMPS
+/// writer emits it.
+///
+/// # Atom order
+///
+/// The improper angle φ is the dihedral I-J-K-L **of the stored order**, as in
+/// every LAMMPS improper style that is a dihedral (`cvff`, `harmonic`), and as
+/// AMBER, GROMACS and LAMMPS each compute it from their topology files. An
+/// AMBER-family improper is stored in AMBER's order — the centre **third**
+/// (`atomk`) — because that is the order whose dihedral is AMBER's angle: no
+/// order with the centre first has the same dihedral (the axis of an AMBER
+/// improper runs through the centre). It is therefore also the order a LAMMPS
+/// data file lists such an improper in for `cvff` to reproduce AMBER's energy.
+/// OpenMM's XML lists the centre first and evaluates `(c2, c3, c1, c4)`; its
+/// reader and writer map between the two.
 pub struct ImproperPeriodic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -128,7 +130,7 @@ impl IndexedTerms for ImproperPeriodic {
 
 /// Construct an [`ImproperPeriodic`] from per-type params (`k`,
 /// `periodicity`, `phase` in degrees) and a Frame's `"impropers"` block
-/// (`atomi/atomj/atomk/atoml/type`, in AMBER order — see the module docs).
+/// (`atomi/atomj/atomk/atoml/type`, in AMBER order — see [`ImproperPeriodic`]).
 pub fn improper_periodic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],

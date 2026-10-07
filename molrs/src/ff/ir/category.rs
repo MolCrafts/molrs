@@ -1,11 +1,5 @@
 //! What a category is: how many endpoints its rows name, which Frame block
 //! its terms live in, and which coordinate its energy is a function of.
-//!
-//! The seven categories molrs prices (`atom`, `bond`, `angle`, `dihedral`,
-//! `improper`, `pair`, `cmap`) and molrec's `constraint`, `drude` and
-//! `virtual_site` are [`CategorySpec`]s like any other — a category added at
-//! run time is registered through the same struct and gated by the same
-//! fields.
 
 use std::borrow::Cow;
 
@@ -101,6 +95,12 @@ pub enum EndpointOrder {
 }
 
 /// A category of the force-field IR.
+///
+/// The seven categories molrs prices (`atom`, `bond`, `angle`, `dihedral`,
+/// `improper`, `pair`, `cmap`) and molrec's `constraint`, `drude` and
+/// `virtual_site` are [`CategorySpec`]s like any other — a category added at
+/// run time is registered through the same struct and gated by the same
+/// fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CategorySpec {
     /// `^[a-z][a-z0-9_]*$`.

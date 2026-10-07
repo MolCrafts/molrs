@@ -1,9 +1,4 @@
-//! Triclinic simulation box and periodic operations based on ndarray.
-//!
-//! Conventions (fractional/cartesian):
-//! - cart = origin + H * frac
-//! - frac = H^{-1} * (cart - origin)
-//! - Lattice vectors are the columns of H.
+//! Triclinic simulation box and periodic operations: [`SimBox`].
 
 use crate::op::vec3::{cross, dot, norm};
 use crate::op::{F, F3, F3View, Fnx3, Fnx3View, I, Pbc3};
@@ -20,7 +15,12 @@ pub enum BoxKind {
     Triclinic,
 }
 
-/// Simulation box: triclinic cell with origin and per-axis PBC mask
+/// Simulation box: triclinic cell with origin and per-axis PBC mask.
+///
+/// Conventions (fractional/cartesian):
+/// - cart = origin + H * frac
+/// - frac = H^{-1} * (cart - origin)
+/// - Lattice vectors are the columns of H.
 #[derive(Debug, Clone)]
 pub struct SimBox {
     /// Triclinic cell matrix H (columns are lattice vectors)

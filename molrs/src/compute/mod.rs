@@ -98,6 +98,56 @@
 //! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
 //! outputs use the default no-op.
 //!
+//! # Raw observable, then fit: transport
+//!
+//! Every transport method returns **only a raw curve + scalar metadata**; the fit
+//! step (slope, integral, Debye τ) is the analyst's explicit, parameterized
+//! choice:
+//!
+//! | Method | Raw output | Downstream fit |
+//! |--------|-----------|----------------|
+//! | [`Vacf`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`] (VDOS) / [`CumulativeTrapezoid`] (D) |
+//! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`] (D = slope/2d) |
+//! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`] (σ) |
+//! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`] (σ) |
+//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) / [`DipoleAutocorrelationSpectrum`] |
+//! | [`DipoleRateCross`] | `C_{ṀM}` (FD Ṁ × M) | [`DipoleRateCrossSpectrum`] |
+//! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`] per pair |
+//!
+//! [`VacfAccumulator`] is the streaming (frame-by-frame, bounded-memory)
+//! counterpart of [`Vacf`] for on-the-fly MD analysis. Units follow the MD
+//! convention of the caller (time in the `dt` unit, velocities/dipoles as
+//! supplied); the fits document the MD→SI prefactors.
+//!
+//! ```ignore
+//! let raw = Vacf.compute(&[] as &[&Frame], (&velocities, dt, resolution))?;
+//! let d = CumulativeTrapezoid.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
+//! ```
+//!
+//! # Raw observable, then fit: spectra
+//!
+//! Each spectrum is an explicit two-step composition — a raw compute produces
+//! an (unwindowed) correlation function, a fit applies window + FFT (+
+//! physical prefactors):
+//!
+//! | Spectrum | Raw compute | Fit transform |
+//! |----------|-------------|---------------|
+//! | VDOS | [`Vacf`] (velocity ACF) | [`PowerSpectrum`] |
+//! | IR | [`IrFlux`] (dipole-flux ACF) | [`IrSpectrum`] |
+//! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
+//! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
+//! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
+//! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
+//! | Dielectric ε(ω) | [`DebyeRelaxation`] / [`GreenKuboConductivity`] / [`DipoleRateCross`] | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
+//!
+//! Spectral units:
+//!
+//! | quantity   | unit |
+//! |------------|------|
+//! | time / dt  | fs   |
+//! | frequency  | cm⁻¹ |
+//! | intensity  | arb. |
+//!
 //! # Implementation modules (`compute/<name>/`)
 //!
 //! One folder per kernel family. **UI/catalog categories** (see

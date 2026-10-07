@@ -1,7 +1,4 @@
 //! Control commands sent from streaming clients back to the simulation.
-//!
-//! This module is WASM-clean: it depends only on `serde` (and optional
-//! MessagePack / JSON codecs at the call site). No tokio or socket types.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +9,9 @@ use crate::stream::{FrameEncoding, StreamError};
 /// Wire format is externally tagged by `"type"` with snake_case variant names,
 /// so a browser client can send `{"type":"pause"}` or MessagePack with the same
 /// shape.
+///
+/// It is WASM-clean: it depends only on `serde` (and optional
+/// MessagePack / JSON codecs at the call site). No tokio or socket types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlCommand {

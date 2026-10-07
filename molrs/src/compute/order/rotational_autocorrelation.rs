@@ -1,28 +1,4 @@
 //! Rotational autocorrelation for time-series of orientations.
-//!
-//! Mirrors `freud.order.RotationalAutocorrelation`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/RotationalAutocorrelation.cc)).
-//!
-//! For each particle with reference orientation `q_ref` and current
-//! orientation `q_t` the relative rotation is `q_rel = q_t · q_ref⁻¹`.
-//! The Wigner-D character at angular order ℓ depends only on the rotation
-//! angle `θ_rel`:
-//!
-//! ```text
-//!   χ^ℓ(θ) = sin((ℓ + ½) θ) / sin(θ/2)        (for θ ≠ 0)
-//!   χ^ℓ(0) = 2ℓ + 1
-//! ```
-//!
-//! and is the trace of the (2ℓ+1)×(2ℓ+1) D-matrix. The output is the
-//! **normalised** rotational autocorrelation per particle:
-//!
-//! ```text
-//!   Ψ_ℓ(i) = χ^ℓ(θ_rel(i)) / (2ℓ + 1)
-//! ```
-//!
-//! so that `Ψ_ℓ = 1` for unrotated particles and decays toward 0 as the
-//! ensemble decorrelates. The system-wide order parameter is the mean of
-//! `Ψ_ℓ(i)` across particles.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
@@ -34,6 +10,30 @@ use crate::op::Quat;
 use crate::op::{quat_conj, quat_mul, quat_norm};
 
 /// Rotational autocorrelation calculator.
+///
+/// Mirrors `freud.order.RotationalAutocorrelation`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/RotationalAutocorrelation.cc)).
+///
+/// For each particle with reference orientation `q_ref` and current
+/// orientation `q_t` the relative rotation is `q_rel = q_t · q_ref⁻¹`.
+/// The Wigner-D character at angular order ℓ depends only on the rotation
+/// angle `θ_rel`:
+///
+/// ```text
+///   χ^ℓ(θ) = sin((ℓ + ½) θ) / sin(θ/2)        (for θ ≠ 0)
+///   χ^ℓ(0) = 2ℓ + 1
+/// ```
+///
+/// and is the trace of the (2ℓ+1)×(2ℓ+1) D-matrix. The output is the
+/// **normalised** rotational autocorrelation per particle:
+///
+/// ```text
+///   Ψ_ℓ(i) = χ^ℓ(θ_rel(i)) / (2ℓ + 1)
+/// ```
+///
+/// so that `Ψ_ℓ = 1` for unrotated particles and decays toward 0 as the
+/// ensemble decorrelates. The system-wide order parameter is the mean of
+/// `Ψ_ℓ(i)` across particles.
 #[derive(Debug, Clone, Copy)]
 pub struct RotationalAutocorrelation {
     l: u32,

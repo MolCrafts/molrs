@@ -1,19 +1,5 @@
-//! Convert [`SmilesIr`] into [`Atomistic`] molecular graphs.
-//!
-//! This is the second stage of the pipeline:
-//!
-//! ```text
-//! SMILES string → SmilesIr::parse() → SmilesIr → SmilesIr::to_atomistic() → Atomistic
-//! ```
-//!
-//! The conversion walks the IR tree, creates atoms with element symbols, creates
-//! bonds from the chain structure and ring closures, and sets properties
-//! (mass, charge, isotope, chirality, hydrogen count).
-//!
-//! [`SmilesIr::to_atomistic_with_descriptors`] is the fragment-dialect entry
-//! point and shares that one walk: it additionally hands back the bonding
-//! descriptors the notation anchored on each atom, which
-//! [`SmilesIr::to_atomistic`] refuses rather than drops.
+//! Convert [`SmilesIr`] into [`Atomistic`] molecular graphs, and the
+//! [`read_smiles_str`] door.
 
 use std::collections::{HashMap, HashSet};
 

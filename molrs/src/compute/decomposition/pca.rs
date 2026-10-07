@@ -1,21 +1,4 @@
 //! 2-component Principal Component Analysis (PCA).
-//!
-//! [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
-//! `T: DescriptorRow` — each descriptor row is one observation. PCA
-//! standardizes the columns, computes covariance, and projects onto the top
-//! two eigenvectors via power iteration with deflation. No external
-//! linear-algebra crate is required; matrices are small (tens of columns).
-//!
-//! # Algorithm
-//!
-//! 1. Collect rows into an `n_rows × n_cols` matrix (row-major).
-//! 2. Standardize each column: `(x - mean) / std`. Zero-variance columns are
-//!    rejected.
-//! 3. Covariance `C = (Z^T Z) / (n_rows - 1)`.
-//! 4. Top two eigenvectors via power iteration with deflation.
-//! 5. Project every row onto the two eigenvectors → `[n_rows, 2]` scores.
-//!
-//! Same input → identical output (deterministic initial vector, deflation).
 
 use std::marker::PhantomData;
 
@@ -42,6 +25,23 @@ impl ComputeResult for PcaResult {}
 ///
 /// Construct with `Pca::<T>::new()` where `T: DescriptorRow`. Each
 /// [`compute`](Compute::compute) call expects an `&Vec<T>` of length ≥ 3.
+///
+/// [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
+/// `T: DescriptorRow` — each descriptor row is one observation. PCA
+/// standardizes the columns, computes covariance, and projects onto the top
+/// two eigenvectors via power iteration with deflation. No external
+/// linear-algebra crate is required; matrices are small (tens of columns).
+///
+/// # Algorithm
+///
+/// 1. Collect rows into an `n_rows × n_cols` matrix (row-major).
+/// 2. Standardize each column: `(x - mean) / std`. Zero-variance columns are
+///    rejected.
+/// 3. Covariance `C = (Z^T Z) / (n_rows - 1)`.
+/// 4. Top two eigenvectors via power iteration with deflation.
+/// 5. Project every row onto the two eigenvectors → `[n_rows, 2]` scores.
+///
+/// Same input → identical output (deterministic initial vector, deflation).
 #[derive(Debug)]
 pub struct Pca<T: DescriptorRow + Clone + Send + Sync + 'static> {
     _marker: PhantomData<fn() -> T>,

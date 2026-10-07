@@ -4,24 +4,6 @@
 // more clearly than nested zips.
 #![allow(clippy::needless_range_loop)]
 
-//! 2-D `(x, y, θ)` Pair Mode Fourier Transform.
-//!
-//! Mirrors `freud.pmft.PmftXyt`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyt.cc)).
-//!
-//! For a 2-D system of oriented particles: bin each neighbor pair `(i, j)`
-//! by the bond vector **rotated into the query particle's local frame**
-//! `(x, y)` and the **relative orientation angle** `θ = orient_j − orient_i`.
-//!
-//! Algorithm:
-//! 1. `r_local = R(−orient_i) · r_ij`           (rotate bond into i's frame)
-//! 2. `x = r_local.x`, `y = r_local.y`
-//! 3. `θ = wrap(orient_j − orient_i, [0, 2π))`
-//! 4. Bin into `[−x_max, x_max] × [−y_max, y_max] × [0, 2π)`
-//!
-//! PMF is `−ln(ρ / ρ_ref)`. The lab z-axis is ignored; orientations are
-//! scalar 2-D angles in radians.
-
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
@@ -36,6 +18,22 @@ use crate::compute::require_disp;
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
 /// `PmftXyt` analyzer.
+///
+/// Mirrors `freud.pmft.PmftXyt`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyt.cc)).
+///
+/// For a 2-D system of oriented particles: bin each neighbor pair `(i, j)`
+/// by the bond vector **rotated into the query particle's local frame**
+/// `(x, y)` and the **relative orientation angle** `θ = orient_j − orient_i`.
+///
+/// Algorithm:
+/// 1. `r_local = R(−orient_i) · r_ij`           (rotate bond into i's frame)
+/// 2. `x = r_local.x`, `y = r_local.y`
+/// 3. `θ = wrap(orient_j − orient_i, [0, 2π))`
+/// 4. Bin into `[−x_max, x_max] × [−y_max, y_max] × [0, 2π)`
+///
+/// PMF is `−ln(ρ / ρ_ref)`. The lab z-axis is ignored; orientations are
+/// scalar 2-D angles in radians.
 #[derive(Debug, Clone, Copy)]
 pub struct PmftXyt {
     x_max: F,
