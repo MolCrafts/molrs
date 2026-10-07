@@ -171,7 +171,7 @@ impl PyFrameMeta {
             .map_err(ffi_error_to_pyerr)
     }
 
-    fn store(&mut self, key: &str, value: MetaValue) -> PyResult<()> {
+    fn insert_meta(&mut self, key: &str, value: MetaValue) -> PyResult<()> {
         self.inner
             .with_meta_mut(|meta| {
                 meta.insert(key, value);
@@ -251,7 +251,7 @@ impl PyFrameMeta {
 
     fn __setitem__(&mut self, key: &str, value: &Bound<'_, PyAny>) -> PyResult<()> {
         let typed = infer_meta_value(value)?;
-        self.store(key, typed)
+        self.insert_meta(key, typed)
     }
 
     fn __delitem__(&mut self, key: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -399,7 +399,7 @@ impl PyFrameMeta {
             None => py.None().into_bound(py),
         };
         let typed = infer_meta_value(&value)?;
-        self.store(key, typed.clone())?;
+        self.insert_meta(key, typed.clone())?;
         meta_value_to_py(py, &typed, JsonForm::Frozen)
     }
 
@@ -767,7 +767,7 @@ impl PyFrame {
             )));
         };
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_block(self.inner.id, key, core_block)
             .map_err(ffi_error_to_pyerr)
@@ -790,7 +790,7 @@ impl PyFrame {
     /// >>> del frame["bonds"]
     fn __delitem__(&mut self, key: &str) -> PyResult<()> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .remove_block(self.inner.id, key)
             .map_err(ffi_error_to_pyerr)
@@ -1242,14 +1242,14 @@ unsafe impl Send for FrameRefPtr {}
 impl PyFrame {
     /// Create a `PyFrame` from a Rust `CoreFrame`, allocating a new FFI store.
     pub(crate) fn from_core_frame(frame: CoreFrame) -> PyResult<Self> {
-        let store = molrs_ffi::new_shared();
-        let id = store.borrow_mut().frame_new();
-        store
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let id = arena.borrow_mut().frame_new();
+        arena
             .borrow_mut()
             .set_frame(id, frame)
             .map_err(ffi_error_to_pyerr)?;
         Ok(Self {
-            inner: FrameRef::new(store, id),
+            inner: FrameRef::new(arena, id),
         })
     }
 

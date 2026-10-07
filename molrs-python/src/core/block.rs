@@ -930,18 +930,18 @@ impl PyBlock {
     /// Create a `PyBlock` from a Rust `CoreBlock`, allocating a new
     /// single-frame FFI store.
     pub(crate) fn from_core_block(block: CoreBlock) -> PyResult<Self> {
-        let store = molrs_ffi::new_shared();
-        let frame = store.borrow_mut().frame_new();
-        store
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let frame = arena.borrow_mut().frame_new();
+        arena
             .borrow_mut()
             .set_block(frame, "__block__", block)
             .map_err(ffi_error_to_pyerr)?;
-        let handle = store
+        let handle = arena
             .borrow()
             .get_block(frame, "__block__")
             .map_err(ffi_error_to_pyerr)?;
         Ok(Self {
-            inner: BlockRef::new(store, handle),
+            inner: BlockRef::new(arena, handle),
         })
     }
 

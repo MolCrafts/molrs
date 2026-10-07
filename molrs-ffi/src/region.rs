@@ -6,7 +6,7 @@
 //! of this handle, and a consuming Rust binding (e.g. molpack) resolves the
 //! capsule back to a `RegionRef`, takes the shared [`Region`] through
 //! [`RegionRef::region`], and calls its methods. No marshalling, no parallel
-//! data type — and, unlike a frame, no store: a region is a self-contained
+//! data type — and, unlike a frame, no arena: a region is a self-contained
 //! `Arc`.
 //!
 //! Always compiled: `Region` lives in molrs `core`, which every consumer

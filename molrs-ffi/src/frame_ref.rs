@@ -1,13 +1,8 @@
-//! Shared-ownership wrappers pairing handles with a SharedStore.
+//! [`FrameRef`] and [`BlockRef`]: a handle paired with the
+//! [`FrameArenaCell`] that owns its frame.
 //!
-//! Every language binding (wasm, python, capi) needs a way to hold a handle
-//! alongside a shared reference to the [`Store`]. Before this module each
-//! binding re-implemented the `(handle, Rc<RefCell<Store>>)` tuple together
-//! with a grab-bag of borrow helpers — duplicated, subtly divergent glue.
-//!
-//! [`FrameRef`] and [`BlockRef`] replace that pattern: bindings just hold
-//! one of these and forward every access through the shared helpers defined
-//! here. The bindings stay thin (attribute macros + name mapping) and the
+//! Every language binding (wasm, python, capi, cxx) holds one of these and
+//! forwards every access through the helpers defined here. The bindings stay thin (attribute macros + name mapping) and the
 //! canonical schema lookup / dtype dispatch / slice borrowing live in one
 //! place.
 //!
@@ -26,11 +21,11 @@
 //!
 //! ## Threading
 //!
-//! [`SharedStore`] uses `Rc<RefCell<_>>`. All current FFI consumers (wasm
-//! is single-threaded; python holds the GIL; capi is used from
-//! single-threaded C/C++ today) satisfy this. Native multi-threaded Rust
-//! consumers should hold the raw [`Store`] directly or wrap it themselves
-//! in `Arc<Mutex<_>>`.
+//! [`FrameArenaCell`] is `Rc<RefCell<_>>`. All current FFI consumers (wasm
+//! is single-threaded; python holds the GIL; cxx is used from
+//! single-threaded C++ today) satisfy this. Native multi-threaded Rust
+//! consumers hold a [`FrameArena`] directly or wrap it themselves in
+//! `Arc<Mutex<_>>` (molrs-capi does).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -42,50 +37,46 @@ use molrs::core::{Block, DType};
 use molrs::op::{F, I, Idx};
 
 use crate::error::FfiError;
+use crate::frame_arena::FrameArena;
 use crate::handle::{BlockHandle, FrameId};
-use crate::store::Store;
 
-/// Single-threaded shared ownership of a [`Store`].
-pub type SharedStore = Rc<RefCell<Store>>;
+/// Single-threaded shared ownership of a [`FrameArena`]; a new empty one is
+/// `FrameArenaCell::default()`.
+pub type FrameArenaCell = Rc<RefCell<FrameArena>>;
 
 /// An owned numeric column as `(values, shape)`, or `None` when absent.
 pub type OwnedColumn<T> = Option<(Vec<T>, Vec<usize>)>;
-
-/// Create a new empty [`SharedStore`].
-pub fn new_shared() -> SharedStore {
-    Rc::new(RefCell::new(Store::new()))
-}
 
 // =====================================================================
 // FrameRef
 // =====================================================================
 
-/// A paired [`FrameId`] + [`SharedStore`]. Cheap to clone (two `Rc` bumps).
+/// A paired [`FrameId`] + [`FrameArenaCell`]. Cheap to clone (two `Rc` bumps).
 ///
 /// Bindings wrap this as their `Frame` type and add language-specific
 /// attributes (e.g. `#[wasm_bindgen]`, `#[pyclass]`).
 #[derive(Clone)]
 pub struct FrameRef {
     pub id: FrameId,
-    pub store: SharedStore,
+    pub arena: FrameArenaCell,
 }
 
 impl FrameRef {
-    /// Wrap an existing store + id.
-    pub fn new(store: SharedStore, id: FrameId) -> Self {
-        Self { id, store }
+    /// Wrap an existing arena + id.
+    pub fn new(arena: FrameArenaCell, id: FrameId) -> Self {
+        Self { id, arena }
     }
 
-    /// Create a new empty frame inside a fresh [`SharedStore`].
+    /// Create a new empty frame inside a fresh [`FrameArenaCell`].
     pub fn new_standalone() -> Self {
-        let store = new_shared();
-        let id = store.borrow_mut().frame_new();
-        Self { id, store }
+        let arena = FrameArenaCell::default();
+        let id = arena.borrow_mut().frame_new();
+        Self { id, arena }
     }
 
     /// Run a closure with immutable access to the underlying [`Frame`].
     pub fn with<R>(&self, f: impl FnOnce(&Frame) -> R) -> Result<R, FfiError> {
-        self.store.borrow().with_frame(self.id, f)
+        self.arena.borrow().with_frame(self.id, f)
     }
 
     /// Run a closure with mutable access to the underlying [`Frame`].
@@ -94,7 +85,7 @@ impl FrameRef {
     /// closure returns, since `&mut Frame` permits arbitrary block
     /// modifications.
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Frame) -> R) -> Result<R, FfiError> {
-        self.store.borrow_mut().with_frame_mut(self.id, f)
+        self.arena.borrow_mut().with_frame_mut(self.id, f)
     }
 
     /// Run a closure with mutable access to the frame's metadata only.
@@ -102,14 +93,14 @@ impl FrameRef {
     /// Unlike [`with_mut`](Self::with_mut), block handles on this frame stay
     /// valid: the closure cannot reach a block.
     pub fn with_meta_mut<R>(&self, f: impl FnOnce(&mut MetaMap) -> R) -> Result<R, FfiError> {
-        self.store.borrow_mut().with_frame_meta_mut(self.id, f)
+        self.arena.borrow_mut().with_frame_meta_mut(self.id, f)
     }
 
     /// Resolve a child block key into a [`BlockRef`]. Returns
     /// `Err(KeyNotFound)` if the key is absent from this frame.
     pub fn block(&self, key: &str) -> Result<BlockRef, FfiError> {
-        let handle = self.store.borrow().get_block(self.id, key)?;
-        Ok(BlockRef::new(Rc::clone(&self.store), handle))
+        let handle = self.arena.borrow().get_block(self.id, key)?;
+        Ok(BlockRef::new(Rc::clone(&self.arena), handle))
     }
 
     /// True if the frame has a block at `key`.
@@ -119,24 +110,24 @@ impl FrameRef {
 
     /// Clone the simbox out of the frame (if any).
     pub fn box_clone(&self) -> Result<Option<SimBox>, FfiError> {
-        self.store
+        self.arena
             .borrow()
             .with_frame_box(self.id, |sb| sb.cloned())
     }
 
     /// Replace / clear the simbox.
     pub fn set_box(&self, simbox: Option<SimBox>) -> Result<(), FfiError> {
-        self.store.borrow_mut().set_frame_box(self.id, simbox)
+        self.arena.borrow_mut().set_frame_box(self.id, simbox)
     }
 
-    /// Deep-clone the frame's data out of the store.
+    /// Deep-clone the frame's data out of the arena.
     pub fn clone_frame(&self) -> Result<Frame, FfiError> {
-        self.store.borrow().clone_frame(self.id)
+        self.arena.borrow().clone_frame(self.id)
     }
 
-    /// Drop the frame from the store, invalidating every handle to it.
+    /// Drop the frame from the arena, invalidating every handle to it.
     pub fn drop_frame(self) -> Result<(), FfiError> {
-        self.store.borrow_mut().frame_drop(self.id)
+        self.arena.borrow_mut().frame_drop(self.id)
     }
 }
 
@@ -144,29 +135,29 @@ impl FrameRef {
 // BlockRef
 // =====================================================================
 
-/// A paired [`BlockHandle`] + [`SharedStore`]. Cheap to clone.
+/// A paired [`BlockHandle`] + [`FrameArenaCell`]. Cheap to clone.
 ///
 /// Bindings wrap this as their `Block` type. All column-access helpers
 /// live on this type so the bindings don't reinvent dtype dispatch.
 #[derive(Clone)]
 pub struct BlockRef {
     pub handle: BlockHandle,
-    pub store: SharedStore,
+    pub arena: FrameArenaCell,
 }
 
 impl BlockRef {
-    pub fn new(store: SharedStore, handle: BlockHandle) -> Self {
-        Self { handle, store }
+    pub fn new(arena: FrameArenaCell, handle: BlockHandle) -> Self {
+        Self { handle, arena }
     }
 
     /// Run a closure with immutable access to the underlying [`Block`].
     pub fn with<R>(&self, f: impl FnOnce(&Block) -> R) -> Result<R, FfiError> {
-        self.store.borrow().with_block(&self.handle, f)
+        self.arena.borrow().with_block(&self.handle, f)
     }
 
     /// Run a closure with mutable access; bumps the handle version.
     pub fn with_mut<R>(&mut self, f: impl FnOnce(&mut Block) -> R) -> Result<R, FfiError> {
-        self.store.borrow_mut().with_block_mut(&mut self.handle, f)
+        self.arena.borrow_mut().with_block_mut(&mut self.handle, f)
     }
 
     // ---- Metadata ----
@@ -199,9 +190,9 @@ impl BlockRef {
         self.with(|b| b.get(key).map(|c| c.shape().to_vec()))
     }
 
-    /// Deep-clone the block data out of the store.
+    /// Deep-clone the block data out of the arena.
     pub fn clone_block(&self) -> Result<Block, FfiError> {
-        self.store.borrow().clone_block(&self.handle)
+        self.arena.borrow().clone_block(&self.handle)
     }
 
     // ---- Typed column borrows (zero-copy closures) ----

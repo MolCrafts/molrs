@@ -4,10 +4,10 @@ use slotmap::new_key_type;
 
 // Define a new key type for frames using slotmap
 new_key_type! {
-    /// Stable identifier for a stored frame.
+    /// Stable identifier for a frame in a [`crate::FrameArena`].
     ///
     /// Structure: (index: u32, generation: u32)
-    /// - index: slot in the store
+    /// - index: slot in the arena
     /// - generation: invalidation counter (detects use-after-free)
     ///
     /// Properties:

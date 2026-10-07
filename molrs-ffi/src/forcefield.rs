@@ -2,8 +2,8 @@
 //! [`crate::FrameRef`].
 //!
 //! A force field is standalone: unlike a [`molrs::core::Frame`] it does
-//! not live in the slot-mapped [`crate::Store`], so this handle is a thin `Rc`
-//! share rather than a `(handle, store)` pair. It exists so a force field can
+//! not live in the slot-mapped [`crate::FrameArena`], so this handle is a thin `Rc`
+//! share rather than a `(handle, arena)` pair. It exists so a force field can
 //! cross a language / extension boundary the same way a frame does — the
 //! producing binding (molrs-python) hands out a `PyCapsule` wrapping a clone of
 //! this handle, and a consuming Rust binding (e.g. molpack) resolves the capsule

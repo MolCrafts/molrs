@@ -1,15 +1,13 @@
-//! Store: owns frames and mediates access via handles.
+//! [`FrameArena`]: owns frames and mediates access to them through handles.
 //!
-//! Column access methods use uppercase type-alias suffixes (`F`, `I`, `U`)
-//! matching the compile-time aliases in [`molrs::op`].
-#![allow(non_snake_case)]
+//! Column access goes through [`crate::BlockRef`]; the arena hands out and
+//! validates the [`FrameId`] / [`BlockHandle`] keys.
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
 use molrs::core::MetaMap;
 use molrs::core::SimBox;
 use molrs::core::{Block, Frame};
-use molrs::op::{F, I, Idx};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 
@@ -20,13 +18,13 @@ struct FrameEntry {
     block_versions: HashMap<String, u64>,
 }
 
-/// Store owns all frames and mediates access via handles.
-pub struct Store {
+/// FrameArena owns all frames and mediates access via handles.
+pub struct FrameArena {
     frames: SlotMap<FrameId, FrameEntry>,
 }
 
-impl Store {
-    /// Creates a new empty Store.
+impl FrameArena {
+    /// Creates a new empty arena.
     pub fn new() -> Self {
         Self {
             frames: SlotMap::with_key(),
@@ -42,7 +40,7 @@ impl Store {
         self.frames.insert(entry)
     }
 
-    /// Drops a frame from the store, invalidating all handles to it.
+    /// Drops a frame from the arena, invalidating all handles to it.
     pub fn frame_drop(&mut self, id: FrameId) -> Result<(), FfiError> {
         self.frames
             .remove(id)
@@ -241,201 +239,6 @@ impl Store {
         Ok(result)
     }
 
-    // ---- Typed column access (F / I / U) ----
-
-    /// Copy an `F` column into a new `Vec<F>`.
-    pub fn copy_col_F(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(Vec<F>, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_float())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        let shape = arr.shape().to_vec();
-        let mut data = Vec::with_capacity(arr.len());
-        data.extend(arr.iter().copied());
-        Ok((data, shape))
-    }
-
-    /// Get `F` column metadata (length, shape) for zero-copy access.
-    pub fn view_col_F(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(usize, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_float())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        arr.as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok((arr.len(), arr.shape().to_vec()))
-    }
-
-    /// Borrow an `F` column as a contiguous slice via closure (zero-copy).
-    pub fn borrow_col_F<R>(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-        f: impl FnOnce(&[F], &[usize]) -> R,
-    ) -> Result<R, FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_float())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        let slice = arr
-            .as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok(f(slice, arr.shape()))
-    }
-
-    // ---- I (signed int) column access ----
-
-    /// Copy an `I` column into a new `Vec<I>`.
-    pub fn copy_col_I(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(Vec<I>, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr = block
-            .get(col)
-            .and_then(|c| c.as_int())
-            .ok_or_else(|| FfiError::KeyNotFound {
-                key: col.to_string(),
-            })?;
-        let shape = arr.shape().to_vec();
-        let mut data = Vec::with_capacity(arr.len());
-        data.extend(arr.iter().copied());
-        Ok((data, shape))
-    }
-
-    /// Get `I` column metadata (length, shape) for zero-copy access.
-    pub fn view_col_I(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(usize, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr = block
-            .get(col)
-            .and_then(|c| c.as_int())
-            .ok_or_else(|| FfiError::KeyNotFound {
-                key: col.to_string(),
-            })?;
-        arr.as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok((arr.len(), arr.shape().to_vec()))
-    }
-
-    /// Borrow an `I` column as a contiguous slice via closure (zero-copy).
-    pub fn borrow_col_I<R>(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-        f: impl FnOnce(&[I], &[usize]) -> R,
-    ) -> Result<R, FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr = block
-            .get(col)
-            .and_then(|c| c.as_int())
-            .ok_or_else(|| FfiError::KeyNotFound {
-                key: col.to_string(),
-            })?;
-        let slice = arr
-            .as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok(f(slice, arr.shape()))
-    }
-
-    // ---- U (unsigned int) column access ----
-
-    /// Copy a `U` column into a new `Vec<U>`.
-    pub fn copy_col_U(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(Vec<Idx>, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        let shape = arr.shape().to_vec();
-        let mut data = Vec::with_capacity(arr.len());
-        data.extend(arr.iter().copied());
-        Ok((data, shape))
-    }
-
-    /// Get `U` column metadata (length, shape) for zero-copy access.
-    pub fn view_col_U(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-    ) -> Result<(usize, Vec<usize>), FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        arr.as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok((arr.len(), arr.shape().to_vec()))
-    }
-
-    /// Borrow a `U` column as a contiguous slice via closure (zero-copy).
-    pub fn borrow_col_U<R>(
-        &self,
-        handle: &BlockHandle,
-        col: &str,
-        f: impl FnOnce(&[Idx], &[usize]) -> R,
-    ) -> Result<R, FfiError> {
-        let (_, block) = self.validated_block(handle)?;
-        let arr =
-            block
-                .get(col)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| FfiError::KeyNotFound {
-                    key: col.to_string(),
-                })?;
-        let slice = arr
-            .as_slice_memory_order()
-            .ok_or_else(|| FfiError::NonContiguous {
-                key: col.to_string(),
-            })?;
-        Ok(f(slice, arr.shape()))
-    }
-
     // ---- Private helpers ----
 
     /// Validate handle and return (&FrameEntry, &Block) in one lookup pass.
@@ -481,7 +284,7 @@ impl Store {
     }
 }
 
-impl Default for Store {
+impl Default for FrameArena {
     fn default() -> Self {
         Self::new()
     }
@@ -495,111 +298,111 @@ mod tests {
 
     #[test]
     fn test_frame_lifecycle() {
-        let mut store = Store::new();
+        let mut arena = FrameArena::new();
 
-        let id = store.frame_new();
-        assert!(store.clone_frame(id).is_ok());
+        let id = arena.frame_new();
+        assert!(arena.clone_frame(id).is_ok());
 
-        store.frame_drop(id).unwrap();
-        assert!(store.clone_frame(id).is_err());
+        arena.frame_drop(id).unwrap();
+        assert!(arena.clone_frame(id).is_err());
     }
 
     #[test]
     fn test_block_operations() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block = Block::new();
         block
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
 
-        store.set_block(id, "atoms", block).unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
 
-        let handle = store.get_block(id, "atoms").unwrap();
-        assert!(store.clone_block(&handle).is_ok());
+        let handle = arena.get_block(id, "atoms").unwrap();
+        assert!(arena.clone_block(&handle).is_ok());
     }
 
     #[test]
     fn test_block_invalidation_on_remove() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block = Block::new();
         block
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
 
-        store.set_block(id, "atoms", block).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
+        let handle = arena.get_block(id, "atoms").unwrap();
 
-        store.remove_block(id, "atoms").unwrap();
+        arena.remove_block(id, "atoms").unwrap();
 
         assert!(matches!(
-            store.clone_block(&handle),
+            arena.clone_block(&handle),
             Err(FfiError::InvalidBlockHandle)
         ));
     }
 
     #[test]
     fn test_block_invalidation_on_replace() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block1 = Block::new();
         block1
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
 
-        store.set_block(id, "atoms", block1).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block1).unwrap();
+        let handle = arena.get_block(id, "atoms").unwrap();
 
         let mut block2 = Block::new();
         block2
             .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn())
             .unwrap();
-        store.set_block(id, "atoms", block2).unwrap();
+        arena.set_block(id, "atoms", block2).unwrap();
 
         assert!(matches!(
-            store.clone_block(&handle),
+            arena.clone_block(&handle),
             Err(FfiError::InvalidBlockHandle)
         ));
     }
 
     #[test]
     fn test_reinsert_does_not_resurrect() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block1 = Block::new();
         block1
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
 
-        store.set_block(id, "atoms", block1).unwrap();
-        let old_handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block1).unwrap();
+        let old_handle = arena.get_block(id, "atoms").unwrap();
 
-        store.remove_block(id, "atoms").unwrap();
+        arena.remove_block(id, "atoms").unwrap();
 
         let mut block2 = Block::new();
         block2
             .insert("x", Array1::from_vec(vec![3.0 as F, 4.0]).into_dyn())
             .unwrap();
-        store.set_block(id, "atoms", block2).unwrap();
+        arena.set_block(id, "atoms", block2).unwrap();
 
         assert!(matches!(
-            store.clone_block(&old_handle),
+            arena.clone_block(&old_handle),
             Err(FfiError::InvalidBlockHandle)
         ));
 
-        let new_handle = store.get_block(id, "atoms").unwrap();
-        assert!(store.clone_block(&new_handle).is_ok());
+        let new_handle = arena.get_block(id, "atoms").unwrap();
+        assert!(arena.clone_block(&new_handle).is_ok());
     }
 
     #[test]
     fn test_clear_invalidates_all_blocks() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block1 = Block::new();
         block1
@@ -610,118 +413,54 @@ mod tests {
             .insert("y", Array1::from_vec(vec![2.0 as F]).into_dyn())
             .unwrap();
 
-        store.set_block(id, "atoms", block1).unwrap();
-        store.set_block(id, "bonds", block2).unwrap();
+        arena.set_block(id, "atoms", block1).unwrap();
+        arena.set_block(id, "bonds", block2).unwrap();
 
-        let handle1 = store.get_block(id, "atoms").unwrap();
-        let handle2 = store.get_block(id, "bonds").unwrap();
+        let handle1 = arena.get_block(id, "atoms").unwrap();
+        let handle2 = arena.get_block(id, "bonds").unwrap();
 
-        store.clear_frame(id).unwrap();
+        arena.clear_frame(id).unwrap();
 
         assert!(matches!(
-            store.clone_block(&handle1),
+            arena.clone_block(&handle1),
             Err(FfiError::InvalidBlockHandle)
         ));
         assert!(matches!(
-            store.clone_block(&handle2),
+            arena.clone_block(&handle2),
             Err(FfiError::InvalidBlockHandle)
         ));
-    }
-
-    #[test]
-    fn test_col_float_copy() {
-        let mut store = Store::new();
-        let id = store.frame_new();
-
-        let mut block = Block::new();
-        block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
-            )
-            .unwrap();
-
-        store.set_block(id, "atoms", block).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
-
-        let (data, shape) = store.copy_col_F(&handle, "x").unwrap();
-        assert_eq!(data, vec![1.0, 2.0, 3.0]);
-        assert_eq!(shape, vec![3]);
-    }
-
-    #[test]
-    fn test_col_float_view_metadata() {
-        let mut store = Store::new();
-        let id = store.frame_new();
-
-        let mut block = Block::new();
-        block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
-            )
-            .unwrap();
-
-        store.set_block(id, "atoms", block).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
-
-        let (len, shape) = store.view_col_F(&handle, "x").unwrap();
-        assert_eq!(len, 3);
-        assert_eq!(shape, vec![3]);
-    }
-
-    #[test]
-    fn test_with_col_float_zero_copy() {
-        let mut store = Store::new();
-        let id = store.frame_new();
-
-        let mut block = Block::new();
-        block
-            .insert(
-                "x",
-                Array1::from_vec(vec![1.0 as F, 2.0 as F, 3.0 as F]).into_dyn(),
-            )
-            .unwrap();
-
-        store.set_block(id, "atoms", block).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
-
-        let sum = store
-            .borrow_col_F(&handle, "x", |slice, _shape| slice.iter().sum::<F>())
-            .unwrap();
-        assert!((sum - 6.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_with_block_read() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block = Block::new();
         block
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
             .unwrap();
-        store.set_block(id, "atoms", block).unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
 
-        let handle = store.get_block(id, "atoms").unwrap();
-        let len = store.with_block(&handle, |b| b.len()).unwrap();
+        let handle = arena.get_block(id, "atoms").unwrap();
+        let len = arena.with_block(&handle, |b| b.len()).unwrap();
         assert_eq!(len, 1);
 
-        let nrows = store.with_block(&handle, |b| b.nrows()).unwrap();
+        let nrows = arena.with_block(&handle, |b| b.nrows()).unwrap();
         assert_eq!(nrows, Some(3));
     }
 
     #[test]
     fn test_with_block_mut_insert() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let block = Block::new();
-        store.set_block(id, "atoms", block).unwrap();
-        let mut handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
+        let mut handle = arena.get_block(id, "atoms").unwrap();
         let old_version = handle.version;
 
-        store
+        arena
             .with_block_mut(&mut handle, |b| {
                 b.insert("y", Array1::from_vec(vec![4.0 as F, 5.0]).into_dyn())
                     .unwrap();
@@ -730,21 +469,21 @@ mod tests {
 
         assert!(handle.version > old_version);
 
-        let nrows = store.with_block(&handle, |b| b.nrows()).unwrap();
+        let nrows = arena.with_block(&handle, |b| b.nrows()).unwrap();
         assert_eq!(nrows, Some(2));
     }
 
     #[test]
     fn test_with_block_mut_invalidates_old_handles() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let block = Block::new();
-        store.set_block(id, "atoms", block).unwrap();
-        let old_handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
+        let old_handle = arena.get_block(id, "atoms").unwrap();
         let mut handle = old_handle.clone();
 
-        store
+        arena
             .with_block_mut(&mut handle, |b| {
                 b.insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
                     .unwrap();
@@ -752,56 +491,56 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            store.with_block(&old_handle, |_| ()),
+            arena.with_block(&old_handle, |_| ()),
             Err(FfiError::InvalidBlockHandle)
         ));
     }
 
     #[test]
     fn test_with_frame_mut() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block = Block::new();
         block
             .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
             .unwrap();
-        store.set_block(id, "atoms", block).unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
 
-        let renamed = store
+        let renamed = arena
             .with_frame_mut(id, |f| f.rename_block("atoms", "particles"))
             .unwrap();
         assert!(renamed);
 
-        assert!(store.get_block(id, "atoms").is_err());
-        assert!(store.get_block(id, "particles").is_ok());
+        assert!(arena.get_block(id, "atoms").is_err());
+        assert!(arena.get_block(id, "particles").is_ok());
     }
 
     #[test]
     fn test_with_frame_meta_mut_keeps_block_handles_valid() {
-        let mut store = Store::new();
-        let id = store.frame_new();
+        let mut arena = FrameArena::new();
+        let id = arena.frame_new();
 
         let mut block = Block::new();
         block
             .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
             .unwrap();
-        store.set_block(id, "atoms", block).unwrap();
-        let handle = store.get_block(id, "atoms").unwrap();
+        arena.set_block(id, "atoms", block).unwrap();
+        let handle = arena.get_block(id, "atoms").unwrap();
 
-        store
+        arena
             .with_frame_meta_mut(id, |meta| meta.insert("title", "water"))
             .unwrap();
 
         // The meta write landed, and the block handle taken before it still
         // resolves at the same version.
-        let title = store
+        let title = arena
             .with_frame(id, |f| f.meta.get("title").cloned())
             .unwrap();
         assert!(title.is_some());
-        assert!(store.clone_block(&handle).is_ok());
+        assert!(arena.clone_block(&handle).is_ok());
         assert_eq!(
-            store.get_block(id, "atoms").unwrap().version,
+            arena.get_block(id, "atoms").unwrap().version,
             handle.version
         );
     }

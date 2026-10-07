@@ -623,7 +623,7 @@ mod tests {
         let mut recovered: Box<FrameRef> = unsafe { Box::from_raw(raw) };
 
         // Same Store behind both handles.
-        assert!(Rc::ptr_eq(&original.0.store, &recovered.0.store));
+        assert!(Rc::ptr_eq(&original.0.arena, &recovered.0.arena));
 
         // Mutate through the recovered handle, observe through the original.
         frame_set_column_f64(&mut recovered, "atoms", "x", &[7.0, 8.0, 9.0]).unwrap();

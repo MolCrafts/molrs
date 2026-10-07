@@ -172,15 +172,15 @@ impl Block {
     /// Throws if the internal store allocation fails.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<Block, JsValue> {
-        let store = molrs_ffi::new_shared();
-        let fid = store.borrow_mut().frame_new();
-        store
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let fid = arena.borrow_mut().frame_new();
+        arena
             .borrow_mut()
             .set_block(fid, "temp", RsBlock::new())
             .map_err(js_err)?;
-        let handle = store.borrow().get_block(fid, "temp").map_err(js_err)?;
+        let handle = arena.borrow().get_block(fid, "temp").map_err(js_err)?;
         Ok(Block {
-            inner: BlockRef::new(store, handle),
+            inner: BlockRef::new(arena, handle),
         })
     }
 
@@ -568,7 +568,7 @@ impl Block {
 
 impl Default for Block {
     fn default() -> Self {
-        Self::new().expect("Block::new on fresh store")
+        Self::new().expect("Block::new on fresh arena")
     }
 }
 
@@ -856,7 +856,7 @@ fn shape_from_js(shape: &JsShape) -> Result<Vec<usize>, JsValue> {
 impl Block {
     fn with<R>(&self, f: impl FnOnce(&RsBlock) -> R) -> Result<R, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_block(&self.inner.handle, f)
             .map_err(js_err)
@@ -867,7 +867,7 @@ impl Block {
         f: impl FnOnce(&mut RsBlock) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_block_mut(&mut self.inner.handle, f)
             .map_err(js_err)?

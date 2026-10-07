@@ -91,14 +91,14 @@ Field). Same composition; no electrostatics.
 ## Path B — Python / WASM via the `molrs-ffi` handle API
 
 Language binders (`molrs-python`, `molrs-wasm`, the C API) link `molrs-ffi` and hold
-a **handle** — a `FrameRef` (a `FrameId` paired with a shared `Store`) — forwarding
+a **handle** — a `FrameRef` (a `FrameId` paired with the shared `FrameArenaCell` that owns the frame) — forwarding
 every column access through the shared helpers. Numeric columns are borrowed as
 contiguous slices (zero-copy); strings are copied (they aren't contiguous scalars).
 
 ```rust,no_run
 use molrs_ffi::FrameRef;
 
-let frame = FrameRef::new_standalone();          // a frame inside a fresh SharedStore
+let frame = FrameRef::new_standalone();          // a frame inside a fresh FrameArenaCell
 // ... populate it via frame.with_mut(|f| ...) ...
 if let Ok(atoms) = frame.block("atoms") {
     // zero-copy borrow of the uint atom-id column (see the uint-index contract below)
@@ -108,7 +108,7 @@ if let Ok(atoms) = frame.block("atoms") {
 ```
 
 `molrs-ffi` exposes `FrameRef`, `BlockRef`, `ForceFieldRef` (under the `ff` feature),
-`RegionRef` (a shared `Arc<dyn Region>`), `SharedStore` / `new_shared`, `FrameId`,
+`RegionRef` (a shared `Arc<dyn Region>`), `FrameArena` and its shared cell `FrameArenaCell`, `FrameId`,
 `BlockHandle`, and one error type `FfiError`.
 This snippet is compile-checked as the `molrs-ffi` crate-level doctest.
 

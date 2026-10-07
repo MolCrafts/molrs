@@ -16,18 +16,18 @@
 //!
 //! # Internal details
 //!
-//! All mutable state is managed through a [`SharedStore`] (an
-//! `Rc<RefCell<Store>>`) that is **not** `Send + Sync`. This is
+//! All mutable state is managed through a [`FrameArenaCell`] (an
+//! `Rc<RefCell<FrameArena>>`) that is **not** `Send + Sync`. This is
 //! intentional: WebAssembly is single-threaded, so no locking overhead
 //! is required. Native multi-threaded consumers should use
-//! `Arc<Mutex<Store>>` instead.
+//! `Arc<Mutex<FrameArena>>` instead.
 //!
-//! The [`SharedStore`] alias and its paired [`FrameRef`](molrs_ffi::FrameRef) /
+//! The [`FrameArenaCell`] alias and its paired [`FrameRef`](molrs_ffi::FrameRef) /
 //! [`BlockRef`](molrs_ffi::BlockRef) wrappers live in `molrs-ffi` so every
-//! binding layer (wasm, python, capi) consumes the same canonical
+//! binding layer (wasm, python, capi, cxx) consumes the same canonical
 //! lifetime-management plumbing.
 //!
-//! [`SharedStore`]: molrs_ffi::SharedStore
+//! [`FrameArenaCell`]: molrs_ffi::FrameArenaCell
 
 use wasm_bindgen::JsValue;
 

@@ -26,7 +26,7 @@ use crate::handle::{BoxKey, ForceFieldKey, RegionKey};
 /// accessed through [`lock_store`].
 pub(crate) struct CStore {
     /// Frame/block management delegated to `molrs-ffi`.
-    pub inner: molrs_ffi::Store,
+    pub inner: molrs_ffi::FrameArena,
 
     /// Interned key strings, stored null-terminated for direct return
     /// to C callers via [`molrs_key_name`](crate::molrs_key_name).
@@ -51,7 +51,7 @@ pub(crate) struct CStore {
 impl CStore {
     fn new() -> Self {
         Self {
-            inner: molrs_ffi::Store::new(),
+            inner: molrs_ffi::FrameArena::new(),
             interned_keys: Vec::new(),
             key_to_id: HashMap::new(),
             simboxes: SlotMap::with_key(),
@@ -81,7 +81,7 @@ impl CStore {
 
     /// Reset all state.
     pub fn clear(&mut self) {
-        self.inner = molrs_ffi::Store::new();
+        self.inner = molrs_ffi::FrameArena::new();
         self.interned_keys.clear();
         self.key_to_id.clear();
         self.simboxes.clear();

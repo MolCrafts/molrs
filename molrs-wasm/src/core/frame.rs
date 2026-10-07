@@ -114,18 +114,18 @@ impl Frame {
     pub fn create_block(&self, key: &str) -> Result<Block, JsValue> {
         let rs_block = RsBlock::new();
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)?;
         let handle = self
             .inner
-            .store
+            .arena
             .borrow()
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
-            inner: BlockRef::new(self.inner.store.clone(), handle),
+            inner: BlockRef::new(self.inner.arena.clone(), handle),
         })
     }
 
@@ -151,12 +151,12 @@ impl Frame {
         }
         let handle = self
             .inner
-            .store
+            .arena
             .borrow()
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
-            inner: BlockRef::new(self.inner.store.clone(), handle),
+            inner: BlockRef::new(self.inner.arena.clone(), handle),
         })
     }
 
@@ -164,7 +164,7 @@ impl Frame {
     #[wasm_bindgen(js_name = has)]
     pub fn has(&self, key: &str) -> bool {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |f| f.contains_key(key))
             .unwrap_or(false)
@@ -188,7 +188,7 @@ impl Frame {
     pub fn set(&self, key: &str, block: &Block) -> Result<(), JsValue> {
         let rs_block = block.inner.clone_block().map_err(js_err)?;
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)
@@ -208,7 +208,7 @@ impl Frame {
     #[wasm_bindgen(js_name = remove)]
     pub fn remove(&self, key: &str) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .remove_block(self.inner.id, key)
             .map_err(js_err)
@@ -228,7 +228,7 @@ impl Frame {
     #[wasm_bindgen(js_name = clear)]
     pub fn clear(&self) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .clear_frame(self.inner.id)
             .map_err(js_err)
@@ -258,7 +258,7 @@ impl Frame {
     #[wasm_bindgen(js_name = renameBlock)]
     pub fn rename_block(&self, old_key: &str, new_key: &str) -> Result<bool, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_mut(self.inner.id, |f| f.rename_block(old_key, new_key))
             .map_err(js_err)
@@ -312,7 +312,7 @@ impl Frame {
     #[wasm_bindgen(js_name = getMeta)]
     pub fn get_meta(&self, name: &str) -> Option<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame
@@ -327,7 +327,7 @@ impl Frame {
     #[wasm_bindgen(js_name = getMetaScalar)]
     pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.meta.get(name).and_then(|value| match value {
@@ -357,7 +357,7 @@ impl Frame {
     #[wasm_bindgen(js_name = metaNames)]
     pub fn meta_names(&self) -> Vec<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.meta.keys().cloned().collect::<Vec<String>>()
@@ -376,7 +376,7 @@ impl Frame {
     #[wasm_bindgen(js_name = keys)]
     pub fn keys(&self) -> Vec<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.keys().map(|k| k.to_string()).collect::<Vec<String>>()
@@ -408,7 +408,7 @@ impl Frame {
     #[wasm_bindgen(js_name = setMeta)]
     pub fn set_meta(&self, name: &str, value: &str) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(
@@ -423,7 +423,7 @@ impl Frame {
     #[wasm_bindgen(js_name = setMetaScalar)]
     pub fn set_meta_scalar(&self, name: &str, value: f64) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(name.to_string(), molrs::core::MetaValue::F64(value));
@@ -449,7 +449,7 @@ impl Frame {
     #[wasm_bindgen(getter, js_name = box)]
     pub fn get_box(&self) -> Option<super::simbox::Box> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame_box(self.inner.id, |sb| {
                 sb.map(|s| super::simbox::Box { inner: s.clone() })
@@ -479,7 +479,7 @@ impl Frame {
     #[wasm_bindgen(setter, js_name = box)]
     pub fn set_box(&self, simbox: Option<super::simbox::Box>) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_frame_box(self.inner.id, simbox.map(|b| b.inner))
             .map_err(js_err)
@@ -525,7 +525,7 @@ impl Frame {
     #[wasm_bindgen(js_name = drop)]
     pub fn drop_frame(&self) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .frame_drop(self.inner.id)
             .map_err(js_err)
@@ -541,11 +541,11 @@ impl Default for Frame {
 /// Internal helpers (not exposed to JS).
 impl Frame {
     pub(crate) fn from_rs(rs_frame: molrs::core::Frame) -> Result<Self, JsValue> {
-        let store = molrs_ffi::new_shared();
-        let id = store.borrow_mut().frame_new();
-        store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let id = arena.borrow_mut().frame_new();
+        arena.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
         Ok(Frame {
-            inner: FrameRef::new(store, id),
+            inner: FrameRef::new(arena, id),
         })
     }
 
@@ -558,7 +558,7 @@ impl Frame {
         f: impl FnOnce(&molrs::core::Frame) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, f)
             .map_err(js_err)?
