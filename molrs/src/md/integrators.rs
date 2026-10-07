@@ -4,13 +4,13 @@
 //!
 //! ```ignore
 //! VelocityVerlet::new(dt, MicPairs::new(Member::pair(lj), skin).unwrap(), mass, Some(bx))?;
-//! Langevin::new(dt, gamma, kbt, Direct::new(potentials), mass, seed, None)?;
+//! Langevin::new(dt, gamma, kbt, SelfPairedForces::new(potentials), mass, seed, None)?;
 //! ```
 //!
 //! The second argument is a [`ForceProvider`],
 //! and it is the only thing an integrator knows about force fields. The
 //! potential, the neighbour bookkeeping and the periodic régime all live behind
-//! it: [`Direct`](super::forces::Direct) hands the potential raw coordinates,
+//! it: [`SelfPairedForces`](super::forces::SelfPairedForces) hands the potential raw coordinates,
 //! [`MicPairs`](super::forces::MicPairs) gives it minimum-image pairs, and
 //! [`GhostPairs`](super::forces::GhostPairs) gives it periodic copies and folds
 //! the forces back. An integrator holds no skin, no halo and no potential, so
@@ -41,7 +41,7 @@ use crate::op::standard_normal;
 use molrs::op::{F, FNx3, I};
 
 use super::error::MdError;
-use super::types::{ForceOutput, MDState};
+use super::state::{ForceOutput, MDState};
 
 fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
     if mass.iter().any(|&m| !m.is_finite() || m <= 0.0) {
@@ -485,28 +485,12 @@ impl Langevin {
     }
 }
 
-/// Broadcast a scalar mass to `(n,)` for a homogeneous system.
-pub fn scalar_mass(mass: F, n: usize) -> Result<Array1<F>, MdError> {
+/// The `(n,)` per-atom masses of a homogeneous system: `mass` on every atom.
+pub fn uniform_masses(mass: F, n: usize) -> Result<Array1<F>, MdError> {
     if !mass.is_finite() || mass <= 0.0 {
         return Err(MdError::Invalid("mass must be strictly positive".into()));
     }
     Ok(Array1::from_elem(n, mass))
-}
-
-/// Kinetic energy `½ Σ m_i |v_i|²` in the integrator energy unit.
-pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<F, MdError> {
-    if mass.len() != vel.nrows() {
-        return Err(MdError::Invalid(format!(
-            "mass length {} disagrees with n_atoms={}",
-            mass.len(),
-            vel.nrows()
-        )));
-    }
-    let mut ke = 0.0;
-    Zip::from(mass).and(vel.rows()).for_each(|&m, v| {
-        ke += m * v.dot(&v);
-    });
-    Ok(0.5 * ke)
 }
 
 #[cfg(test)]
@@ -516,7 +500,7 @@ mod tests {
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::ff::potential::{Member, Potential, Potentials};
 
-    use super::super::forces::{Direct, MicPairs};
+    use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
     use molrs::ff::potential::pair::LJCut;
 
@@ -579,7 +563,7 @@ mod tests {
             gamma,
             kbt,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(mass, 1).unwrap().view(),
+            uniform_masses(mass, 1).unwrap().view(),
             0,
             None,
         )
@@ -599,7 +583,7 @@ mod tests {
         let nve = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -610,7 +594,7 @@ mod tests {
             1.0,
             1.0,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            uniform_masses(1.0, 2).unwrap().view(),
             0,
             None,
         )
@@ -676,7 +660,7 @@ mod tests {
             1.0,
             1.0,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
         )
@@ -687,7 +671,7 @@ mod tests {
             1.0,
             1.0,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
         )
@@ -707,7 +691,7 @@ mod tests {
         let mut ig = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
@@ -724,7 +708,7 @@ mod tests {
         let mut a = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
@@ -732,7 +716,7 @@ mod tests {
         let mut b = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
@@ -754,7 +738,7 @@ mod tests {
         let mut lone = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -770,7 +754,7 @@ mod tests {
         let mut ig = VelocityVerlet::new(
             0.01,
             MicPairs::new(Member::pair(pots), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -787,8 +771,8 @@ mod tests {
         let pos = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let mut ig = VelocityVerlet::new(
             0.01,
-            Direct::new(Potentials::new()),
-            scalar_mass(1.0, 2).unwrap().view(),
+            SelfPairedForces::new(Potentials::new()),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -822,7 +806,7 @@ mod tests {
             VelocityVerlet::new(
                 0.01,
                 MicPairs::new(Member::pair(lj), nl).unwrap(),
-                scalar_mass(1.0, 2).unwrap().view(),
+                uniform_masses(1.0, 2).unwrap().view(),
                 None,
             )
             .unwrap()
@@ -867,7 +851,7 @@ mod ghost_path_tests {
     use molrs::ff::potential::pair::LJCut;
     use ndarray::array;
 
-    use super::super::pairs::Comm;
+    use molrs::core::GhostHalo;
 
     /// A halo that outlives a fold has to be reconciled with it, and the
     /// observable consequence is that nothing happens: the energy does not jump
@@ -915,7 +899,7 @@ mod ghost_path_tests {
 
         // A skin large enough that the halo survives many steps, so folds
         // happen *between* rebuilds — the case the reconciliation exists for.
-        let comm = Comm::new(bx.clone(), pos0.view(), cutoff, 0.8).unwrap();
+        let halo = GhostHalo::new(bx.clone(), pos0.view(), cutoff, 0.8).unwrap();
         // 0.2 fs: at 1 fs the velocity-Verlet truncation error on this LJ
         // lattice is itself 1e-4 of the total energy, which would swamp the
         // signal this test is looking for.
@@ -923,17 +907,19 @@ mod ghost_path_tests {
             0.2,
             GhostPairs::new(
                 Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
-                comm,
+                halo,
             )
             .unwrap(),
-            scalar_mass(12.0, pos0.nrows()).unwrap().view(),
+            uniform_masses(12.0, pos0.nrows()).unwrap().view(),
             Some(bx),
         )
         .unwrap();
 
-        let mass = scalar_mass(12.0, pos0.nrows()).unwrap();
+        let mass = uniform_masses(12.0, pos0.nrows()).unwrap();
         let mut state = ig.initial(pos0, vel0).unwrap();
-        let total = |st: &MDState| st.energy + kinetic_energy(mass.view(), st.vel.view()).unwrap();
+        let total = |st: &MDState| {
+            st.energy + crate::compute::kinetic_energy(mass.view(), st.vel.view()).unwrap()
+        };
         let e0 = total(&state);
         let scale = e0.abs().max(1.0);
 
@@ -1000,18 +986,18 @@ mod ghost_path_tests {
             [3.0, 3.0, 3.0],
         ];
         let n = base.nrows();
-        let mass = scalar_mass(12.0, n).unwrap();
+        let mass = uniform_masses(12.0, n).unwrap();
 
         let virial_after_one_step = |shift: F| {
             let mut pts = base.clone();
             pts.iter_mut().for_each(|x| *x += shift);
             let (wrapped, _m) = bx.wrap_shifts(pts.view());
-            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut ig = VelocityVerlet::new(
                 1.0,
                 GhostPairs::new(
                     Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
-                    comm,
+                    halo,
                 )
                 .unwrap(),
                 mass.view(),
@@ -1106,8 +1092,8 @@ mod ghost_path_tests {
             .virial
             .expect("a typed pair kernel tallies its virial");
 
-        let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let ghost = GhostPairs::new(Member::pair(lj()), comm)
+        let halo = GhostHalo::new(bx, pos.view(), cutoff, 0.0).unwrap();
+        let ghost = GhostPairs::new(Member::pair(lj()), halo)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
@@ -1132,7 +1118,7 @@ mod ghost_path_tests {
 
 #[cfg(test)]
 mod wrapped_state_tests {
-    use super::super::forces::Direct;
+    use super::super::forces::SelfPairedForces;
     use super::*;
     use molrs::ff::potential::Potentials;
     use ndarray::array;
@@ -1144,8 +1130,8 @@ mod wrapped_state_tests {
     fn free_boundary_leaves_positions_and_flags_alone() {
         let mut ig = VelocityVerlet::new(
             1.0,
-            Direct::new(Potentials::new()),
-            scalar_mass(1.0, 1).unwrap().view(),
+            SelfPairedForces::new(Potentials::new()),
+            uniform_masses(1.0, 1).unwrap().view(),
             None,
         )
         .unwrap();

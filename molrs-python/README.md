@@ -55,7 +55,7 @@ symbol has one path, named after its Rust owner (`molrs.core.Frame` is
 | `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_*` / `write_*`; per-format classes in `io.trajectory`, `io.smiles`, `io.log`, `io.lammps_bond_react`, `io.mrec` |
 | `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
-| `molrs.optimize` | `LBFGS`, `OptReport` |
+| `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | Integrators and the `MD` driver |
 | `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |
 | `molrs.conformer` | 3D generation |

@@ -1,9 +1,10 @@
 //! Maxwell-Boltzmann velocity distribution. Not a hook — draw only.
 
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
+use ndarray::{Array2, ArrayView1, ArrayView2, Zip};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
+use crate::compute::center_of_mass_velocity;
 use crate::op::standard_normal;
 use molrs::op::{F, FNx3};
 
@@ -99,40 +100,15 @@ impl MaxwellBoltzmann {
     }
 }
 
+/// Subtract the centre-of-mass velocity from every row of `vel`.
 fn remove_com_velocity(vel: &mut Array2<F>, mass: ArrayView1<'_, F>) {
-    let mut p = [0.0; 3];
-    let mut mtot = 0.0;
-    Zip::from(vel.rows()).and(mass).for_each(|v, &m| {
-        mtot += m;
-        p[0] += m * v[0];
-        p[1] += m * v[1];
-        p[2] += m * v[2];
-    });
-    if mtot == 0.0 {
-        return;
-    }
-    let com = [p[0] / mtot, p[1] / mtot, p[2] / mtot];
+    let com = center_of_mass_velocity(mass, vel.view())
+        .expect("velocities() checked the shapes before drawing");
     Zip::from(vel.rows_mut()).for_each(|mut v| {
         v[0] -= com[0];
         v[1] -= com[1];
         v[2] -= com[2];
     });
-}
-
-/// Total mass-weighted COM velocity of `vel`.
-pub fn com_velocity(vel: ArrayView2<'_, F>, mass: ArrayView1<'_, F>) -> Array1<F> {
-    let mut p = [0.0; 3];
-    let mut mtot = 0.0;
-    Zip::from(vel.rows()).and(mass).for_each(|v, &m| {
-        mtot += m;
-        p[0] += m * v[0];
-        p[1] += m * v[1];
-        p[2] += m * v[2];
-    });
-    if mtot == 0.0 {
-        return Array1::zeros(3);
-    }
-    Array1::from_vec(vec![p[0] / mtot, p[1] / mtot, p[2] / mtot])
 }
 
 #[cfg(test)]
@@ -164,7 +140,7 @@ mod tests {
             .unwrap()
             .velocities(pos.view(), mass.view())
             .unwrap();
-        let com = com_velocity(vel.view(), mass.view());
+        let com = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
         assert!(com.iter().all(|c| c.abs() < 1e-12));
     }
 
@@ -175,7 +151,7 @@ mod tests {
         let mb = MaxwellBoltzmann::new(200.0, 1).unwrap().keep_com();
         assert!(!mb.remove_com());
         let vel = mb.velocities(pos.view(), mass.view()).unwrap();
-        let com = com_velocity(vel.view(), mass.view());
+        let com = center_of_mass_velocity(mass.view(), vel.view()).unwrap();
         assert!(com.iter().any(|c| c.abs() > 1e-8));
     }
 

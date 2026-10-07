@@ -24,6 +24,7 @@ pub mod improper;
 mod instances;
 pub mod kspace;
 pub(crate) mod need;
+mod neighbor_pairs;
 pub mod pair;
 pub(crate) mod registry;
 pub mod soft;
@@ -31,6 +32,7 @@ pub mod soft;
 pub use compile::PotentialCompiler;
 pub use error::CompileError;
 pub use instances::Instances;
+pub use neighbor_pairs::intramolecular_pairs_from_neighbors;
 pub use registry::KernelRegistry;
 
 use std::collections::{HashMap, HashSet};
@@ -300,7 +302,7 @@ pub(crate) fn end_pairs(
 /// two it also is — the question used to be put to `terms()`, whose job is to
 /// return a table and which allocated one per member per step to answer it.
 ///
-/// The geometry optimizer ([`crate::optimize::LBFGS`]) depends on this trait —
+/// The geometry optimizer ([`crate::optimize::Lbfgs`]) depends on this trait —
 /// not the other way around.
 pub trait Potential: Send + Sync {
     /// Compute energy and forces (= -gradient) in one pass.

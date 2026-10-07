@@ -40,7 +40,9 @@
 //! ```
 
 mod ghosts;
+mod halo;
 mod images;
 
 pub use ghosts::GhostSet;
+pub use halo::GhostHalo;
 pub use images::{GhostError, ImageRange};

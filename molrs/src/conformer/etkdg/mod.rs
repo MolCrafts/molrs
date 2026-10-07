@@ -351,7 +351,8 @@ fn try_embed<R: rand::Rng + ?Sized>(
     // First minimization: distance + chiral + 4th-dimension (RDKit
     // firstMinimization, weightChiral=1.0, weightFourthDim=0.1).
     let field1 = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
-    let (e1, _, s1, _) = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
+    let stage1 = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
+    let (e1, s1) = (stage1.final_energy, stage1.n_steps);
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
     if !use_random_coords && e1 / (n as f64) >= etmin::MAX_MINIMIZED_E_PER_ATOM {
@@ -378,7 +379,8 @@ fn try_embed<R: rand::Rng + ?Sized>(
         &constraints.experimental_torsions,
         &constraints.improper,
     );
-    let (e2, _, s2, c2) = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
+    let stage2 = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
+    let (e2, s2, c2) = (stage2.final_energy, stage2.n_steps, stage2.converged);
 
     // Chiral check.
     let mut chiral_pass = true;
@@ -407,7 +409,7 @@ fn minimize(
     coords: &mut [f64],
     max_iters: usize,
     objective: impl Fn(&[f64], &mut [f64]) -> f64,
-) -> crate::optimize::MinResult {
+) -> crate::optimize::OptimizationReport {
     crate::optimize::minimize_lbfgs_rms(coords, max_iters, 1e-3, |p| {
         let mut grad = vec![0.0; p.len()];
         let energy = objective(p, &mut grad);
@@ -457,11 +459,10 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // convergence of 1e-3 kcal/mol/Å (matching RDKit's default
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
-    let (e, _grad_rms, steps, conv) =
-        crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
-            potentials.calc_energy_forces(p)
-        });
-    Ok((e, steps, conv))
+    let report = crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
+        potentials.calc_energy_forces(p)
+    });
+    Ok((report.final_energy, report.n_steps, report.converged))
 }
 
 /// Place a single-atom molecule at the origin.

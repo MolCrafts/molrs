@@ -17,6 +17,7 @@ mod dynamics;
 mod environment;
 mod fitting;
 mod hbond;
+mod kinetic;
 mod msd;
 mod order;
 mod pmft;
@@ -84,6 +85,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     environment::register(m)?;
     fitting::register(m)?;
     hbond::register(m)?;
+    kinetic::register(m)?;
     msd::register(m)?;
     order::register(m)?;
     pmft::register(m)?;

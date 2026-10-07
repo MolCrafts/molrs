@@ -37,6 +37,21 @@ pub enum GhostError {
         /// The ceiling.
         limit: u128,
     },
+    /// A ghost halo's pair cutoff is not a positive distance.
+    InvalidCutoff(F),
+    /// A ghost halo's skin is negative or not a number.
+    InvalidSkin(F),
+    /// A ghost halo's search radius `cutoff + skin` passes half the smallest
+    /// perpendicular cell width, so a pair would have more than one image
+    /// inside it and the halo keeps only one.
+    SearchBeyondHalfWidth {
+        /// Pair cutoff (Å).
+        cutoff: F,
+        /// Verlet skin (Å).
+        skin: F,
+        /// Half the smallest perpendicular cell width (Å).
+        half_width: F,
+    },
     /// A caller handed columns whose row counts disagree.
     Shape {
         /// Rows expected.
@@ -66,6 +81,18 @@ impl std::fmt::Display for GhostError {
                  (half-range {per_axis:?}), above the {limit} ceiling. \
                  The reach is large against this cell; nothing is truncated \
                  because a missing image is a missing pair"
+            ),
+            Self::InvalidCutoff(c) => write!(f, "cutoff must be > 0 Å, got {c}"),
+            Self::InvalidSkin(s) => write!(f, "skin must be >= 0 Å, got {s}"),
+            Self::SearchBeyondHalfWidth {
+                cutoff,
+                skin,
+                half_width,
+            } => write!(
+                f,
+                "cutoff {cutoff} Å + skin {skin} Å exceeds half the minimum perpendicular \
+                 cell width ({half_width:.3} Å); a pair would have more than one image \
+                 inside the search radius and the halo keeps only one"
             ),
             Self::Shape { expected, found } => {
                 write!(f, "expected {expected} rows, got {found}")

@@ -26,7 +26,7 @@ The generated `pkg/` directory is not committed.
 | Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
 | Topology and perception | `Topology` (`fromFrame`), perception functions (`assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders`) |
 | Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
-| Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` (pairs from a `NeighborList`'s `Neighbors`) |
+| Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
 | Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
 
 The [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#readme)

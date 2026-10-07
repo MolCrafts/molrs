@@ -6,8 +6,9 @@ use molrs::ff::potential::{Member, Potential};
 use molrs::op::{F, FNx3, FNx3View, I};
 
 use super::error::MdError;
-use super::pairs::{BondedLists, Comm};
-use super::types::ForceOutput;
+use super::ghost_topology::BondedLists;
+use super::state::ForceOutput;
+use molrs::core::GhostHalo;
 use molrs::ff::potential::SpecialWeights;
 
 /// What an integrator asks of a force field.
@@ -147,16 +148,16 @@ pub struct NeighborStats {
 }
 
 // ---------------------------------------------------------------------------
-// Direct
+// SelfPairedForces
 // ---------------------------------------------------------------------------
 
 /// No neighbour list: the potential is handed coordinates and enumerates its
 /// own pairs.
-pub struct Direct {
+pub struct SelfPairedForces {
     potential: Box<dyn Potential>,
 }
 
-impl Direct {
+impl SelfPairedForces {
     /// Evaluate `potential` at the raw coordinates, every step.
     pub fn new(potential: impl Potential + 'static) -> Self {
         Self {
@@ -165,7 +166,7 @@ impl Direct {
     }
 }
 
-impl ForceProvider for Direct {
+impl ForceProvider for SelfPairedForces {
     fn compute_into(
         &mut self,
         pos: FNx3View<'_>,
@@ -404,7 +405,7 @@ impl ForceProvider for MicPairs {
 /// one table for everybody, and the bonded ones are not interchangeable — a
 /// bond list is not an angle list.
 pub struct GhostPairs {
-    comm: Comm,
+    halo: GhostHalo,
     /// The force evaluation's members, in the order the caller gave them,
     /// each carrying the part it plays.
     members: Vec<Member>,
@@ -427,14 +428,14 @@ pub struct GhostPairs {
 }
 
 impl GhostPairs {
-    /// Evaluate one member over the copies `comm` maintains, with no
+    /// Evaluate one member over the copies `halo` maintains, with no
     /// special-bonds weights — right for a system with no bonded topology.
-    pub fn new(member: Member, comm: Comm) -> Result<Self, MdError> {
-        Self::from_members(vec![(member, SpecialWeights::default())], comm)
+    pub fn new(member: Member, halo: GhostHalo) -> Result<Self, MdError> {
+        Self::from_members(vec![(member, SpecialWeights::default())], halo)
     }
 
     /// Evaluate several members — what a force field compiles to — over the
-    /// copies `comm` maintains.
+    /// copies `halo` maintains.
     ///
     /// This takes no force field and no frame: each member already says which
     /// part it plays — [`Member::Indexed`] reads an index table, [`Member::Pair`]
@@ -448,13 +449,13 @@ impl GhostPairs {
     /// [`SpecialWeights::default`], which scales nothing.
     pub fn from_members(
         members: Vec<(Member, SpecialWeights)>,
-        comm: Comm,
+        halo: GhostHalo,
     ) -> Result<Self, MdError> {
         reject_frozen_members(&members)?;
         let (members, special): (Vec<_>, Vec<_>) = members.into_iter().unzip();
         let lists = BondedLists::new(&members);
         Ok(Self {
-            comm,
+            halo,
             members,
             lists,
             special,
@@ -465,8 +466,8 @@ impl GhostPairs {
     }
 
     /// The halo, for tests that read its counters.
-    pub fn comm(&self) -> &Comm {
-        &self.comm
+    pub fn halo(&self) -> &GhostHalo {
+        &self.halo
     }
 }
 
@@ -480,24 +481,24 @@ impl ForceProvider for GhostPairs {
         // Move the copies first, then re-resolve the indices against them, then
         // read the pairs. Each step depends on the one before it, and doing
         // them in one call would hide that.
-        self.comm.advance(pos, wrap_shifts)?;
+        self.halo.advance(pos, wrap_shifts)?;
         // A member holding anything per atom — a charge, a type index — has to
         // cover the copies, because the pair table names them. That state is
         // *derived* from the owners', so a rebuild invalidates it and nothing
         // else does: a fold relabels an atom without changing what it is.
-        let generation = self.comm.ghosts().generation();
+        let generation = self.halo.ghosts().generation();
         if self.gathered != Some(generation) {
-            let owner = self.comm.ghosts().owner();
+            let owner = self.halo.ghosts().owner();
             for member in &mut self.members {
                 member.gather_onto_copies(owner);
             }
             self.gathered = Some(generation);
         }
-        self.lists.refresh(&self.comm, pos, wrap_shifts)?;
+        self.lists.refresh(&self.halo, pos, wrap_shifts)?;
 
         // Both are reads: `advance` filled them.
-        let pairs = self.comm.pairs();
-        let all = self.comm.combined();
+        let pairs = self.halo.pairs();
+        let all = self.halo.combined();
         let n_all = all.nrows();
         let owned_copy: Vec<F>;
         let flat: &[F] = match all.as_slice() {
@@ -518,7 +519,7 @@ impl ForceProvider for GhostPairs {
             .as_slice_mut()
             .expect("a freshly shaped array is standard layout");
 
-        let set = self.comm.ghosts();
+        let set = self.halo.ghosts();
         let mut energy = 0.0;
         for m in 0..self.members.len() {
             let member = &self.members[m];
@@ -556,7 +557,7 @@ impl ForceProvider for GhostPairs {
         // member, bonded included, which is why the kernels' own tallies are
         // not summed here.
         let virial = self
-            .comm
+            .halo
             .reverse_comm_with_virial(&mut self.acc, all.view())?;
         // The owned block is a prefix of `acc`, which also covers the copies,
         // so it is copied out — into the caller's array when that already has
@@ -575,7 +576,7 @@ impl ForceProvider for GhostPairs {
     fn neighbor_stats(&self) -> NeighborStats {
         NeighborStats {
             edges: None,
-            rebuilds: Some(self.comm.rebuilds()),
+            rebuilds: Some(self.halo.rebuilds()),
             ago: None,
         }
     }
@@ -652,7 +653,7 @@ mod tests {
         let n = pos.nrows();
         let no_fold = Array2::zeros((n, 3));
 
-        let mut direct = Direct::new(Potentials::new());
+        let mut direct = SelfPairedForces::new(Potentials::new());
         assert_eq!(
             direct
                 .compute(pos.view(), no_fold.view())
@@ -671,12 +672,12 @@ mod tests {
             n
         );
 
-        let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(Member::pair(lj()), comm).unwrap();
+        let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
+        let mut ghosts = GhostPairs::new(Member::pair(lj()), halo).unwrap();
         let out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
         assert_eq!(out.forces.nrows(), n);
         assert!(
-            !ghosts.comm().ghosts().is_empty(),
+            !ghosts.halo().ghosts().is_empty(),
             "this cell must actually produce copies, or the fold-back is untested"
         );
     }
@@ -776,7 +777,7 @@ mod tests {
                 }
             }
             let (wrapped, _) = bx.wrap_shifts(pts.view());
-            let comm = Comm::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
+            let halo = GhostHalo::new(bx.clone(), wrapped.view(), 4.0, 0.0).unwrap();
             let members = PotentialCompiler::new(&field)
                 .compile(&frame(()))
                 .unwrap()
@@ -785,7 +786,7 @@ mod tests {
                 .into_iter()
                 .map(|p| (p, SpecialWeights::default()))
                 .collect();
-            let mut provider = GhostPairs::from_members(members, comm).unwrap();
+            let mut provider = GhostPairs::from_members(members, halo).unwrap();
             // The halo was built from these coordinates, so from its point of
             // view nothing has folded. A fold is reported exactly once, to the
             // halo that existed before it.
@@ -883,12 +884,12 @@ mod tests {
         let mut mic = MicPairs::new(Member::pair(lj()), skin).unwrap();
         let mic_out = mic.compute(pos.view(), no_fold.view()).unwrap();
 
-        let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(Member::pair(lj()), comm).unwrap();
+        let halo = GhostHalo::new(bx, pos.view(), cutoff, 0.0).unwrap();
+        let mut ghosts = GhostPairs::new(Member::pair(lj()), halo).unwrap();
         let ghost_out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
 
         assert!(
-            ghosts.comm().ghosts().len() > n,
+            ghosts.halo().ghosts().len() > n,
             "this cell must materialise copies, or the gather is untested"
         );
         assert!(
@@ -954,9 +955,9 @@ mod tests {
         )
         .unwrap();
 
-        let comm = Comm::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
+        let halo = GhostHalo::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
         let no_fold = Array2::<I>::zeros((n, 3));
-        let mut with = GhostPairs::from_members(vec![(Member::pair(lj), special)], comm).unwrap();
+        let mut with = GhostPairs::from_members(vec![(Member::pair(lj), special)], halo).unwrap();
         let out = with.compute(pos.view(), no_fold.view()).unwrap();
 
         assert_eq!(
@@ -982,8 +983,8 @@ mod tests {
             false,
         )
         .unwrap();
-        let comm = Comm::new(bx, pos.view(), 6.0, 0.0).unwrap();
-        let mut without = GhostPairs::new(Member::pair(lj), comm).unwrap();
+        let halo = GhostHalo::new(bx, pos.view(), 6.0, 0.0).unwrap();
+        let mut without = GhostPairs::new(Member::pair(lj), halo).unwrap();
         let bare = without.compute(pos.view(), no_fold.view()).unwrap();
         assert!(
             bare.energy > 100.0,
@@ -1043,9 +1044,9 @@ mod tests {
                 false,
             )
             .unwrap();
-            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut provider =
-                GhostPairs::from_members(vec![(Member::pair(lj), special.clone())], comm).unwrap();
+                GhostPairs::from_members(vec![(Member::pair(lj), special.clone())], halo).unwrap();
             let no_fold = Array2::<I>::zeros((n, 3));
             let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
             (out.energy, out.forces)
@@ -1207,7 +1208,7 @@ mod tests {
         let pots = PotentialCompiler::new(&field)
             .compile(&compiled_frame)
             .unwrap();
-        let mut compiled = Direct::new(pots);
+        let mut compiled = SelfPairedForces::new(pots);
         let no_fold = Array2::<I>::zeros((n, 3));
         let a = compiled.compute(pts.view(), no_fold.view()).unwrap();
         assert!(a.energy.abs() > 1e-6, "the 1-3 pair must carry energy");
@@ -1336,10 +1337,10 @@ mod tests {
         assert!(msg.contains("fixed pair list"), "{msg}");
         assert!(msg.contains("PotentialCompiler::compile_typed"), "{msg}");
 
-        let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
+        let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
         let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
         assert!(
-            GhostPairs::new(Member::pair(compiled), comm).is_err(),
+            GhostPairs::new(Member::pair(compiled), halo).is_err(),
             "and so does the halo"
         );
 
@@ -1358,7 +1359,7 @@ mod tests {
         let pos = four_atoms();
 
         assert_eq!(
-            Direct::new(Potentials::new()).neighbor_stats(),
+            SelfPairedForces::new(Potentials::new()).neighbor_stats(),
             NeighborStats::default()
         );
 
@@ -1368,8 +1369,8 @@ mod tests {
         assert!(stats.rebuilds.is_some());
         assert!(stats.ago.is_some());
 
-        let comm = Comm::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let stats = GhostPairs::new(Member::pair(lj()), comm)
+        let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
+        let stats = GhostPairs::new(Member::pair(lj()), halo)
             .unwrap()
             .neighbor_stats();
         assert!(stats.rebuilds.is_some(), "a halo counts its rebuilds");

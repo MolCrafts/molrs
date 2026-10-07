@@ -32,7 +32,7 @@
 //! [`PyTypedPotentials`]. The `Potential` trait has no error channel, so a
 //! Python exception raised mid-evaluation is parked in an [`ErrSlot`] and
 //! re-raised by the caller that drove the evaluation ([`take_err`]). The MD
-//! integrators and `molrs.optimize.LBFGS` consume potentials through here.
+//! integrators and `molrs.optimize.Lbfgs` consume potentials through here.
 
 use super::ir;
 use super::ir::{column, declared};

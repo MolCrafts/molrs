@@ -75,8 +75,9 @@ ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 conformer = ["ff"]
 # In-process MD: integrators and force providers (the kernels are
 # `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molrs-python. Consumes
-# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
-md        = ["ff"]
+# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
+# kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
+md        = ["ff", "compute"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
 # No new deps — serde is already always-on; the feature just enables the impls.
 serde     = []

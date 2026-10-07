@@ -329,3 +329,24 @@ class TestRustNames:
             molrs.compute.ConductivitySumRule(1.0, 1.0, 300.0),
             molrs.compute.ConductivitySumRule,
         )
+
+
+class TestKinetic:
+    """``kinetic_energy`` / ``kinetic_temperature`` /
+    ``center_of_mass_velocity`` — the readings ``md.MD`` thermo prints."""
+
+    def test_kinetic_energy_and_temperature(self):
+        mass = np.array([2.0, 1.0])
+        vel = np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 2.0]])
+        ke = molrs.compute.kinetic_energy(mass, vel)
+        assert ke == pytest.approx(5.0)
+        assert molrs.compute.kinetic_temperature(ke, 5, 0.5) == pytest.approx(4.0)
+        with pytest.raises(ValueError):
+            molrs.compute.kinetic_temperature(ke, 0, 0.5)
+
+    def test_center_of_mass_velocity(self):
+        mass = np.array([3.0, 1.0])
+        vel = np.array([[1.0, 0.0, 0.0], [-3.0, 4.0, 0.0]])
+        np.testing.assert_allclose(
+            molrs.compute.center_of_mass_velocity(mass, vel), [0.0, 1.0, 0.0]
+        )

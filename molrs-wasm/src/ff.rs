@@ -1,6 +1,6 @@
 //! Force-field WASM face — typifiers and the potentials they compile; mirrors
 //! native molrs composition (`molrs::ff::typifier`, `molrs::ff::potential`).
-//! Minimizing with those potentials is `optimize`'s job (`LBFGS`).
+//! Minimizing with those potentials is `optimize`'s job (`Lbfgs`).
 //!
 //! ```js
 //! const typifier = new UFFTypifier();
@@ -75,7 +75,7 @@ macro_rules! wasm_typifier {
             /// the output force field accumulated by [`typify`](Self::typify)
             /// (only the definitions typing has assigned — call `typify` first).
             ///
-            /// Non-bonded terms need a `pairs` block; `LBFGS.run` installs
+            /// Non-bonded terms need a `pairs` block; `Lbfgs.minimize` installs
             /// that list (from a caller-supplied [`Neighbors`] table or an
             /// internal bruteforce topology list) and recompiles before
             /// minimizing.
@@ -129,7 +129,7 @@ wasm_typifier!(
 
 // ── Potentials ──────────────────────────────────────────────────────────────
 
-/// Compiled kernels. Holds the force-field skeleton so [`LBFGS`](crate::optimize::LBFGS) can recompile
+/// Compiled kernels. Holds the force-field skeleton so [`Lbfgs`](crate::optimize::Lbfgs) can recompile
 /// after installing a neighbour list.
 #[wasm_bindgen(js_name = Potentials)]
 pub struct Potentials {

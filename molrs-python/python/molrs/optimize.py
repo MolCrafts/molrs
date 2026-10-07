@@ -6,11 +6,11 @@ field. Construct the potentials with :mod:`molrs.ff.potential`, hand them here.
 """
 
 from ._lib import (
-    LBFGS,
-    OptReport,
+    Lbfgs,
+    OptimizationReport,
 )
 
 __all__ = [
-    "LBFGS",
-    "OptReport",
+    "Lbfgs",
+    "OptimizationReport",
 ]

@@ -17,10 +17,10 @@
 #[cfg(feature = "ff")]
 mod lbfgs;
 #[cfg(feature = "ff")]
-mod potential;
+mod lbfgs_driver;
 
 #[cfg(feature = "ff")]
-pub use potential::LBFGS;
+pub use lbfgs_driver::{Lbfgs, minimize_lbfgs, minimize_lbfgs_batch};
 
 use crate::core::Frame;
 use crate::core::keys::FREE;
@@ -29,19 +29,78 @@ use crate::op::F;
 use ndarray::Array1;
 
 #[cfg(feature = "conformer")]
-pub(crate) use lbfgs::{MinResult, minimize_lbfgs_rms};
+pub(crate) use lbfgs::minimize_lbfgs_rms;
 
-/// Outcome of a single minimization.
+/// Outcome of one minimization — the one report every minimizer in molrs
+/// returns, the geometry optimizer and the conformer stages alike.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OptReport {
-    /// Whether `fmax` convergence was reached within `max_steps`.
+pub struct OptimizationReport {
+    /// Whether the convergence criterion was met within the step budget.
     pub converged: bool,
-    /// Number of outer L-BFGS iterations performed.
+    /// Number of outer iterations performed.
     pub n_steps: usize,
-    /// Potential energy at the returned point (kcal/mol).
+    /// Potential energy at the returned point, in the potential's energy unit
+    /// (kcal/mol for the force fields molrs ships).
     pub final_energy: F,
-    /// Maximum per-atom force magnitude at the returned point (kcal/mol/Å).
+    /// Maximum per-atom force magnitude at the returned point (energy / Å).
     pub final_fmax: F,
+    /// Root-mean-square gradient component at the returned point (energy / Å).
+    pub final_grad_rms: F,
+}
+
+impl OptimizationReport {
+    /// The report of a minimization that stopped at `energy` with gradient
+    /// `grad` (= −forces, flat `3·n_atoms`).
+    #[cfg(feature = "ff")]
+    pub(crate) fn from_gradient(converged: bool, n_steps: usize, energy: F, grad: &[F]) -> Self {
+        Self {
+            converged,
+            n_steps,
+            final_energy: energy,
+            final_fmax: lbfgs::fmax_from_grad(grad),
+            final_grad_rms: lbfgs::grad_rms(grad),
+        }
+    }
+
+    /// The report of an empty system: nothing to move, converged at zero.
+    pub(crate) const EMPTY: Self = Self {
+        converged: true,
+        n_steps: 0,
+        final_energy: 0.0,
+        final_fmax: 0.0,
+        final_grad_rms: 0.0,
+    };
+}
+
+/// The knobs of an L-BFGS geometry minimization, and their one set of
+/// defaults — every binding reads [`LbfgsSettings::DEFAULT`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LbfgsSettings {
+    /// Converged when the largest per-atom force falls below this (energy / Å).
+    pub fmax: F,
+    /// Most outer iterations before giving up.
+    pub max_steps: usize,
+    /// Largest displacement of any coordinate in one step (Å): the trust
+    /// region.
+    pub max_step: F,
+    /// Correction pairs kept in the L-BFGS history.
+    pub memory: usize,
+}
+
+impl LbfgsSettings {
+    /// `fmax = 0.05`, `max_steps = 500`, `max_step = 0.2`, `memory = 8`.
+    pub const DEFAULT: Self = Self {
+        fmax: 0.05,
+        max_steps: 500,
+        max_step: 0.2,
+        memory: 8,
+    };
+}
+
+impl Default for LbfgsSettings {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Geometry optimizer: minimize a [`Frame`] in place.
@@ -50,7 +109,7 @@ pub struct OptReport {
 /// Fixed atoms stay in the potential evaluation but are not optimizable DOFs.
 pub trait Optimizer: Send + Sync {
     /// Relax `frame` in place. Coordinates are `atoms.{x,y,z}`.
-    fn run(&mut self, frame: &mut Frame) -> Result<OptReport, String>;
+    fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String>;
 }
 
 /// Ensure `atoms.free` exists with the given mask (helper for callers assembling Frames).
@@ -81,16 +140,14 @@ mod tests {
     struct Center;
 
     impl Optimizer for Center {
-        fn run(&mut self, frame: &mut Frame) -> Result<OptReport, String> {
+        fn minimize(&mut self, frame: &mut Frame) -> Result<OptimizationReport, String> {
             let mut xyz = frame.coords().map_err(|e| e.to_string())?;
             let centroid = xyz.mean_axis(ndarray::Axis(0)).unwrap_or_default();
             xyz -= &centroid;
             frame.set_coords(xyz.view()).map_err(|e| e.to_string())?;
-            Ok(OptReport {
-                converged: true,
+            Ok(OptimizationReport {
                 n_steps: 1,
-                final_energy: 0.0,
-                final_fmax: 0.0,
+                ..OptimizationReport::EMPTY
             })
         }
     }
@@ -101,7 +158,7 @@ mod tests {
         frame
             .set_coords(array![[1.0 as F, 0.0, 0.0], [3.0, 2.0, 0.0]].view())
             .unwrap();
-        let report = Center.run(&mut frame).unwrap();
+        let report = Center.minimize(&mut frame).unwrap();
         assert!(report.converged);
         assert_eq!(
             frame.coords().unwrap(),

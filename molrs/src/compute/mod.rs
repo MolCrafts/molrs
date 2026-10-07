@@ -131,6 +131,7 @@
 //! | `pmft` | potentials of mean force and torque (R12/XY/XYT/XYZ) |
 //! | `distribution` | distance/angle/dihedral distribution functions |
 //! | `hbond` | hydrogen-bond detection, lifetimes, network components |
+//! | `kinetic` | kinetic energy, kinetic temperature, centre-of-mass velocity of one state |
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
 mod analysis_contract;
@@ -148,6 +149,7 @@ mod fitting;
 #[cfg(test)]
 pub(crate) mod fixtures;
 mod hbond;
+mod kinetic;
 mod msd;
 mod order;
 mod pmft;
@@ -204,6 +206,7 @@ pub use hbond::{
     HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
     HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
 };
+pub use kinetic::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
 pub use msd::{Msd, MsdAccumulator, MsdMode, MsdResult, MsdTimeSeries};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,

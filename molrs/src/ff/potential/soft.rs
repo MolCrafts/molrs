@@ -15,7 +15,7 @@
 //!   cut-off at every evaluation.
 //!
 //! Minimizing it is minimizing any potential:
-//! `LBFGS::new(Arc::new(SoftSpec::from_frame(&frame).potential(frame.simbox.as_ref())), …)`.
+//! `Lbfgs::new(Arc::new(SoftSpec::from_frame(&frame).potential(frame.simbox.as_ref())), …)`.
 //!
 //! Per pair at distance `r`: `a_rep (σ − r)²` for `r < σ`, and, with an
 //! attraction `b > 0`, `−b (r − σ)(r_cut − r)` for `σ ≤ r < r_cut`. A spring

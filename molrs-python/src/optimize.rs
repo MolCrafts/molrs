@@ -1,5 +1,6 @@
 //! Python bindings for `molrs::optimize` (`molrs.optimize`): the L-BFGS
-//! minimizer ([`PyLBFGS`]) and the report it returns ([`PyOptReport`]).
+//! minimizer ([`PyLbfgs`]) and the report it returns
+//! ([`PyOptimizationReport`]).
 //!
 //! An optimizer minimizes a `molrs.ff.potential.Potentials` over a coordinate
 //! vector; it neither builds the potentials nor owns a force field.
@@ -7,7 +8,7 @@
 use pyo3::prelude::*;
 
 use molrs::ff::potential::PotentialCompiler;
-use molrs::optimize::{LBFGS, OptReport};
+use molrs::optimize::{LbfgsSettings, OptimizationReport, minimize_lbfgs, minimize_lbfgs_batch};
 
 use crate::core::frame::PyFrame;
 use crate::ff::ir;
@@ -16,14 +17,15 @@ use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err};
 use ndarray::{Array2, Array3};
 use numpy::{PyArray2, PyArray3, PyReadonlyArrayDyn, ToPyArray};
 
-/// Outcome of a geometry optimization, exposed to Python as `molrs.optimize.OptReport`.
-#[pyclass(module = "molrs.optimize", name = "OptReport", subclass)]
-pub struct PyOptReport {
-    inner: OptReport,
+/// Outcome of a minimization, exposed to Python as
+/// `molrs.optimize.OptimizationReport`.
+#[pyclass(module = "molrs.optimize", name = "OptimizationReport", subclass)]
+pub struct PyOptimizationReport {
+    inner: OptimizationReport,
 }
 
 #[pymethods]
-impl PyOptReport {
+impl PyOptimizationReport {
     /// Whether ``fmax`` convergence was reached within ``max_steps``.
     #[getter]
     fn converged(&self) -> bool {
@@ -49,9 +51,16 @@ impl PyOptReport {
         self.inner.final_fmax
     }
 
+    /// Root-mean-square gradient component at the returned geometry
+    /// (kcal/mol/angstrom).
+    #[getter]
+    fn final_grad_rms(&self) -> f64 {
+        self.inner.final_grad_rms
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "OptReport(converged={}, n_steps={}, final_energy={:.6}, final_fmax={:.6})",
+            "OptimizationReport(converged={}, n_steps={}, final_energy={:.6}, final_fmax={:.6})",
             if self.inner.converged {
                 "True"
             } else {
@@ -64,36 +73,41 @@ impl PyOptReport {
     }
 }
 
-impl From<OptReport> for PyOptReport {
-    fn from(inner: OptReport) -> Self {
+impl From<OptimizationReport> for PyOptimizationReport {
+    fn from(inner: OptimizationReport) -> Self {
         Self { inner }
     }
 }
 
-/// L-BFGS geometry optimizer, exposed as `molrs.optimize.LBFGS`.
+/// L-BFGS geometry optimizer, exposed as `molrs.optimize.Lbfgs`.
 ///
-/// Construct with potentials + knobs on ``new``, then ``run`` a :class:`Frame`
-/// (primary) or a coordinate array (single / batch by rank).
+/// Construct with potentials + knobs on ``new`` (defaults are Rust's
+/// ``LbfgsSettings::DEFAULT``), then ``minimize`` a :class:`Frame` (primary) or
+/// a coordinate array (single / batch by rank).
 ///
 /// Examples
 /// --------
 /// >>> pots = molrs.ff.potential.PotentialCompiler(molrs.ff.typifier.MMFF94Typifier().forcefield()).compile(frame)
-/// >>> opt = molrs.optimize.LBFGS(pots, fmax=0.05, max_steps=500)
-/// >>> frame, report = opt.run(frame)
-/// >>> coords, report = opt.run(coords)         # (N, 3)
-#[pyclass(module = "molrs.optimize", name = "LBFGS", subclass)]
-pub struct PyLBFGS {
+/// >>> opt = molrs.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
+/// >>> frame, report = opt.minimize(frame)
+/// >>> coords, report = opt.minimize(coords)         # (N, 3)
+#[pyclass(module = "molrs.optimize", name = "Lbfgs", subclass)]
+pub struct PyLbfgs {
     potentials: Py<PyPotentials>,
-    fmax: f64,
-    max_steps: usize,
-    max_step: f64,
-    memory: usize,
+    settings: LbfgsSettings,
 }
 
 #[pymethods]
-impl PyLBFGS {
+impl PyLbfgs {
     #[new]
-    #[pyo3(signature = (potentials, *, fmax = 0.05, max_steps = 500, max_step = 0.2, memory = 8))]
+    #[pyo3(signature = (
+        potentials,
+        *,
+        fmax = LbfgsSettings::DEFAULT.fmax,
+        max_steps = LbfgsSettings::DEFAULT.max_steps,
+        max_step = LbfgsSettings::DEFAULT.max_step,
+        memory = LbfgsSettings::DEFAULT.memory,
+    ))]
     fn new(
         potentials: Py<PyPotentials>,
         fmax: f64,
@@ -103,20 +117,26 @@ impl PyLBFGS {
     ) -> Self {
         Self {
             potentials,
-            fmax,
-            max_steps,
-            max_step,
-            memory,
+            settings: LbfgsSettings {
+                fmax,
+                max_steps,
+                max_step,
+                memory,
+            },
         }
     }
 
     /// Relax a :class:`Frame` or coordinates by L-BFGS.
     ///
-    /// * ``Frame`` → ``(Frame, OptReport)`` (frame coordinates updated; a new
-    ///   Python frame object is returned with the minimized coords).
-    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptReport)``
-    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptReport])``
-    fn run<'py>(&self, py: Python<'py>, arg: &Bound<'_, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    /// * ``Frame`` → ``(Frame, OptimizationReport)`` (a new Python frame
+    ///   object is returned with the minimized coords).
+    /// * ``(N, 3)`` / ``(3N,)`` → ``((N, 3) array, OptimizationReport)``
+    /// * ``(B, N, 3)`` → ``((B, N, 3) array, list[OptimizationReport])``
+    fn minimize<'py>(
+        &self,
+        py: Python<'py>,
+        arg: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         // Frame path (primary).
         if let Ok(frame) = arg.extract::<PyRef<'_, PyFrame>>() {
             let mut core = frame.clone_core_frame()?;
@@ -142,20 +162,13 @@ impl PyLBFGS {
             let flat = xyz
                 .as_slice_mut()
                 .expect("Frame::coords returns a standard-layout array");
-            let report = LBFGS::minimize(
-                pot,
-                flat,
-                self.fmax,
-                self.max_steps,
-                self.max_step,
-                self.memory,
-            )
-            .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            let report = minimize_lbfgs(pot, flat, &self.settings)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
             crate::ff::potential::take_err(&pots.err_slots)?;
             core.set_coords(xyz.view())
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
             let out_frame = PyFrame::from_core_frame(core)?;
-            return Ok((out_frame, PyOptReport::from(report))
+            return Ok((out_frame, PyOptimizationReport::from(report))
                 .into_pyobject(py)?
                 .into_any());
         }
@@ -174,20 +187,13 @@ impl PyLBFGS {
                         "coords has {n_elem} elements, not a multiple of 3 (expected (N, 3) or (3N,))"
                     )));
                 }
-                let report = LBFGS::minimize(
-                    pot,
-                    &mut flat,
-                    self.fmax,
-                    self.max_steps,
-                    self.max_step,
-                    self.memory,
-                )
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let report = minimize_lbfgs(pot, &mut flat, &self.settings)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 crate::ff::potential::take_err(&pots.err_slots)?;
                 let out: Bound<'py, PyArray2<f64>> = Array2::from_shape_vec((n_elem / 3, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
-                Ok((out, PyOptReport::from(report))
+                Ok((out, PyOptimizationReport::from(report))
                     .into_pyobject(py)?
                     .into_any())
             }
@@ -206,23 +212,16 @@ impl PyLBFGS {
                     )));
                 }
                 let mut flat: Vec<f64> = arr.iter().copied().collect();
-                let reports = LBFGS::minimize_batch(
-                    pot,
-                    &mut flat,
-                    n,
-                    b,
-                    self.fmax,
-                    self.max_steps,
-                    self.max_step,
-                    self.memory,
-                )
-                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+                let reports = minimize_lbfgs_batch(pot, &mut flat, n, b, &self.settings)
+                    .map_err(pyo3::exceptions::PyValueError::new_err)?;
                 crate::ff::potential::take_err(&pots.err_slots)?;
                 let out: Bound<'py, PyArray3<f64>> = Array3::from_shape_vec((b, n, 3), flat)
                     .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?
                     .to_pyarray(py);
-                let reports: Vec<PyOptReport> =
-                    reports.into_iter().map(PyOptReport::from).collect();
+                let reports: Vec<PyOptimizationReport> = reports
+                    .into_iter()
+                    .map(PyOptimizationReport::from)
+                    .collect();
                 Ok((out, reports).into_pyobject(py)?.into_any())
             }
             other => Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -233,15 +232,18 @@ impl PyLBFGS {
 
     fn __repr__(&self) -> String {
         format!(
-            "LBFGS(fmax={}, max_steps={}, max_step={}, memory={})",
-            self.fmax, self.max_steps, self.max_step, self.memory
+            "Lbfgs(fmax={}, max_steps={}, max_step={}, memory={})",
+            self.settings.fmax,
+            self.settings.max_steps,
+            self.settings.max_step,
+            self.settings.memory
         )
     }
 }
 
 /// Register `molrs.optimize`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyOptReport>()?;
-    m.add_class::<PyLBFGS>()?;
+    m.add_class::<PyOptimizationReport>()?;
+    m.add_class::<PyLbfgs>()?;
     Ok(())
 }

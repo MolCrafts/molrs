@@ -1,0 +1,211 @@
+//! [`intramolecular_pairs_from_neighbors`]: the intramolecular `pairs` block
+//! of [`intramolecular_pairs`](super::intramolecular_pairs), over the pairs of a
+//! neighbour table instead of every pair of the molecule.
+
+use std::collections::HashSet;
+
+use ndarray::Array1;
+
+use crate::ff::forcefield::SpecialBonds;
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+use molrs::op::Idx;
+
+use super::{carried_overrides, end_pairs};
+
+/// Build the intramolecular non-bonded `pairs` block (`atomi`, `atomj`,
+/// `is_14`) from the pairs of `neighbors` — a cutoff-bounded neighbour table —
+/// by the rules of [`intramolecular_pairs`](super::intramolecular_pairs): a
+/// 1-2 / 1-3 pair is dropped unless `special` keeps its class, and a
+/// dihedral's end pair is flagged 1-4 unless it is also a 1-2 or 1-3 pair (a
+/// ring closes it).
+///
+/// Each unordered pair appears once, as `(lo, hi)`, in the order the table
+/// first reports it, so a full (both-direction) table and a half-shell one
+/// give the same block. Per-pair override cells of the frame's own `pairs`
+/// rows move onto the new rows exactly as in `intramolecular_pairs`; an
+/// override on a pair the new list leaves out is an [`Err`].
+///
+/// # Errors
+///
+/// When `special`'s weights cannot be expressed by inclusion
+/// ([`SpecialBonds::compiled_inclusion`]), or an override would be dropped.
+pub fn intramolecular_pairs_from_neighbors(
+    frame: &Frame,
+    special: &SpecialBonds,
+    neighbors: &Neighbors,
+) -> Result<Block, String> {
+    let [keep_12, keep_13] = special.compiled_inclusion()?;
+    let ends = |block, a, b| -> HashSet<(usize, usize)> {
+        end_pairs(frame, block, a, b).into_iter().collect()
+    };
+    let pairs_12 = ends(BONDS, ATOMI, ATOMJ);
+    let pairs_13 = ends(ANGLES, ATOMI, ATOMK);
+    let set_14 = ends(DIHEDRALS, ATOMI, ATOML);
+
+    let mut pi: Vec<Idx> = Vec::new();
+    let mut pj: Vec<Idx> = Vec::new();
+    let mut p14: Vec<bool> = Vec::new();
+    let mut seen = HashSet::new();
+    for (&a, &b) in neighbors
+        .query_point_indices()
+        .iter()
+        .zip(neighbors.point_indices())
+    {
+        let (lo, hi) = (a.min(b) as usize, a.max(b) as usize);
+        if lo == hi || !seen.insert((lo, hi)) {
+            continue;
+        }
+        let key = (lo, hi);
+        let (is_12, is_13) = (pairs_12.contains(&key), pairs_13.contains(&key));
+        if (!keep_12 && is_12) || (!keep_13 && is_13) {
+            continue;
+        }
+        pi.push(lo as Idx);
+        pj.push(hi as Idx);
+        p14.push(set_14.contains(&key) && !is_12 && !is_13);
+    }
+
+    let mut pairs = Block::new();
+    if pi.is_empty() {
+        return Ok(pairs);
+    }
+    let overrides = carried_overrides(frame, &pi, &pj)?;
+    pairs
+        .insert(ATOMI, Array1::from_vec(pi).into_dyn())
+        .expect("fresh pairs block");
+    pairs
+        .insert(ATOMJ, Array1::from_vec(pj).into_dyn())
+        .expect("fresh pairs block");
+    pairs
+        .insert(IS_14, Array1::from_vec(p14).into_dyn())
+        .expect("fresh pairs block");
+    for (key, values, valid) in overrides {
+        pairs
+            .insert_nullable(key, Array1::from_vec(values).into_dyn(), valid)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(pairs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+
+    /// A four-atom chain 0-1-2-3 with its bonds, angles and dihedral.
+    fn chain() -> Frame {
+        let block = |cols: &[(&str, Vec<Idx>)]| {
+            let mut b = Block::new();
+            for (k, v) in cols {
+                b.insert(*k, Array1::from_vec(v.clone()).into_dyn())
+                    .unwrap();
+            }
+            b
+        };
+        let mut frame = Frame::new();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", Array1::from_vec(vec![0.0_f64; 4]).into_dyn())
+            .unwrap();
+        frame.insert(molrs::core::schema::block_names::ATOMS, atoms);
+        frame.insert(
+            BONDS,
+            block(&[(ATOMI, vec![0, 1, 2]), (ATOMJ, vec![1, 2, 3])]),
+        );
+        frame.insert(
+            ANGLES,
+            block(&[
+                (ATOMI, vec![0, 1]),
+                (ATOMJ, vec![1, 2]),
+                (ATOMK, vec![2, 3]),
+            ]),
+        );
+        frame.insert(
+            DIHEDRALS,
+            block(&[
+                (ATOMI, vec![0]),
+                (ATOMJ, vec![1]),
+                (ATOMK, vec![2]),
+                (ATOML, vec![3]),
+            ]),
+        );
+        frame
+    }
+
+    /// A table over the four atoms: half-shell when every pair has `i < j`,
+    /// otherwise a cross-query of the set against itself.
+    fn table(pairs: &[(u32, u32)]) -> Neighbors {
+        let rows = pairs.iter().map(|&(i, j)| NeighborPair {
+            i,
+            j,
+            dist_sq: 1.0,
+            disp: [1.0, 0.0, 0.0],
+        });
+        let mode = if pairs.iter().all(|&(i, j)| i < j) {
+            QueryMode::SelfQuery { num_points: 4 }
+        } else {
+            QueryMode::CrossQuery {
+                num_query_points: 4,
+                num_points: 4,
+            }
+        };
+        Neighbors::from_pairs(rows, NeighborsStorage::FULL, mode)
+    }
+
+    #[test]
+    fn excludes_bonded_and_angle_pairs_and_flags_the_dihedral_ends() {
+        // Both directions of every pair, as a full table reports them.
+        let all: Vec<(u32, u32)> = (0..4u32)
+            .flat_map(|i| (0..4u32).filter(move |&j| j != i).map(move |j| (i, j)))
+            .collect();
+        let pairs =
+            intramolecular_pairs_from_neighbors(&chain(), &SpecialBonds::default(), &table(&all))
+                .unwrap();
+        let i = pairs
+            .get(ATOMI)
+            .unwrap()
+            .as_uint()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let j = pairs
+            .get(ATOMJ)
+            .unwrap()
+            .as_uint()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let f = pairs
+            .get(IS_14)
+            .unwrap()
+            .as_bool()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!((i, j, f), (vec![0], vec![3], vec![true]));
+    }
+
+    #[test]
+    fn agrees_with_the_full_list_on_a_complete_table() {
+        let all: Vec<(u32, u32)> = (0..4u32)
+            .flat_map(|i| ((i + 1)..4u32).map(move |j| (i, j)))
+            .collect();
+        let special = SpecialBonds::default();
+        let from_table =
+            intramolecular_pairs_from_neighbors(&chain(), &special, &table(&all)).unwrap();
+        let full = super::super::intramolecular_pairs(&chain(), &special).unwrap();
+        for key in [ATOMI, ATOMJ] {
+            assert_eq!(
+                from_table.get(key).unwrap().as_uint().unwrap(),
+                full.get(key).unwrap().as_uint().unwrap()
+            );
+        }
+    }
+}

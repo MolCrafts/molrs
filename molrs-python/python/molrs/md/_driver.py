@@ -11,7 +11,15 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from .._lib import ForceField, NeighborList, PotentialCompiler, Potentials, VerletSkin
+from .._lib import (
+    ForceField,
+    NeighborList,
+    PotentialCompiler,
+    Potentials,
+    VerletSkin,
+    kinetic_energy,
+    kinetic_temperature,
+)
 from .._lib import md as _md
 
 _NEIGHBOR_DEFAULTS = {
@@ -382,11 +390,10 @@ class MD:
             if interval < 1:
                 raise ValueError(f"thermo must be >= 1, got {thermo}")
             kb = float(kb)
-            dof = max(1, 3 * pos.shape[0] - int(integrator.removed_dof))
-            mass_col = mass_arr.reshape(-1, 1)
+            n_dof = max(1, 3 * pos.shape[0] - int(integrator.removed_dof))
 
             def record(step: int, state: _md.MDState) -> None:
-                ke = float(0.5 * (mass_col * state.vel * state.vel).sum())
+                ke = kinetic_energy(mass_arr, state.vel)
                 pe = float(state.energy)
                 self.thermo.append(
                     {
@@ -394,7 +401,7 @@ class MD:
                         "pe": pe,
                         "ke": ke,
                         "etotal": pe + ke,
-                        "temp": 2.0 * ke / (dof * kb),
+                        "temp": kinetic_temperature(ke, n_dof, kb),
                     }
                 )
 

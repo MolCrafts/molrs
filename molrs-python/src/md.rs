@@ -17,7 +17,8 @@ use crate::core::simbox::PyBox;
 use crate::ff::potential::{ErrSlot, Members, PyLJCut, check_nx3, take_err, take_members};
 use molrs::core::Virial;
 use molrs::md::{
-    Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
+    ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, SelfPairedForces,
+    VelocityVerlet,
 };
 use molrs::op::{F, I};
 use ndarray::Array1;
@@ -55,7 +56,7 @@ fn provider(
                     "special-bonds weights apply to a pair table; pass neighbors=",
                 ));
             }
-            Box::new(Direct::new(pot))
+            Box::new(SelfPairedForces::new(pot))
         }
     })
 }

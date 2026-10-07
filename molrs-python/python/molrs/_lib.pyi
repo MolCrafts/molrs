@@ -3381,8 +3381,8 @@ class LammpsLog:
     def to_dict(self) -> dict[str, Any]: ...
     def __len__(self) -> int: ...
 
-class OptReport:
-    """Outcome of a geometry optimization (energy minimization)."""
+class OptimizationReport:
+    """Outcome of a minimization (geometry optimization)."""
 
     @property
     def converged(self) -> bool: ...
@@ -3392,6 +3392,8 @@ class OptReport:
     def final_energy(self) -> float: ...
     @property
     def final_fmax(self) -> float: ...
+    @property
+    def final_grad_rms(self) -> float: ...
 
 class TypedPotentials:
     """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
@@ -3439,11 +3441,12 @@ class PotentialCompiler:
     def defer(self) -> Potentials: ...
     def compile_typed(self, frame: Frame) -> TypedPotentials: ...
 
-class LBFGS:
+class Lbfgs:
     """L-BFGS geometry optimizer over a force-field Potential.
 
-    Knobs live on ``__init__`` (no config object). Primary call is
-    ``run(frame)``; array ranks dispatch single / batch coordinate paths.
+    Knobs live on ``__init__`` (defaults: Rust ``LbfgsSettings::DEFAULT``).
+    Primary call is ``minimize(frame)``; array ranks dispatch single / batch
+    coordinate paths.
     """
 
     def __init__(
@@ -3456,12 +3459,12 @@ class LBFGS:
         memory: int = 8,
     ) -> None: ...
     @overload
-    def run(self, frame: Frame) -> tuple[Frame, OptReport]: ...
+    def minimize(self, frame: Frame) -> tuple[Frame, OptimizationReport]: ...
     # (N, 3) or (3N,) -> single structure; (B, N, 3) -> homogeneous batch.
     @overload
-    def run(self, coords: ArrayF) -> tuple[ArrayF, OptReport]: ...
+    def minimize(self, coords: ArrayF) -> tuple[ArrayF, OptimizationReport]: ...
     @overload
-    def run(self, coords: ArrayF) -> tuple[ArrayF, list[OptReport]]: ...
+    def minimize(self, coords: ArrayF) -> tuple[ArrayF, list[OptimizationReport]]: ...
 
 #: A param value of a type annotation or style: numbers to the numeric side,
 #: strings to the string side.

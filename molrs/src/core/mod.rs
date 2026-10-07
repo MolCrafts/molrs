@@ -123,7 +123,7 @@ pub use neighbors::{
     NeighborQuery, Neighbors, NeighborsStorage, QueryMode, SkinError, SkinPair, VerletSkin,
     filter_rad, filter_sann,
 };
-pub use periodic::{GhostError, GhostSet, ImageRange};
+pub use periodic::{GhostError, GhostHalo, GhostSet, ImageRange};
 pub use region::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, PolyhedronError, Region, Sphere, SphereUnion, SphereUnionError,

@@ -19,7 +19,7 @@
 //!   potential neither owns nor updates the skin.
 //! * [`crate::md::ForceProvider`] is the force-field seam: the potential, the
 //!   neighbour bookkeeping and the periodic régime all live behind it, and the
-//!   integrator sees only energy, forces and virial. [`crate::md::Direct`],
+//!   integrator sees only energy, forces and virial. [`crate::md::SelfPairedForces`],
 //!   [`crate::md::MicPairs`] and [`crate::md::GhostPairs`] are the three that
 //!   ship; a new way to make a force is a new implementor, not a new variant.
 //! * [`crate::md::VelocityVerlet`] / [`crate::md::Langevin`] — constructed with
@@ -27,22 +27,27 @@
 //!   provider owns the neighbour state, so the integrator neither holds a skin
 //!   nor knows whether one exists.
 //!
+//! * The kinetic readings of a state (kinetic energy, temperature,
+//!   centre-of-mass velocity) are analyses, and live in [`crate::compute`]
+//!   ([`crate::compute::kinetic_energy`] and its siblings); `md` holds
+//!   integrators and force providers only.
+//!
 //! No `bind_*` façades. Compose required pieces in the constructor.
 
 mod error;
 mod forces;
+mod ghost_topology;
 mod integrators;
 mod maxwell;
-mod pairs;
-mod types;
+mod state;
 
 // No re-exports of `ff` or `core` types here. `LJCut`, `PairPotential`,
 // `Potential`, `Potentials` and `Virial` are owned by the modules that define
 // them, and a second public spelling is a second name to keep true — the
 // module doc above says where each lives, which is the pointer a reader needs.
 pub use error::MdError;
-pub use forces::{Direct, ForceProvider, GhostPairs, MicPairs, NeighborStats};
-pub use integrators::{Langevin, VelocityVerlet, kinetic_energy, scalar_mass};
-pub use maxwell::{MaxwellBoltzmann, com_velocity};
-pub use pairs::{BondedLists, Comm};
-pub use types::{ForceOutput, MDState};
+pub use forces::{ForceProvider, GhostPairs, MicPairs, NeighborStats, SelfPairedForces};
+pub use ghost_topology::BondedLists;
+pub use integrators::{Langevin, VelocityVerlet, uniform_masses};
+pub use maxwell::MaxwellBoltzmann;
+pub use state::{ForceOutput, MDState};

@@ -31,7 +31,7 @@
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
 //! | `conformer` | `conformer` | 3D conformer generation (`generate3D`) |
 //! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s) and the `Potentials` they compile |
-//! | `optimize`  | `optimize` | `LBFGS` / `OptReport` |
+//! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |
 //! | `builder`   | `builder` | `CarbonTubeBuilder` |
 //!
 //! # Quick start (JavaScript)
@@ -94,7 +94,7 @@ mod core;
 mod ff;
 #[cfg(feature = "io")]
 mod io;
-/// Geometry optimization (`LBFGS`) over force-field potentials.
+/// Geometry optimization (`Lbfgs`) over force-field potentials.
 #[cfg(feature = "conformer")]
 mod optimize;
 /// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of

@@ -41,7 +41,7 @@ and the docs build.
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
 | `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
 | `molrs.ff.scale_lj` | `molrs::ff::scale_lj` | `FragmentScaling`, `compute_k_ij`, `fragment_scaling_data`, `scale_lj` |
-| `molrs.optimize` | `molrs::optimize` | `LBFGS`, `OptReport` |
+| `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
@@ -381,9 +381,9 @@ arrays (a CMAP `grid`).
 
 ## `molrs.optimize`
 
-::: molrs.optimize.LBFGS
+::: molrs.optimize.Lbfgs
 
-::: molrs.optimize.OptReport
+::: molrs.optimize.OptimizationReport
 
 ## `molrs.conformer`
 

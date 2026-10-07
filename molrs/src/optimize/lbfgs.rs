@@ -1,7 +1,8 @@
 //! Limited-memory BFGS (L-BFGS) core, force-field agnostic.
 //!
 //! This is the shared minimization engine consumed both by the public
-//! geometry optimizer (`optimize::LBFGS::minimize` / `LBFGS::minimize_batch`) and by
+//! geometry optimizer ([`minimize_lbfgs`](super::minimize_lbfgs) /
+//! [`Lbfgs`](super::Lbfgs)) and by
 //! the ETKDG conformer pipeline (via the crate-internal [`minimize_lbfgs_rms`]). It operates on a
 //! flat `3·n_atoms` coordinate buffer and any `(energy, forces = -grad)`
 //! evaluator, exactly the contract that `crate::ff::potential::Potential`
@@ -15,6 +16,8 @@
 //! Reference:
 //!   Nocedal & Wright, *Numerical Optimization* (2nd ed.), Algorithm 7.4
 //!   (L-BFGS two-loop recursion) + Algorithm 3.1 (backtracking line search).
+
+use super::OptimizationReport;
 
 /// Default number of correction pairs retained by the L-BFGS history.
 /// This is the value the ETKDG cleanup historically used; preserving it keeps
@@ -42,11 +45,6 @@ pub(crate) enum Converge {
     /// public geometry optimizer.
     Fmax(f64),
 }
-
-/// Outcome tuple of [`minimize_lbfgs_rms`]: `(energy, grad_rms, steps,
-/// converged)`. `grad_rms` is the RMS gradient at the returned point.
-#[cfg_attr(not(feature = "conformer"), allow(dead_code))]
-pub(crate) type MinResult = (f64, f64, usize, bool);
 
 /// Maximum per-atom force magnitude from a flat `3N` gradient (= -forces).
 ///
@@ -276,19 +274,17 @@ where
 ///
 /// Preserves the historical signature and convergence behaviour (RMS gradient,
 /// no trust region, history size `HISTORY`) so conformer generation is
-/// unchanged. `coords` is updated in place; returns `(energy, grad_rms, steps,
-/// converged)`.
+/// unchanged. `coords` is updated in place.
 #[cfg_attr(not(feature = "conformer"), allow(dead_code))]
 pub(crate) fn minimize_lbfgs_rms<F>(
     coords: &mut [f64],
     max_iters: usize,
     grad_rms_tol: f64,
     eval: F,
-) -> MinResult
+) -> OptimizationReport
 where
     F: FnMut(&[f64]) -> (f64, Vec<f64>),
 {
-    let n = coords.len();
     let (energy, grad, iters, converged) = minimize_core(
         coords,
         max_iters,
@@ -297,12 +293,16 @@ where
         HISTORY,
         eval,
     );
-    let grad_rms = if n == 0 {
+    OptimizationReport::from_gradient(converged, iters, energy, &grad)
+}
+
+/// RMS of a flat gradient, `|g| / sqrt(len)`; zero for an empty one.
+pub(crate) fn grad_rms(grad: &[f64]) -> f64 {
+    if grad.is_empty() {
         0.0
     } else {
-        dot(&grad, &grad).sqrt() / (n as f64).sqrt()
-    };
-    (energy, grad_rms, iters, converged)
+        dot(grad, grad).sqrt() / (grad.len() as f64).sqrt()
+    }
 }
 
 #[inline]
@@ -345,7 +345,13 @@ mod tests {
             (e, forces)
         };
         let mut x = vec![1.0, 1.0, 1.0, -1.0, -1.0, -1.0];
-        let (e, grms, steps, conv) = minimize_lbfgs_rms(&mut x, 200, 1e-6, eval);
+        let report = minimize_lbfgs_rms(&mut x, 200, 1e-6, eval);
+        let (e, grms, steps, conv) = (
+            report.final_energy,
+            report.final_grad_rms,
+            report.n_steps,
+            report.converged,
+        );
         assert!(conv, "should converge");
         assert!(e < 1e-8, "energy should reach ~0, got {e}");
         assert!(grms < 1e-6, "grad RMS should be tiny, got {grms}");

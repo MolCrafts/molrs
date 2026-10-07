@@ -99,7 +99,7 @@ const typed    = typifier.typify(frame);
 const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
 const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
 nl.build(typed);
-const report   = new LBFGS(pots, nl.neighbors()).run(typed, 200);  // pairs come from the NeighborList
+const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come from the NeighborList
 ```
 
 - **UFF** — full RDKit default table (entire periodic table + oxidation states)
