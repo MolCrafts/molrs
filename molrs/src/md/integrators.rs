@@ -1039,7 +1039,7 @@ mod ghost_path_tests {
     /// have been none.
     #[test]
     fn the_two_regimes_derive_the_same_virial() {
-        use molrs::ff::forcefield::combining_rule::CombiningRule;
+        use molrs::ff::ir::CombiningRule;
 
         let l = 12.0_f64;
         let cutoff = 5.0;

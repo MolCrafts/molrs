@@ -40,14 +40,16 @@ use std::collections::BTreeMap;
 use super::{
     Endpoints, KCAL_TO_KJ, NM_TO_ANGSTROM, OpenmmXmlWriter, Out, centre_first, either_way, esc,
 };
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
-use crate::ff::ir::expression::fallback_spec;
+use crate::ff::forcefield::{ForceField, Style, StyleDefs};
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::Params;
 use crate::ff::ir::expression::{self, BinOp, Definition, Expr, Func, Parsed};
 use crate::ff::ir::{
     CategorySpec, Coordinate, EndpointOrder, Engine, ParamCombination, ParamKind, ParamValue,
-    Registry, SpecialClass, StyleSpec,
+    SpecialClass, StyleSpec,
 };
+use crate::ff::style_registry::Registry;
+use crate::ff::style_registry::fallback_spec;
 use crate::io::writer::ForceFieldWriteError;
 use molrs::op::F;
 

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
@@ -243,12 +243,12 @@ mod tests {
     #[test]
     fn a_nonzero_weight_needs_lj_charmm_and_a_weight_in_range() {
         let (ff, frame) = lammps_charmm("1.0");
-        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+        let err = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
         assert!(err.to_string().contains("lj/charmm"), "{err}");
         let (ff, frame) = lammps_charmm("1.5");
-        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+        let err = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
         assert!(
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn a_zero_weight_compiles_to_the_lammps_energy() {
         let (ff, frame) = lammps_charmm("0.0");
-        let pots = crate::ff::potential::PotentialCompiler::new(&ff)
+        let pots = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap();
         let phi = 60.0_f64.to_radians();

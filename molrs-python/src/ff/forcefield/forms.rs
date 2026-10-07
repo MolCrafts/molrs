@@ -5,7 +5,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use molrs::ff::ir::{FitMetric, FitResidual};
+use molrs::ff::form_conversion::{FitMetric, FitResidual};
 
 use super::PyForceField;
 use crate::ff::ir::refuse;

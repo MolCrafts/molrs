@@ -75,8 +75,9 @@ impl Category {
         if let Some(builtin) = Self::BUILTIN.into_iter().find(|c| c.name() == name) {
             return Ok(builtin);
         }
-        let declared = molrs::ff::ir::with_global_registry(|r| r.category(name).is_some())
-            || ff.styles().iter().any(|s| s.category() == name);
+        let declared =
+            molrs::ff::style_registry::with_global_registry(|r| r.category(name).is_some())
+                || ff.styles().iter().any(|s| s.category() == name);
         if declared {
             Ok(Self::Relation(Arc::from(name)))
         } else {

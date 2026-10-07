@@ -1,99 +1,73 @@
-//! The force-field IR as a protocol: anything that conforms to its form can
-//! extend it, with nothing in molrs rebuilt.
+//! The force-field IR as vocabulary: what a category, a style and its
+//! parameters *are*, stated as data.
 //!
 //! The IR adopts the LAMMPS standard for every style LAMMPS has
 //! (`molrs-python/docs/guides/forcefield-ir.md`); this module states that
-//! standard as data, so a new style or a new category is a registration,
-//! not an edit:
+//! standard as data, so a new style or a new category is a registration
+//! ([`crate::ff::style_registry`]), not an edit:
 //!
 //! * a **category** is a [`CategorySpec`] — its arity, the Frame block it
 //!   prices, the [`Coordinate`] its energy is a function of;
 //! * a **style** is a [`StyleSpec`] — its ordered per-type parameters, each
-//!   with a [`ParamDimension`], its style parameters, where its numbers come from — and
-//!   a [`Kernel`] in one of three tiers: an expression
-//!   ([`ExpressionKernel`]), a batch form of one coordinate or of the atoms'
-//!   positions ([`ScalarForm`](crate::ff::potential::form_kernel::ScalarForm),
-//!   [`CompoundForm`](crate::ff::potential::form_kernel::CompoundForm), built into
-//!   the form kernels of [`crate::ff::potential::form_kernel`]), or a constructor that
-//!   builds a whole kernel (every built-in kernel; `dihedral rb` is a
-//!   built-in priced by its expression alone);
-//! * the [`Registry`] refuses anything that does not conform
-//!   ([`conformance`], [`IrError`]) and seals the built-ins;
-//! * [`expression`] compiles a style's Lepton `expression` into its kernel, with
-//!   exact derivatives — installed in every registry
-//!   [`Registry::builtin`] makes;
-//! * a style's **engine forms** ([`Engine`], [`EngineCodec`]): its [`LammpsForm`] (positional,
-//!   derived from the spec with conversion per [`ParamDimension`], or a [`LammpsCodec`]
-//!   of its own) drives the LAMMPS reader and writer; an expression style is
-//!   written to OpenMM XML as its category's `Custom*Force`; every engine
-//!   that cannot hold a style refuses it with [`IrError::NoEngineForm`];
-//! * a style of a **form family** registers a [`FormCodec`] — its exact maps
-//!   to and from the family's canonical style — and the form machinery converts a force
-//!   field between the family's styles: exactly
-//!   (`ForceField::canonical`, `ForceField::to_form`) or by least squares
-//!   with a residual (`ForceField::fit_form`).
+//!   with a [`ParamDimension`], its style parameters, where its numbers come
+//!   from ([`ParamSource`]) and which special-bonds weights scale it
+//!   ([`SpecialClass`]);
+//! * the numbers themselves are [`Params`]; the force field's declarations
+//!   the kernels read are [`CombiningRule`], [`SpecialBonds`] and the 1-4
+//!   semantics of `lj/charmm` ([`OneFour`]);
+//! * [`expression`] is the Lepton expression language a style's energy may
+//!   be written in, with exact derivatives;
+//! * a style's **engine forms** ([`Engine`], [`EngineCodec`]): its
+//!   [`LammpsForm`] (positional, derived from the spec with conversion per
+//!   [`ParamDimension`], or a [`LammpsCodec`] of its own) drives the LAMMPS
+//!   reader and writer; every engine that cannot hold a style refuses it with
+//!   [`IrError::NoEngineForm`];
+//! * a style of a **form family** has a [`FormCodec`] — its exact maps to
+//!   and from the family's canonical style ([`torsion`] for the torsions).
 //!
-//! ```
-//! use std::sync::Arc;
-//! use molrs::ff::ir::{ParamDimension, Kernel, ParamSpec, Registry, StyleSpec};
-//! use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
-//!
-//! /// LAMMPS `bond_style harmonic`, as a third party would write it.
-//! struct Harmonic;
-//! impl ScalarForm for Harmonic {
-//!     fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
-//!         let (k, r0) = (p.get("k").unwrap(), p.get("r0").unwrap());
-//!         for t in 0..r.len() {
-//!             e[t] = k[t] * (r[t] - r0[t]).powi(2);
-//!             de_dr[t] = 2.0 * k[t] * (r[t] - r0[t]);
-//!         }
-//!     }
-//! }
-//!
-//! let mut registry = Registry::builtin();
-//! let spec = StyleSpec::new("bond", "my_harmonic").params(vec![
-//!     ParamSpec::new("k", "E/L^2".parse().unwrap()),
-//!     ParamSpec::new("r0", ParamDimension::LENGTH),
-//! ]);
-//! registry
-//!     .register_style(spec, Some(Kernel::Scalar(Arc::new(Harmonic))))
-//!     .unwrap();
-//! ```
+//! The IR is the lowest layer of `ff`: it names no kernel, no registry and
+//! no force field. Which kernel prices a style is
+//! [`crate::ff::style_registry`]'s; converting a force field between the
+//! styles of a family is [`crate::ff::form_conversion`]'s.
 
 mod category;
-pub mod conformance;
+mod combining_rule;
 mod engine_codec;
 mod error;
 pub mod expression;
-mod form;
+pub(crate) mod form;
+mod one_four;
 mod param_dimension;
+mod param_source;
+mod params;
 mod spec;
-pub(crate) mod style_registry;
+mod special_bonds;
+mod special_class;
 mod style_table;
 
 pub use category::{
     Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categories, category_arity,
 };
+pub use combining_rule::{COMBINING_RULES, CombiningRule};
 pub use engine_codec::{
     Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale, positional,
 };
 pub use error::IrError;
-pub use expression::registry_kernel::{CompiledExpression, compile_expression};
 pub use form::torsion;
-pub use form::{FitMetric, FitResidual, FormCodec, FormFn, FormRefusal, TypeParams, TypeResidual};
+pub use form::{FormCodec, FormFn, FormRefusal, TypeParams};
+pub(crate) use one_four::has_own_one_four;
+pub use one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, ONE_FOUR_REGULAR, ONE_FOUR_VALUES, OneFour};
 pub use param_dimension::ParamDimension;
+pub use param_source::ParamSource;
+pub use params::{Params, pair_key};
 pub use spec::{
     ConformanceSample, ParamCombination, ParamKind, ParamSpec, ParamValue, StyleSpec,
     builtin_styles,
 };
-pub use style_registry::{
-    ExpressionCompiler, ExpressionForm, ExpressionKernel, Kernel, KernelConstructor, ParamSource,
-    Registry, RegistryRef, RowSource, SpecialClass, register_category, register_engine_form,
-    register_form, register_style, set_expression_compiler, unregister_style, with_global_registry,
-};
+pub(crate) use special_bonds::DEFAULT_SPECIAL_BONDS;
+pub use special_bonds::SpecialBonds;
+pub use special_class::SpecialClass;
 pub use style_table::{ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, is_parameter_column};
 
-#[cfg(test)]
-mod builtin_conformance;
 #[cfg(test)]
 mod tests;

@@ -212,10 +212,11 @@ use std::path::{Path, PathBuf};
 use ndarray::ArrayD;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::ForceField;
 use crate::ff::ir::CMAP_GRID;
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::torsion::rb_polynomial;
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::io::reader::ForceFieldReader;
 use molrs::core::Frame;
 use molrs::core::TypeName;
@@ -1657,7 +1658,8 @@ fn path_text(path: &std::path::Path) -> Result<&str, String> {
 mod tests {
     use super::*;
     use crate::core::constants::VACUUM_DIELECTRIC;
-    use crate::ff::forcefield::{AtomType, ForceField, PairType, Params, Style, StyleDefs};
+    use crate::ff::forcefield::{AtomType, ForceField, PairType, Style, StyleDefs};
+    use crate::ff::ir::Params;
     use molrs::core::constants::COULOMB_REAL;
 
     /// `nbfunc 1`, comb-rule 3 (OPLS-AA: geometric σ and ε), `gen-pairs yes`.

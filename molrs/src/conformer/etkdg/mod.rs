@@ -29,7 +29,8 @@ use crate::conformer::{ConformerOptions, ForceFieldKind};
 use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
-use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use molrs::ff::compile::PotentialCompiler;
+use molrs::ff::potential::intramolecular_pairs;
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::Mmff94Typifier;
 use molrs::perceive::add_hydrogens;
@@ -42,7 +43,7 @@ const CHIRAL_RATIO_TOL: f64 = 0.8;
 
 /// Per-atom energy threshold above which the first minimization is rejected
 /// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
-const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
+const MAX_MEAN_ATOM_ENERGY: f64 = 0.05;
 
 /// Run the ETKDGv3 embedding pipeline and return the molecule with 3D
 /// coordinates plus a stage report.
@@ -358,7 +359,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
     let (e1, s1) = (stage1.final_energy, stage1.n_steps);
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
-    if !use_random_coords && e1 / (n as f64) >= MAX_MINIMIZED_E_PER_ATOM {
+    if !use_random_coords && e1 / (n as f64) >= MAX_MEAN_ATOM_ENERGY {
         return (None, s1, e1, 0, false, false);
     }
 

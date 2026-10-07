@@ -10,7 +10,7 @@ from __future__ import annotations
 import molrs
 import numpy as np
 import pytest
-from molrs.ff.potential import compile_explicit_terms
+from molrs.ff.compile import compile_explicit_terms
 
 
 def _lj_dimer():

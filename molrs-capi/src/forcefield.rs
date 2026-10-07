@@ -51,7 +51,8 @@
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::ff::forcefield::{DefError, ForceField, Params};
+use molrs::ff::forcefield::{DefError, ForceField};
+use molrs::ff::ir::Params;
 use molrs::io::mrec::ForceFieldSection;
 
 use crate::error::{self, MolrsStatus};
@@ -687,8 +688,8 @@ fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::ff::forcefield::Params;
-    use molrs::ff::forcefield::SpecialBonds;
+    use molrs::ff::ir::Params;
+    use molrs::ff::ir::SpecialBonds;
 
     fn round_trip(ff: &ForceField) -> ForceField {
         ff_from_json_string(&ff_to_json_string(ff).unwrap()).unwrap()

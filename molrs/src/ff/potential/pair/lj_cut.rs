@@ -3,9 +3,9 @@
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::IrError;
+use crate::ff::ir::{Params, pair_key};
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
 use crate::ff::potential::pair::PairPotential;
@@ -1367,7 +1367,7 @@ mod tests {
     /// `style` as a compile hands it to the kernel: the `lj/cut` spec's
     /// defaults filled in.
     fn gathered(style: Params) -> Params {
-        crate::ff::ir::with_global_registry(|r| {
+        crate::ff::style_registry::with_global_registry(|r| {
             r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
         })
         .unwrap()

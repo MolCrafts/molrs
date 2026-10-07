@@ -44,8 +44,10 @@ use std::path::Path;
 use ndarray::Array1;
 use serde_json::Value;
 
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
+use crate::ff::potential::intramolecular_pairs;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;
 use crate::io::openmm_xml::writer::OpenmmXmlWriter;
 use crate::io::reader::ForceFieldReader;

@@ -1,4 +1,4 @@
-"""``molrs.ff.potential.compile_explicit_terms``: any style's kernel over explicit instances.
+"""``molrs.ff.compile.compile_explicit_terms``: any style's kernel over explicit instances.
 
 One builder for every style the force-field IR prices — the built-ins, a
 style registered from Python by expression or by a numpy kernel, a style of a
@@ -18,8 +18,8 @@ import molrs
 import numpy as np
 import pytest
 from molrs.ff.potential import Potentials
-from molrs.ff import ir
-from molrs.ff.potential import compile_explicit_terms
+from molrs.ff import ir, style_registry
+from molrs.ff.compile import compile_explicit_terms
 
 # A non-planar four-atom chain: every angle and the dihedral are generic.
 XYZ = np.array(
@@ -36,7 +36,7 @@ def registered() -> Iterator[list[tuple[str, str]]]:
     yield names
     for category, name in names:
         try:
-            ir.unregister_style(category, name)
+            style_registry.unregister_style(category, name)
         except ir.IrError:
             pass
 
@@ -139,7 +139,7 @@ class TestBuiltins:
 
 class TestCustomStyles:
     def test_a_style_registered_by_expression(self, registered) -> None:
-        class Quartic(ir.StyleDeclaration):
+        class Quartic(style_registry.StyleDeclaration):
             category = "bond"
             name = "quartic/kernel-test"
             params = {"k": "E/L^4", "r0": "L"}
@@ -154,7 +154,7 @@ class TestCustomStyles:
             d = r - r0
             return k * d**3, 3 * k * d**2
 
-        ir.register_style(
+        style_registry.register_style(
             "bond", "cubic/kernel-test", params={"k": "E/L^3", "r0": "L"}, kernel=cubic
         )
         registered.append(("bond", "cubic/kernel-test"))
@@ -162,8 +162,8 @@ class TestCustomStyles:
         assert math.isclose(_energy(pots), 3.0 * (_dist(0, 1) - 0.5) ** 3, rel_tol=1e-12)
 
     def test_a_style_of_a_custom_category(self, registered) -> None:
-        ir.register_category("urey_bradley", 3)
-        ir.register_style(
+        style_registry.register_category("urey_bradley", 3)
+        style_registry.register_style(
             "urey_bradley",
             "kernel-test",
             params={"k_ub": "E/L^2", "r_ub": "L"},
@@ -265,7 +265,7 @@ class TestPotentialsAssembly:
                 topo.insert(column, np.array(atom, dtype=np.uint32))
             topo.insert("type", [label] * len(rows))
             frame[name] = topo
-        compiled = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
+        compiled = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
 
         pots = Potentials()
         pots.push(compile_explicit_terms("bond", "harmonic", bonds, k=300.0, r0=1.4))

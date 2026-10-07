@@ -47,7 +47,8 @@ use molrs::core::{Atomistic, NodeId};
 
 use super::properties::{MmffMolProperties, MmffVariant};
 use super::resolve as eparams;
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::typifier::{Annotation, TypeAssignment};
 use crate::perceive::mmff_aromaticity::MmffTopology;
 

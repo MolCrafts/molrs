@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::ir::{IrError, ParamDimension, ParamKind, ParamSpec, ParamValue, StyleSpec};
 use molrs::op::F;
 
@@ -79,28 +79,6 @@ impl Engine {
             style: style.to_owned(),
             reason: reason.into(),
         }
-    }
-}
-
-impl Engine {
-    /// The refusal of a style this engine's writer has no form for, among
-    /// the formats that hold built-in styles only (GROMACS, AMBER): a
-    /// built-in without one, or any style that is not built in.
-    pub fn refuse_style(self, category: &str, style: &str) -> IrError {
-        let builtin = crate::ff::ir::with_global_registry(|r| r.is_sealed(category, style));
-        let reason = if builtin {
-            format!(
-                "a built-in style no {} directive or section holds",
-                self.name()
-            )
-        } else {
-            format!(
-                "it is not a built-in style: {} holds the built-in styles it has directives \
-                 for, and a style registered at run time (or an expression's) has none",
-                self.name()
-            )
-        };
-        self.refuse(category, style, reason)
     }
 }
 

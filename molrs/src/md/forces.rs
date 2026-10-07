@@ -604,8 +604,9 @@ mod tests {
 
     use molrs::core::SimBox;
     use molrs::core::{NeighborList, NeighborPolicy};
+    use molrs::ff::compile::PotentialCompiler;
+    use molrs::ff::potential::Potentials;
     use molrs::ff::potential::pair::PairLjCut;
-    use molrs::ff::potential::{PotentialCompiler, Potentials};
 
     use super::*;
     use molrs::ff::potential::SpecialWeights;
@@ -700,7 +701,8 @@ mod tests {
     fn a_molecule_across_a_face_scores_as_one_that_is_not() {
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::ff::forcefield::{ForceField, Params};
+        use molrs::ff::forcefield::ForceField;
+        use molrs::ff::ir::Params;
         use molrs::op::Idx;
         use ndarray::Array1;
 
@@ -832,7 +834,7 @@ mod tests {
     /// Two unlike types, alternating, so picking up the wrong one is visible.
     #[test]
     fn a_typed_kernel_reads_the_same_types_through_copies_as_through_the_image() {
-        use molrs::ff::forcefield::combining_rule::CombiningRule;
+        use molrs::ff::ir::CombiningRule;
 
         let l = 12.0_f64;
         let cutoff = 5.0;
@@ -928,7 +930,7 @@ mod tests {
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::combining_rule::CombiningRule;
+        use molrs::ff::ir::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // A bent chain, every atom well inside the 6 Å cutoff of the others.
@@ -1006,7 +1008,7 @@ mod tests {
     fn exclusions_follow_a_molecule_through_a_face() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::combining_rule::CombiningRule;
+        use molrs::ff::ir::CombiningRule;
 
         let l = 20.0_f64;
         let cutoff = 6.0;
@@ -1140,7 +1142,8 @@ mod tests {
         use molrs::core::Block;
         use molrs::core::Frame;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::{ForceField, Params, SpecialBonds};
+        use molrs::ff::forcefield::ForceField;
+        use molrs::ff::ir::{Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
         use molrs::op::Idx;
         use ndarray::Array1;
@@ -1258,7 +1261,7 @@ mod tests {
     fn the_minimum_image_route_excludes_the_same_pairs() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::combining_rule::CombiningRule;
+        use molrs::ff::ir::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let pos = array![

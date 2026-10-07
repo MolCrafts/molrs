@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::ir::conformance::Probe;
+use crate::ff::ir::Params;
 use crate::ff::ir::{CategorySpec, Coordinate, StyleSpec};
 use crate::ff::potential::flat_coords::{
     accumulate_angle_forces, accumulate_dihedral_forces, compute_angle, compute_dihedral,
     term_table, validate_coords,
 };
+use crate::ff::potential::form_kernel::Probe;
 use crate::ff::potential::form_kernel::{ScalarForm, TermParams, resolve_terms};
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::core::Frame;

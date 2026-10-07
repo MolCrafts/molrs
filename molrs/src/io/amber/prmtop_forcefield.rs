@@ -6,8 +6,9 @@ use std::path::Path;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_COULOMB, CHARMM_COULOMB};
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::combining_rule::CombiningRule;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
 use crate::io::amber::prmtop::{frame_from_sections, parse_flag_sections};
 use crate::io::amber::prmtop_tables::{

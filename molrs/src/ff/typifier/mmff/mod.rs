@@ -3,7 +3,7 @@
 //! Matches an [`Atomistic`] to MMFF type labels and partial charges. That is
 //! the typifier's contract, and all of it: MMFF is a parameter set plus a topology
 //! labeler, and it computes energies the way every other force field in molrs does
-//! — through [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile).
+//! — through [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile).
 //! **MMFF is not a special case.**
 //!
 //! # Which door?
@@ -28,7 +28,8 @@
 //!
 //! ```no_run
 //! use molrs::core::Atomistic;
-//! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+//! use molrs::ff::compile::PotentialCompiler;
+//! use molrs::ff::potential::intramolecular_pairs;
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::mmff::Mmff94Typifier;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {

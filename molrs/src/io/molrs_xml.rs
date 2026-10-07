@@ -2,7 +2,8 @@
 
 use std::fmt::Write as _;
 
-use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::Params;
 use crate::io::xml_attribute::{attr_str, children_named, forcefield_root, numeric_attrs};
 
 /// The style elements of the layout, by category.

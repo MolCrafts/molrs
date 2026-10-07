@@ -28,10 +28,13 @@ use std::path::Path;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::ir::conformance::{Rng, SEED};
-use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
-use crate::ff::potential::{ForceTerm, PotentialCompiler};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
+use crate::ff::ir::{LammpsForm, ParamKind, ParamSource, StyleSpec};
+use crate::ff::potential::ForceTerm;
+use crate::ff::style_registry::conformance::{Rng, SEED};
+use crate::ff::style_registry::{Kernel, Registry};
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
 use crate::io::writer::ForceFieldWriter;
@@ -46,7 +49,7 @@ use molrs::op::{F, Idx};
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;
 
-use super::spec::RADIANS_PER_DEGREE;
+use crate::ff::ir::expression::DEG;
 
 /// Four atoms of type `A`, a non-planar chain (`super::tests::chain`'s,
 /// moved by up to ±0.2 Å per coordinate), with charges; one term of
@@ -401,9 +404,7 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                         row.push((format!("k{t}"), rng.uniform(-2.0, 2.0)));
                         row.push((format!("periodicity{t}"), (1 + (config + t) % 6) as F));
                         row.push((format!("phase{t}"), rng.uniform(-180.0, 180.0)));
-                        terms.push(format!(
-                            "k{t}*(1+cos(periodicity{t}*phi-phase{t}*{RADIANS_PER_DEGREE}))"
-                        ));
+                        terms.push(format!("k{t}*(1+cos(periodicity{t}*phi-phase{t}*{DEG}))"));
                     }
                     (c.name, twin(&mut r, spec, terms.join("+"), m))
                 }
@@ -683,7 +684,7 @@ fn every_param_source_is_what_its_constructor_reads() {
             let mut ff = ForceField::new("gate");
             // 1-4 pairs priced by no pair style: a `dihedral charmm` `w`
             // may price them.
-            ff.set_special_bonds(crate::ff::forcefield::SpecialBonds {
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds {
                 lj: [0.0; 3],
                 coul: [0.0; 3],
             });

@@ -61,9 +61,11 @@ use ndarray::Array1;
 use serde_json::{Value, json};
 
 use crate::core::UnitFactor;
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
-use crate::ff::potential::pair::exceptions;
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::compile::exceptions;
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::potential::intramolecular_pairs;
 use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
 use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;

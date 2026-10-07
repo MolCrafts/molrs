@@ -1,6 +1,7 @@
-"""``StyleDeclaration``, the class form of :func:`molrs.ff.ir.register_style`.
+"""``StyleDeclaration``, the class form of
+:func:`molrs.ff.style_registry.register_style`.
 
-Private: :mod:`molrs.ff.ir` is its public path.
+Private: :mod:`molrs.ff.style_registry` is its public path.
 """
 
 from __future__ import annotations
@@ -8,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, ClassVar
 
-from .._native import ir as _ir
+from .._native import style_registry as _style_registry
 
 
 class StyleDeclaration:
@@ -48,8 +49,8 @@ class StyleDeclaration:
     Examples
     --------
     >>> import numpy as np
-    >>> from molrs.ff import ir
-    >>> class Quartic(ir.StyleDeclaration):
+    >>> from molrs.ff import style_registry
+    >>> class Quartic(style_registry.StyleDeclaration):
     ...     category = "bond"
     ...     name = "quartic/doc"
     ...     params = {"k": "E/L^4", "r0": "L"}
@@ -90,7 +91,7 @@ class StyleDeclaration:
         kernel: Callable[..., Any] | None = None
         if callable(getattr(cls, "kernel", None)):
             kernel = cls().kernel  # type: ignore[attr-defined]
-        _ir.register_style(
+        _style_registry.register_style(
             cls.category,
             cls.name,
             params=cls.params,
@@ -109,9 +110,9 @@ class StyleDeclaration:
         cls, q: Any = None, *, x: Any = None, **params: Any
     ) -> tuple[Any, Any]:
         """:func:`evaluate` of this style."""
-        return _ir.evaluate(cls.category, cls.name, q, x=x, **params)
+        return _style_registry.evaluate(cls.category, cls.name, q, x=x, **params)
 
     @classmethod
     def unregister(cls) -> None:
         """:func:`unregister_style` this style."""
-        _ir.unregister_style(cls.category, cls.name)
+        _style_registry.unregister_style(cls.category, cls.name)

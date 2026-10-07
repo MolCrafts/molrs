@@ -17,9 +17,10 @@ use std::path::Path;
 use ndarray::{Array1, ArrayD, Axis};
 
 use super::charmm::tests::{alanine, chain, place};
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
 use crate::ff::ir::CMAP_GRID;
-use crate::ff::potential::PotentialCompiler;
+use crate::ff::ir::Params;
 use crate::ff::typifier::cmap::assign_cmaps;
 use crate::io::writer::ForceFieldWriter;
 use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};

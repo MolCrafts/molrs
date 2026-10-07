@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_angle, sub3, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
@@ -207,8 +207,10 @@ pub fn angle_charmm_constructor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{ForceField, SpecialBonds};
-    use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::SpecialBonds;
+    use crate::ff::potential::intramolecular_pairs;
     use molrs::core::Block;
     use molrs::op::Idx;
     use ndarray::Array1;

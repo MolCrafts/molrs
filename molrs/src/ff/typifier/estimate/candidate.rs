@@ -16,7 +16,8 @@
 //! reads a neighbour angle's `theta0`, which is why angles must reach the
 //! estimator in molrs's radians — see [`empirical`](super::empirical)).
 
-use crate::ff::forcefield::{ForceField, Params, StyleDefs};
+use crate::ff::forcefield::{ForceField, StyleDefs};
+use crate::ff::ir::Params;
 
 /// One row of a bonded table, as the cascade sees it.
 #[derive(Debug, Clone)]

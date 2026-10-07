@@ -13,9 +13,10 @@
 use crate::conformer::distgeom::{
     BoundsMatrix, DistanceViolations, ImproperConstraint, TorsionConstraint,
 };
-use crate::ff::forcefield::Params;
+use crate::ff::compile::ExplicitTerms;
+use crate::ff::ir::Params;
 use crate::ff::potential::improper::ImproperDistance;
-use crate::ff::potential::{ExplicitTerms, Potential, Potentials};
+use crate::ff::potential::{Potential, Potentials};
 
 /// Second-stage (3D) objective: distance constraints from the bounds matrix,
 /// the experimental (CrystalFF M6) and flat-ring basic-knowledge torsions and

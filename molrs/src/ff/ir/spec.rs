@@ -4,9 +4,9 @@
 
 use std::borrow::Cow;
 
-use crate::ff::forcefield::Params;
-use crate::ff::forcefield::combining_rule::CombiningRule;
+use crate::ff::ir::CombiningRule;
 use crate::ff::ir::LammpsForm;
+use crate::ff::ir::Params;
 use crate::ff::ir::{IrError, ParamDimension};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use molrs::op::F;
@@ -143,7 +143,7 @@ pub struct ConformanceSample {
 /// where they come from.
 ///
 /// The kernel that prices it is registered beside it
-/// ([`Registry::register_style`](crate::ff::ir::Registry::register_style)).
+/// ([`Registry::register_style`](crate::ff::style_registry::Registry::register_style)).
 ///
 /// The parameter order is the force-field IR's: where LAMMPS has a style of
 /// the name, it is that style's `*_coeff` order and the meanings are
@@ -256,7 +256,7 @@ impl StyleSpec {
     /// filled in where the style (or a row) lacks the parameter.
     ///
     /// The one place a [`ParamSpec::default`] takes effect.
-    /// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) gathers
+    /// [`PotentialCompiler`](crate::ff::compile::PotentialCompiler) gathers
     /// through it before any kernel — a Tier-3 constructor, a form kernel
     /// or an expression — sees a parameter, so no kernel states a default of
     /// its own and every tier prices an absent parameter alike. A row is

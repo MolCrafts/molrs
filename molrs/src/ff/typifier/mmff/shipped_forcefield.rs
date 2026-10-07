@@ -15,7 +15,8 @@
 use std::sync::{Arc, OnceLock};
 
 use super::properties::MmffVariant;
-use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
+use crate::ff::forcefield::{DefError, ForceField};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::params::mmff::{
     MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE, encode_da_byte,
 };

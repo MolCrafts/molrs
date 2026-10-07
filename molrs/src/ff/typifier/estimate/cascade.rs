@@ -1,6 +1,6 @@
 //! The cascade: exact → equivalent → wildcard row → corresponding → empirical.
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::params::ParmchkPenalty;
 
 use super::Parmchk2Estimator;

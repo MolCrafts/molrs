@@ -42,7 +42,7 @@ use std::collections::HashMap;
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::params::{ParmTable, ParmchkTable, ParmchkType};
 use crate::ff::typifier::Provenance;
 use crate::ff::typifier::estimate::DEFAULT_IMPROPER;

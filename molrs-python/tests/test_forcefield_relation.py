@@ -30,7 +30,7 @@ XYZ = np.array(
 TYPES = [("t", 20.0, 2.45), ("u", 11.0, 2.2)]
 
 # The public registration path: the process-wide registry gains the category.
-molrs.ff.ir.register_category("urey_bradley", 3)
+molrs.ff.style_registry.register_category("urey_bradley", 3)
 
 
 def _frame(block: str) -> molrs.core.Frame:
@@ -55,7 +55,7 @@ def _reference() -> tuple[float, np.ndarray]:
     for name, k_ub, r_ub in TYPES:
         style.def_type(name, a, a, a, k=0.0, theta0=109.5, k_ub=k_ub, r_ub=r_ub)
     frame = _frame("angles")
-    return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    return molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
 
 
 def _ub_ff(category: str = "urey_bradley") -> molrs.ff.forcefield.ForceField:
@@ -71,7 +71,7 @@ def _assert_prices_like_the_reference(ff: molrs.ff.forcefield.ForceField) -> Non
     e_ref, f_ref = _reference()
     assert e_ref > 0.0
     frame = _frame("urey_bradleys")
-    e, f = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
+    e, f = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
     assert e == pytest.approx(e_ref, rel=1e-12)
     np.testing.assert_allclose(f, f_ref, rtol=0, atol=1e-12 * np.abs(f_ref).max())
 
@@ -167,7 +167,7 @@ def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_express
     assert molrs.io.mrec.ForceFieldSection.from_forcefield(back).table("bespoke", "spring") is not None
     pickled = pickle.loads(pickle.dumps(back))
     assert pickled.get_style("bespoke", "spring").arity == 3
-    compiler = molrs.ff.potential.PotentialCompiler(back)
+    compiler = molrs.ff.compile.PotentialCompiler(back)
     with pytest.raises(ValueError, match="no kernel for bespoke `spring`"):
         compiler.compile(_frame("bespokes"))
     # Without its block there is nothing to price.
@@ -178,5 +178,5 @@ def test_an_unregistered_category_with_an_expression_is_priced_by_it() -> None:
     back = _unregistered_section(UB_EXPRESSION).to_forcefield()
     e_ref, _ = _reference()
     frame = _frame("bespokes")
-    e = molrs.ff.potential.PotentialCompiler(back).compile(frame).calc_energy(frame)
+    e = molrs.ff.compile.PotentialCompiler(back).compile(frame).calc_energy(frame)
     assert e == pytest.approx(e_ref, rel=1e-12)

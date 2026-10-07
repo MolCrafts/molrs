@@ -25,12 +25,15 @@ use std::sync::Arc;
 use ndarray::Array1;
 use serde_json::json;
 
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
 use crate::ff::ir::{
     CategorySpec, Coordinate, EndpointOrder, LammpsForm, ParamCombination, ParamDimension,
-    ParamSpec, ParamValue, Registry, SpecialClass, StyleSpec,
+    ParamSpec, ParamValue, SpecialClass, StyleSpec,
 };
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::potential::intramolecular_pairs;
+use crate::ff::style_registry::Registry;
 use crate::io::lammps::units::LammpsUnitConverter;
 use crate::io::writer::ForceFieldWriter;
 use crate::io::{

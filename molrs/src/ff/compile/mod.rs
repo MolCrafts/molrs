@@ -1,15 +1,32 @@
-//! Turning a [`ForceField`]'s declarations into evaluable potentials.
+//! Compiling a force field: a [`ForceField`]'s declarations bound, through
+//! the style registry ([`crate::ff::style_registry`]), to the kernels of
+//! [`crate::ff::potential`] on a typed [`Frame`].
+//!
+//! * [`PotentialCompiler`] compiles a force field against a frame;
+//! * [`ExplicitTerms`] compiles one style over explicit instances;
+//! * the 1-4 exceptions (`exceptions`, `one_four`) decide which close pairs
+//!   the [`PairExceptions`](crate::ff::potential::pair::PairExceptions)
+//!   kernel prices, and at what parameters.
 
+pub(crate) mod exceptions;
+mod explicit_terms;
+pub(crate) mod one_four;
+
+pub use explicit_terms::ExplicitTerms;
+
+use crate::ff::style_registry;
 use std::borrow::Cow;
 
-use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style, StyleDefs};
-use crate::ff::ir::style_registry::RegisteredStyle;
-use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
-use crate::ff::ir::{ParamSource, RowSource, SpecialClass};
-use crate::ff::potential::pair::exceptions;
+use crate::ff::forcefield::{ForceField, Style, StyleDefs};
+use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder};
+use crate::ff::ir::{ParamSource, SpecialClass};
+use crate::ff::ir::{Params, SpecialBonds};
 use crate::ff::potential::{
     CompileError, ForceTerm, PairWeights, Potentials, ScaledTerm, WeightedTerm,
 };
+use crate::ff::style_registry::RegisteredStyle;
+use crate::ff::style_registry::Registry;
+use crate::ff::style_registry::RowSource;
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
@@ -21,8 +38,9 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 /// is at hand:
 ///
 /// ```
-/// use molrs::ff::forcefield::{ForceField, Params};
-/// use molrs::ff::potential::PotentialCompiler;
+/// use molrs::ff::forcefield::ForceField;
+/// use molrs::ff::ir::Params;
+/// use molrs::ff::compile::PotentialCompiler;
 /// use molrs::core::Frame;
 ///
 /// let mut ff = ForceField::new("example");
@@ -37,7 +55,7 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 /// ```
 ///
 /// Each style's category and kernel come from the force-field IR registry
-/// ([`crate::ff::ir`]): the process-wide one, unless the compiler was made
+/// ([`crate::ff::style_registry`]): the process-wide one, unless the compiler was made
 /// with [`with_registry`](Self::with_registry).
 ///
 /// [`PotentialCompiler`] reads one force field and has two doors; the
@@ -95,7 +113,7 @@ impl<'a> PotentialCompiler<'a> {
     fn registry(&self) -> Cow<'a, Registry> {
         match self.registry {
             Some(r) => Cow::Borrowed(r),
-            None => Cow::Owned(ir::with_global_registry(Registry::clone)),
+            None => Cow::Owned(style_registry::with_global_registry(Registry::clone)),
         }
     }
 
@@ -115,7 +133,7 @@ impl<'a> PotentialCompiler<'a> {
     /// The `pairs` block carries the 1-2 / 1-3 weights by whether a row is
     /// there, so a force field that *scales* those classes rather than
     /// excluding them is an [`Err`] here — see
-    /// [`SpecialBonds::compiled_inclusion`](crate::ff::forcefield::SpecialBonds::compiled_inclusion).
+    /// [`SpecialBonds::compiled_inclusion`](crate::ff::ir::SpecialBonds::compiled_inclusion).
     /// [`compile_typed`](Self::compile_typed) carries a per-pair weight and
     /// takes every force field.
     ///
@@ -487,7 +505,7 @@ impl<'a> PotentialCompiler<'a> {
 /// same number there as in the kernel. An unregistered style is as stated.
 pub(crate) fn gathered(style: &Style) -> Result<(Params, Vec<(String, Params)>), CompileError> {
     let rows = style.defs().kernel_type_params()?;
-    let spec = ir::with_global_registry(|r| {
+    let spec = style_registry::with_global_registry(|r| {
         r.style(style.category(), style.name())
             .map(|(spec, _)| spec.clone())
     });

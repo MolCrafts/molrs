@@ -2,10 +2,10 @@
 //! once over a [`ScalarForm`] or a [`CompoundForm`].
 //!
 //! A style registered with a form
-//! ([`Kernel::Scalar`](crate::ff::ir::Kernel::Scalar),
-//! [`Kernel::Compound`](crate::ff::ir::Kernel::Compound), or an
+//! ([`Kernel::Scalar`](crate::ff::style_registry::Kernel::Scalar),
+//! [`Kernel::Compound`](crate::ff::style_registry::Kernel::Compound), or an
 //! expression's) is built into one of these by
-//! [`PotentialCompiler`](crate::ff::potential::PotentialCompiler). They are
+//! [`PotentialCompiler`](crate::ff::compile::PotentialCompiler). They are
 //! the column fetch, type lookup, 1-4 scaling, type-pair table and
 //! periodic-copy bookkeeping a hand-written kernel (`pair/morse.rs`)
 //! repeats, so a third party writes only the energy:
@@ -34,8 +34,8 @@ use std::ops::Range;
 
 use ndarray::{ArrayD, Axis, Slice};
 
-use crate::ff::forcefield::Params;
 use crate::ff::ir::ParamSource;
+use crate::ff::ir::Params;
 use crate::ff::ir::{IrError, ParamKind, ParamSpec, StyleSpec};
 use molrs::core::Frame;
 use molrs::core::keys::ENDPOINTS;
@@ -373,4 +373,25 @@ pub(crate) fn resolve_terms(
     }
     out.add_style(spec, style, n)?;
     Ok((atoms, out))
+}
+
+/// The points a numeric check evaluates a form at: terms' inputs, and their
+/// coordinates (`q`, scalar forms) or positions (`x`, compound forms).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Probe {
+    pub params: TermParams,
+    pub q: Vec<F>,
+    pub x: Vec<[F; 3]>,
+    pub arity: usize,
+}
+
+impl Probe {
+    /// How many terms the probe holds.
+    pub(crate) fn n(&self) -> usize {
+        if self.x.is_empty() {
+            self.q.len()
+        } else {
+            self.x.len() / self.arity.max(1)
+        }
+    }
 }

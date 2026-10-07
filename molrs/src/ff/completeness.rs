@@ -18,9 +18,10 @@
 
 use std::path::Path;
 
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::BuiltinKernels;
-use crate::ff::potential::PotentialCompiler;
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
+use crate::ff::style_registry::BuiltinKernels;
 
 /// The columns, in order.
 const COLUMNS: [&str; 9] = [
@@ -908,7 +909,7 @@ const MATRIX: &[Row] = &[
         item: "lj/charmm one_four = \"epsilon14\"",
         cells: [
             Exact(&[
-                "ff/forcefield/one_four.rs::epsilon14_without_rows_is_refused_and_with_them_priced",
+                "ff/compile/one_four.rs::epsilon14_without_rows_is_refused_and_with_them_priced",
             ]),
             Na("LAMMPS prices a special_bonds 1-4 pair at the regular parameters"),
             ExactWhere(
@@ -981,7 +982,7 @@ const MATRIX: &[Row] = &[
     Row {
         item: "mixing sixthpower",
         cells: [
-            Exact(&["ff/forcefield/combining_rule.rs::sixthpower_is_the_waldman_hagler_rule"]),
+            Exact(&["ff/ir/combining_rule.rs::sixthpower_is_the_waldman_hagler_rule"]),
             Exact(&["io/lammps/forcefield_writer.rs::sixthpower_mixing_is_read_and_written_back"]),
             Exact(&["io/lammps/forcefield_writer.rs::sixthpower_mixing_is_read_and_written_back"]),
             Na("OpenMM mixes arithmetically"),

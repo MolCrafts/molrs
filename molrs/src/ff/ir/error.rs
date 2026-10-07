@@ -182,7 +182,7 @@ impl fmt::Display for IrError {
         match self {
             UnknownCategory { category } => write!(
                 f,
-                "category `{category}` is not registered (molrs.ff.ir.register_category)"
+                "category `{category}` is not registered (molrs.ff.style_registry.register_category)"
             ),
             BadName { what, name } => write!(f, "{name:?} is no {what} name"),
             Arity { category, arity } => write!(
@@ -261,7 +261,7 @@ impl fmt::Display for IrError {
             ),
             NoKernel { category, style } => write!(
                 f,
-                "no kernel for {category} `{style}`: register it (molrs.ff.ir.register_style) \
+                "no kernel for {category} `{style}`: register it (molrs.ff.style_registry.register_style) \
                  or give it an expression"
             ),
             NoMixing { style, param, pair } => write!(

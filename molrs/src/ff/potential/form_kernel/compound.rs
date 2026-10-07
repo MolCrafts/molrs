@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::ir::conformance::Probe;
+use crate::ff::ir::Params;
 use crate::ff::ir::{CategorySpec, StyleSpec};
 use crate::ff::potential::flat_coords::{term_table, validate_coords};
+use crate::ff::potential::form_kernel::Probe;
 use crate::ff::potential::form_kernel::{CompoundForm, TermParams, resolve_terms};
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::core::Frame;

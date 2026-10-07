@@ -9,11 +9,14 @@ use std::f64::consts::PI;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use crate::ff::forcefield::{ForceField, Params, pair_key};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::form_conversion::FitMetric;
 use crate::ff::ir::torsion::{CosineTerm, Opls, Periodic};
-use crate::ff::ir::{FitMetric, FormCodec, FormRefusal, TypeParams};
-use crate::ff::ir::{IrError, ParamDimension, ParamSpec, Registry, StyleSpec};
-use crate::ff::potential::PotentialCompiler;
+use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
+use crate::ff::ir::{IrError, ParamDimension, ParamSpec, StyleSpec};
+use crate::ff::ir::{Params, pair_key};
+use crate::ff::style_registry::Registry;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};

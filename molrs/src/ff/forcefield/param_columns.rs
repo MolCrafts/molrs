@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, HashMap};
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::{ForceField, Params, Style, pair_key};
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::{Params, pair_key};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS};
@@ -274,7 +275,7 @@ fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Params;
+    use crate::ff::ir::Params;
     use molrs::op::Idx;
 
     fn uint(values: &[Idx]) -> ndarray::ArrayD<Idx> {

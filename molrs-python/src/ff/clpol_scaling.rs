@@ -1,6 +1,6 @@
 //! Python bindings for `molrs::ff::clpol_scaling` (`molrs.ff.clpol_scaling`): CL&Pol
 //! fragment scaling of Lennard-Jones parameters — the fragment table
-//! ([`PyFragmentScaling`]; the shipped table is `molrs.ff.params.clpol_fragment_scaling`), the SAPT pair factor
+//! ([`PyFragmentScaling`]; the shipped table is `fragment_table`), the SAPT pair factor
 //! (`compute_k_ij`) and the scaled force field (`scale_lj`).
 
 use std::collections::HashMap;
@@ -114,7 +114,7 @@ pub fn scale_lj_py(
             scaling.insert(label.extract::<String>()?, item.clone().into());
         }
     } else {
-        scaling = molrs::ff::params::clpol_fragment_scaling();
+        scaling = molrs::ff::clpol_scaling::fragment_table();
     }
 
     let inner = molrs::ff::clpol_scaling::scale_lj(
@@ -132,6 +132,18 @@ pub fn scale_lj_py(
     PyForceField::from_core(py, inner)
 }
 
+/// CL&Pol's fragment scaling table (paduagroup/clandpol ``fragment.ff``):
+/// each fragment's charge, dipole and polarizability, by fragment name, as
+/// :func:`scale_lj` reads it.
+#[pyfunction]
+fn fragment_table(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let result = PyDict::new(py);
+    for (name, scaling) in molrs::ff::clpol_scaling::fragment_table() {
+        result.set_item(name, Py::new(py, PyFragmentScaling::from(scaling))?)?;
+    }
+    Ok(result)
+}
+
 /// Register `molrs.ff.clpol_scaling`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFragmentScaling>()?;
@@ -144,6 +156,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m,
         "molrs.ff.clpol_scaling",
         wrap_pyfunction!(scale_lj_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.clpol_scaling",
+        wrap_pyfunction!(fragment_table, m)?,
     )?;
     Ok(())
 }

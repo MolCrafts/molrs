@@ -17,7 +17,7 @@ use crate::op::F;
 /// with an implicit tail of `1`; that triple is **not** a legal construction
 /// here until the tail is appended.
 ///
-/// This type is not `molrs::ff::forcefield::SpecialBonds`. That force-field
+/// This type is not `molrs::ff::ir::SpecialBonds`. That force-field
 /// type is gated, holds separate LJ/Coulomb triples, and has no 1-N tail.
 /// There is no `From` / `Into` between them.
 ///

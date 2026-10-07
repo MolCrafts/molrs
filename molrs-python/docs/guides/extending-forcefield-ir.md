@@ -12,8 +12,11 @@ and refused by name by every engine that cannot, and joins the form
 conversions — exactly as a built-in does. The built-ins are themselves
 registrations of the same form, sealed.
 
-Everything below lives in `molrs::ff::ir` (Rust) and `molrs.ff.ir`
-(Python); molpy re-exports the Python module. The engine files a registered
+The form — categories, styles, parameters, refusals — is `molrs::ff::ir`
+(Rust) and `molrs.ff.ir` (Python); registering into it is
+`molrs::ff::style_registry` and `molrs.ff.style_registry`; compiling a force
+field against it is `molrs::ff::compile` and `molrs.ff.compile`. molpy
+re-exports the Python modules. The engine files a registered
 style is read from and written to are `molrs.io`'s (`read_lammps_forcefield`,
 `write_openmm_xml_forcefield`, `write_mrec_frame`, …; the same names in Rust's
 `molrs::io`), the one owner of every file reader and writer.
@@ -169,7 +172,7 @@ term at once:
 
 ```python
 import numpy as np
-from molrs.ff import ir
+from molrs.ff import ir, style_registry
 
 def fene(r, k, r0, epsilon, sigma):
     x = (r / r0) ** 2
@@ -179,9 +182,9 @@ def fene(r, k, r0, epsilon, sigma):
     de = k * r / (1 - x) + np.where(inner, 4 * epsilon * (-12 * s6 * s6 + 6 * s6) / r, 0.0)
     return e, de
 
-ir.register_style("bond", "fene/np",
-                  params={"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"},
-                  kernel=fene)
+style_registry.register_style("bond", "fene/np",
+                              params={"k": "E/L^2", "r0": "L", "epsilon": "E", "sigma": "L"},
+                              kernel=fene)
 ```
 
 A kernel of the wrong shape or dtype, or one that raises, is `KernelShape`
@@ -190,9 +193,9 @@ evaluation that met it.
 
 `PotentialCompiler::with_registry(ff, &registry)` compiles against a
 registry of one's own; `PotentialCompiler::new` reads the process-wide one
-(`molrs::ff::ir::register_style`, Python `ir.register_style`).
+(`molrs::ff::style_registry::register_style`, Python `style_registry.register_style`).
 
-Without a force field, `molrs.ff.potential.compile_explicit_terms(category, style, atoms, *,
+Without a force field, `molrs.ff.compile.compile_explicit_terms(category, style, atoms, *,
 charges=None, **params)` builds the kernel of any style the IR prices — a
 built-in, a registered one, a custom category's — over explicit terms: an
 `(n, arity)` array of atom indices and each parameter as stored, one number
@@ -215,9 +218,9 @@ registry.register_style(
 ```
 
 ```python
-ir.register_category("urey_bradley", 3)          # block "urey_bradleys", coordinate compound
-ir.register_style("urey_bradley", "spring", params={"k_ub": "E/L^2", "r_ub": "L"},
-                  expression="k_ub*(distance(p1,p3)-r_ub)^2")
+style_registry.register_category("urey_bradley", 3)          # block "urey_bradleys", coordinate compound
+style_registry.register_style("urey_bradley", "spring", params={"k_ub": "E/L^2", "r_ub": "L"},
+                              expression="k_ub*(distance(p1,p3)-r_ub)^2")
 ff.def_style("urey_bradley", "spring").def_type("A-B-A", a, b, a, k_ub=20.0, r_ub=2.4)
 ```
 
@@ -273,7 +276,7 @@ registered nothing can price it), and its table (array columns included,
 `f64[T, S…]`). A category beyond the built-ins is kept with the arity of
 its endpoint columns. Reading never evaluates an expression: a style with
 no expression reads whole, and compiling it is `NoKernel` — "no kernel for
-`<category>` `` `<style>` ``: register it (molrs.ff.ir.register_style) or
+`<category>` `` `<style>` ``: register it (molrs.ff.style_registry.register_style) or
 give it an expression". Parameter dimensions are not persisted: a style read
 from a record has no `ParamDimension`s until it is registered again.
 
@@ -362,7 +365,7 @@ set)`. The checks never run per evaluation.
 ## From molpy
 
 molpy keeps no IR of its own: `molpy.potential.StyleDeclaration` **is**
-`molrs.ff.ir.StyleDeclaration`. A user's style in a class, a typifier that types a
+`molrs.ff.style_registry.StyleDeclaration`. A user's style in a class, a typifier that types a
 bead-spring chain with it, compiled, priced and saved — molpy's "Extending
 the force field" snippet, run as written by its
 `tests/test_potential/test_user_style.py`:
@@ -428,7 +431,7 @@ numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 | `urey_bradley` from Python = LAMMPS (`angle_style charmm`, K = 0) | rel ≤ 1e-10 | 1.6·10⁻¹⁶ |
 | `pair lj/smooth/linear` by expression and by a numpy kernel = LAMMPS, its 5 Å cutoff straddling the pairs; `compile_typed` (an integrator's first force call) = `compile` | rel ≤ 1e-10; doors rel ≤ 1e-12 | 2.5·10⁻¹⁵ (expression), 2.9·10⁻¹⁵ (numpy); doors bit for bit |
 | `.mrec` round trip; a subprocess that registered nothing | bit for bit, expression byte for byte | bit for bit |
-| a callable-only style in a fresh process | `NoKernel` naming the style and `molrs.ff.ir.register_style` | as stated |
+| a callable-only style in a fresh process | `NoKernel` naming the style and `molrs.ff.style_registry.register_style` | as stated |
 | refusals: unknown function, unbound variable, sealed `bond harmonic`, wrong `def_type` arity, kernel of the wrong shape, kernel raising, `write_gromacs_top_forcefield`, missing parameter | each its `IrError` subclass naming the item | as stated |
 | `dihedral table/linear` (`table: f64[N]`) by a numpy kernel = hand linear interpolation; round trip | rel ≤ 1e-12; bits | 0 |
 | class2 bond-angle: expression = numpy = −π/60 (= the Rust form) | rel ≤ 1e-12 | 2.4·10⁻¹⁵ |

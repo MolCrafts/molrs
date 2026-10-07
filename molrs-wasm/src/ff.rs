@@ -18,8 +18,9 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use molrs::core::Atomistic;
+use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{PotentialCompiler, Potentials as RsPotentials};
+use molrs::ff::potential::Potentials as RsPotentials;
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::UffTypifier as RsUff;
 use molrs::ff::typifier::mmff::{Mmff94Typifier as RsMmff94, Mmff94sTypifier as RsMmff94s};

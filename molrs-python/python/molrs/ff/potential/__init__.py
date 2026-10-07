@@ -1,23 +1,10 @@
 """Evaluable force terms — ``molrs::ff::potential``.
 
-* :class:`PotentialCompiler` — compiles a
-  :class:`~molrs.ff.forcefield.ForceField` against a typed frame into
-  :class:`Potentials` (``compile``), or into :class:`WeightedTerms` — each
-  kernel with its special-bonds weights — for a neighbour-driven integrator
-  (``compile_typed``).
 * :class:`Potentials` — kernels evaluated together
-  (``calc_energy_forces``); ``push`` moves one more member in.
-* :func:`compile_explicit_terms` — the kernel of **any** style the force-field IR prices (a
-  built-in, a style registered through :mod:`molrs.ff.ir` by expression or
-  Python kernel, a style of a custom category) over explicit instances: atom
-  indices and one parameter row per term, as stored (angle values in
-  degrees). It returns a :class:`Potentials`::
-
-      pots = Potentials()
-      pots.push(compile_explicit_terms("bond", "harmonic", [[0, 1], [1, 2]], k=300.0, r0=1.4))
-      pots.push(compile_explicit_terms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
-      energy, forces = pots.calc_energy_forces(pos)
-
+  (``calc_energy_forces``); ``push`` moves one more member in. A force field
+  compiles into one through :mod:`molrs.ff.compile`.
+* :class:`WeightedTerms` — kernels each with its special-bonds weights, for a
+  neighbour-driven integrator (``PotentialCompiler.compile_typed``).
 * :class:`PairLjCut` — the one-type ``lj/cut`` kernel a neighbour loop feeds
   (the MD integrators' nonbond kernel).
 * :func:`intramolecular_pairs` — the special-bonds pair list of a typed
@@ -28,11 +15,9 @@
 
 from ..._native import (
     PairLjCut,
-    PotentialCompiler,
     Potentials,
     WeightedTerms,
     intramolecular_pairs,
-    compile_explicit_terms,
 )
 from ._protocol import Potential
 
@@ -41,9 +26,7 @@ Potential.__module__ = __name__
 __all__ = [
     "PairLjCut",
     "Potential",
-    "PotentialCompiler",
     "Potentials",
     "WeightedTerms",
     "intramolecular_pairs",
-    "compile_explicit_terms",
 ]

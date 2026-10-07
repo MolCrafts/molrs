@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::term_table;
 use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};

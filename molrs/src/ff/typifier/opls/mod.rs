@@ -276,7 +276,7 @@ impl Typifier for OplsAaTypifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Params;
+    use crate::ff::ir::Params;
     use crate::ff::typifier::Typing;
     use indexmap::IndexMap;
     use molrs::core::Atom;

@@ -62,7 +62,8 @@ use molrs::core::PropValue;
 use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::assign_aromaticity;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::typifier::Annotation;
 
 use super::layered::LayeredTypingEngine;

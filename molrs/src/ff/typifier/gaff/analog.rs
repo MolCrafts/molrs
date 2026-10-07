@@ -37,7 +37,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use molrs::core::NodeId;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::params::{EmpiricalTable, ParmTable, ParmchkTable, ParmchkWeights};
 use crate::ff::typifier::{EstimateMethod, Provenance};
 

@@ -12,7 +12,7 @@ subsystem you use:
 ```python
 from molrs.core import Frame, Block
 from molrs.core import Box, NeighborList
-from molrs.ff.potential import PotentialCompiler
+from molrs.ff.compile import PotentialCompiler
 ```
 
 This page is rendered from the installed `molrs` package by
@@ -35,12 +35,14 @@ and the docs build.
 | `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
-| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `WeightedTerms`, `compile_explicit_terms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
+| `molrs.ff.potential` | `molrs::ff::potential` | `Potentials`, `WeightedTerms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
+| `molrs.ff.compile` | `molrs::ff::compile` | `PotentialCompiler`, `compile_explicit_terms` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `TypeAssignment`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
-| `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
-| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability`, `clpol_fragment_scaling` |
-| `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj` (the shipped table is `molrs.ff.params.clpol_fragment_scaling`) |
+| `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR's vocabulary (`ParamSpec`, `StyleSpec`, `CategorySpec`) and its `IrError` family |
+| `molrs.ff.style_registry` | `molrs::ff::style_registry` | `register_category`, `register_style`, `register_engine_form`, `unregister_style`, `StyleDeclaration`, `styles`, `categories`, `evaluate` |
+| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
+| `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj`, `fragment_table` (the shipped table) |
 | `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MdState`, `MaxwellBoltzmann`, `MdDriver` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
@@ -422,9 +424,11 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.forcefield.CmapType
 
-### `molrs.ff.potential`
+### `molrs.ff.compile`
 
-::: molrs.ff.potential.PotentialCompiler
+::: molrs.ff.compile.PotentialCompiler
+
+### `molrs.ff.potential`
 
 ::: molrs.ff.potential.Potentials
 

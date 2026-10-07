@@ -32,7 +32,8 @@ evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follo
 
 ```rust,no_run
 use molrs::core::Atomistic;
-use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use molrs::ff::compile::PotentialCompiler;
+use molrs::ff::potential::intramolecular_pairs;
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::Mmff94Typifier;
 // UFF: use molrs::ff::typifier::UffTypifier  (same composition)

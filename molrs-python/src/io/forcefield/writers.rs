@@ -87,7 +87,7 @@ pub fn write_openmm_xml_forcefield_py(
 /// the lj reduced hub — never hard-coded eV/kcal factors. A split ``lj/cut`` +
 /// ``coul/cut`` pair is recombined as ``lj/cut/coul/cut`` so geometric mixing
 /// is not defeated by a hybrid wildcard. Every style is written through its
-/// LAMMPS form in the IR registry (``molrs.ff.ir``, ``StyleSpec.lammps``):
+/// LAMMPS form in the IR registry (``molrs.ff.style_registry``, ``StyleSpec.lammps``):
 /// the built-ins LAMMPS has (``dihedral periodic`` as ``fourier``,
 /// ``improper periodic`` as ``cvff``, the ``class2`` styles with their
 /// cross-term lines at zero, …) and a style registered with

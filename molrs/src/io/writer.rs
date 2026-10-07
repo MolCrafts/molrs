@@ -89,7 +89,8 @@ pub(crate) fn write_forcefield_text(
 /// `str`.
 ///
 /// ```
-/// use molrs::ff::forcefield::{ForceField, Params};
+/// use molrs::ff::forcefield::ForceField;
+/// use molrs::ff::ir::Params;
 /// use molrs::io::writer::ForceFieldWriter;
 /// use molrs::io::gromacs::GromacsTopForcefieldWriter;
 /// use molrs::ff::ir::IrError;

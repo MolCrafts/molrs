@@ -21,14 +21,14 @@
 //! [`PotentialCompiler::compile`] projects into the pair params as `coulomb14scale` /
 //! `lj14scale` — so neither kernel hardcodes a scale factor.
 //!
-//! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-//! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
+//! [`SpecialBonds`]: crate::ff::ir::SpecialBonds
+//! [`PotentialCompiler::compile`]: crate::ff::compile::PotentialCompiler::compile
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 #[cfg(test)]
 use crate::ff::params::mmff::DA_NEITHER;
 use crate::ff::params::mmff::{DA_ACCEPTOR, DA_DONOR};
@@ -417,8 +417,8 @@ fn vdw_combining(
 /// 1-4 pair. The weight is read (rather than ignored) so that a force field which
 /// *does* scale can reuse this kernel, and so the 1.0 is visible as a choice.
 ///
-/// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
-/// [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
+/// [`SpecialBonds`]: crate::ff::ir::SpecialBonds
+/// [`PotentialCompiler::compile`]: crate::ff::compile::PotentialCompiler::compile
 pub fn pair_mmff_vdw_constructor(
     sp: &Params,
     tp: &[(&str, &Params)],

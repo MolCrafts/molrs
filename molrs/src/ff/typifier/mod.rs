@@ -42,7 +42,8 @@ use indexmap::IndexMap;
 use molrs::core::Atomistic;
 use molrs::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
 
-use crate::ff::forcefield::{ForceField, Params, Style};
+use crate::ff::forcefield::{ForceField, Style};
+use crate::ff::ir::Params;
 use crate::ff::ir::{Arity, EndpointOrder};
 use estimate::candidate::is_wildcard;
 
@@ -138,7 +139,7 @@ pub struct TypeAssignment {
 pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
     // `Some(_)` when registered categories own the block: the relation
     // among them, if any.
-    let owned = crate::ff::ir::with_global_registry(|r| {
+    let owned = crate::ff::style_registry::with_global_registry(|r| {
         let owners: Vec<_> = r.categories().filter(|c| c.block == kind).collect();
         (!owners.is_empty()).then(|| {
             owners
@@ -720,8 +721,9 @@ mod tests {
     use molrs::core::{Atom, PropValue};
 
     use super::*;
+    use crate::ff::forcefield::ForceField;
     use crate::ff::forcefield::tests::assert_same_definitions;
-    use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+    use crate::ff::ir::{Params, SpecialBonds};
 
     // -- stubs and fixtures ----------------------------------------------------
 
@@ -1634,7 +1636,7 @@ mod tests {
     /// the process-wide registry exactly as the Python test hook does, so
     /// the registration is idempotent across tests.
     fn register_urey_bradley() {
-        crate::ff::ir::register_category(crate::ff::ir::CategorySpec::custom(
+        crate::ff::style_registry::register_category(crate::ff::ir::CategorySpec::custom(
             "urey_bradley",
             3,
             crate::ff::ir::Coordinate::Compound,
@@ -1735,7 +1737,7 @@ mod tests {
     fn energy_forces(ff: &ForceField, typed: &Atomistic) -> (f64, Vec<f64>) {
         let frame = typed.to_frame().unwrap();
         let coords: Vec<f64> = UB_XYZ.iter().flatten().copied().collect();
-        crate::ff::potential::PotentialCompiler::new(ff)
+        crate::ff::compile::PotentialCompiler::new(ff)
             .compile(&frame)
             .unwrap()
             .calc_energy_forces(&coords)

@@ -1,6 +1,7 @@
 //! One style's kernel over **explicit instances**: the terms and their
 //! parameters given by hand, no typifier and no type table.
 
+use crate::ff::style_registry;
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::keys::ENDPOINTS;
@@ -8,9 +9,12 @@ use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::{F, Idx};
 use ndarray::Array1;
 
-use crate::ff::forcefield::{DefError, ForceField, Params};
-use crate::ff::ir::{self, CategorySpec, IrError, Registry};
-use crate::ff::potential::{CompileError, PotentialCompiler, Potentials};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::{DefError, ForceField};
+use crate::ff::ir::Params;
+use crate::ff::ir::{CategorySpec, IrError};
+use crate::ff::potential::{CompileError, Potentials};
+use crate::ff::style_registry::Registry;
 
 /// One style's terms, each its atoms and its own parameter row (as stored:
 /// the force-field IR's units, angle values in degrees).
@@ -30,8 +34,8 @@ use crate::ff::potential::{CompileError, PotentialCompiler, Potentials};
 /// with the same registry, fallback and refusals.
 ///
 /// ```
-/// use molrs::ff::forcefield::Params;
-/// use molrs::ff::potential::ExplicitTerms;
+/// use molrs::ff::ir::Params;
+/// use molrs::ff::compile::ExplicitTerms;
 ///
 /// // LAMMPS `bond_style harmonic`, one bond: k (r − r0)².
 /// let pots = ExplicitTerms::new("bond", "harmonic")
@@ -93,7 +97,8 @@ impl ExplicitTerms {
 
     /// The kernel, against the process-wide registry.
     pub fn compile(&self) -> Result<Potentials, CompileError> {
-        let category = ir::with_global_registry(|r| r.category(&self.category).cloned());
+        let category =
+            style_registry::with_global_registry(|r| r.category(&self.category).cloned());
         self.build(category, None)
     }
 
@@ -207,7 +212,8 @@ fn def_err(e: DefError) -> CompileError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::ir::{Kernel, ParamSpec, StyleSpec};
+    use crate::ff::ir::{ParamSpec, StyleSpec};
+    use crate::ff::style_registry::Kernel;
 
     const XYZ: [F; 12] = [
         1.2, -0.4, 0.3, 0.0, 0.0, 0.0, -0.2, 1.5, 0.1, 0.9, 2.1, -0.8,

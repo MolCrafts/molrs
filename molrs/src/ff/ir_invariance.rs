@@ -32,8 +32,9 @@ use std::collections::BTreeMap;
 use ndarray::Array1;
 
 use crate::core::UnitFactor;
+use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
-use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::ff::potential::intramolecular_pairs;
 use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::openmm_xml::reader::OpenmmXmlReader;

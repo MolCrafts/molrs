@@ -1298,37 +1298,8 @@ fn canonical_row(s: &FourierSeries) -> TypeParams {
 }
 
 /// The series of canonical (`dihedral periodic`) parameters.
-fn canonical_series(tp: &TypeParams) -> Result<FourierSeries> {
+pub(crate) fn canonical_series(tp: &TypeParams) -> Result<FourierSeries> {
     Periodic::from_params(&tp.row)?.to_series()
-}
-
-/// The exact series of a row of any style of the `torsion` family, through
-/// its registered form codec (a built-in's, or a third party's): the row
-/// embedded in the canonical `dihedral periodic` parameters, summed.
-///
-/// # Errors
-///
-/// The style registers no form of the `torsion` family, or its embedding
-/// refuses the row (a charmm `w ≠ 0`, a non-integer periodicity, …).
-pub fn torsion_series(
-    category: &str,
-    style: &str,
-    style_params: &Params,
-    row: &Params,
-) -> std::result::Result<FourierSeries, String> {
-    let what = format!("{category} {style}");
-    let canonical = crate::ff::ir::with_global_registry(|r| {
-        let codec = r
-            .form(category, style)
-            .filter(|c| c.family == FAMILY)
-            .ok_or_else(|| format!("{what} has no form of the `{FAMILY}` family"))?;
-        (codec.embed)(&TypeParams {
-            style: style_params.clone(),
-            row: row.clone(),
-        })
-        .map_err(|e| format!("{what}: {e}"))
-    })?;
-    canonical_series(&canonical).map_err(|e| format!("{what}: {e}"))
 }
 
 /// The family name of every torsion form.
@@ -2262,8 +2233,8 @@ mod tests {
     /// drift.
     #[test]
     fn registered_kernels_price_the_series() {
+        use crate::ff::compile::PotentialCompiler;
         use crate::ff::forcefield::ForceField;
-        use crate::ff::potential::PotentialCompiler;
         use crate::ff::potential::flat_coords::compute_dihedral;
         use molrs::core::Block;
         use molrs::core::Frame;

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::flat_coords::{compute_angle, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
@@ -231,7 +231,7 @@ mod tests {
             )
             .unwrap();
         let frame = right_angle_frame("A-A-A");
-        let pots = crate::ff::potential::PotentialCompiler::new(&ff)
+        let pots = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap();
         // The frame's angle is 90 degrees.

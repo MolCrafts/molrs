@@ -71,7 +71,7 @@ def test_materialize_one_four_writes_the_one_four_rows() -> None:
         style["inner"] = 900.0
         style["cutoff"] = 1000.0
     frame = _chain()
-    compiler = molrs.ff.potential.PotentialCompiler(ff)
+    compiler = molrs.ff.compile.PotentialCompiler(ff)
     with pytest.raises(ValueError, match="materialize_one_four"):
         compiler.compile(frame)
     assert ff.materialize_one_four(frame) == 1
