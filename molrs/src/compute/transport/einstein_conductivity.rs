@@ -1,32 +1,31 @@
 //! Einstein–Helfand conductivity raw compute — the collective-dipole-MSD route
 //! to σ.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use molrs::signal as sig;
 
-/// Raw collective charge-dipole MSD — the raw portion of the legacy
-/// `ConductivityResult`, with **no** fitted sigma/slope.
+/// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
 #[derive(Debug, Clone)]
 pub struct EinsteinConductivityResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
-    /// Collective-dipole MSD ⟨|**M_J**(t+τ) − **M_J**(t)|²⟩ over time origins,
-    /// identical to `ConductivityResult.msd`. Units: `(e·Å)²`.
+    /// Collective-dipole MSD ⟨|**M_J**(t+τ) − **M_J**(t)|²⟩ over time origins.
+    /// Units: `(e·Å)²`.
     pub msd: Array1<f64>,
 }
 
 impl ComputeResult for EinsteinConductivityResult {}
 
-/// Raw collective charge-dipole MSD compute. Lifts the time-origin MSD loop
-/// from the Einstein–Helfand conductivity and stops there (no OLS, no σ). The
+/// Raw collective charge-dipole MSD compute: the time-origin MSD of the
+/// Einstein–Helfand conductivity, and nothing more (no OLS, no σ). The
 /// σ = slope/(6·V·k_B·T) step is a downstream
-/// [`LinearFit`](crate::compute::fitting::LinearFit).
+/// [`LinearFit`](crate::compute::LinearFit).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EinsteinConductivity;
 
@@ -112,18 +111,16 @@ impl Compute for EinsteinConductivity {
 mod tests {
     use super::super::green_kubo_conductivity::GreenKuboConductivity;
     use super::*;
-    use molrs::Frame;
+    use molrs::core::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
-    /// MD→SI conductivity prefactor with the Einstein 1/6 factor, lifted from the
-    /// (removed) Einstein–Helfand conductivity free fn so the tests fold in the exact
-    /// same constant the legacy free function used.
+    /// MD→SI conductivity prefactor with the Einstein 1/6 factor.
     fn einstein_helfand_prefactor() -> f64 {
-        use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
-        (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (6.0 * ANGSTROM_M.powi(3) * K_B_SI)
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
+        (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s) / (6.0 * angstrom_m.powi(3) * K_B_SI)
     }
 
     /// Empty frame slice for the series-based raw computes.
@@ -145,7 +142,7 @@ mod tests {
     #[test]
     fn einstein_conductivity_msd_matches_direct_time_origin_average() {
         // ac-009: EinsteinConductivity.msd == the direct time-origin collective-
-        // dipole MSD (the raw observable the removed bundled result also carried).
+        // dipole MSD.
         let n = 256;
         let dt = 0.5;
         let mct = 80;
@@ -213,10 +210,9 @@ mod tests {
     fn einstein_conductivity_plus_linear_fit_matches_manual_ols() {
         // ac-015: LinearFit slope on EinsteinConductivity.msd reproduces a manual
         // OLS over the same diffusive window, and the σ = slope/(6·V·k_B·T)·prefactor
-        // composition is well-defined (replaces the removed bundled
-        // Einstein–Helfand conductivity).
-        use crate::compute::fitting::LinearFit;
-        use crate::compute::traits::Fit;
+        // composition is well-defined.
+        use crate::compute::Fit;
+        use crate::compute::LinearFit;
 
         let n = 256;
         let dt = 0.5;
@@ -256,17 +252,17 @@ mod tests {
 
     #[test]
     fn einstein_conductivity_plus_fit_recovers_nernst_einstein() {
-        // ac-008 (scientific regression, moved from dielectric.rs): N independent
+        // ac-008 (scientific regression): N independent
         // ions of charge q on uncorrelated 3-D random walks. For independent
         // carriers EinsteinConductivity + LinearFit must reduce to the
         // Nernst–Einstein value σ = n·q²·D/(k_B·T) within the ≤0.13 ensemble
         // tolerance. M_J(t) is ONE stochastic trajectory, so we ENSEMBLE-AVERAGE
         // σ over many realisations. Seed is fixed → deterministic across CI.
-        use crate::compute::fitting::LinearFit;
-        use crate::compute::traits::Fit;
-        use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
+        use crate::compute::Fit;
+        use crate::compute::LinearFit;
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
 
         let n_realisations = 48usize;
         let n_ions = 50usize;
@@ -278,7 +274,7 @@ mod tests {
         let step = 0.5_f64; // Å, uniform per-axis displacement amplitude
         // Nernst–Einstein prefactor (no Einstein 1/6 here: D folds it in).
         let ne_prefactor =
-            (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (ANGSTROM_M.powi(3) * K_B_SI);
+            (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s) / (angstrom_m.powi(3) * K_B_SI);
         let eh_prefactor = einstein_helfand_prefactor();
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(20260601);

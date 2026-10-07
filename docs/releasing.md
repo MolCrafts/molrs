@@ -27,7 +27,9 @@ Check version metadata before tagging. One version appears in:
 - `version` and the `molcrafts-molrs` / `molcrafts-molrs-ffi` dependency
   versions in `molrs-ffi/`, `molrs-python/`, `molrs-wasm/`, `molrs-capi/`
   and `molrs-cxxapi/Cargo.toml` (the npm `package.json` is generated from
-  `molrs-wasm/Cargo.toml` by wasm-pack);
+  `molrs-wasm/Cargo.toml` by wasm-pack), and in
+  `molrs-ext-example/Cargo.toml` (unpublished, a standalone workspace kept
+  in step);
 - `version` in `molrs-python/pyproject.toml`;
 - the `molcrafts-molrs*` entries of every committed `Cargo.lock` (the root
   one and one per binder), and the editable `molcrafts-molrs` entry of
@@ -44,14 +46,19 @@ pip install ".[doc]"
 zensical build --clean      # must end with "No issues found"
 ```
 
+## Partners
+
+On `dev`, `.github/partners.env` tracks molrec's `dev` (`MOLREC_REF=dev`).
+A release is judged against a fixed molrec instead: the release commit on
+`master` sets `MOLREC_REF` to the molrec tag or full commit the release was
+checked against, so the tag's CI run (`ci-snapshot.yml`'s `mrec` step)
+fetches exactly that. When `master` is merged back into `dev`, keep
+`MOLREC_REF=dev` there.
+
 ## Publishing
 
-1. Finish the checks and review the release diff, including API migrations;
-   add every breaking change to the
-   [migration guide](../molrs-python/docs/migration.md) and the highlights to
-   the [release notes](../molrs-python/docs/release-notes.md). Both are pages
-   of the documentation site; the GitHub Release created by **Publish** links
-   to both at the tag, beside the auto-generated changelog.
+1. Finish the checks and review the release diff. The GitHub Release created
+   by **Publish** links to the documentation site.
 2. Run **Publish** manually on a branch for a build rehearsal. It runs CI and
    builds artifacts without uploading to registries or creating a release.
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,

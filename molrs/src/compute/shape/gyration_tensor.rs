@@ -1,23 +1,18 @@
 //! Gyration tensor computation for clusters.
-//!
-//! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
-//! ([`ClusterResult`],
-//! [`ClusterCentersResult`])
-//! pairs — run [`Cluster`](crate::compute::cluster::Cluster) and
-//! [`ClusterCenters`](crate::compute::shape::ClusterCenters) first. Output:
-//! per-cluster 3×3 gyration tensors (Å²).
 
 #![allow(clippy::needless_range_loop)]
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
-use crate::compute::shape::cluster_centers::ClusterCentersResult;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::compute::ClusterCentersResult;
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::sub;
+use molrs::core::{Mic, SimBox};
 
 /// Gyration tensor per cluster, per frame.
 ///
@@ -25,6 +20,13 @@ use crate::compute::util::{MicHelper, get_positions_ref};
 /// where `s_i = shortest_vector(center_k, r_i)` is the MIC displacement from
 /// the geometric center. Geometric centers come from the
 /// [`ClusterCentersResult`] arg — this Compute does **not** recompute them.
+///
+/// Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
+/// ([`ClusterResult`],
+/// [`ClusterCentersResult`])
+/// pairs — run [`Cluster`](crate::compute::Cluster) and
+/// [`ClusterCenters`](crate::compute::ClusterCenters) first. Output:
+/// per-cluster 3×3 gyration tensors (Å²).
 #[derive(Debug, Clone, Default)]
 pub struct GyrationTensor;
 
@@ -44,8 +46,8 @@ impl GyrationTensor {
         let xs = xs_p.slice();
         let ys = ys_p.slice();
         let zs = zs_p.slice();
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
-        let nc = clusters.num_clusters;
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        let nc = clusters.n_clusters;
 
         if centers.centers.len() != nc {
             return Err(ComputeError::DimensionMismatch {
@@ -64,7 +66,7 @@ impl GyrationTensor {
             }
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
-            let s = mic.disp(centers.centers[c], pos);
+            let s = mic.apply(sub(pos, centers.centers[c]));
 
             // Fully unrolled 3x3 rank-1 update — compiler emits straight-line code.
             let t = &mut tensors[c];
@@ -161,10 +163,10 @@ impl ComputeResult for GyrationTensorResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::shape::cluster_centers::ClusterCenters;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::ClusterCenters;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
@@ -198,7 +200,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

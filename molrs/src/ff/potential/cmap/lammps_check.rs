@@ -16,19 +16,20 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, Axis};
 
-use super::charmm::GRID;
 use super::charmm::tests::{alanine, chain, place};
-use crate::ff::forcefield::writers::ForceFieldWriter;
-use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::PotentialCompiler;
-use crate::ff::typifier::assign_cmaps;
-use crate::ff::{LammpsFfWriter, LammpsWriteOptions};
-use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::spatial::simbox::SimBox;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::type_labels::TypeLabels;
-use molrs::types::{F, Idx};
+use crate::ff::compile::PotentialCompiler;
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::CMAP_GRID;
+use crate::ff::ir::Params;
+use crate::ff::typifier::cmap::assign_cmaps;
+use crate::io::writer::ForceFieldWriter;
+use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
+use molrs::io::lammps::data::write_lammps_data;
+use molrs::op::{F, Idx};
 
 const TYPES: [&str; 8] = ["C", "NH1", "CT1", "C", "NH1", "CT1", "C", "NH1"];
 
@@ -57,13 +58,13 @@ fn system() -> (ForceField, Frame, Vec<F>) {
     let mut ff = ForceField::new("charmm");
     let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
     let mut ala = Params::new();
-    ala.set_array(GRID, alanine());
+    ala.set_array(CMAP_GRID, alanine());
     style
         .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
         .unwrap();
     let mut swapped = Params::new();
     swapped.set_array(
-        GRID,
+        CMAP_GRID,
         alanine().reversed_axes().as_standard_layout().to_owned(),
     );
     style
@@ -124,17 +125,17 @@ fn system() -> (ForceField, Frame, Vec<F>) {
 }
 
 /// Write the LAMMPS inputs of [`system`] into `dir` (see the module docs).
-fn write_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
+fn stage_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
     let mut lammps = frame.clone();
     lammps.remove("dihedrals");
     write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
     let labels = TypeLabels::from_frame(&lammps).unwrap();
-    let options = LammpsWriteOptions {
+    let options = LammpsForcefieldWriteOptions {
         skip_pair_style: true,
         cmap_file: Some("charmm.cmap".into()),
-        ..LammpsWriteOptions::default()
+        ..LammpsForcefieldWriteOptions::default()
     };
-    let writer = LammpsFfWriter::with_options(&labels, options);
+    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     std::fs::write(dir.join("charmm.cmap"), writer.write_cmap_str(ff).unwrap()).unwrap();
     std::fs::write(dir.join("system.ff"), writer.write_str(ff).unwrap()).unwrap();
 }
@@ -145,7 +146,7 @@ fn energy_and_forces_are_lammps_fix_cmap() {
     let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
     let (energy, forces) = pots.calc_energy_forces(&x);
     if let Some(dir) = std::env::var_os("MOLRS_LAMMPS_CMAP_DIR") {
-        write_inputs(Path::new(&dir), &ff, &frame);
+        stage_inputs(Path::new(&dir), &ff, &frame);
         println!("molrs energy {energy:.17e}");
         for f in forces.chunks(3) {
             println!("molrs force {:.17e} {:.17e} {:.17e}", f[0], f[1], f[2]);

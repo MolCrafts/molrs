@@ -1,60 +1,20 @@
 //! Steinhardt bond-orientational order parameters `q_ℓ` and `w_ℓ`.
-//!
-//! Mirrors `freud.order.Steinhardt`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Steinhardt.cc)).
-//! Implements:
-//!
-//! - per-particle `q_ℓm(i) = (1/N_i) Σ_{j ∈ neigh(i)} Y_ℓm(r̂_ij)`
-//! - the **averaged** variant (``average = true``) `q̄_ℓm(i) = (1/(N_i+1))
-//!   (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j))` — the "near-shell" Steinhardt
-//! - the rotational invariant
-//!   `q_ℓ(i) = √( (4π/(2ℓ+1)) Σ_m |q_ℓm(i)|² )`
-//! - the cubic invariant
-//!   `w_ℓ(i) = Σ_{m1+m2+m3=0} (ℓ ℓ ℓ; m1 m2 m3) q_ℓm1(i) q_ℓm2(i) q_ℓm3(i)`
-//!   with an optional normalization
-//!   `ŵ_ℓ(i) = w_ℓ(i) / ( Σ_m |q_ℓm(i)|² )^{3/2}`.
-//!
-//! # Conventions
-//!
-//! - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
-//!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
-//!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
-//! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
-//!   (see [`molrs::math::spherical_harmonics`]).
-//!
-//! # Required neighbor columns
-//!
-//! `q_ℓm` is built from bond *directions*, so the table must carry the
-//! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). Distances
-//! alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
-//! directions, and reads back `None` rather than zeros, so every entry point
-//! here answers [`ComputeError::BadShape`] naming the missing column instead of
-//! indexing an empty view.
-//!
-//! # References
-//!
-//! - Steinhardt, Nelson & Ronchetti, *Phys. Rev. B* **28**, 784 (1983).
-//! - Lechner & Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — averaged
-//!   variant.
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use std::cmp::Ordering;
 
-use molrs::math::complex::Complex;
-use molrs::math::spherical_harmonics::ylm_all;
-use molrs::math::wigner3j::wigner_3j;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::Complex;
+use molrs::core::FOUR_PI;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::core::wigner_3j;
+use molrs::core::ylm_all;
+use molrs::op::F;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
-
-const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 
 /// Steinhardt order-parameter calculator.
 ///
@@ -62,8 +22,46 @@ const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 ///
 /// [`compute`](Compute::compute) takes `&Vec<Neighbors>` — one neighbor table
 /// per frame, index-aligned with `frames`, each carrying the `disp` column
-/// (Å); see the module docs for why, and
-/// [`ComputeError::BadShape`] for what happens when it is absent.
+/// (Å); see *Required neighbor columns* below.
+///
+/// Mirrors `freud.order.Steinhardt`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/Steinhardt.cc)).
+/// Implements:
+///
+/// - per-particle `q_ℓm(i) = (1/N_i) Σ_{j ∈ neigh(i)} Y_ℓm(r̂_ij)`
+/// - the **averaged** variant (``average = true``) `q̄_ℓm(i) = (1/(N_i+1))
+///   (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j))` — the "near-shell" Steinhardt
+/// - the rotational invariant
+///   `q_ℓ(i) = √( (4π/(2ℓ+1)) Σ_m |q_ℓm(i)|² )`
+/// - the cubic invariant
+///   `w_ℓ(i) = Σ_{m1+m2+m3=0} (ℓ ℓ ℓ; m1 m2 m3) q_ℓm1(i) q_ℓm2(i) q_ℓm3(i)`
+///   with an optional normalization
+///   `ŵ_ℓ(i) = w_ℓ(i) / ( Σ_m |q_ℓm(i)|² )^{3/2}`.
+///
+/// # Conventions
+///
+/// - Self-query [`Neighbors`]: each pair `(i, j)` with `i < j` carries the
+///   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
+///   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
+/// - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
+///   (see [`molrs::core::ylm_all`]).
+///
+/// # Required neighbor columns
+///
+/// `q_ℓm` is built from bond *directions*, so the table must carry the
+/// minimum-image displacement column `disp` (Å) — materialize it with
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL). Distances
+/// alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
+/// directions, and reads back `None` rather than zeros, so every entry point
+/// here answers [`ComputeError::BadShape`] naming the missing column instead of
+/// indexing an empty view.
+///
+/// # References
+///
+/// - Steinhardt, Nelson & Ronchetti, *Phys. Rev. B* **28**, 784 (1983).
+/// - Lechner & Dellago, *J. Chem. Phys.* **129**, 114707 (2008) — averaged
+///   variant.
 #[derive(Debug, Clone)]
 pub struct Steinhardt {
     l: Vec<u32>,
@@ -128,8 +126,8 @@ impl Steinhardt {
 ///
 /// `nlist` must carry the minimum-image displacement column `disp` (Å) — build
 /// it with
-/// [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-/// or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL) — because the
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL) — because the
 /// bond directions `r̂_ij` are the entire computation.
 ///
 /// Returns a row-major buffer of length `n_particles · (2ℓ+1)` with element
@@ -138,7 +136,7 @@ impl Steinhardt {
 /// directions.
 ///
 /// `nlist` must also be a half-shell
-/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): each row is
+/// [`SelfQuery`](molrs::core::QueryMode::SelfQuery): each row is
 /// visited once and credited to *both* of its particles, which double-counts on
 /// a cross-query table.
 ///
@@ -146,10 +144,10 @@ impl Steinhardt {
 ///
 /// [`ComputeError::BadShape`] if `nlist` has no `disp` column — a `DIST_SQ` or
 /// `INDICES_ONLY` table is refused rather than read as zeros — or if `nlist` is
-/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table.
-/// Positions are read through [`get_positions_ref`], so a frame without
-/// `atoms.x/y/z` columns errors there instead.
-pub fn compute_qlm<FA: FrameAccess>(
+/// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table.
+/// Positions are read from the `atoms.x/y/z` columns, so a frame without
+/// them errors there instead.
+pub fn steinhardt_qlm<FA: FrameAccess>(
     frame: &FA,
     nlist: &Neighbors,
     l: u32,
@@ -224,11 +222,11 @@ pub fn compute_qlm<FA: FrameAccess>(
 /// Apply the Lechner-Dellago "near-shell" average over self + neighbors.
 /// In place: `q̄_ℓm(i) = (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j)) / (N_i + 1)`.
 ///
-/// Carries the same half-shell requirement as [`compute_qlm`] — it too visits
+/// Carries the same half-shell requirement as [`steinhardt_qlm`] — it too visits
 /// each row once and updates both endpoints, and on a cross table the
 /// denominator would be `1 + 2·N_i`. It is not guarded again here because its
 /// only caller is [`Steinhardt::one_frame`], which reaches it solely through
-/// `compute_qlm(frame, nlist, l)?` on this same `nlist`; a new caller must
+/// `steinhardt_qlm(frame, nlist, l)?` on this same `nlist`; a new caller must
 /// either come through that guard or call [`require_self_query`] itself.
 fn average_qlm(qlm: &[Complex], nlist: &Neighbors, n: usize, m_count: usize) -> Vec<Complex> {
     let mut acc = qlm.to_vec();
@@ -334,7 +332,7 @@ impl Steinhardt {
 
         for &l in &self.l {
             let m_count = (2 * l + 1) as usize;
-            let qlm_raw = compute_qlm(frame, nlist, l)?;
+            let qlm_raw = steinhardt_qlm(frame, nlist, l)?;
             let qlm_used = if self.average {
                 average_qlm(&qlm_raw, nlist, n, m_count)
             } else {
@@ -423,10 +421,10 @@ impl ComputeResult for SteinhardtResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -664,13 +662,13 @@ mod tests {
         }
     }
 
-    // -- 7) Public compute_qlm helper -----------------------------------------
+    // -- 7) Public steinhardt_qlm helper -----------------------------------------
 
     #[test]
-    fn compute_qlm_normalization_matches_internal() {
+    fn steinhardt_qlm_normalization_matches_internal() {
         let frame = octahedron(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let qlm_raw = compute_qlm(&frame, &nl, 6).unwrap();
+        let qlm_raw = steinhardt_qlm(&frame, &nl, 6).unwrap();
 
         // Plain (non-averaged) Steinhardt should yield the same qlm.
         let s = Steinhardt::new(&[6]).unwrap();
@@ -712,13 +710,13 @@ mod tests {
     /// so it must refuse that table loudly instead of reading zeros.
     #[test]
     fn nlist_without_displacement_vectors_is_error() {
-        use molrs::spatial::neighbors::NeighborsStorage;
+        use molrs::core::NeighborColumns;
         let frame = octahedron(20.0);
         let nl_full = nlist_from_frame(&frame, 1.2);
         assert!(nl_full.n_pairs() > 0);
         // Lean list: distances kept, displacements dropped (a caller that only
         // asked for d², e.g. an RDF-shaped query, reused for an order kernel).
-        let nl_lean = nl_full.repack(NeighborsStorage::DIST_SQ);
+        let nl_lean = nl_full.repack(NeighborColumns::DIST_SQ);
         assert_eq!(nl_lean.n_pairs(), nl_full.n_pairs());
         assert!(
             nl_lean.disp().is_none(),
@@ -743,10 +741,10 @@ mod tests {
     /// The pairs are the octahedron's own bonds, hard-coded rather than
     /// searched: centre 0 bonded to its six neighbours 1..=6 at unit distance
     /// along ±x, ±y, ±z. Every pair satisfies the half-shell contract `i < j`,
-    /// so `SelfQuery { num_points: 7 }` is a legal label for them.
+    /// so `SelfQuery { n_points: 7 }` is a legal label for them.
     #[test]
     fn steinhardt_indices_only_neighbors_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = octahedron(20.0);
         let bonds: [[F; 3]; 6] = [
@@ -769,8 +767,8 @@ mod tests {
             .collect();
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::INDICES_ONLY,
-            QueryMode::SelfQuery { num_points: 7 },
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::SelfQuery { n_points: 7 },
         );
         assert_eq!(
             nl.n_pairs(),
@@ -962,7 +960,7 @@ mod tests {
     /// Edge: a **cross-query** [`Neighbors`] table must be refused with
     /// [`ComputeError::BadShape`], not consumed.
     ///
-    /// `compute_qlm` visits each row once and updates *both* endpoints, using
+    /// `steinhardt_qlm` visits each row once and updates *both* endpoints, using
     /// `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)` for the `j` side. That double update is only
     /// correct for a half-shell [`QueryMode::SelfQuery`], where each unordered
     /// pair appears exactly once. On a full-shell or cross table every pair is
@@ -978,12 +976,12 @@ mod tests {
     ///
     /// The table below is well-formed in every other respect (FULL storage,
     /// finite displacements, in-range indices), so the mode is the only thing
-    /// left to refuse. The guard belongs in `compute_qlm`, which `SolidLiquid`
+    /// left to refuse. The guard belongs in `steinhardt_qlm`, which `SolidLiquid`
     /// and `ContinuousCoordination` call directly — checking it only inside
     /// `Steinhardt::one_frame` would leave those two entry points open.
     #[test]
     fn steinhardt_cross_query_table_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = octahedron(20.0);
         // Same six bonds as `steinhardt_indices_only_neighbors_is_bad_shape`:
@@ -1016,10 +1014,10 @@ mod tests {
         }
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::CrossQuery {
-                num_query_points: 7,
-                num_points: 7,
+                n_query_points: 7,
+                n_points: 7,
             },
         );
         assert_eq!(nl.n_pairs(), 12, "the guard must see a non-empty table");
@@ -1030,8 +1028,8 @@ mod tests {
 
         // Deliberately not `expect_err`: the Ok payload is the whole q_ℓm
         // buffer, and dumping it buries the one thing the failure says.
-        let Err(err) = compute_qlm(&frame, &nl, 6) else {
-            panic!("compute_qlm must refuse a cross-query table outright, but returned Ok");
+        let Err(err) = steinhardt_qlm(&frame, &nl, 6) else {
+            panic!("steinhardt_qlm must refuse a cross-query table outright, but returned Ok");
         };
         assert!(
             matches!(err, ComputeError::BadShape { .. }),
@@ -1039,7 +1037,7 @@ mod tests {
         );
 
         let Err(err) = Steinhardt::new(&[6]).unwrap().compute(&[&frame], &[nl]) else {
-            panic!("Steinhardt::compute must inherit the compute_qlm cross-query guard");
+            panic!("Steinhardt::compute must inherit the steinhardt_qlm cross-query guard");
         };
         assert!(
             matches!(err, ComputeError::BadShape { .. }),

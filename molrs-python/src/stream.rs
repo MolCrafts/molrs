@@ -5,7 +5,8 @@
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
-//! [`Frame.from_bytes`](crate::core::store::frame::PyFrame).
+//! `molrs.io.read_msgpack_frame_bytes` (or `read_json_frame_str` from a JSON
+//! publisher; [`crate::io`]).
 //!
 //! Traffic in the other direction is [`PyControlCommand`]: a viewer asks the
 //! producer to pause, change rate, or restrict the atom subset. The producer
@@ -17,7 +18,7 @@
 //! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
 //! build has the command type and no server.
 //!
-//! [`Frame`]: molrs::store::frame::Frame
+//! [`Frame`]: molrs::core::Frame
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -25,7 +26,23 @@ use pyo3::types::PyBytes;
 
 use molrs::stream::ControlCommand;
 
-use crate::helpers::{message_format, py_value_err};
+use crate::error::py_value_err;
+
+/// Resolve a wire-encoding name onto [`FrameEncoding`].
+///
+/// The two spellings are the only ones the Rust side can produce, so an
+/// unknown name is an error rather than a silent fall back to MessagePack —
+/// a caller who writes `"messagepack"` must find out, not stream bytes the
+/// peer will read as JSON.
+pub(crate) fn frame_encoding(name: &str) -> PyResult<molrs::stream::FrameEncoding> {
+    match name {
+        "msgpack" => Ok(molrs::stream::FrameEncoding::MessagePack),
+        "json" => Ok(molrs::stream::FrameEncoding::Json),
+        other => Err(PyValueError::new_err(format!(
+            "unknown wire format {other:?}; expected 'msgpack' or 'json'"
+        ))),
+    }
+}
 
 /// A control message sent from a streaming viewer back to the producer.
 ///
@@ -148,7 +165,7 @@ impl PyControlCommand {
     fn to_bytes<'py>(&self, py: Python<'py>, format: &str) -> PyResult<Bound<'py, PyBytes>> {
         let bytes = self
             .inner
-            .to_bytes(message_format(format)?)
+            .to_bytes(frame_encoding(format)?)
             .map_err(py_value_err)?;
         Ok(PyBytes::new(py, &bytes))
     }
@@ -158,7 +175,7 @@ impl PyControlCommand {
     #[pyo3(signature = (data, format = "json"))]
     fn from_bytes(data: &[u8], format: &str) -> PyResult<Self> {
         let inner =
-            ControlCommand::from_bytes(data, message_format(format)?).map_err(py_value_err)?;
+            ControlCommand::from_bytes(data, frame_encoding(format)?).map_err(py_value_err)?;
         Ok(Self { inner })
     }
 
@@ -189,8 +206,9 @@ mod server {
     use molrs::stream::{Publisher, PublisherConfig};
 
     use super::PyControlCommand;
-    use crate::core::store::frame::PyFrame;
-    use crate::helpers::{io_error_to_pyerr, message_format, py_value_err};
+    use super::frame_encoding;
+    use crate::core::frame::PyFrame;
+    use crate::error::{io_error_to_pyerr, py_value_err};
 
     /// WebSocket server that broadcasts frames to every connected viewer.
     ///
@@ -253,7 +271,7 @@ mod server {
                 ));
             }
             let config = PublisherConfig {
-                format: message_format(format)?,
+                format: frame_encoding(format)?,
                 buffer_size,
                 max_frame_rate: 0.0,
                 token,
@@ -280,8 +298,8 @@ mod server {
 
         /// Number of viewers currently connected.
         #[getter]
-        fn client_count(&self) -> PyResult<usize> {
-            Ok(self.server()?.client_count())
+        fn n_clients(&self) -> PyResult<usize> {
+            Ok(self.server()?.n_clients())
         }
 
         /// Broadcast one frame. Returns immediately; never blocks on the network.
@@ -350,7 +368,7 @@ mod server {
                 Some(server) => format!(
                     "Publisher(address='{}', clients={})",
                     self.address,
-                    server.client_count()
+                    server.n_clients()
                 ),
                 None => format!("Publisher(address='{}', closed)", self.address),
             }
@@ -366,4 +384,12 @@ mod server {
             })
         }
     }
+}
+
+/// Register `molrs.stream`.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyControlCommand>()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    m.add_class::<PyPublisher>()?;
+    Ok(())
 }

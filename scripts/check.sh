@@ -7,14 +7,14 @@
 #   scripts/check.sh fmt clippy     # run the named gates, in order
 #   scripts/check.sh all            # every gate (CI parity)
 #
-# Gates: fmt partners clippy doc test features package ffi cxx python capi
+# Gates: fmt ruff partners clippy doc test features package ffi cxx ext python capi
 # wasm mrec docs. Root-workspace cargo calls go through the `cargo mrs-*`
 # aliases (.cargo/config.toml) so they share one feature set and one build.
 # Every cargo / maturin / wasm-pack call is --locked and every uv call runs
 # on CI's Python (3.12) against the committed lock: a gate that would have to
 # change a lock file fails instead.
 #
-# Dispatch: `fmt` and `partners` compile nothing and run wherever this script
+# Dispatch: `fmt`, `ruff` and `partners` compile nothing and run wherever this script
 # is called. When the environment names a runner in MOLCRAFTS_HOOK_RUNNER and
 # this is not already a Slurm job, any other gate hands the whole call to it.
 # The MolCrafts cluster's shared git hooks set it to a launcher that runs its
@@ -31,6 +31,9 @@ CLEANUP=()
 trap '[ "${#CLEANUP[@]}" -eq 0 ] || rm -rf "${CLEANUP[@]}"' EXIT
 
 BINDERS=(molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi)
+# Every standalone workspace root besides the root one: the binders, and the
+# force-field IR extension proof crate.
+ROOTS=("${BINDERS[@]}" molrs-ext-example)
 # wasm-opt release the wasm gate runs; CI installs exactly this one.
 BINARYEN_VERSION=version_133
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
@@ -47,13 +50,19 @@ scratch() {
 
 gate_fmt() {
     cargo fmt --all --check
-    for crate in "${BINDERS[@]}"; do
+    for crate in "${ROOTS[@]}"; do
         cargo fmt --manifest-path "$crate/Cargo.toml" --check
     done
 }
 
-# Every partner pin in .github/partners.env exists on its remote, no path
-# dependency points where CI has no checkout, no workflow spells its own pin.
+# Python lint (ruff.toml): text-mode file I/O names its encoding, so a read
+# that passes on Linux cannot fail only on Windows (cp1252).
+gate_ruff() {
+    uvx ruff@0.16.5 check .
+}
+
+# Every partner in .github/partners.env resolves, no path dependency points
+# where CI has no checkout, no workflow spells a partner commit of its own.
 gate_partners() {
     python3 scripts/partners.py check
 }
@@ -72,12 +81,18 @@ gate_test() {
     cargo --locked mrs-doctest
 }
 
-# Each sub-system must build on its own, without molrs's native defaults.
+# Each sub-system must build on its own, without molrs's native defaults,
+# and so must its tests: --all-targets, so a test that reaches past its
+# feature (an `ff` test naming `io::mrec`, which is `zarr`'s) fails here.
+features_clippy() {
+    cargo clippy --locked -p molcrafts-molrs --all-targets "$@" -- -D warnings
+}
+
 gate_features() {
-    cargo check --locked -p molcrafts-molrs
-    cargo check --locked -p molcrafts-molrs --no-default-features
+    features_clippy
+    features_clippy --no-default-features
     for feature in io smiles signal compute ff conformer md builder serde stream zarr filesystem voronoi full; do
-        cargo check --locked -p molcrafts-molrs --no-default-features --features "$feature"
+        features_clippy --no-default-features --features "$feature"
     done
 }
 
@@ -107,6 +122,15 @@ gate_ffi() {
 gate_cxx() {
     clippy_binder molrs-cxxapi
     cargo test --locked --manifest-path molrs-cxxapi/Cargo.toml
+}
+
+# The force-field IR as a protocol (ff-ir-02-protocol, P-Rust): a third
+# party's crate extending it through molrs's pub API alone — a pair style, a
+# new category, an expression style — priced against pinned LAMMPS numbers
+# (scripts/ff_ir_extension_lammps_check.sh), persisted, and refused by name.
+gate_ext() {
+    clippy_binder molrs-ext-example
+    cargo test --locked --manifest-path molrs-ext-example/Cargo.toml
 }
 
 # Tools only (no project install), so tox builds the wheel once.
@@ -143,8 +167,8 @@ gate_wasm() {
 }
 
 # molrec's conformance suite through molrs.io.mrec, as ci-snapshot.yml's mrec
-# step runs it: molrec at the commit .github/partners.env pins (fetched into a
-# temp dir, never a sibling checkout), the extension built by `maturin
+# step runs it: molrec at the commit scripts/partners.py resolves (fetched into
+# a temp dir, never a sibling's working tree), the extension built by `maturin
 # develop` into a fresh venv on CI's Python, scripts/ci-conformance.py judging
 # every case. Any case that does not pass fails the gate.
 gate_mrec() {
@@ -179,9 +203,9 @@ gate_docs() {
     (cd molrs-python && "$work/venv/bin/zensical" build --clean --strict)
 }
 
-ALL=(fmt partners clippy doc test features package ffi cxx python capi wasm mrec docs)
+ALL=(fmt ruff partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)
 # Gates that compile nothing; everything else goes to MOLCRAFTS_HOOK_RUNNER.
-CHEAP=(fmt partners)
+CHEAP=(fmt ruff partners)
 
 [ "$#" -gt 0 ] || { echo "usage: $0 <gate>... | all   (gates: ${ALL[*]})" >&2; exit 2; }
 [ "$1" = all ] && set -- "${ALL[@]}"

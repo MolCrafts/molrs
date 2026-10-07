@@ -7,9 +7,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::ff::forcefield::ForceField;
-    use crate::ff::typifier::mmff::MMFF94Typifier;
-    use molrs::system::molgraph::{Atom, PropValue};
-    use molrs::{AtomId, Atomistic};
+    use crate::ff::typifier::mmff::Mmff94Typifier;
+    use molrs::core::{Atom, PropValue};
+    use molrs::core::{Atomistic, NodeId};
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -17,23 +17,23 @@ mod tests {
         a
     }
 
-    fn bond_order(mol: &mut Atomistic, a: AtomId, b: AtomId, order: f64) {
+    fn bond_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            // The old float encoding, split into the two facts it conflated.
+            // The fixture's float order, split into class (1.5 = aromatic) and count.
             let _ = if (order - 1.5).abs() < 1e-6 {
                 mol.set_bond_class(
                     bid,
-                    crate::system::bond::BondType::Aromatic,
-                    crate::system::bond::BondNumber::Unknown,
+                    crate::core::BondOrder::Aromatic,
+                    crate::core::BondNumber::Unknown,
                 )
             } else {
-                mol.set_bond_type(bid, crate::system::bond::BondType::from_code(order as u32))
+                mol.set_bond_type(bid, crate::core::BondOrder::from_code(order as u32))
             };
         }
     }
 
-    fn test_typifier() -> MMFF94Typifier {
-        MMFF94Typifier::new()
+    fn test_typifier() -> Mmff94Typifier {
+        Mmff94Typifier::new()
     }
 
     // -----------------------------------------------------------------------
@@ -46,12 +46,12 @@ mod tests {
         let params = typifier.params();
         // Should have loaded ~90+ atom types
         assert!(
-            params.props.len() > 80,
+            params.rows.len() > 80,
             "expected >80 atom props, got {}",
-            params.props.len()
+            params.rows.len()
         );
         // Type 1 = CR (sp3 carbon)
-        let p1 = params.get_prop(1).expect("type 1 should exist");
+        let p1 = params.get(1).expect("type 1 should exist");
         assert_eq!(p1.atno, 6);
         assert_eq!(p1.crd, 4);
         assert_eq!(p1.val, 4);
@@ -102,7 +102,7 @@ mod tests {
     // Bond / angle / torsion type classification
     // -----------------------------------------------------------------------
     //
-    // The seven unit tests that lived here drove `MMFF94Typifier::typify_bond` /
+    // The seven unit tests that lived here drove `Mmff94Typifier::typify_bond` /
     // `typify_angle` / `typify_dihedral` — three front-door methods over
     // `typifier/mmff/classify.rs`, a second implementation of MMFF's context
     // rules that `ff/mmff/params.rs` already implements correctly. All three are
@@ -121,15 +121,15 @@ mod tests {
     // bare integers: `tests/ff/typifier/mmff_labels.rs`.
 
     // -----------------------------------------------------------------------
-    // Typing<MMFF94Typifier> output (system-forcefield-07)
+    // Typing<Mmff94Typifier> output (system-forcefield-07)
     // -----------------------------------------------------------------------
 
     /// Explicit-H 1,3-butadiene `H2C=CH-CH=CH2`, hand-built: carbons
     /// `C0=C1-C2=C3` are atoms 0..=3; hydrogens follow (two on C0, one on C1,
     /// one on C2, two on C3).
-    fn butadiene() -> (Atomistic, [AtomId; 4]) {
+    fn butadiene() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
-        let c: [AtomId; 4] = std::array::from_fn(|_| mol.add_atom(atom("C")));
+        let c: [NodeId; 4] = std::array::from_fn(|_| mol.add_atom(atom("C")));
         bond_order(&mut mol, c[0], c[1], 2.0);
         bond_order(&mut mol, c[1], c[2], 1.0);
         bond_order(&mut mol, c[2], c[3], 2.0);
@@ -178,13 +178,13 @@ mod tests {
     #[test]
     fn typing_butadiene_gives_its_two_stbn_orientations_distinct_names() {
         let (mol, c) = butadiene();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing
             .typify(&mol)
             .expect("butadiene types without a TypeConflict");
 
-        let is_carbon = |id: &AtomId| c.contains(id);
-        let ccc: Vec<(Vec<AtomId>, String)> = typed
+        let is_carbon = |id: &NodeId| c.contains(id);
+        let ccc: Vec<(Vec<NodeId>, String)> = typed
             .angles()
             .filter(|(_, a)| a.nodes.iter().all(is_carbon))
             .map(|(_, a)| {
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn typing_butadiene_output_names_equal_the_stamped_labels() {
         let (mol, _) = butadiene();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing.typify(&mol).expect("butadiene types");
 
         let atoms: BTreeSet<String> = typed
@@ -247,7 +247,7 @@ mod tests {
     /// the ring `C=N`, type 3) atom 1, `c_h2` (the sp3 ring CH2, type 20 `CR4R`)
     /// atom 2, `n` (the ring imine N, type 9 `N=C`) atom 3, `o` (type 7) atom 4;
     /// the three hydrogens follow.
-    fn azetone() -> (Atomistic, [AtomId; 4]) {
+    fn azetone() -> (Atomistic, [NodeId; 4]) {
         let mut mol = Atomistic::new();
         let c_co = mol.add_atom(atom("C"));
         let c_im = mol.add_atom(atom("C"));
@@ -303,12 +303,12 @@ mod tests {
     #[test]
     fn typing_names_ring_torsions_with_different_secondary_types_apart() {
         let (mol, [c_co, c_im, c_h2, n]) = azetone();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing
             .typify(&mol)
             .expect("one torsion label names one parameter set, so no TypeConflict");
 
-        let find = |path: [AtomId; 4]| {
+        let find = |path: [NodeId; 4]| {
             let (_, d) = typed
                 .dihedrals()
                 .find(|(_, d)| {

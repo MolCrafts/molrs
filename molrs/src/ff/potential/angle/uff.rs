@@ -1,20 +1,20 @@
 //! UFF angle bend (RDKit `AngleBendContrib`).
-//!
-//! Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
-//! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
-use molrs::store::schema::block_names::ANGLES;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 use crate::ff::potential::angle::accumulate_angle_forces;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{dot, norm};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::core::Frame;
+use molrs::op::F;
 
-pub struct UffAngle {
+/// Per-instance columns: `ka`, `order` (0–4), and for `order==0` the Fourier
+/// coefficients `c0`/`c1`/`c2` derived from θ₀.
+pub struct AngleUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -25,7 +25,7 @@ pub struct UffAngle {
     c2: Vec<F>,
 }
 
-impl UffAngle {
+impl AngleUff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -91,7 +91,7 @@ impl UffAngle {
     }
 }
 
-impl Potential for UffAngle {
+impl Potential for AngleUff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -105,7 +105,7 @@ impl Potential for UffAngle {
     }
 }
 
-impl IndexedTerms for UffAngle {
+impl IndexedTerms for AngleUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
@@ -135,11 +135,11 @@ impl IndexedTerms for UffAngle {
     }
 }
 
-pub fn uff_angle_ctor(
+pub fn angle_uff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let block = frame
         .get(ANGLES)
         .ok_or("uff_angle: missing \"angles\" block")?;
@@ -155,28 +155,13 @@ pub fn uff_angle_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("uff_angle: missing atomk")?;
-    let ka = block
-        .get("ka")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing ka")?;
-    let order = block
-        .get("order")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing order")?;
-    let c0 = block
-        .get("c0")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c0")?;
-    let c1 = block
-        .get("c1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c1")?;
-    let c2 = block
-        .get("c2")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_angle: missing c2")?;
+    let ka = param_reads::instance_col("uff_angle", block, "ka")?;
+    let order = param_reads::instance_col("uff_angle", block, "order")?;
+    let c0 = param_reads::instance_col("uff_angle", block, "c0")?;
+    let c1 = param_reads::instance_col("uff_angle", block, "c1")?;
+    let c2 = param_reads::instance_col("uff_angle", block, "c2")?;
     let n = i.len();
-    Ok(Member::indexed(UffAngle {
+    Ok(ForceTerm::indexed(AngleUff {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),
@@ -191,10 +176,10 @@ pub fn uff_angle_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+    use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
-    fn bent(order: u8, c: [F; 3]) -> UffAngle {
-        UffAngle {
+    fn bent(order: u8, c: [F; 3]) -> AngleUff {
+        AngleUff {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

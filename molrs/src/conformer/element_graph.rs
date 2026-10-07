@@ -1,18 +1,18 @@
 //! The [`ElementGraph`] bound behind the generic
 //! [`Conformer::generate`](super::Conformer::generate).
-//!
-//! An embedding is only defined for a graph whose nodes are chemical elements:
-//! ETKDG reads `element` for bond-length estimation, ring geometry and
-//! force-field selection. This module names that requirement once, as a trait,
-//! so the single entry point can hand the caller back the same typed world it
-//! was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
-//! `frag_id` properties intact.
 
-use molrs::error::MolRsError;
-use molrs::system::atomistic::Atomistic;
-use molrs::system::molgraph::MolGraph;
+use molrs::core::Atomistic;
+use molrs::core::MolGraph;
+use molrs::core::MolRsError;
 
 /// A typed wrapper over a [`MolGraph`] whose every node carries an `element`.
+///
+/// An embedding is only defined for a graph whose nodes are chemical elements:
+/// ETKDG reads `element` for bond-length estimation, ring geometry and
+/// force-field selection. This module names that requirement once, as a trait,
+/// so the single entry point can hand the caller back the same typed world it
+/// was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
+/// `frag_id` properties intact.
 ///
 /// # Contract
 ///
@@ -34,7 +34,7 @@ use molrs::system::molgraph::MolGraph;
 /// # Implementors
 ///
 /// [`Atomistic`], and no one else.
-/// [`CoarseGrain`](crate::system::coarsegrain::CoarseGrain) owns the same pair
+/// [`CoarseGrain`](crate::core::CoarseGrain) owns the same pair
 /// of inherent methods and deliberately does **not** implement this trait: its
 /// nodes carry bead types, not elements, so every `element` lookup the
 /// embedding performs would be a lookup for a property that a coarse-grained
@@ -75,16 +75,17 @@ impl ElementGraph for Atomistic {
 #[cfg(test)]
 mod tests {
     use super::ElementGraph;
-    use molrs::error::MolRsError;
-    use molrs::system::atomistic::{AtomId, Atomistic};
-    use molrs::system::bond::BondNumber;
-    use molrs::system::molgraph::{Atom, MolGraph};
-    use molrs::system::port::PortKind;
+    use molrs::core::Atomistic;
+    use molrs::core::BondNumber;
+    use molrs::core::MolRsError;
+    use molrs::core::NodeId;
+    use molrs::core::PortKind;
+    use molrs::core::{Atom, MolGraph};
 
     /// `H–C–C–H` with a `$` port on each C–H valence and a `frag_id` on every
     /// atom: four atoms, three bonds, two ports, two distinct fragment labels
     /// (so a per-atom check cannot pass by broadcasting a single label).
-    fn ported_pair() -> (Atomistic, [AtomId; 4]) {
+    fn ported_pair() -> (Atomistic, [NodeId; 4]) {
         let mut frag = Atomistic::new();
         let c0 = frag.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let c1 = frag.add_atom_xyz("C", 1.54, 0.0, 0.0);

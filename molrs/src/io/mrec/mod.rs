@@ -1,64 +1,63 @@
-//! Public path and packing functions for scientific records (`*.mrec`).
+//! Scientific records (`*.mrec`), the MolRec record format.
 //!
 //! A **scientific record** is one self-describing package on disk: `meta`
 //! plus at least one of a snapshot (`frame`), a topology (`system`), a
 //! time-ordered frame sequence (`trajectory`), a force field (`forcefield`),
-//! or a run `status`. This module is how a [`crate::Frame`],
-//! [`crate::Trajectory`] or [`crate::ForceFieldSection`] becomes that
-//! package, and how the package becomes those objects again.
+//! or a run `status`. On disk a record is a **directory** whose name
+//! conventionally ends in `.mrec` (for example `water.mrec/`); inside, arrays
+//! are stored with **Zarr V3** — an open format that cuts each array into
+//! compressed chunks and records their shape in a small JSON document. The
+//! Cargo feature that enables this module is still named `zarr` after that
+//! encoding; the Zarr storage engine itself is crate-private. A closed
+//! directory can be packed into a sibling `*.mrec.zip` archive.
 //!
-//! The in-memory codec working set that holds every section at once is
-//! crate-internal. Callers write the object they have:
+//! # The doors
 //!
-//! - [`write_frame_file`] / [`read_frame_file`] — Structure (`meta` + `frame/`)
-//! - [`write_system_file`] / [`read_system_file`] — System-def (`meta` + `system/`)
-//! - [`write_trajectory_file`] / [`read_trajectory_file`] — Trajectory shape
-//! - [`write_forcefield_file`] / [`read_forcefield_file`] — Force-field
+//! Whole records are read and written like every other format, by functions
+//! of [`crate::io`]:
+//!
+//! - [`write_mrec_frame`](crate::io::write_mrec_frame) /
+//!   [`read_mrec_frame`](crate::io::read_mrec_frame) — Structure (`meta` +
+//!   `frame/`)
+//! - [`write_mrec_system`](crate::io::write_mrec_system) /
+//!   [`read_mrec_system`](crate::io::read_mrec_system) — System-def (`meta` +
+//!   `system/`)
+//! - [`write_mrec_trajectory`](crate::io::write_mrec_trajectory) /
+//!   [`read_mrec_trajectory`](crate::io::read_mrec_trajectory) — Trajectory
+//!   shape
+//! - [`write_mrec_forcefield`](crate::io::write_mrec_forcefield) /
+//!   [`read_mrec_forcefield`](crate::io::read_mrec_forcefield) — Force-field
 //!   package (`meta` + `forcefield/`)
+//! - [`write_mrec`](crate::io::write_mrec) / [`read_mrec`](crate::io::read_mrec)
+//!   — a whole [`MolRec`], every section it holds;
+//!   [`read_mrec_meta`](crate::io::read_mrec_meta) — the identity document
+//! - [`write_mrec_storage`](crate::io::write_mrec_storage) /
+//!   [`read_mrec_storage`](crate::io::read_mrec_storage) /
+//!   [`read_mrec_frame_storage`](crate::io::read_mrec_frame_storage) — the same
+//!   into / out of any open Zarr storage (in-memory, a host's), filesystem or
+//!   not.
 //!
-//! On disk a record is a **directory** whose name conventionally ends in
-//! `.mrec` (for example `water.mrec/`). Inside, arrays are stored with
-//! **Zarr V3** — an open format that cuts each array into compressed chunks
-//! and records their shape in a small JSON document. The Cargo feature that
-//! enables this module is still named `zarr` after that encoding; the Zarr
-//! adapter itself is crate-private. A closed directory can be packed into a
-//! sibling `*.mrec.zip` archive. Paths ending in `.zarr` or `.zarr.zip` are
-//! refused: those were the previous scientific suffixes and are not migrated.
+//! # This module
 //!
-//! [`schema`] is the runtime check for path suffix and `meta` brand keys.
-//! The language-neutral JSON Schema lives in molrec
-//! (`schema/core/record.schema.json`).
-//!
-//! ## What to call
-//!
-//! - A snapshot: [`read_frame_file`] / [`write_frame_file`].
-//! - A topology: [`read_system_file`] / [`write_system_file`].
-//! - A trajectory: [`read_trajectory_file`] / [`write_trajectory_file`].
-//! - A force field: [`read_forcefield_file`] / [`write_forcefield_file`], or
-//!   [`crate::MolRec::forcefield`] beside other sections through
-//!   [`write_record_file`].
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
-//!   [`FrameSequenceWriter`], read one frame at a time with [`FrameSequence`].
-//!   [`FrameSequence::open`] takes any already-open store (including an
-//!   in-memory one). [`open_trajectory_sequence`] is the filesystem-path
-//!   opener for that cursor.
-//! - Pack a closed directory: [`pack`] / [`open_packed`]. Those two, the
-//!   `*_file` functions, and [`open_trajectory_sequence`] need the
-//!   `filesystem` feature.
+//!   [`MrecWriter`], read one frame at a time with [`MrecReader`]
+//!   ([`MrecReader::open`] opens a path, [`MrecReader::from_storage`] any open
+//!   storage).
+//! - [`section_names`] / [`section_names_storage`] — which sections a record
+//!   holds.
+//! - [`pack_mrec_zip`] / [`open_mrec_zip`] — collapse a closed directory into
+//!   one `*.mrec.zip`, and open one for reading.
+//! - [`ForceFieldSection`] — the `forcefield` section as data.
+//! - [`validation`] — the runtime check of a record's frames.
+//!   The language-neutral JSON Schema lives in molrec
+//!   (`schema/core/record.schema.json`).
 //!
-//! Every writer creates the record root and its `meta/` group, and stamps
-//! `molrec_version` there when the producer supplied none — so every record
-//! written by this version carries the contract it was written at. A producer
-//! that set the key keeps its value, which is how a writer for an older contract
-//! stays expressible.
+//! The path-taking doors need the `filesystem` feature.
 //!
-//! Readers validate the key only when it is present: an absent key performs no
-//! version check (a foreign store, or one written before the stamp, opens), and
-//! a present key must be an integer `>= 1` no newer than
-//! [`schema::MOLREC_VERSION`].
-//!
-//! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
-//! key; the key says which contract wrote it.
+//! Every writer creates the record root and its `meta/` group, written as the
+//! producer supplied it; `meta` keys a reader does not recognise are kept as
+//! they are. Identity of a store is the
+//! `*.mrec/` path suffix plus a Zarr root.
 //!
 //! # Examples
 //!
@@ -66,15 +65,15 @@
 //! # #[cfg(not(feature = "filesystem"))]
 //! # fn main() {}
 //! # #[cfg(feature = "filesystem")]
-//! # fn main() -> Result<(), molrs::MolRsError> {
-//! use molrs::io::mrec::{read_frame_file, write_frame_file};
+//! # fn main() -> Result<(), molrs::core::MolRsError> {
+//! use molrs::io::{read_mrec_frame, write_mrec_frame};
 //!
 //! let dir = tempfile::tempdir().unwrap();
 //! let path = dir.path().join("water.mrec");
 //!
-//! write_frame_file(&path, &molrs::Frame::new(), None, None)?;
+//! write_mrec_frame(&path, &molrs::core::Frame::new(), None, None)?;
 //!
-//! let loaded = read_frame_file(&path)?;
+//! let loaded = read_mrec_frame(&path)?;
 //! let sections = molrs::io::mrec::section_names(&path)?;
 //! assert!(sections.iter().any(|s| s == "frame"));
 //! let _ = loaded;
@@ -82,30 +81,18 @@
 //! # }
 //! ```
 
-#[doc(inline)]
-pub use super::zarr::{
-    Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype,
-};
+mod forcefield_mapping;
+pub(crate) mod forcefield_section;
+mod record;
+pub mod validation;
+pub(crate) mod zarr_storage;
 
-/// Runtime validation of the mrec record schema (path suffix, `meta` brand).
-#[doc(inline)]
-pub use super::zarr::schema;
-
-#[cfg(feature = "filesystem")]
-#[doc(inline)]
-pub use super::zarr::{
-    open_trajectory_sequence, read_forcefield_file, read_frame_file, read_meta_file,
-    read_record_file, read_system_file, read_trajectory_file, section_names, write_forcefield_file,
-    write_frame_file, write_record_file, write_system_file, write_trajectory_file,
+pub use forcefield_section::{EndpointKey, ForceFieldSection, SectionStyle, style_block_name};
+pub use record::{MolRec, Observables};
+pub use zarr_storage::{
+    Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,
+    section_names_storage,
 };
 
 #[cfg(feature = "filesystem")]
-#[doc(inline)]
-pub use super::zarr::{open_packed, pack};
-
-/// The store-taking record doors: a whole record into / out of any open
-/// store, filesystem or not.
-#[doc(inline)]
-pub use super::zarr::{
-    read_frame_section_store, read_record_store, section_names_store, write_record_store,
-};
+pub use zarr_storage::{open_mrec_zip, pack_mrec_zip, section_names};

@@ -9,12 +9,13 @@
 //! relative to the centroid, eigen-decompose it, and read the top `dim`
 //! eigenpairs as coordinates. ETKDG embeds in `dim = 4`; the fourth dimension
 //! is later squeezed out by `FourthDimContribs` during minimization (see
-//! `etmin`). Negative eigenvalues are replaced with small random jitter when
+//! `distgeom::ViolationEnergy`). Negative eigenvalues are replaced with small random jitter when
 //! `rand_neg_eig` is set (RDKit `randNegEig`), matching `computeInitialCoords`.
 
 use rand::RngExt;
 
 use crate::conformer::distgeom::BoundsMatrix;
+use crate::op::linalg::eigh_sym;
 
 /// Eigenvalue tolerance (RDKit `EIGVAL_TOL`).
 const EIGVAL_TOL: f64 = 0.001;
@@ -55,7 +56,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     dim: usize,
     rng: &mut R,
     rand_neg_eig: bool,
-    num_zero_fail: usize,
+    n_zero_fail: usize,
 ) -> Option<Vec<f64>> {
     // Squared distances and global mean of squared distances.
     let mut sq = vec![0.0; n * n];
@@ -94,10 +95,9 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
         }
     }
 
-    let (eigvals, eigvecs) = jacobi_eigen(&t, n);
-    // Take the `dim` largest eigenvalues (descending).
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| eigvals[b].partial_cmp(&eigvals[a]).unwrap());
+    // Eigenvalues descending, eigenvector `k` in column `k`: the top `dim`
+    // eigenpairs are the leading ones.
+    let (eigvals, eigvecs) = eigh_sym(&t, n);
 
     let mut found_neg = false;
     let mut zero_eigs = 0usize;
@@ -105,7 +105,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     let mut scale = vec![0.0; dim];
     let mut neg_dim = vec![false; dim];
     for d in 0..dim {
-        let ev = if d < n { eigvals[order[d]] } else { 0.0 };
+        let ev = if d < n { eigvals[d] } else { 0.0 };
         if ev > EIGVAL_TOL {
             scale[d] = ev.sqrt();
         } else if ev.abs() < EIGVAL_TOL {
@@ -119,7 +119,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     if found_neg && !rand_neg_eig {
         return None;
     }
-    if zero_eigs >= num_zero_fail && n > 3 {
+    if zero_eigs >= n_zero_fail && n > 3 {
         return None;
     }
 
@@ -127,11 +127,7 @@ pub fn compute_initial_coords<R: RngExt + ?Sized>(
     for i in 0..n {
         for d in 0..dim {
             if !neg_dim[d] {
-                let vec_comp = if d < n {
-                    eigvecs[order[d] * n + i]
-                } else {
-                    0.0
-                };
+                let vec_comp = if d < n { eigvecs[i * n + d] } else { 0.0 };
                 coords[i * dim + d] = scale[d] * vec_comp;
             } else {
                 // RDKit fills negative-eigenvalue dims with random jitter.
@@ -156,83 +152,6 @@ pub fn compute_random_coords<R: RngExt + ?Sized>(
         *c = box_size * (rng.random::<f64>() - 0.5);
     }
     coords
-}
-
-/// Symmetric eigen-decomposition via the cyclic Jacobi method.
-///
-/// Returns `(eigvalues[n], eigvectors_row_major[n*n])` where row `k`
-/// (`eigvecs[k*n + i]`) is the eigenvector for `eigvalues[k]`. The input `a`
-/// is an `n×n` symmetric matrix (row-major). Deterministic — no RNG — so the
-/// whole embedding stage is reproducible under a fixed seed.
-fn jacobi_eigen(a: &[f64], n: usize) -> (Vec<f64>, Vec<f64>) {
-    let mut m = a.to_vec();
-    // Eigenvector accumulator (identity), row-major; column i is eigenvector i.
-    let mut v = vec![0.0; n * n];
-    for i in 0..n {
-        v[i * n + i] = 1.0;
-    }
-    if n == 0 {
-        return (Vec::new(), v);
-    }
-
-    let max_sweeps = 100;
-    for _ in 0..max_sweeps {
-        // Off-diagonal magnitude.
-        let mut off = 0.0;
-        for p in 0..n {
-            for q in (p + 1)..n {
-                off += m[p * n + q] * m[p * n + q];
-            }
-        }
-        if off < 1e-30 {
-            break;
-        }
-        for p in 0..n {
-            for q in (p + 1)..n {
-                let apq = m[p * n + q];
-                if apq.abs() < 1e-300 {
-                    continue;
-                }
-                let app = m[p * n + p];
-                let aqq = m[q * n + q];
-                let theta = (aqq - app) / (2.0 * apq);
-                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
-                let c = 1.0 / (t * t + 1.0).sqrt();
-                let s = t * c;
-                // Rotate rows/cols p and q.
-                for k in 0..n {
-                    let akp = m[k * n + p];
-                    let akq = m[k * n + q];
-                    m[k * n + p] = c * akp - s * akq;
-                    m[k * n + q] = s * akp + c * akq;
-                }
-                for k in 0..n {
-                    let apk = m[p * n + k];
-                    let aqk = m[q * n + k];
-                    m[p * n + k] = c * apk - s * aqk;
-                    m[q * n + k] = s * apk + c * aqk;
-                }
-                // Accumulate eigenvectors (column p, q).
-                for k in 0..n {
-                    let vkp = v[k * n + p];
-                    let vkq = v[k * n + q];
-                    v[k * n + p] = c * vkp - s * vkq;
-                    v[k * n + q] = s * vkp + c * vkq;
-                }
-            }
-        }
-    }
-
-    let eigvals: Vec<f64> = (0..n).map(|i| m[i * n + i]).collect();
-    // Repack eigenvectors into row-major "row k = eigenvector k" layout
-    // (currently stored as column k = eigenvector k).
-    let mut eigvecs = vec![0.0; n * n];
-    for k in 0..n {
-        for i in 0..n {
-            eigvecs[k * n + i] = v[i * n + k];
-        }
-    }
-    (eigvals, eigvecs)
 }
 
 #[cfg(test)]

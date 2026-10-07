@@ -7,7 +7,7 @@
 //! `conformer`, and `stream`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.15", features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.16", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
@@ -15,10 +15,9 @@
 //! ```
 //! # #[cfg(feature = "smiles")]
 //! # {
-//! use molrs::io::smiles::{parse_smiles, to_atomistic};
+//! use molrs::io::read_smiles_str;
 //!
-//! let ir = parse_smiles("CCO")?;
-//! let molecule = to_atomistic(&ir)?;
+//! let molecule = read_smiles_str("CCO")?;
 //! assert_eq!(molecule.n_atoms(), 3);
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -30,14 +29,23 @@
 //! - `io`        — file I/O (PDB, XYZ, LAMMPS, CHGCAR, Cube, …; `*.mrec`
 //!   record files need `zarr`, their path doors `filesystem`)
 //! - `compute`   — trajectory analysis (RDF, MSD, clustering, tensors)
-//! - `smiles`    — SMILES/SMARTS parser (lives in `io`)
+//! - `smiles`    — the line notations: SMILES and CGsmiles (`io::smiles`,
+//!   `io::cgsmiles`) and SMARTS (`perceive::smarts`), over one shared grammar
 //! - `ff`        — force fields (MMFF94, PME, typifier)
 //! - `conformer` — 3D conformer generation
 //! - `signal`    — signal processing (FFT-based ACF, windowing, frequency grids)
-//! - `md`        — in-process molecular dynamics (enables `ff`)
+//! - `md`        — in-process molecular dynamics: integrators and force
+//!   providers; the kernels are `ff::potential` (enables `ff`)
 //! - `voronoi`   — radical Voronoi tessellation (enables `compute`)
 //! - `full`      — everything above
 //! - `stream`    — MessagePack/JSON frames and native WebSocket streaming (not in `full`)
+//!
+//! ## Paths
+//!
+//! Every public item has exactly one path: `molrs::<subsystem>::Item`, where
+//! the subsystem is a top-level module (`core`, `ff`, `io`, …) or a namespace
+//! its facade keeps (`ff::potential::pair`, `core::keys`, …). Implementation files are private
+//! and their facade re-exports them; nothing is flattened to the crate root.
 //!
 //! Default: core only, plus `rayon`. Every sub-system is opt-in; name the
 //! ones you use, or `full` for all of them. `default-features = false` also
@@ -54,52 +62,39 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 // Let in-crate paths refer to this crate by its public name `molrs::` (e.g.
-// `molrs::Frame`, `molrs::io::read_xyz`), matching how downstream code and
-// doctests spell them. Sub-system modules below were absorbed from the former
-// `molrs-*` member crates and rely on this alias for their cross-module paths.
+// `molrs::core::Frame`, `molrs::io::read_xyz`), matching how downstream code and
+// doctests spell them. The sub-system modules below use this alias for their
+// cross-module paths.
 extern crate self as molrs;
 
-/// The version of the `molcrafts-molrs` crate compiled into this binary.
-///
-/// This is the crate every binder statically links, so its major.minor is the
-/// ABI line of any FFI handle the binary mints — `molrs_ffi::abi` derives the
-/// versioned capsule names and the handshake token from it. Downstream pins
-/// major.minor only; layout of the FFI-crossing types is frozen within a minor
-/// line.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 // Op is always compiled: the numeric base beneath core (vector, rigid-motion,
-// linear-algebra kernels); it names no other molrs module.
+// linear-algebra kernels). It names no other molrs module.
 pub mod op;
 
-// Core is always compiled and its public surface is re-exported at the crate
-// root, so `molrs::Frame`, `molrs::system::…`, `molrs::error::…` resolve exactly
-// as they did when core was a separate crate.
+// Core is always compiled: the data model (Frame, Block, Trajectory), the
+// molecular graph (MolGraph, Atomistic, Topology, Element), space (SimBox,
+// regions, neighbour search), numerics and units, all flat on `molrs::core`,
+// with the vocabularies `core::keys`, `core::schema` and `core::constants`.
 pub mod core;
-pub use crate::core::system::element::Element;
-pub use crate::core::*;
 
-/// Structure builders (graphene, nanotubes, self-avoiding walks, trace
-/// assembly, …).
-///
-/// Builders sit above `core` and produce frames / paths without depending on
-/// feature-gated analysis or force fields; `full` includes them.
+// Structure builders (graphene, nanotubes, self-avoiding walks, trace
+// assembly, …). Builders sit above `core` and produce frames / paths without
+// depending on feature-gated analysis or force fields; `full` includes them.
 #[cfg(feature = "builder")]
 pub mod builder;
-#[cfg(feature = "builder")]
-pub use crate::builder::{
-    AssembleError, Assembler, AxisOrienter, CarbonTubeBuilder, CarbonTubeError, FccLattice,
-    GrapheneBuilder, GrapheneError, GrowthPlacer, GrowthStrategy, OccupancyMode, OffLattice,
-    OrientError, Orienter, ParentJoin, PlaceError, PlaceSite, Placer, SelfAvoidingWalk, SiteLink,
-    SitePlacer, SiteView, WalkError, WalkOutput,
-};
 
-// Chemical perception: one layer above `core`, below `ff` / `io` / `conformer`.
-// Always compiled — every consumer configuration already compiled these modules
-// when they lived inside `core`, so keeping them unconditional reproduces the
-// existing build graph exactly (feature-gating them would be a behaviour change,
-// not a refactor).
+// Chemical perception: one layer above `core`, below `ff` / `conformer`.
+// Always compiled, except SMARTS (`perceive::smarts`), which parses its
+// patterns with the crate's line-notation grammar and so needs the `smiles`
+// feature.
 pub mod perceive;
+
+// The line notations' shared grammar (SMILES, SMARTS, SMILES fragment
+// bodies): one AST, scanner, parser, writer and error. Crate-private; its
+// public faces are `io::smiles` / `io::cgsmiles` and `perceive::smarts`, so
+// io and perceive build on it without depending on each other.
+#[cfg(feature = "smiles")]
+pub(crate) mod line_notation;
 
 #[cfg(feature = "io")]
 pub mod io;
@@ -116,26 +111,32 @@ pub mod ff;
 // Geometry optimization; always compiled (its module docs say what needs `ff`).
 pub mod optimize;
 
-/// In-process MD: velocity-Verlet / Langevin and shifted Lennard-Jones.
-/// Consumes the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
-/// seam (the `md` feature therefore enables `ff`) — required pieces go in the
-/// constructor (`VelocityVerlet::new(dt, potential, neighbors, mass)`); pair
-/// search is core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField`
-/// wiring lives in molpy / molrs-python.
+/// In-process MD: integrators (velocity-Verlet, Langevin) and force providers.
+/// The energy kernels are not here — they are in [`ff::potential`], consumed
+/// through the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
+/// seam (the `md` feature therefore enables `ff`). Required pieces go in the
+/// constructor (`VelocityVerlet::new(dt, forces, mass, simbox)`); pair search
+/// is core [`core::VerletSkin`]. Frame/`ForceField` wiring lives
+/// in molpy / molrs-python.
 #[cfg(feature = "md")]
 pub mod md;
 
 #[cfg(feature = "conformer")]
 pub mod conformer;
 
+// Which module may name which (`ff` and `perceive` never `io`, `io` never
+// `perceive`), checked over the source text.
+#[cfg(test)]
+mod module_boundaries;
+
 // `serde::Serialize`/`Deserialize` for the core model (Frame/Block/Column/
 // SimBox). Impls only; no public items. Enabled by `serde` (and by `stream`).
 #[cfg(feature = "serde")]
 mod serialize;
 
-/// Live `Frame` streaming: the transport encoding (MessagePack / JSON) over the
-/// `serde`-serializable core model, plus the WebSocket server and control
-/// commands that ride it. Kept out of `io` — and out of `full` — because it
-/// pulls third-party runtime dependencies that `io` must not acquire.
+// Live `Frame` streaming: the transport encoding (MessagePack / JSON) over the
+// `serde`-serializable core model, plus the WebSocket server and control
+// commands that ride it. Kept out of `io` — and out of `full` — because it
+// pulls third-party runtime dependencies that `io` must not acquire.
 #[cfg(feature = "stream")]
 pub mod stream;

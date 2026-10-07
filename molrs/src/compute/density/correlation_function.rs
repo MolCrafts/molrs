@@ -1,28 +1,28 @@
 //! Generic distance-binned correlation `⟨A_i · B_j⟩(r)`.
-//!
-//! Mirrors `freud.density.CorrelationFunction`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/CorrelationFunction.cc)).
-//!
-//! Given per-particle real scalar fields `A_i` and `B_j` and a neighbor
-//! list, builds the histogram `⟨A_i · B_j⟩(r)` averaged over all pairs
-//! that fall into each shell `[r, r + dr)`. Empty bins return 0.
-//!
-//! freud also supports complex-valued fields with the convention
-//! `A_i · conj(B_j)`; the real version is implemented here. The complex
-//! variant requires only a handful of extra lines and will follow when the
-//! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
-use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_dist_sq;
-use crate::compute::traits::Compute;
 
 /// Correlation-function calculator. Stateless container of bin parameters.
+///
+/// Mirrors `freud.density.CorrelationFunction`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/CorrelationFunction.cc)).
+///
+/// Given per-particle real scalar fields `A_i` and `B_j` and a neighbor
+/// list, builds the histogram `⟨A_i · B_j⟩(r)` averaged over all pairs
+/// that fall into each shell `[r, r + dr)`. Empty bins return 0.
+///
+/// freud also supports complex-valued fields with the convention
+/// `A_i · conj(B_j)`; the real version is implemented here. The complex
+/// variant requires only a handful of extra lines and will follow when the
+/// first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 #[derive(Debug, Clone)]
 pub struct CorrelationFunction {
     n_bins: usize,
@@ -92,10 +92,7 @@ impl CorrelationFunction {
         // Every pair is binned by its separation; a table without `dist_sq`
         // cannot say which bin.
         let dist_sq = require_dist_sq(nlist)?;
-        let symmetric = matches!(
-            nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-        );
+        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
 
         let mut sum = Array1::<F>::zeros(self.n_bins);
         let mut counts = Array1::<u64>::zeros(self.n_bins);
@@ -147,20 +144,20 @@ impl CorrelationFunction {
 /// `Args` for [`CorrelationFunction`]: parallel per-frame triplets of
 /// `(neighbor list, A values, B values)`. All three slices must have the
 /// same length as `frames`.
-pub struct CorrelationArgs<'a> {
+pub struct CorrelationFunctionArgs<'a> {
     pub nlists: &'a [Neighbors],
     pub values_a: &'a [Vec<F>],
     pub values_b: &'a [Vec<F>],
 }
 
 impl Compute for CorrelationFunction {
-    type Args<'a> = CorrelationArgs<'a>;
+    type Args<'a> = CorrelationFunctionArgs<'a>;
     type Output = Vec<CorrelationFunctionResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: CorrelationArgs<'a>,
+        args: CorrelationFunctionArgs<'a>,
     ) -> Result<Vec<CorrelationFunctionResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
@@ -215,10 +212,10 @@ impl ComputeResult for CorrelationFunctionResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
@@ -252,7 +249,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -288,7 +285,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -309,7 +306,7 @@ mod tests {
         let r = &cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &[nl],
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -347,7 +344,7 @@ mod tests {
         let solo = cf
             .compute(
                 &[&frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: std::slice::from_ref(&nl),
                     values_a: std::slice::from_ref(&vals),
                     values_b: std::slice::from_ref(&vals),
@@ -359,7 +356,7 @@ mod tests {
         let par = cf
             .compute(
                 &[&frame, &frame],
-                CorrelationArgs {
+                CorrelationFunctionArgs {
                     nlists: &nls,
                     values_a: &vs,
                     values_b: &vs,

@@ -1,6 +1,6 @@
 //! Python bindings for the charge models (`molrs::ff::charge`).
 //!
-//! Three classes — `molrs.BccModel`, `molrs.MullikenModel`, `molrs.GasteigerModel`
+//! Three classes — `molrs.ff.charge.BccModel`, `MullikenModel`, `GasteigerModel`
 //! — behind the one Rust trait, and behind **one Python calling convention**:
 //!
 //! ```text
@@ -39,47 +39,12 @@ use molrs::ff::charge::{
     BccModel, BccParameterSet, ChargeError, ChargeModel, GasteigerModel, MullikenModel,
 };
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 
-/// The `-c` flag of every correction family, paired with the table it reads.
-///
-/// Two, not seven: `BCCPARM.DAT` and `BCCPARM_ABCG2.DAT` are the only correction
-/// families that exist. `ATOMTYPE_GAS.DEF` is a set of atom *types* with no
-/// correction table, and `gaff` is an atom-type table too — naming either here would
-/// be naming a table that cannot correct a bond.
-const BCC_PARAMETER_SETS: &[(&str, BccParameterSet)] = &[
-    ("bcc", BccParameterSet::Bcc),
-    ("abcg2", BccParameterSet::Abcg2),
-];
-
-/// The correction family named by an antechamber `-c` flag.
-///
-/// # Errors
-///
-/// `ValueError` — an unknown name, including the atom-type table names (`"gaff"`)
-/// that a caller might reasonably confuse for one. Never a fallback: a correction row
-/// is keyed on atom types, so the wrong family silently looks up the wrong rows.
+/// The correction family named by an antechamber `-c` flag
+/// ([`BccParameterSet::from_name`]), as a Python `ValueError` when it names none.
 fn bcc_set_from_name(name: &str) -> PyResult<BccParameterSet> {
-    BCC_PARAMETER_SETS
-        .iter()
-        .find(|(flag, _)| *flag == name)
-        .map(|(_, set)| *set)
-        .ok_or_else(|| {
-            let known: Vec<&str> = BCC_PARAMETER_SETS.iter().map(|(flag, _)| *flag).collect();
-            PyValueError::new_err(format!(
-                "unknown BCC correction family {name:?}; expected one of {}",
-                known.join(", ")
-            ))
-        })
-}
-
-/// The `-c` flag of a correction family — the inverse of [`bcc_set_from_name`].
-fn bcc_set_name(set: BccParameterSet) -> &'static str {
-    BCC_PARAMETER_SETS
-        .iter()
-        .find(|(_, known)| *known == set)
-        .map(|(flag, _)| *flag)
-        .unwrap_or("")
+    BccParameterSet::from_name(name).map_err(PyValueError::new_err)
 }
 
 /// A charge failure, as a Python `ValueError`.
@@ -105,7 +70,7 @@ fn charges_out(py: Python<'_>, charges: Vec<f64>) -> Bound<'_, PyArray1<f64>> {
     charges.into_pyarray(py)
 }
 
-/// AM1-BCC / ABCG2 bond-charge corrections — `molrs.BccModel`.
+/// AM1-BCC / ABCG2 bond-charge corrections — `molrs.ff.charge.BccModel`.
 ///
 /// The correction stage of AM1-BCC: base QM charges in, corrected charges out. The
 /// increments are pairwise antisymmetric, so the total charge is conserved to machine
@@ -125,7 +90,7 @@ fn charges_out(py: Python<'_>, charges: Vec<f64>) -> Bound<'_, PyArray1<f64>> {
 ///
 /// Examples
 /// --------
-/// >>> model = molrs.BccModel(parameter_set="bcc")
+/// >>> model = molrs.ff.charge.BccModel(parameter_set="bcc")
 /// >>> model.correct(methane, np.zeros(5))[0]     # 4 x the C-H increment
 /// 0.1572
 /// >>> model.assign(methanol, raw_sqm_charges)    # equivalences first, then corrects
@@ -141,14 +106,14 @@ impl PyBccModel {
     #[new]
     #[pyo3(signature = (*, parameter_set))]
     fn new(parameter_set: &str) -> PyResult<Self> {
-        let inner = BccModel::new(bcc_set_from_name(parameter_set)?).map_err(charge_err)?;
+        let inner = BccModel::new(bcc_set_from_name(parameter_set)?);
         Ok(Self { inner })
     }
 
     /// The antechamber ``-c`` flag of this model's correction family.
     #[getter]
     fn parameter_set(&self) -> &'static str {
-        bcc_set_name(self.inner.parameter_set())
+        self.inner.parameter_set().name()
     }
 
     /// ``True`` — AM1-BCC averages its base charges over the topological-equivalence
@@ -234,7 +199,7 @@ impl PyBccModel {
     }
 }
 
-/// Mulliken population charges, unchanged — `molrs.MullikenModel`.
+/// Mulliken population charges, unchanged — `molrs.ff.charge.MullikenModel`.
 ///
 /// The pass-through: it hands back the QM charges it was given, bit for bit. No
 /// correction, and no equivalencing (antechamber's ``-eq`` default is ``0`` for every
@@ -242,7 +207,7 @@ impl PyBccModel {
 ///
 /// Examples
 /// --------
-/// >>> molrs.MullikenModel().assign(mol, am1)
+/// >>> molrs.ff.charge.MullikenModel().assign(mol, am1)
 #[pyclass(module = "molrs.ff.charge", name = "MullikenModel", subclass)]
 #[derive(Debug)]
 pub struct PyMullikenModel;
@@ -296,7 +261,7 @@ impl PyMullikenModel {
     }
 }
 
-/// Gasteiger / PEOE partial charges — `molrs.GasteigerModel`.
+/// Gasteiger / PEOE partial charges — `molrs.ff.charge.GasteigerModel`.
 ///
 /// The model with **no QM input**: it is handed a molecule and nothing else, and
 /// still lands on antechamber's ``-c gas`` column. The ``qm`` argument exists so that
@@ -309,7 +274,7 @@ impl PyMullikenModel {
 ///
 /// Examples
 /// --------
-/// >>> molrs.GasteigerModel().assign(mol)
+/// >>> molrs.ff.charge.GasteigerModel().assign(mol)
 #[pyclass(module = "molrs.ff.charge", name = "GasteigerModel", subclass)]
 #[derive(Debug)]
 pub struct PyGasteigerModel;
@@ -364,4 +329,12 @@ impl PyGasteigerModel {
     fn __repr__(&self) -> String {
         "GasteigerModel()".to_string()
     }
+}
+
+/// Register `molrs.ff.charge`.
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyBccModel>()?;
+    m.add_class::<PyMullikenModel>()?;
+    m.add_class::<PyGasteigerModel>()?;
+    Ok(())
 }

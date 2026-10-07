@@ -1,6 +1,6 @@
-//! `extern "C"` functions for SimBox (simulation cell) operations.
+//! `extern "C"` functions for Box (simulation cell) operations.
 //!
-//! A **SimBox** defines a periodic simulation cell via a 3x3 cell matrix
+//! A **Box** defines a periodic simulation cell via a 3x3 cell matrix
 //! **H** (columns are lattice vectors), an origin point, and per-axis
 //! periodic boundary condition (PBC) flags.
 //!
@@ -16,19 +16,19 @@
 
 use ndarray::{Array1, Array2, ArrayView2, array};
 
-use molrs::spatial::simbox::SimBox;
+use molrs::core::SimBox;
 
-use crate::F;
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsBoxHandle, box_key_to_handle, handle_to_box_key};
-use crate::store::lock_store;
+use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
+use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
 
-/// Create a SimBox from a general 3x3 cell matrix.
+/// Create a Box from a general 3x3 cell matrix.
 ///
 /// # C signature
 ///
@@ -45,7 +45,7 @@ use crate::{ffi_try, null_check};
 ///   `h9[0..3]` is lattice vector **a**, `h9[3..6]` is **b**, `h9[6..9]` is **c**.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom (3 floats).
 /// * `pbc3` -- Per-axis periodic boundary flags `[px, py, pz]` (3 bools).
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -93,14 +93,14 @@ pub unsafe extern "C" fn molrs_box_new(
                 return MolrsStatus::SingularCell;
             }
         };
-        let mut store = lock_store();
-        let key = store.simboxes.insert(sb);
+        let mut registry = lock_registry();
+        let key = registry.simboxes.insert(sb);
         unsafe { *out = box_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }
 
-/// Create a cubic SimBox with edge length `a`.
+/// Create a cubic Box with edge length `a`.
 ///
 /// Equivalent to calling [`molrs_box_new`] with a diagonal cell
 /// matrix `diag(a, a, a)`.
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn molrs_box_new(
 /// * `a` -- Cube edge length in Angstrom.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
 /// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -156,14 +156,14 @@ pub unsafe extern "C" fn molrs_box_cube(
                 return MolrsStatus::InvalidArgument;
             }
         };
-        let mut store = lock_store();
-        let key = store.simboxes.insert(sb);
+        let mut registry = lock_registry();
+        let key = registry.simboxes.insert(sb);
         unsafe { *out = box_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }
 
-/// Create an orthorhombic (rectangular) SimBox from axis lengths.
+/// Create an orthorhombic (rectangular) Box from axis lengths.
 ///
 /// Equivalent to calling [`molrs_box_new`] with a diagonal cell
 /// matrix `diag(lx, ly, lz)`.
@@ -182,7 +182,7 @@ pub unsafe extern "C" fn molrs_box_cube(
 /// * `lengths3` -- Box side lengths `[lx, ly, lz]` in Angstrom.
 /// * `origin3` -- Box origin `[ox, oy, oz]` in Angstrom.
 /// * `pbc3` -- Per-axis PBC flags.
-/// * `out` -- On success, receives the new SimBox handle.
+/// * `out` -- On success, receives the new Box handle.
 ///
 /// # Returns
 ///
@@ -222,14 +222,14 @@ pub unsafe extern "C" fn molrs_box_ortho(
                 return MolrsStatus::InvalidArgument;
             }
         };
-        let mut store = lock_store();
-        let key = store.simboxes.insert(sb);
+        let mut registry = lock_registry();
+        let key = registry.simboxes.insert(sb);
         unsafe { *out = box_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }
 
-/// Destroy a SimBox and invalidate its handle.
+/// Destroy a Box and invalidate its handle.
 ///
 /// # C signature
 ///
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn molrs_box_ortho(
 ///
 /// # Arguments
 ///
-/// * `handle` -- The SimBox to destroy.
+/// * `handle` -- The Box to destroy.
 ///
 /// # Returns
 ///
@@ -252,9 +252,9 @@ pub unsafe extern "C" fn molrs_box_ortho(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_box_drop(handle: MolrsBoxHandle) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let key = handle_to_box_key(handle);
-        match store.simboxes.remove(key) {
+        match registry.simboxes.remove(key) {
             Some(_) => MolrsStatus::Ok,
             None => {
                 error::set_last_error("invalid simbox handle");
@@ -268,10 +268,10 @@ pub unsafe extern "C" fn molrs_box_drop(handle: MolrsBoxHandle) -> MolrsStatus {
 // Queries
 // ---------------------------------------------------------------------------
 
-/// Helper: get a reference to a SimBox by handle, returning error if invalid.
+/// Helper: get a reference to a Box by handle, returning error if invalid.
 macro_rules! get_simbox {
-    ($store:expr, $handle:expr) => {
-        match $store.simboxes.get(handle_to_box_key($handle)) {
+    ($registry:expr, $handle:expr) => {
+        match $registry.simboxes.get(handle_to_box_key($handle)) {
             Some(sb) => sb,
             None => {
                 error::set_last_error("invalid simbox handle");
@@ -288,30 +288,30 @@ macro_rules! get_simbox {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_h(MolrsBoxHandle h, F out9[9]);
+/// MolrsStatus molrs_box_h(MolrsBoxHandle box_handle, F out9[9]);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out9` -- Buffer of at least 9 floats; receives the cell matrix.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out9` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out9` must point to at least 9 writable `F` values.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_h(h: MolrsBoxHandle, out9: *mut F) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_h(box_handle: MolrsBoxHandle, out9: *mut F) -> MolrsStatus {
     ffi_try!({
         null_check!(out9);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         let hv = sb.h_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out9, 9) };
         for (i, &val) in hv.iter().enumerate() {
@@ -326,31 +326,31 @@ pub unsafe extern "C" fn molrs_box_h(h: MolrsBoxHandle, out9: *mut F) -> MolrsSt
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_origin(MolrsBoxHandle h,
+/// MolrsStatus molrs_box_origin(MolrsBoxHandle box_handle,
 ///                                  F out3[3]);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out3` -- Buffer of at least 3 floats; receives `[ox, oy, oz]`.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out3` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out3` must point to at least 3 writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_origin(h: MolrsBoxHandle, out3: *mut F) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_origin(box_handle: MolrsBoxHandle, out3: *mut F) -> MolrsStatus {
     ffi_try!({
         null_check!(out3);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         let ov = sb.origin_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
         for (i, &val) in ov.iter().enumerate() {
@@ -365,30 +365,30 @@ pub unsafe extern "C" fn molrs_box_origin(h: MolrsBoxHandle, out3: *mut F) -> Mo
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_pbc(MolrsBoxHandle h, bool out3[3]);
+/// MolrsStatus molrs_box_pbc(MolrsBoxHandle box_handle, bool out3[3]);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out3` -- Buffer of at least 3 bools; receives `[px, py, pz]`.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out3` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out3` must point to at least 3 writable `bool` values.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_pbc(h: MolrsBoxHandle, out3: *mut bool) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_pbc(box_handle: MolrsBoxHandle, out3: *mut bool) -> MolrsStatus {
     ffi_try!({
         null_check!(out3);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         let pbc = sb.pbc_view();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
         for (i, &val) in pbc.iter().enumerate() {
@@ -405,31 +405,31 @@ pub unsafe extern "C" fn molrs_box_pbc(h: MolrsBoxHandle, out3: *mut bool) -> Mo
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_volume(MolrsBoxHandle h,
+/// MolrsStatus molrs_box_volume(MolrsBoxHandle box_handle,
 ///                                  F* out);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out` -- On success, receives the volume in Angstrom^3.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out` must point to a writable float.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_volume(h: MolrsBoxHandle, out: *mut F) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_volume(box_handle: MolrsBoxHandle, out: *mut F) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         unsafe { *out = sb.volume() };
         MolrsStatus::Ok
     })
@@ -440,31 +440,34 @@ pub unsafe extern "C" fn molrs_box_volume(h: MolrsBoxHandle, out: *mut F) -> Mol
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_lengths(MolrsBoxHandle h,
+/// MolrsStatus molrs_box_lengths(MolrsBoxHandle box_handle,
 ///                                   F out3[3]);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out3` -- Buffer of at least 3 floats; receives the lengths.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out3` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out3` must point to at least 3 writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_lengths(h: MolrsBoxHandle, out3: *mut F) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_lengths(
+    box_handle: MolrsBoxHandle,
+    out3: *mut F,
+) -> MolrsStatus {
     ffi_try!({
         null_check!(out3);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         let lengths = sb.lengths();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
         for (i, &val) in lengths.iter().enumerate() {
@@ -482,31 +485,31 @@ pub unsafe extern "C" fn molrs_box_lengths(h: MolrsBoxHandle, out3: *mut F) -> M
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_tilts(MolrsBoxHandle h,
+/// MolrsStatus molrs_box_tilts(MolrsBoxHandle box_handle,
 ///                                 F out3[3]);
 /// ```
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `out3` -- Buffer of at least 3 floats; receives `[xy, xz, yz]`.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out3` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `out3` must point to at least 3 writable floats.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_box_tilts(h: MolrsBoxHandle, out3: *mut F) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_box_tilts(box_handle: MolrsBoxHandle, out3: *mut F) -> MolrsStatus {
     ffi_try!({
         null_check!(out3);
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
         let tilts = sb.tilts();
         let out_slice = unsafe { std::slice::from_raw_parts_mut(out3, 3) };
         for (i, &val) in tilts.iter().enumerate() {
@@ -528,7 +531,7 @@ pub unsafe extern "C" fn molrs_box_tilts(h: MolrsBoxHandle, out3: *mut F) -> Mol
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_box_wrap(MolrsBoxHandle h,
+/// MolrsStatus molrs_box_wrap(MolrsBoxHandle box_handle,
 ///                                const F* xyz_in,
 ///                                F* xyz_out,
 ///                                size_t n_atoms);
@@ -536,7 +539,7 @@ pub unsafe extern "C" fn molrs_box_tilts(h: MolrsBoxHandle, out3: *mut F) -> Mol
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `xyz_in` -- Input coordinates, flat `[x0,y0,z0, x1,y1,z1, ...]`
 ///   (`n_atoms * 3` floats, in Angstrom).
 /// * `xyz_out` -- Output buffer (`n_atoms * 3` floats).  May alias
@@ -547,17 +550,17 @@ pub unsafe extern "C" fn molrs_box_tilts(h: MolrsBoxHandle, out3: *mut F) -> Mol
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `xyz_in` or `xyz_out` is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 /// * `MolrsStatus::InvalidArgument` if the input array shape is bad.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `xyz_in` must point to at least `n_atoms * 3` readable floats.
 /// * `xyz_out` must point to at least `n_atoms * 3` writable floats.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_box_wrap(
-    h: MolrsBoxHandle,
+    box_handle: MolrsBoxHandle,
     xyz_in: *const F,
     xyz_out: *mut F,
     n_atoms: usize,
@@ -568,8 +571,8 @@ pub unsafe extern "C" fn molrs_box_wrap(
         if n_atoms == 0 {
             return MolrsStatus::Ok;
         }
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
 
         let in_slice = unsafe { std::slice::from_raw_parts(xyz_in, n_atoms * 3) };
         let in_arr = match ArrayView2::from_shape((n_atoms, 3), in_slice) {
@@ -598,7 +601,7 @@ pub unsafe extern "C" fn molrs_box_wrap(
 ///
 /// ```c
 /// MolrsStatus molrs_box_shortest_vector(
-///     MolrsBoxHandle h,
+///     MolrsBoxHandle box_handle,
 ///     const F* r1,
 ///     const F* r2,
 ///     F* dr_out,
@@ -607,7 +610,7 @@ pub unsafe extern "C" fn molrs_box_wrap(
 ///
 /// # Arguments
 ///
-/// * `h` -- SimBox handle.
+/// * `box_handle` -- Box handle.
 /// * `r1` -- First set of positions, flat `[x0,y0,z0, ...]`
 ///   (`n_pairs * 3` floats, in Angstrom).
 /// * `r2` -- Second set of positions (`n_pairs * 3` floats, in Angstrom).
@@ -618,16 +621,16 @@ pub unsafe extern "C" fn molrs_box_wrap(
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if any pointer is null.
-/// * `MolrsStatus::InvalidBoxHandle` if `h` is stale.
+/// * `MolrsStatus::InvalidBoxHandle` if `box_handle` is stale.
 ///
 /// # Safety
 ///
-/// * `h` must be a live SimBox handle.
+/// * `box_handle` must be a live Box handle.
 /// * `r1`, `r2` must each point to at least `n_pairs * 3` readable floats.
 /// * `dr_out` must point to at least `n_pairs * 3` writable floats.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_box_shortest_vector(
-    h: MolrsBoxHandle,
+    box_handle: MolrsBoxHandle,
     r1: *const F,
     r2: *const F,
     dr_out: *mut F,
@@ -640,8 +643,8 @@ pub unsafe extern "C" fn molrs_box_shortest_vector(
         if n_pairs == 0 {
             return MolrsStatus::Ok;
         }
-        let store = lock_store();
-        let sb = get_simbox!(store, h);
+        let registry = lock_registry();
+        let sb = get_simbox!(registry, box_handle);
 
         let r1_slice = unsafe { std::slice::from_raw_parts(r1, n_pairs * 3) };
         let r2_slice = unsafe { std::slice::from_raw_parts(r2, n_pairs * 3) };

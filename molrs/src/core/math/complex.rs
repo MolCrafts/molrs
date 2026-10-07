@@ -1,14 +1,15 @@
-//! Minimal complex-number type used by `spherical_harmonics` and `wigner_d`.
-//!
-//! molrs-core does not pull in `num-complex` — we only need a handful of
-//! operations (add, sub, mul, conjugate, modulus, polar construction), so a
-//! ~100-line newtype avoids the extra crate dependency. Layout matches
-//! `num_complex::Complex<F>` (two contiguous `F`s) so a downstream crate that
-//! does depend on `num-complex` can transmute slices if profiling warrants.
+//! Minimal complex-number type: [`Complex`].
 
-use crate::types::F;
+use crate::op::F;
 
-/// Complex number with `f64` real and imaginary parts.
+/// Complex number with `f64` real and imaginary parts, used by the spherical
+/// harmonics and Wigner-D kernels.
+///
+/// molrs does not pull in `num-complex` — only a handful of operations are
+/// needed (add, sub, mul, conjugate, modulus, polar construction), so a
+/// ~100-line newtype avoids the extra crate dependency. The layout matches
+/// `num_complex::Complex<F>` (two contiguous `F`s) so a downstream crate that
+/// does depend on `num-complex` can transmute slices if profiling warrants.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct Complex {

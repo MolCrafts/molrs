@@ -1,57 +1,17 @@
 //! Dielectric raw observables + static dielectric constant.
-//!
-//! Computes the **raw/defined** dielectric quantities of a polar fluid from
-//! molecular-dynamics dipole trajectories: the instantaneous dipole moment,
-//! current density, current partition, and the static dielectric constant
-//! ε(0).
-//!
-//! # Routes
-//!
-//! - [`static_dielectric_constant`] / [`static_dielectric_constant_components`]
-//!   — Neumann fluctuation formula (Neumann, *Mol. Phys.* **50**, 841 (1983);
-//!   conducting/tin-foil Ewald boundary conditions assumed).
-//!
-//! The frequency-dependent permittivity ε*(ω) = ε′(ω) − i·ε″(ω) is **no longer
-//! computed here**: the raw fluctuation dipole / current ACFs come from the
-//! [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
-//! [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
-//! computes, and the window + FFT + prefactor transform is the
-//! [`EinsteinHelfandSpectrum`](crate::compute::spectroscopy::EinsteinHelfandSpectrum) /
-//! [`GreenKuboSpectrum`](crate::compute::spectroscopy::GreenKuboSpectrum)
-//! [`Fit`](crate::compute::traits::Fit) in `compute::spectroscopy` (windowing +
-//! transforming a raw ACF into ε(ω) is a *fit*).
-//!
-//! # Units
-//!
-//! All inputs and outputs use LAMMPS *real* / project analysis units:
-//!
-//! | quantity        | unit                |
-//! |-----------------|---------------------|
-//! | length          | Å                   |
-//! | charge          | e                   |
-//! | energy          | kcal / mol          |
-//! | time            | **fs**              |
-//! | temperature     | K                   |
-//! | volume          | Å³                  |
-//! | dipole moment   | e · Å               |
-//! | current density | e · Å⁻² · fs⁻¹      |
-//! | ε permittivity  | dimensionless       |
 
 use ndarray::{Array1, Array2, Array3};
 
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────
 //
-// MD-real and SI values are defined once in `molrs-core::units::constants`;
-// the names below are the local spellings the kernels use.
+// The Coulomb constant is `core::constants`'s (`KAPPA` locally), k_B the
+// `real` unit preset's (`UnitPreset::real().boltzmann()`).
 
-use molrs::units::constants::COULOMB_REAL as KAPPA;
+use molrs::core::constants::COULOMB_REAL as KAPPA;
 
-// Boltzmann constant in kcal/(mol·K) — MD "real" units.
-use molrs::units::constants::BOLTZMANN_REAL as K_B;
-
-const FOUR_PI_OVER_3: f64 = 4.1887902047863905; // 4π/3
+use molrs::core::{FOUR_THIRDS_PI, UnitPreset};
 
 // ── Basic observables ─────────────────────────────────────────────────────
 
@@ -70,7 +30,7 @@ const FOUR_PI_OVER_3: f64 = 4.1887902047863905; // 4π/3
 /// # Errors
 /// * `DimensionMismatch` if `positions.shape() != (n_atoms, 3)`.
 /// * `NonFinite` if any charge is NaN/inf.
-pub fn compute_dipole_moment(
+pub fn dipole_moment(
     charges: &Array1<f64>,
     positions: &Array2<f64>,
 ) -> Result<Array1<f64>, ComputeError> {
@@ -119,7 +79,7 @@ pub fn compute_dipole_moment(
 /// # Errors
 /// * `DimensionMismatch` if shape is not `(_, 3)`.
 /// * `OutOfRange` if `dt ≤ 0` or `volume ≤ 0`.
-pub fn compute_current_density(
+pub fn current_density(
     dipole_moments: &Array2<f64>,
     dt: f64,
     volume: f64,
@@ -186,6 +146,37 @@ pub fn compute_current_density(
 /// Neumann, M. *Mol. Phys.* **50** (4), 841 (1983),
 /// "Dipole moment fluctuation formulas in computer simulations of
 /// polar systems."
+///
+/// One of the raw dielectric quantities of a polar fluid computed from
+/// molecular-dynamics dipole trajectories, beside [`dipole_moment`],
+/// [`current_density`] and [`decompose_current`].
+///
+/// The frequency-dependent permittivity ε*(ω) = ε′(ω) − i·ε″(ω) is **not**
+/// computed by these functions: the raw fluctuation dipole / current ACFs come from the
+/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) /
+/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) raw
+/// computes, and the window + FFT + prefactor transform is the
+/// [`EinsteinHelfandSpectrum`](crate::compute::EinsteinHelfandSpectrum) /
+/// [`GreenKuboSpectrum`](crate::compute::GreenKuboSpectrum)
+/// [`Fit`](crate::compute::Fit) (windowing + transforming a raw ACF into
+/// ε(ω) is a *fit*).
+///
+/// # Units
+///
+/// All inputs and outputs of these functions use LAMMPS *real* / project
+/// analysis units:
+///
+/// | quantity        | unit                |
+/// |-----------------|---------------------|
+/// | length          | Å                   |
+/// | charge          | e                   |
+/// | energy          | kcal / mol          |
+/// | time            | **fs**              |
+/// | temperature     | K                   |
+/// | volume          | Å³                  |
+/// | dipole moment   | e · Å               |
+/// | current density | e · Å⁻² · fs⁻¹      |
+/// | ε permittivity  | dimensionless       |
 pub fn static_dielectric_constant(
     dipole_moments: &Array2<f64>,
     volume: f64,
@@ -237,7 +228,8 @@ pub fn static_dielectric_constant(
         }
     }
     variance /= n;
-    let prefactor = FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+    let prefactor =
+        FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
 
     Ok(epsilon_inf + prefactor * variance)
 }
@@ -320,7 +312,8 @@ pub fn static_dielectric_constant_components(
     // isotropic prefactor because the diagonal dielectric-tensor
     // component integrates the full dipole in one direction, while the
     // isotropic ε averages over 3 directions.
-    let per_axis_prefactor = 3.0 * FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+    let per_axis_prefactor =
+        3.0 * FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
 
     for d in 0..3 {
         eps[d] = epsilon_inf + per_axis_prefactor * fluctuation[d];
@@ -397,13 +390,10 @@ pub fn decompose_current(
     Ok((j_water, j_ion))
 }
 
-// The Einstein–Helfand ionic conductivity is now the explicit composition of
+// The Einstein–Helfand ionic conductivity is the explicit composition of
 // the raw [`EinsteinConductivity`](crate::compute::EinsteinConductivity) collective-dipole
-// MSD compute with the [`LinearFit`](crate::compute::fitting::LinearFit) slope and a
-// caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor. The legacy bundled
-// `ConductivityResult` + `einstein_helfand_conductivity` free function (which
-// baked the OLS slope and σ into the raw result) were removed in
-// compute-fit-03-cleanup.
+// MSD compute with the [`LinearFit`](crate::compute::LinearFit) slope and a
+// caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor.
 
 /// Per-axis static dielectric constant result (MDAnalysis-compatible).
 ///
@@ -433,16 +423,11 @@ mod tests {
     use super::*;
     use ndarray::{Axis, arr1};
 
-    // The conductivity MSD-exactness and Nernst–Einstein scientific-regression
-    // tests moved to `compute::transport` alongside the
-    // `EinsteinConductivity` + `LinearFit` composition that replaced the removed
-    // `einstein_helfand_conductivity` free function.
-
     #[test]
     fn test_dipole_moment_two_charges() {
         let charges = arr1(&[1.0, -1.0]);
         let positions = ndarray::arr2(&[[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
-        let m = compute_dipole_moment(&charges, &positions).unwrap();
+        let m = dipole_moment(&charges, &positions).unwrap();
         assert!((m[0] - 2.0).abs() < 1e-10);
         assert!((m[1] - 0.0).abs() < 1e-10);
         assert!((m[2] - 0.0).abs() < 1e-10);
@@ -452,7 +437,7 @@ mod tests {
     fn test_dipole_moment_zero_charge() {
         let charges = arr1(&[0.0, 0.0, 0.0]);
         let positions = ndarray::Array2::zeros((3, 3));
-        let m = compute_dipole_moment(&charges, &positions).unwrap();
+        let m = dipole_moment(&charges, &positions).unwrap();
         assert!((m[0].abs() + m[1].abs() + m[2].abs()) < 1e-10);
     }
 
@@ -460,13 +445,13 @@ mod tests {
     fn test_dipole_moment_wrong_shape() {
         let charges = arr1(&[1.0, 2.0]);
         let positions = ndarray::Array2::zeros((3, 3));
-        assert!(compute_dipole_moment(&charges, &positions).is_err());
+        assert!(dipole_moment(&charges, &positions).is_err());
     }
 
     #[test]
     fn test_current_density_constant_dipole() {
         let dm = ndarray::Array2::from_elem((3, 3), 1.0);
-        let j = compute_current_density(&dm, 1.0, 1.0).unwrap();
+        let j = current_density(&dm, 1.0, 1.0).unwrap();
         assert_eq!(j.shape(), &[3, 3]);
         assert!(j[[0, 0]].is_nan());
         assert!((j[[1, 0]]).abs() < 1e-10);
@@ -476,7 +461,7 @@ mod tests {
     #[test]
     fn test_current_density_linear() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
-        let j = compute_current_density(&dm, 1.0, 1.0).unwrap();
+        let j = current_density(&dm, 1.0, 1.0).unwrap();
         assert!(j[[0, 0]].is_nan());
         assert!((j[[1, 0]] - 1.0).abs() < 1e-10);
         assert!((j[[2, 0]] - 1.0).abs() < 1e-10);
@@ -485,8 +470,8 @@ mod tests {
     #[test]
     fn test_current_density_dt_scaling() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
-        let j1 = compute_current_density(&dm, 1.0, 1.0).unwrap();
-        let j2 = compute_current_density(&dm, 2.0, 1.0).unwrap();
+        let j1 = current_density(&dm, 1.0, 1.0).unwrap();
+        let j2 = current_density(&dm, 2.0, 1.0).unwrap();
         assert!((j2[[1, 0]] * 2.0 - j1[[1, 0]]).abs() < 1e-10);
     }
 
@@ -503,7 +488,8 @@ mod tests {
         let eps = static_dielectric_constant(&dm, 1000.0, 300.0, 1.0).unwrap();
         // ⟨M⟩ = 0, ⟨M²⟩ = (1²+(-1)²)/2 = 1.0
         // ε(0) = 1.0 + (4π/3)*332.0637*1.0/(1000*1.9872e-3*300)
-        let expected = 1.0 + FOUR_PI_OVER_3 * KAPPA * 1.0 / (1000.0 * K_B * 300.0);
+        let expected =
+            1.0 + FOUR_THIRDS_PI * KAPPA * 1.0 / (1000.0 * UnitPreset::real().boltzmann() * 300.0);
         assert!((eps - expected).abs() < 1e-10);
     }
 
@@ -550,7 +536,7 @@ mod tests {
         let charges = arr1(&[1.0, -1.0]);
         let positions = ndarray::arr2(&[[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
         let pos_copy = positions.clone();
-        compute_dipole_moment(&charges, &positions).unwrap();
+        dipole_moment(&charges, &positions).unwrap();
         assert_eq!(positions, pos_copy);
     }
 
@@ -558,7 +544,7 @@ mod tests {
     fn test_immutability_current_density() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
         let dm_copy = dm.clone();
-        compute_current_density(&dm, 1.0, 1.0).unwrap();
+        current_density(&dm, 1.0, 1.0).unwrap();
         assert_eq!(dm, dm_copy);
     }
 

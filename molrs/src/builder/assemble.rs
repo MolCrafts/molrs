@@ -1,16 +1,5 @@
 //! [`Assembler`]: one placed, linked world graph from a site graph.
 //!
-//! The assembler holds a library (name → one template [`MolGraph`], with or
-//! without ports — any graph type, handed over as its inner graph), a
-//! [`Placer`] and an [`Orienter`]. Its one verb,
-//! [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
-//! whose beads are the sites and whose bonds say which sites join) and
-//! builds every molecule in it in one call: one template copy per site,
-//! turned and placed, the copies of bonded sites joined through their ports,
-//! each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
-//! Any topology is accepted: chains, branches and rings (operator,
-//! 2026-09-28).
-//!
 //! `assemble` is a composed operation by operator ruling (notes.md
 //! 2026-09-27): it supersedes the 2026-09-26 "primitives only" ruling for
 //! this one concern.
@@ -18,19 +7,22 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::builder::orient::{OrientError, Orienter, SiteLink, SiteView, direction_fit};
-use crate::builder::place::{ParentJoin, PlaceError, PlaceSite, Placer};
-use crate::error::MolRsError;
-use crate::op::rigid::{Rigid, apply};
-use crate::op::types::Vec3;
+use crate::builder::orient::direction_fit;
+use crate::builder::{OrientError, Orienter, SiteLink, SiteView};
+use crate::builder::{ParentJoin, PlaceError, PlaceSite, Placer};
+use crate::core::CoarseGrain;
+use crate::core::FromMolGraph;
+use crate::core::LinkManyError;
+use crate::core::MolGraph;
+use crate::core::MolRsError;
+use crate::core::NodeId;
+use crate::core::Port;
+use crate::core::RelationId;
+use crate::core::keys;
+use crate::op::I;
+use crate::op::Vec3;
 use crate::op::vec3::sub;
-use crate::store::keys;
-use crate::system::atomistic::AtomId;
-use crate::system::coarsegrain::{BeadId, CoarseGrain};
-use crate::system::link::LinkManyError;
-use crate::system::molgraph::{FromMolGraph, MolGraph};
-use crate::system::port::{Port, PortId};
-use crate::types::I;
+use crate::op::{Rigid, transform_point};
 
 /// The most port assignments tried at one site before it is refused.
 const MAX_ASSIGNMENTS: usize = 5040;
@@ -38,7 +30,7 @@ const MAX_ASSIGNMENTS: usize = 5040;
 /// Why [`Assembler::assemble`] refused its input.
 ///
 /// `site` is a 0-based ordinal of the site graph's beads, in
-/// [`node_ids`](crate::system::molgraph::MolGraph::node_ids) order — the
+/// [`node_ids`](crate::core::MolGraph::node_ids) order — the
 /// unit's `frag_id`.
 #[derive(Debug)]
 pub enum AssembleError {
@@ -178,7 +170,7 @@ impl std::error::Error for AssembleError {
 
 /// One port of a template, read once.
 struct TemplatePort {
-    id: PortId,
+    id: RelationId,
     port: Port,
     anchor_row: usize,
     handle_row: usize,
@@ -211,7 +203,7 @@ struct SiteGraph {
 
 impl SiteGraph {
     fn read(sites: &CoarseGrain) -> Result<Self, AssembleError> {
-        let ids: Vec<BeadId> = sites.node_ids().collect();
+        let ids: Vec<NodeId> = sites.node_ids().collect();
         let n = ids.len();
         if I::try_from(n).is_err() {
             return Err(AssembleError::TooManyUnits { units: n });
@@ -229,7 +221,7 @@ impl SiteGraph {
         } else {
             None
         };
-        let ordinal: HashMap<BeadId, usize> =
+        let ordinal: HashMap<NodeId, usize> =
             ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let mut bonds = Vec::with_capacity(sites.n_bonds());
         let mut incident = vec![Vec::new(); n];
@@ -269,13 +261,24 @@ enum PortChoice {
 /// Builds every molecule of a site graph as one placed, linked world graph,
 /// returned as the graph type the caller names.
 ///
+/// The assembler holds a library (name → one template [`MolGraph`], with or
+/// without ports — any graph type, handed over as its inner graph), a
+/// [`Placer`] and an [`Orienter`]. Its one verb,
+/// [`assemble`](Assembler::assemble), reads a site graph (a [`CoarseGrain`]
+/// whose beads are the sites and whose bonds say which sites join) and
+/// builds every molecule in it in one call: one template copy per site,
+/// turned and placed, the copies of bonded sites joined through their ports,
+/// each atom stamped with its unit (`frag_id`) and its molecule (`mol_id`).
+/// Any topology is accepted: chains, branches and rings (operator,
+/// 2026-09-28).
+///
 /// # Sites
 ///
 /// Each bead of the site graph is one unit: its `bead_type` names the
 /// library template and each bond joins two units. A position `p` (Å) and an
 /// axis ([`CoarseGrain::axes`]) are optional: a site graph read from a CG
 /// model carries them, one written from a CGsmiles topology
-/// (`CGSmilesIR::to_coarsegrain`) does not.
+/// (`CgSmilesIr::to_coarsegrain`) does not.
 ///
 /// # Ports
 ///
@@ -326,11 +329,11 @@ enum PortChoice {
 /// use std::collections::HashMap;
 ///
 /// use molrs::builder::{Assembler, GrowthPlacer};
-/// use molrs::store::keys;
-/// use molrs::system::bond::BondNumber;
-/// use molrs::system::coarsegrain::CoarseGrain;
-/// use molrs::system::atomistic::Atomistic;
-/// use molrs::system::port::PortKind;
+/// use molrs::core::keys;
+/// use molrs::core::BondNumber;
+/// use molrs::core::CoarseGrain;
+/// use molrs::core::Atomistic;
+/// use molrs::core::PortKind;
 ///
 /// // Joining carbons C0 (`<`, hydrogen on −x) and C1 (`>`, hydrogen on +x).
 /// let mut unit = Atomistic::new();
@@ -538,8 +541,8 @@ impl Assembler {
                         })?;
                         Some(ParentJoin {
                             port: port_of(u, b).id,
-                            anchor: apply(&poses[p], anchor),
-                            handle: apply(&poses[p], handle),
+                            anchor: transform_point(&poses[p], anchor),
+                            handle: transform_point(&poses[p], handle),
                         })
                     }
                 };
@@ -557,7 +560,7 @@ impl Assembler {
 
         // ---- replicate and stamp mol_id: one pass per name ----
         let mut world = MolGraph::new();
-        let mut copies: Vec<Vec<AtomId>> = Vec::with_capacity(groups.len());
+        let mut copies: Vec<Vec<NodeId>> = Vec::with_capacity(groups.len());
         for group in &groups {
             let rigids: Vec<Rigid> = group.sites.iter().map(|&u| poses[u]).collect();
             let replicate_err = |source| AssembleError::Replicate {
@@ -586,14 +589,14 @@ impl Assembler {
         }
 
         // ---- one scan of the world's ports ----
-        let mut world_ports: HashMap<(AtomId, AtomId), PortId> =
+        let mut world_ports: HashMap<(NodeId, NodeId), RelationId> =
             HashMap::with_capacity(world.n_ports());
         for id in world.ports() {
             if let Ok(port) = world.port(id) {
                 world_ports.insert((port.anchor, port.handle), id);
             }
         }
-        let world_port = |u: usize, b: usize| -> Result<PortId, AssembleError> {
+        let world_port = |u: usize, b: usize| -> Result<RelationId, AssembleError> {
             let (g, c) = group_of[u];
             let group = &groups[g];
             let tp = port_of(u, b);
@@ -612,7 +615,7 @@ impl Assembler {
         };
 
         // ---- one batch join along the site bonds ----
-        let mut pairs: Vec<(PortId, PortId)> = Vec::with_capacity(graph.bonds.len());
+        let mut pairs: Vec<(RelationId, RelationId)> = Vec::with_capacity(graph.bonds.len());
         for (b, &(u, v)) in graph.bonds.iter().enumerate() {
             pairs.push((world_port(u, b)?, world_port(v, b)?));
         }
@@ -827,17 +830,17 @@ impl Assembler {
             name: name.to_owned(),
             source,
         };
-        let row = |atom: AtomId| {
+        let row = |atom: NodeId| {
             template.node_table().row(atom).ok_or_else(|| {
                 refuse(MolRsError::validation(format!(
                     "a port names {atom:?}, which is no live atom"
                 )))
             })
         };
-        let position = |atom: AtomId| template.get_node(atom).ok().and_then(|a| a.position());
-        let center =
-            crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
-                .ok();
+        let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
+            .ok();
         let mut out = Vec::new();
         for id in template.ports() {
             let port = template.port(id).map_err(refuse)?;
@@ -915,17 +918,17 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{AssembleError, Assembler};
-    use crate::builder::orient::{AxisOrienter, OrientError, Orienter, SiteView};
-    use crate::builder::place::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
-    use crate::op::rigid::{Rigid, about};
-    use crate::op::types::Vec3;
-    use crate::store::keys;
-    use crate::system::atomistic::AtomId;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::coarsegrain::CoarseGrain;
-    use crate::system::molgraph::MolGraph;
-    use crate::system::port::PortKind;
+    use crate::builder::{AxisOrienter, OrientError, Orienter, SiteView};
+    use crate::builder::{GrowthPlacer, PlaceError, PlaceSite, Placer, SitePlacer};
+    use crate::core::Atomistic;
+    use crate::core::BondNumber;
+    use crate::core::CoarseGrain;
+    use crate::core::MolGraph;
+    use crate::core::NodeId;
+    use crate::core::PortKind;
+    use crate::core::keys;
+    use crate::op::Vec3;
+    use crate::op::{Rigid, rotation_about};
 
     const TOL: f64 = 1e-9;
 
@@ -939,7 +942,7 @@ mod tests {
     // and adds one C1–C0 bond. An n-unit M chain therefore has
     // 5n − 2(n−1) atoms, 4n − 2(n−1) + (n−1) bonds and 2 ports.
 
-    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> AtomId {
+    fn atom(f: &mut Atomistic, symbol: &str, xyz: Vec3, mass: f64) -> NodeId {
         let id = f.add_atom_xyz(symbol, xyz[0], xyz[1], xyz[2]);
         f.set_node(id, keys::MASS, mass).expect("stamp mass");
         id
@@ -1330,13 +1333,11 @@ mod tests {
             template: &MolGraph,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
-            let c = crate::spatial::geometry::center(
-                template,
-                &template.node_ids().collect::<Vec<_>>(),
-            )
-            .map_err(OrientError::Center)?;
+            let c = template
+                .center(&template.node_ids().collect::<Vec<_>>())
+                .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
-            Ok(vec![about(rz, c); sites.len()])
+            Ok(vec![rotation_about(rz, c); sites.len()])
         }
     }
 

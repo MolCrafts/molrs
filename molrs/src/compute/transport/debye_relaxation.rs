@@ -1,13 +1,14 @@
 //! Debye dipole-relaxation raw compute — the dipole-ACF route to ε(ω) and τ_D.
 
-use molrs::store::frame_access::FrameAccess;
-use ndarray::{Array1, Array2};
+use molrs::core::FrameAccess;
+use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::{lag_times, unbiased_cartesian_acf};
-use crate::compute::error::ComputeError;
+use super::correlation::lag_times;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::autocorrelation;
 use crate::compute::fitting::ols_slope_intercept_r2;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::{Compute, Fit};
+use crate::compute::{Compute, Fit};
 
 /// Ewald boundary condition under which the dipole fluctuations were sampled.
 ///
@@ -128,7 +129,7 @@ impl Compute for DebyeRelaxation {
         let max_lag = max_correlation_time.min(n_frames - 1);
 
         // Fluctuation ACF so acf[0] = ⟨|δM|²⟩ (shared cartesian helper).
-        let acf = unbiased_cartesian_acf(dipole, max_lag, true)?;
+        let acf = autocorrelation(dipole.view().insert_axis(Axis(1)), max_lag, true)?.acf;
         let zero_lag_variance = acf[0];
         Ok(DebyeRelaxationResult {
             lag_times: lag_times(max_lag, dt),
@@ -229,7 +230,7 @@ impl Fit for DebyeFit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

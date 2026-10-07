@@ -1,61 +1,61 @@
 //! Mean squared displacement analysis (stateless).
-//!
-//! # Hard precondition — unwrapped coordinates
-//!
-//! Positions must be **continuous / unwrapped** across the trajectory (or
-//! unwrapped by the caller with image flags + box **before** MSD). This
-//! kernel does **not** apply the minimum-image convention: MIC inside MSD
-//! re-wraps jumps and destroys the Einstein diffusion signal. Wrapped PBC
-//! dumps silently saturate MSD ~ \(L^2\) and yield meaningless \(D\).
-//! Same contract as freud `MSD` / MDAnalysis EinsteinMSD.
-//!
-//! Given a slice of frames, produces one [`MSDResult`] per lag-time. Two
-//! modes are supported, matching the conventions in `freud.msd`:
-//!
-//! - [`MsdMode::Direct`] — `MSD(t) = ⟨|r(t) − r(0)|²⟩_i` with frame 0 as
-//!   the single time origin. The original molrs behaviour.
-//! - [`MsdMode::Window`] — `MSD(t) = ⟨|r(τ+t) − r(τ)|²⟩_{i, τ}` averaged
-//!   over all time origins τ. Implemented in O(N log N) via the
-//!   Wiener–Khinchin identity (zero-padded autocorrelation through
-//!   `rustfft`) — the nMoldyn / Allen-Tildesley algorithm.
-//!
-//! Both modes produce the same `MSDTimeSeries` output shape; callers select
-//! via [`MSD::with_mode`] (default is `Direct` for backward compatibility).
 
 mod accumulator;
 mod result;
 
-pub use accumulator::MSDAccumulator;
-pub use result::{MSDResult, MSDTimeSeries};
+pub use accumulator::MsdAccumulator;
+pub use result::{MsdResult, MsdTimeSeries};
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref_any_dim;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref_any_dim;
 
 /// Mode of MSD computation.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MsdMode {
-    /// `MSD(t) = ⟨|r(t) − r(0)|²⟩`, single time origin (frame 0).
+    /// `Msd(t) = ⟨|r(t) − r(0)|²⟩`, single time origin (frame 0).
     #[default]
     Direct,
-    /// `MSD(t) = ⟨|r(τ+t) − r(τ)|²⟩` averaged over all time origins,
+    /// `Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩` averaged over all time origins,
     /// computed via FFT autocorrelation. O(T log T) per particle.
     Window,
 }
 
 /// Mean squared displacement analysis.
+///
+/// # Hard precondition — unwrapped coordinates
+///
+/// Positions must be **continuous / unwrapped** across the trajectory (or
+/// unwrapped by the caller with image flags + box **before** MSD). This
+/// kernel does **not** apply the minimum-image convention: MIC inside MSD
+/// re-wraps jumps and destroys the Einstein diffusion signal. Wrapped PBC
+/// dumps silently saturate MSD ~ \(L^2\) and yield meaningless \(D\).
+/// Same contract as freud `Msd` / MDAnalysis EinsteinMSD.
+///
+/// Given a slice of frames, produces one [`MsdResult`] per lag-time. Two
+/// modes are supported, matching the conventions in `freud.msd`:
+///
+/// - [`MsdMode::Direct`] — `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` with frame 0 as
+///   the single time origin.
+/// - [`MsdMode::Window`] — `Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩_{i, τ}` averaged
+///   over all time origins τ. Implemented in O(N log N) via the
+///   Wiener–Khinchin identity (zero-padded autocorrelation through
+///   `rustfft`) — the nMoldyn / Allen-Tildesley algorithm.
+///
+/// Both modes produce the same `MsdTimeSeries` output shape; callers select
+/// via [`Msd::with_mode`] (default is `Direct`).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct MSD {
+pub struct Msd {
     mode: MsdMode,
 }
 
-impl MSD {
+impl Msd {
     /// New MSD analyzer in direct (single-reference) mode.
     pub fn new() -> Self {
         Self {
@@ -78,7 +78,7 @@ fn msd_vs_reference<FA: FrameAccess>(
     ref_x: &[F],
     ref_y: &[F],
     ref_z: &[F],
-) -> Result<MSDResult, ComputeError> {
+) -> Result<MsdResult, ComputeError> {
     let (xs_p, ys_p, zs_p) = get_positions_ref_any_dim(frame)?;
     let xs = xs_p.slice();
     let ys = ys_p.slice();
@@ -88,7 +88,7 @@ fn msd_vs_reference<FA: FrameAccess>(
         return Err(ComputeError::DimensionMismatch {
             expected: ref_x.len(),
             got: n,
-            what: "MSD particle count",
+            what: "Msd particle count",
         });
     }
     let mut per_particle = Array1::<F>::zeros(n);
@@ -104,7 +104,7 @@ fn msd_vs_reference<FA: FrameAccess>(
         total += d2;
     }
     let mean = if n > 0 { total / n as F } else { 0.0 };
-    Ok(MSDResult { per_particle, mean })
+    Ok(MsdResult { per_particle, mean })
 }
 
 /// Unnormalised linear autocorrelation of a length-`T` real series via FFT.
@@ -145,7 +145,7 @@ fn autocorrelate_fft(planner: &mut FftPlanner<F>, x: &[F]) -> Vec<F> {
 /// using the identity
 /// `|a-b|² = |a|² + |b|² - 2 a·b` and the FFT autocorrelation of each
 /// coordinate component.
-fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries, ComputeError> {
+fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MsdTimeSeries, ComputeError> {
     let t = frames.len();
     if t == 0 {
         return Err(ComputeError::EmptyInput);
@@ -167,7 +167,7 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries,
             return Err(ComputeError::DimensionMismatch {
                 expected: n,
                 got: xs.len(),
-                what: "MSD particle count",
+                what: "Msd particle count",
             });
         }
         for i in 0..n {
@@ -204,7 +204,7 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries,
         }
     }
 
-    let mut data: Vec<MSDResult> = Vec::with_capacity(t);
+    let mut data: Vec<MsdResult> = Vec::with_capacity(t);
     for per_particle in per_particle_per_lag.into_iter() {
         let pp = Array1::from_vec(per_particle);
         let mean = if n > 0 {
@@ -212,23 +212,23 @@ fn msd_windowed<FA: FrameAccess + Sync>(frames: &[&FA]) -> Result<MSDTimeSeries,
         } else {
             0.0
         };
-        data.push(MSDResult {
+        data.push(MsdResult {
             per_particle: pp,
             mean,
         });
     }
-    Ok(MSDTimeSeries::new(data))
+    Ok(MsdTimeSeries::new(data))
 }
 
-impl Compute for MSD {
+impl Compute for Msd {
     type Args<'a> = ();
-    type Output = MSDTimeSeries;
+    type Output = MsdTimeSeries;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         _args: (),
-    ) -> Result<MSDTimeSeries, ComputeError> {
+    ) -> Result<MsdTimeSeries, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -239,11 +239,11 @@ impl Compute for MSD {
     }
 }
 
-impl MSD {
+impl Msd {
     fn compute_direct<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-    ) -> Result<MSDTimeSeries, ComputeError> {
+    ) -> Result<MsdTimeSeries, ComputeError> {
         // Own the reference positions so downstream frames can be processed
         // in parallel. Contiguous views on the first frame become slice
         // copies into owned Vecs once.
@@ -263,7 +263,7 @@ impl MSD {
                 .collect::<Result<Vec<_>, _>>()
         };
         #[cfg(feature = "rayon")]
-        let results: Vec<MSDResult> = if frames.len() >= 8 {
+        let results: Vec<MsdResult> = if frames.len() >= 8 {
             use rayon::prelude::*;
             frames
                 .par_iter()
@@ -273,17 +273,17 @@ impl MSD {
             serial()?
         };
         #[cfg(not(feature = "rayon"))]
-        let results: Vec<MSDResult> = serial()?;
+        let results: Vec<MsdResult> = serial()?;
 
-        Ok(MSDTimeSeries::new(results))
+        Ok(MsdTimeSeries::new(results))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[F], y: &[F], z: &[F]) -> Frame {
@@ -306,10 +306,10 @@ mod tests {
     fn reference_frame_msd_is_zero() {
         let f0 = make_frame(&[0.0, 0.0], &[0.0, 0.0], &[0.0, 0.0]);
         let f1 = make_frame(&[1.0, 1.0], &[0.0, 0.0], &[0.0, 0.0]);
-        let series = MSD::new().compute(&[&f0, &f1], ()).unwrap();
+        let series = Msd::new().compute(&[&f0, &f1], ()).unwrap();
         assert_eq!(series.len(), 2);
-        assert!(series.data[0].mean.abs() < 1e-12);
-        assert!((series.data[1].mean - 1.0).abs() < 1e-12);
+        assert!(series.per_frame[0].mean.abs() < 1e-12);
+        assert!((series.per_frame[1].mean - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -317,12 +317,12 @@ mod tests {
         let f0 = make_frame(&[0.0, 0.0, 0.0], &[0.0; 3], &[0.0; 3]);
         let f1 = make_frame(&[1.0, 1.0, 1.0], &[0.0; 3], &[0.0; 3]);
         let f2 = make_frame(&[2.0, 2.0, 2.0], &[0.0; 3], &[0.0; 3]);
-        let msd = MSD::new();
+        let msd = Msd::new();
         let a = msd.compute(&[&f0, &f1, &f2], ()).unwrap();
         let b = msd.compute(&[&f0, &f1, &f2], ()).unwrap();
         assert_eq!(a.len(), b.len());
         for i in 0..a.len() {
-            assert!((a.data[i].mean - b.data[i].mean).abs() < 1e-12);
+            assert!((a.per_frame[i].mean - b.per_frame[i].mean).abs() < 1e-12);
         }
     }
 
@@ -333,13 +333,13 @@ mod tests {
             .map(|i| make_frame(&[i as F; 3], &[0.0; 3], &[0.0; 3]))
             .collect();
         let frames: Vec<&Frame> = frames_owned.iter().collect();
-        let series = MSD::new().compute(&frames, ()).unwrap();
+        let series = Msd::new().compute(&frames, ()).unwrap();
         for i in 0..4 {
             let expected = (i as F) * (i as F);
             assert!(
-                (series.data[i].mean - expected).abs() < 1e-12,
+                (series.per_frame[i].mean - expected).abs() < 1e-12,
                 "MSD[{i}] = {}, expected {expected}",
-                series.data[i].mean
+                series.per_frame[i].mean
             );
         }
     }
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn empty_input_errors() {
         let frames: Vec<&Frame> = Vec::new();
-        let err = MSD::new().compute(&frames, ()).unwrap_err();
+        let err = Msd::new().compute(&frames, ()).unwrap_err();
         assert!(matches!(err, ComputeError::EmptyInput));
     }
 
@@ -355,7 +355,7 @@ mod tests {
     fn mismatched_particle_count_errors() {
         let f0 = make_frame(&[0.0, 0.0], &[0.0, 0.0], &[0.0, 0.0]);
         let f1 = make_frame(&[1.0], &[0.0], &[0.0]); // one particle only
-        let err = MSD::new().compute(&[&f0, &f1], ()).unwrap_err();
+        let err = Msd::new().compute(&[&f0, &f1], ()).unwrap_err();
         assert!(matches!(
             err,
             ComputeError::DimensionMismatch {
@@ -420,16 +420,16 @@ mod tests {
         let frames: Vec<&Frame> = frames_owned.iter().collect();
 
         let reference = windowed_reference(&frames);
-        let computed = MSD::with_mode(MsdMode::Window)
+        let computed = Msd::with_mode(MsdMode::Window)
             .compute(&frames, ())
             .unwrap();
 
         assert_eq!(computed.len(), 6);
         for (lag, &ref_val) in reference.iter().enumerate() {
             assert!(
-                (computed.data[lag].mean - ref_val).abs() < 1e-9,
+                (computed.per_frame[lag].mean - ref_val).abs() < 1e-9,
                 "lag {lag}: window={}, ref={ref_val}",
-                computed.data[lag].mean,
+                computed.per_frame[lag].mean,
             );
         }
     }
@@ -439,10 +439,10 @@ mod tests {
         let f0 = make_frame(&[0.0, 1.0], &[0.0; 2], &[0.0; 2]);
         let f1 = make_frame(&[1.0, 2.0], &[0.0; 2], &[0.0; 2]);
         let f2 = make_frame(&[2.0, 3.0], &[0.0; 2], &[0.0; 2]);
-        let series = MSD::with_mode(MsdMode::Window)
+        let series = Msd::with_mode(MsdMode::Window)
             .compute(&[&f0, &f1, &f2], ())
             .unwrap();
-        assert!(series.data[0].mean.abs() < 1e-10);
+        assert!(series.per_frame[0].mean.abs() < 1e-10);
     }
 
     #[test]
@@ -455,16 +455,16 @@ mod tests {
             .map(|t| make_frame(&[t as F * v[0], t as F * v[1]], &[0.0; 2], &[0.0; 2]))
             .collect();
         let frames: Vec<&Frame> = frames_owned.iter().collect();
-        let series = MSD::with_mode(MsdMode::Window)
+        let series = Msd::with_mode(MsdMode::Window)
             .compute(&frames, ())
             .unwrap();
         let mean_v2 = (v[0] * v[0] + v[1] * v[1]) / 2.0;
         for lag in 0..8 {
             let expected = (lag as F) * (lag as F) * mean_v2;
             assert!(
-                (series.data[lag].mean - expected).abs() < 1e-10,
+                (series.per_frame[lag].mean - expected).abs() < 1e-10,
                 "lag {lag}: got {}, expected {expected}",
-                series.data[lag].mean,
+                series.per_frame[lag].mean,
             );
         }
     }
@@ -486,13 +486,13 @@ mod tests {
             .collect();
         let refs: Vec<&Frame> = frames.iter().collect();
 
-        let direct = MSD::new().compute(&refs, ()).unwrap();
-        let means: Vec<F> = direct.data.iter().map(|r| r.mean).collect();
+        let direct = Msd::new().compute(&refs, ()).unwrap();
+        let means: Vec<F> = direct.per_frame.iter().map(|r| r.mean).collect();
         assert_eq!(means, vec![0.0, 1.0, 9.0]);
 
         // and the windowed estimator agrees with the nested loop in 1-D too
-        let windowed = MSD::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
-        let w: Vec<F> = windowed.data.iter().map(|r| r.mean).collect();
+        let windowed = Msd::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
+        let w: Vec<F> = windowed.per_frame.iter().map(|r| r.mean).collect();
         assert!((w[1] - ((1.0 + 4.0) / 2.0)).abs() < 1e-12, "{w:?}");
     }
 }

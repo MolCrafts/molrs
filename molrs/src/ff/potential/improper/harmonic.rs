@@ -1,35 +1,38 @@
-//! Harmonic improper (LAMMPS `improper_style harmonic`):
-//!
-//! E(χ) = K · (χ − χ₀)²
-//!
-//! Following LAMMPS, the improper angle χ is the **unsigned** dihedral of the
-//! quadruple I-J-K-L: χ = |φ| ∈ [0, π], where φ = atan2(…) is the signed
-//! dihedral. Hence dχ/dφ = sign(φ), so dE/dφ = 2K(χ − χ₀)·sign(φ), projected
-//! onto Cartesian forces by the shared dihedral routine. `chi0` is the
-//! equilibrium angle in **degrees** (0 for a planar centre), as LAMMPS takes
-//! it; the kernel converts it to radians once. `k` is LAMMPS's `K`
-//! (energy/rad², the ½ included).
-//!
-//! # Atom order
-//!
-//! LAMMPS's: the improper angle is the dihedral I-J-K-L of the stored order,
-//! and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
-//! style; CHARMM writes its impropers this way).
+//! Harmonic improper (LAMMPS `improper_style harmonic`).
 
-use molrs::store::schema::block_names::IMPROPERS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Harmonic improper with pre-resolved flat arrays.
+///
+/// Harmonic improper (LAMMPS `improper_style harmonic`):
+///
+/// E(χ) = K · (χ − χ₀)²
+///
+/// Following LAMMPS, the improper angle χ is the **unsigned** dihedral of the
+/// quadruple I-J-K-L: χ = |φ| ∈ [0, π], where φ = atan2(…) is the signed
+/// dihedral. Hence dχ/dφ = sign(φ), so dE/dφ = 2K(χ − χ₀)·sign(φ), projected
+/// onto Cartesian forces by the shared dihedral routine. `chi0` is the
+/// equilibrium angle in **degrees** (0 for a planar centre), as LAMMPS takes
+/// it; the kernel converts it to radians once. `k` is LAMMPS's `K`
+/// (energy/rad², the ½ included).
+///
+/// # Atom order
+///
+/// LAMMPS's: the improper angle is the dihedral I-J-K-L of the stored order,
+/// and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
+/// style; CHARMM writes its impropers this way).
 pub struct ImproperHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -130,11 +133,11 @@ impl IndexedTerms for ImproperHarmonic {
 
 /// Construct an [`ImproperHarmonic`] from per-type params (`k`, `chi0` degrees)
 /// and a Frame's `"impropers"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn improper_harmonic_ctor(
+pub fn improper_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(IMPROPERS)
@@ -177,10 +180,11 @@ pub fn improper_harmonic_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("improper_harmonic: missing k")? as F);
-        cc.push(p.get("chi0").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        kk.push(param_reads::type_num("harmonic", &tc[idx], p, "k")?);
+        // degrees → radians
+        cc.push(param_reads::type_num("harmonic", &tc[idx], p, "chi0")?.to_radians());
     }
-    Ok(Member::indexed(ImproperHarmonic {
+    Ok(ForceTerm::indexed(ImproperHarmonic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

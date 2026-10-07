@@ -27,21 +27,21 @@ Total wall time: 0:00:01
 
 
 def test_parse_returns_the_structured_classes():
-    log = molrs.io.parse_lammps_log_text(_LOG)
-    assert isinstance(log, molrs.io.LammpsLog)
+    log = molrs.io.read_lammps_log_str(_LOG)
+    assert isinstance(log, molrs.io.lammps.LammpsLog)
     assert log.version == "LAMMPS (1 Jan 2026)"
     assert len(log) == len(log.runs) == 1
     run = log.runs[0]
-    assert isinstance(run, molrs.io.LammpsRun)
-    assert isinstance(run.thermo, molrs.io.LammpsThermo)
-    assert isinstance(run.loop_time, molrs.io.LammpsLoopTime)
-    assert isinstance(run.performance, molrs.io.LammpsPerformance)
-    assert isinstance(run.memory, molrs.io.LammpsMemoryUsage)
-    assert isinstance(log.header, molrs.io.LammpsLogHeader)
+    assert isinstance(run, molrs.io.lammps.LammpsRun)
+    assert isinstance(run.thermo, molrs.io.lammps.LammpsThermo)
+    assert isinstance(run.loop_time, molrs.io.lammps.LammpsLoopTime)
+    assert isinstance(run.performance, molrs.io.lammps.LammpsPerformance)
+    assert isinstance(run.memory, molrs.io.lammps.LammpsMemoryUsage)
+    assert isinstance(log.header, molrs.io.lammps.LammpsLogHeader)
 
 
 def test_thermo_columns_cross_as_float64_arrays():
-    thermo = molrs.io.parse_lammps_log_text(_LOG).runs[0].thermo
+    thermo = molrs.io.read_lammps_log_str(_LOG).runs[0].thermo
     assert thermo.columns == ["Step", "Temp", "PotEng"]
     assert thermo.rows.dtype == np.float64
     assert thermo.rows.shape == (2, 3)
@@ -52,7 +52,7 @@ def test_thermo_columns_cross_as_float64_arrays():
 
 
 def test_scalars_and_optionals_cross_as_python_types():
-    log = molrs.io.parse_lammps_log_text(_LOG)
+    log = molrs.io.read_lammps_log_str(_LOG)
     run = log.runs[0]
     assert run.loop_time.procs == 2 and run.loop_time.steps == 10
     assert run.loop_time.atoms == 100
@@ -61,13 +61,13 @@ def test_scalars_and_optionals_cross_as_python_types():
     assert run.load_balance == []
     # The log lists every warning; the run lists the ones raised inside it.
     assert len(log.warnings) == 1 and len(run.warnings) == 1
-    assert isinstance(run.warnings[0], molrs.io.LammpsWarning)
+    assert isinstance(run.warnings[0], molrs.io.lammps.LammpsWarning)
     assert run.warnings[0].message == log.warnings[0].message
     assert run.warnings[0].message.startswith("test warning")
 
 
 def test_to_dict_is_json_friendly():
-    payload = molrs.io.parse_lammps_log_text(_LOG).to_dict()
+    payload = molrs.io.read_lammps_log_str(_LOG).to_dict()
     json.dumps(payload)
     assert payload["runs"][0]["thermo"]["columns"] == ["Step", "Temp", "PotEng"]
     assert payload["runs"][0]["thermo"]["rows"][0] == [0.0, 300.0, -1.5]
@@ -78,3 +78,10 @@ def test_missing_file_is_file_not_found(tmp_path):
 
     with pytest.raises(FileNotFoundError):
         molrs.io.read_lammps_log(str(tmp_path / "nope.log"))
+
+
+def test_is_lammps_log_keys_on_the_run_the_reader_parses():
+    assert molrs.io.lammps.is_lammps_log(_LOG)
+    banner_only = "LAMMPS (1 Jan 2026)\nERROR: Unknown command\n"
+    assert not molrs.io.lammps.is_lammps_log(banner_only)
+    assert len(molrs.io.read_lammps_log_str(banner_only).runs) == 0

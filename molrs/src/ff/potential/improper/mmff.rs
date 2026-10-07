@@ -1,24 +1,26 @@
-//! MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
-//!
-//! No LAMMPS style has this name. Its atom order is that of LAMMPS's
-//! out-of-plane styles (`improper_style fourier`, `umbrella`): the centre is
-//! **first** (`atomi`), and χ is the angle between the bond centre→`atoml` and
-//! the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
-//! read centre first.
+//! MMFF94 out-of-plane bending (Wilson angle).
 
-use molrs::store::schema::block_names::IMPROPERS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::core::Frame;
+use molrs::op::F;
 
-use crate::ff::constants::MDYNE_A_TO_KCAL;
+use crate::core::constants::MMFF_MDYNE_A_TO_KCAL_MOL;
 
-pub struct MMFFOutOfPlane {
+/// MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
+///
+/// No LAMMPS style has this name. Its atom order is that of LAMMPS's
+/// out-of-plane styles (`improper_style fourier`, `umbrella`): the centre is
+/// **first** (`atomi`), and χ is the angle between the bond centre→`atoml` and
+/// the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
+/// read centre first.
+pub struct ImproperMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -26,7 +28,7 @@ pub struct MMFFOutOfPlane {
     koop: Vec<F>,
 }
 
-impl MMFFOutOfPlane {
+impl ImproperMmff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -41,7 +43,7 @@ impl MMFFOutOfPlane {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let forces = out;
-        let conv = MDYNE_A_TO_KCAL as F;
+        let conv = MMFF_MDYNE_A_TO_KCAL_MOL as F;
 
         for idx in 0..n_terms {
             // Stored centre first; the Wilson math below names the centre `j`.
@@ -94,7 +96,7 @@ impl MMFFOutOfPlane {
     }
 }
 
-impl Potential for MMFFOutOfPlane {
+impl Potential for ImproperMmff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -113,7 +115,7 @@ impl Potential for MMFFOutOfPlane {
     }
 }
 
-impl IndexedTerms for MMFFOutOfPlane {
+impl IndexedTerms for ImproperMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -144,11 +146,11 @@ impl IndexedTerms for MMFFOutOfPlane {
     }
 }
 
-pub fn mmff_oop_ctor(
+pub fn improper_mmff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked koop onto each improper.
     // This kernel only reads the column and evaluates.
     let block = frame
@@ -170,10 +172,7 @@ pub fn mmff_oop_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("missing atoml")?;
-    let koopc = block
-        .get("koop")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_oop: missing \"koop\" column (typifier did not bake oop params)")?;
+    let koopc = param_reads::instance_col("mmff_oop", block, "koop")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al, mut koop) = (
@@ -191,7 +190,7 @@ pub fn mmff_oop_ctor(
         al.push(lc[idx] as usize);
         koop.push(koopc[idx] as F);
     }
-    Ok(Member::indexed(MMFFOutOfPlane {
+    Ok(ForceTerm::indexed(ImproperMmff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

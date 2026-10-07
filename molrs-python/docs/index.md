@@ -21,14 +21,14 @@ doc comments.
     ```python
     import molrs
 
-    ir = molrs.io.SmilesIR("CCO")
+    ir = molrs.io.smiles.SmilesIr("CCO")
     mol = ir.to_atomistic()
 
     mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
     frame = mol3d.to_frame()
 
     atoms = frame["atoms"]
-    print("atoms:", atoms.nrows)
+    print("atoms:", atoms.n_rows)
     print("columns:", atoms.keys())
     print("x:", atoms["x"][:3])
     ```
@@ -44,11 +44,10 @@ doc comments.
 
     ```rust
     use molrs::conformer::{Conformer, ConformerOptions};
-    use molrs::io::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::read_smiles_str;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = parse_smiles("c1ccccc1")?;
-        let mol = to_atomistic(&ir)?;
+        let mol = read_smiles_str("c1ccccc1")?;
         let (mol3d, report) = Conformer::new(ConformerOptions::default()).generate(&mol)?;
 
         println!("atoms: {}", mol3d.n_atoms());
@@ -63,40 +62,37 @@ doc comments.
     module, and the generated classes and functions are regular exports.
 
     ```ts
-    import { generate3D, parseSMILES, writeFrame } from "@molcrafts/molrs";
+    import { SmilesIr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 
-    const ir = parseSMILES("CCO");
+    const ir = SmilesIr.parse("CCO");
     const frame2d = ir.toFrame();
-    const frame3d = generate3D(frame2d, "fast", 42);
+    const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 
-    console.log(writeFrame(frame3d, "xyz"));
+    console.log(writeXyzStr(frame3d));
     ```
 
-## What's new in 0.15
+## Highlights
 
-molrs 0.15 settles the column store and the on-disk record:
+molrs holds every force field in one force-field IR (LAMMPS standard):
 
-- **One column accessor.** `Block::get` / `FrameAccess::column` plus
-  `Column::as_*` replace the per-dtype getters on every surface, and each
-  column reports the dtype it is stored at (C: `MolrsDType`). Floats are
-  `f64` only.
-- **Record files follow the molrec contract.** Typed frame metadata,
-  topology conventions (`chain`, `res_id`, `b_factor`, …), row references,
-  aligned trajectory blocks, declared precision (coordinates in about 7.6
-  instead of 24 bytes per atom per frame), and a `forcefield` section. See
+- **One set of styles** with LAMMPS's energy expressions, factors and
+  units; every angle-valued parameter is in degrees. Urey–Bradley, CMAP,
+  CHARMM 1-4 interactions and per-pair overrides are supported. See
+  [Force-field IR](guides/forcefield-ir.md).
+- **Engines read and written whole.** LAMMPS, GROMACS (whole topologies),
+  OpenMM XML and AMBER prmtop (chamber too) convert to the IR exactly or
+  refuse by name, checked term by term against the engines.
+- **The IR is a protocol.** A style or a category registers from Rust,
+  Python or molpy with nothing rebuilt; see
+  [Extending the force-field IR](guides/extending-forcefield-ir.md).
+- **Records** (`*.mrec`) carry frames, trajectories and force fields; see
   [Record files](guides/records.md).
-- **Force fields** are built through `def_style` / `def_type`, compiled by
-  `PotentialCompiler`, and typed by `Typing`; LAMMPS harmonic impropers now
-  evaluate at the LAMMPS energy.
-
-[What's new in 0.15](release-notes.md) lists the highlights, and the
-[migration guide](migration.md) lists every breaking change from 0.14.
 
 ## What lives here
 
 These docs cover the molrs **binding surface**: the per-language quickstarts,
-the [record-file guide](guides/records.md), the API reference, and the
-migration guide. Task-oriented Python guides (the data model, in-process MD,
+the [record-file guide](guides/records.md), and the API reference.
+Task-oriented Python guides (the data model, in-process MD,
 SMILES and topology, neighbor search, 3D embedding, force fields, I/O, and
 trajectory analysis) live in the
 [molpy documentation](https://docs.molcrafts.org/molpy/), the Python library

@@ -1,45 +1,16 @@
-//! Buffered Coulomb pair potential with a hard distance cutoff — `pair/coul/cut`:
-//!
-//! ```text
-//! E(r) = k · qᵢqⱼ / (D · (r + δ))      r < r_cut,  else 0
-//! ```
-//!
-//! Every constant in that formula is **force-field data, read from the style**:
-//! the Coulomb constant `k`, the dielectric `D` and the buffering distance `δ`.
-//! The kernel holds none of them.
-//!
-//! # One kernel, two force fields
-//!
-//! `δ = 0` degenerates the buffered form into the textbook Coulomb `k·qᵢqⱼ/r`,
-//! which is what OPLS, LAMMPS and every other non-buffered force field mean. MMFF's
-//! electrostatics (Halgren, *MMFF.I* eq. 5) is the *same kernel* at
-//! `k = 332.0716`, `D = 1.0`, `δ = 0.05 Å` — a parameterization, not a kernel of
-//! its own. The buffer is what keeps `E` finite at `r = 0`, where MMFF's charges
-//! sit on the nuclei.
-//!
-//! # Why `k` is a style param and not a shared constant
-//!
-//! MMFF uses Halgren's **332.0716**; OPLS/LAMMPS use CODATA's
-//! [`COULOMB_REAL`](molrs::units::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
-//! relative difference is worth 0.0036 kcal/mol on caffeine's −150.48 kcal/mol
-//! electrostatic term — **above** the 1e-3 RDKit parity tolerance. Both values are
-//! correct; the force field decides. A kernel holding either one would be choosing a
-//! force field for its caller, so there is no default: a style that does not say is
-//! an [`Err`].
-//!
-//! The kernel is topology-blind: it consumes a pre-resolved pair list whose per-pair
-//! charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
+//! Buffered Coulomb pair potential with a hard distance cutoff (`pair coul/cut`).
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
-use molrs::types::F;
+use crate::ff::potential::param_reads;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use molrs::op::F;
 
 /// Below this squared separation a pair's force has no direction, so only the
 /// (buffered) energy is accumulated. Unchanged from the unbuffered kernel.
@@ -47,8 +18,39 @@ const R_MIN2: F = 1e-24;
 
 /// Buffered Coulomb with cutoff, over pre-resolved flat arrays.
 ///
-/// `E = k·qᵢqⱼ / (D·(r + δ))`. All four scalars come from the force field; see the
-/// module docs.
+/// `E = k·qᵢqⱼ / (D·(r + δ))`. All four scalars come from the force field.
+///
+/// Buffered Coulomb pair potential with a hard distance cutoff — `pair/coul/cut`:
+///
+/// ```text
+/// E(r) = k · qᵢqⱼ / (D · (r + δ))      r < r_cut,  else 0
+/// ```
+///
+/// Every constant in that formula is **force-field data, read from the style**:
+/// the Coulomb constant `k`, the dielectric `D` and the buffering distance `δ`.
+/// The kernel holds none of them.
+///
+/// # One kernel, two force fields
+///
+/// `δ = 0` degenerates the buffered form into the textbook Coulomb `k·qᵢqⱼ/r`,
+/// which is what OPLS, LAMMPS and every other non-buffered force field mean. MMFF's
+/// electrostatics (Halgren, *MMFF.I* eq. 5) is the *same kernel* at
+/// `k = 332.0716`, `D = 1.0`, `δ = 0.05 Å` — a parameterization, not a kernel of
+/// its own. The buffer is what keeps `E` finite at `r = 0`, where MMFF's charges
+/// sit on the nuclei.
+///
+/// # Why `k` is a style param and not a shared constant
+///
+/// MMFF uses Halgren's **332.0716**; OPLS/LAMMPS use CODATA's
+/// [`COULOMB_REAL`](molrs::core::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
+/// relative difference is worth 0.0036 kcal/mol on caffeine's −150.48 kcal/mol
+/// electrostatic term — **above** the 1e-3 RDKit parity tolerance. Both values are
+/// correct; the force field decides. A kernel holding either one would be choosing a
+/// force field for its caller, so there is no default: a style that does not say is
+/// an [`Err`].
+///
+/// The kernel is topology-blind: it consumes a pre-resolved pair list whose per-pair
+/// charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
 pub struct PairCoulCut {
     charges: Charges,
     /// Coulomb constant `k` in kcal·Å·mol⁻¹·e⁻² — the force field's, not the kernel's.
@@ -320,23 +322,10 @@ impl PairDriven for PairCoulCut {
     }
 }
 
-/// Read a style param the **force field must supply**, or say which one it did not.
-///
-/// There is no `unwrap_or` here on purpose. A kernel that defaults `coulomb` or
-/// `dielectric` is a kernel answering a question only the force field can answer: it
-/// computes plausible numbers from constants nobody handed it, and every energy test
-/// still passes. (`coulomb14scale` is projected out of the force field's
-/// `SpecialBonds` by `PotentialCompiler::compile`, so through the documented route it is
-/// always present — which is exactly why defaulting it here would be invisible.)
-fn required(style_params: &Params, key: &str) -> Result<F, String> {
-    style_params.get(key).map(|v| v as F).ok_or_else(|| {
-        format!(
-            "PairCoulCut: style params missing \"{key}\" — it is force-field data and this kernel \
-             has no default for it. `pair/coul/cut` evaluates E = coulomb·qᵢqⱼ/(dielectric·(r+delta)); \
-             the force field must declare `coulomb` (MMFF: 332.0716, OPLS/LAMMPS: 332.06371), \
-             `dielectric`, and — via `special_bonds` — `coulomb14scale`."
-        )
-    })
+/// `(coulomb, dielectric, delta)` of a gathered `coul/cut` style.
+fn coul_style(style_params: &Params) -> Result<(F, F, F), crate::ff::ir::IrError> {
+    let get = |key: &str| param_reads::style_num("coul/cut", style_params, key);
+    Ok((get("coulomb")?, get("dielectric")?, get("delta")?))
 }
 
 /// Construct a [`PairCoulCut`] from **per-atom charges** + a neighbour list.
@@ -348,36 +337,31 @@ fn required(style_params: &Params, key: &str) -> Result<F, String> {
 ///
 /// # Style params
 ///
-/// | param | meaning | missing |
-/// |---|---|---|
-/// | `coulomb` | Coulomb constant `k` | **`Err`** — the force field's to choose |
-/// | `dielectric` | dielectric `D` | **`Err`** — a property of the medium, not of the kernel |
-/// | `coulomb14scale` | 1-4 weight | **`Err`** — projected from `special_bonds` by `PotentialCompiler::compile` |
-/// | `delta` | buffering distance δ (Å) | `0.0` — *semantic* default: no buffer, the textbook Coulomb |
-/// | `cutoff` | cutoff (Å) | `∞` — *semantic* default: do not truncate |
+/// They arrive gathered ([`StyleSpec::gather`](crate::ff::ir::StyleSpec::gather)):
+/// the spec's defaults are in place and this kernel states none.
 ///
-/// The last two are real, meaningful choices a force field is entitled to leave
-/// unsaid. The first three are not: a default there is the kernel pretending the
-/// force field spoke.
+/// | param | meaning | absent |
+/// |---|---|---|
+/// | `coulomb` | Coulomb constant `k` | [`IrError::MissingParam`] — the force field's to choose |
+/// | `dielectric` | dielectric `D` | the spec's default, 1 (LAMMPS's `dielectric`) |
+/// | `delta` | buffering distance δ (Å) | the spec's default, 0: no buffer, the textbook Coulomb |
+/// | `cutoff` | cutoff (Å): a pair prices at `r < cutoff`, as LAMMPS | the spec's default, ∞: do not truncate |
+/// | `coulomb14scale` | 1-4 weight | projected from `special_bonds` by `PotentialCompiler::compile` |
+///
+/// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
 ///
 /// The `pairs` block is the consumer-built neighbour list (`atomi`/`atomj`/`is_14`)
 /// from `intramolecular_pairs`; 1-2/1-3 are already excluded. Charge-free pair types
 /// are not consulted — this kernel is per-atom
-/// ([`ParamSource::PerInstance`](crate::ff::potential::ParamSource::PerInstance)).
-pub fn pair_coul_cut_ctor(
+/// ([`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance)).
+pub fn pair_coul_cut_constructor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    let coulomb = required(style_params, "coulomb")?;
-    let dielectric = required(style_params, "dielectric")?;
-    let scale_14 = required(style_params, "coulomb14scale")?;
-    // The two genuine semantic defaults.
-    let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
-    let cutoff = style_params
-        .get("cutoff")
-        .map(|c| c as F)
-        .unwrap_or(F::INFINITY);
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    let (coulomb, dielectric, delta) = coul_style(style_params)?;
+    let cutoff = param_reads::pair_cutoff("coul/cut", style_params)?;
+    let scale_14 = param_reads::style_num("coul/cut", style_params, "coulomb14scale")?;
 
     let atoms = frame
         .get(ATOMS)
@@ -416,29 +400,24 @@ pub fn pair_coul_cut_ctor(
         qiqj.push(qq);
     }
 
-    Ok(Member::pair(PairCoulCut::new(
+    Ok(ForceTerm::pair(PairCoulCut::new(
         atom_i, atom_j, qiqj, coulomb, dielectric, delta, cutoff,
     )))
 }
 
 /// Construct a neighbour-driven [`PairCoulCut`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_coul_cut_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_coul_cut_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_coul_cut_typed_ctor(
+pub fn pair_coul_cut_typed_constructor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    let coulomb = required(style_params, "coulomb")?;
-    let dielectric = required(style_params, "dielectric")?;
-    let delta = style_params.get("delta").map(|d| d as F).unwrap_or(0.0);
-    let cutoff = style_params
-        .get("cutoff")
-        .map(|c| c as F)
-        .unwrap_or(F::INFINITY);
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    let (coulomb, dielectric, delta) = coul_style(style_params)?;
+    let cutoff = param_reads::neighbour_cutoff("coul/cut", style_params)?;
     // `coulomb14scale` is deliberately not read here. On this path the 1-4
     // weight is applied to the pair table, not baked into a charge product, so
     // requiring the kernel to know it would be asking it a question it no
@@ -451,14 +430,14 @@ pub fn pair_coul_cut_typed_ctor(
         .and_then(|c| c.as_float())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
-    Ok(Member::pair(PairCoulCut::typed(
+    Ok(ForceTerm::pair(PairCoulCut::typed(
         q, coulomb, dielectric, delta, cutoff,
     )))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ff::potential::pair::testing::{
+    use crate::ff::potential::pair::fixtures::{
         assert_same, assert_virial_matches_forces, table_over,
     };
 
@@ -499,7 +478,7 @@ mod tests {
     }
 
     use super::*;
-    use molrs::units::constants::COULOMB_REAL;
+    use molrs::core::constants::COULOMB_REAL;
 
     /// MMFF's parameterization: Halgren's constant, unit dielectric, 0.05 Å buffer.
     const MMFF: (F, F, F) = (332.0716, 1.0, 0.05);
@@ -589,27 +568,41 @@ mod tests {
         }
     }
 
-    /// A style that does not carry `coulomb` / `dielectric` / `coulomb14scale` is an
-    /// `Err`. The kernel must not supply the force field's own constants.
+    /// `coulomb` is the force field's to state: a style without it is
+    /// [`IrError::MissingParam`](crate::ff::ir::IrError::MissingParam). The
+    /// spec's defaults — `dielectric` 1 (LAMMPS's), `delta` 0, `cutoff` ∞ —
+    /// apply when the style leaves them out, exactly as stating them does.
     #[test]
-    fn missing_force_field_data_is_an_error() {
-        let full = [
-            ("coulomb", 332.0716),
+    fn coulomb_is_required_and_the_spec_defaults_apply() {
+        use crate::ff::compile::ExplicitTerms;
+        use crate::ff::ir::IrError;
+        let terms = |style: &[(&str, f64)]| {
+            ExplicitTerms::new("pair", "coul/cut")
+                .style_params(Params::from_pairs(style))
+                .atoms([vec![0, 1]])
+                .charges(vec![0.5, -0.4])
+                .compile()
+        };
+        let err = terms(&[]).map(|_| ()).unwrap_err();
+        assert_eq!(
+            err.ir(),
+            Some(&IrError::MissingParam {
+                style: "coul/cut".into(),
+                type_: String::new(),
+                param: "coulomb".into(),
+            })
+        );
+        let coords = [0.0, 0.0, 0.0, 2.5, 0.0, 0.0];
+        let bare = terms(&[("coulomb", COULOMB_REAL)]).unwrap();
+        let stated = terms(&[
+            ("coulomb", COULOMB_REAL),
             ("dielectric", 1.0),
-            ("coulomb14scale", 0.75),
-        ];
-        for omitted in ["coulomb", "dielectric", "coulomb14scale"] {
-            let pairs: Vec<(&str, f64)> = full
-                .iter()
-                .copied()
-                .filter(|(k, _)| *k != omitted)
-                .collect();
-            let params = Params::from_pairs(&pairs);
-            let err = required(&params, omitted).expect_err("must not default");
-            assert!(err.contains(omitted), "error must name `{omitted}`: {err}");
-        }
-        // All three present -> read, not invented.
-        let params = Params::from_pairs(&full);
-        assert_eq!(required(&params, "coulomb").unwrap(), 332.0716);
+            ("delta", 0.0),
+            ("cutoff", F::INFINITY),
+        ])
+        .unwrap();
+        let want = COULOMB_REAL * 0.5 * -0.4 / 2.5;
+        assert!((bare.calc_energy(&coords) - want).abs() < 1e-12);
+        assert_eq!(bare.calc_energy(&coords), stated.calc_energy(&coords));
     }
 }

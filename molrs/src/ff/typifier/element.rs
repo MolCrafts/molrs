@@ -1,18 +1,16 @@
 //! Element typing: type labels derived from element symbols alone.
-//!
-//! [`ElementTypifier`] gives every atom and link a `type` label built from the
-//! elements it touches, for writers that need type labels (LAMMPS data Type
-//! Labels) on a molecule no force field has typed.
 
 use std::collections::HashMap;
 
-use molrs::Atomistic;
-use molrs::store::keys;
-use molrs::store::type_labels::TypeName;
-use molrs::system::molgraph::{MolGraph, NodeId, PropValue};
+use indexmap::IndexMap;
+use molrs::core::Atomistic;
+use molrs::core::TypeName;
+use molrs::core::keys;
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+use molrs::core::{MolGraph, NodeId, PropValue};
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 
 /// A typifier whose labels are the elements themselves; it defines no force
 /// field.
@@ -32,7 +30,7 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 ///
 /// # Stamp-only
 ///
-/// The [`Match`] carries only [`Annotation::Value`] entries and no styles or
+/// The [`TypeAssignment`] carries only [`Annotation::Value`] entries and no styles or
 /// pair rows, so [`Typing::forcefield`](crate::ff::typifier::Typing::forcefield)
 /// stays empty. Masses and charges are left on the atoms as they are.
 ///
@@ -45,7 +43,7 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 /// # Example
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::typifier::{ElementTypifier, Typing};
 ///
 /// let mut mol = Atomistic::new();
@@ -60,6 +58,10 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 /// assert_eq!(bond.props["type"], "H-O".into());
 /// assert!(typing.forcefield().styles().is_empty());
 /// ```
+///
+/// [`ElementTypifier`] gives every atom and link a `type` label built from the
+/// elements it touches, for writers that need type labels (LAMMPS data Type
+/// Labels) on a molecule no force field has typed.
 #[derive(Debug, Clone)]
 pub struct ElementTypifier {
     library: ForceField,
@@ -133,7 +135,7 @@ fn link_labels(
 }
 
 impl Typifier for ElementTypifier {
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         if graph.n_impropers() > 0 {
             return Err(format!(
                 "ElementTypifier derives no improper labels; the graph has {} impropers",
@@ -156,16 +158,21 @@ impl Typifier for ElementTypifier {
         }
 
         let mut cache: HashMap<Vec<String>, String> = HashMap::new();
-        Ok(Match {
+        let mut links = IndexMap::new();
+        for kind in [BONDS, ANGLES, DIHEDRALS] {
+            links.insert(
+                kind.to_owned(),
+                link_labels(graph, kind, &elements, &mut cache)?,
+            );
+        }
+        Ok(TypeAssignment {
             nodes,
-            bonds: link_labels(graph, "bonds", &elements, &mut cache)?,
-            angles: link_labels(graph, "angles", &elements, &mut cache)?,
-            dihedrals: link_labels(graph, "dihedrals", &elements, &mut cache)?,
-            ..Match::default()
+            links,
+            ..TypeAssignment::default()
         })
     }
 
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         &self.library
     }
 }
@@ -175,8 +182,8 @@ mod tests {
     //! `ElementTypifier` through `Typing::typify` on hand-built graphs. Every
     //! expected label is written by hand.
 
-    use molrs::system::molgraph::{Atom, PropValue};
-    use molrs::{AtomId, Atomistic};
+    use molrs::core::{Atom, PropValue};
+    use molrs::core::{Atomistic, NodeId};
 
     use super::*;
     use crate::ff::typifier::Typing;
@@ -219,7 +226,7 @@ mod tests {
     }
 
     /// C1–C2–H with bonds C1–C2, C2–H and one angle written H–C2–C1.
-    fn cch() -> (Atomistic, [AtomId; 3]) {
+    fn cch() -> (Atomistic, [NodeId; 3]) {
         let mut g = Atomistic::new();
         let c1 = g.add_atom_bare("C");
         let c2 = g.add_atom_bare("C");
@@ -300,7 +307,7 @@ mod tests {
     fn a_graph_with_an_improper_is_refused_naming_impropers() {
         let mut mol = Atomistic::new();
         let c = mol.add_atom_bare("C");
-        let ids: Vec<AtomId> = (0..3).map(|_| mol.add_atom_bare("H")).collect();
+        let ids: Vec<NodeId> = (0..3).map(|_| mol.add_atom_bare("H")).collect();
         for &h in &ids {
             mol.add_bond(c, h).unwrap();
         }

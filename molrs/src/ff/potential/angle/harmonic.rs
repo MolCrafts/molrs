@@ -1,22 +1,25 @@
-//! Harmonic angle (LAMMPS `angle_style harmonic`): E = k·(θ − θ0)².
-//!
-//! `k` is LAMMPS's `K` (energy/rad², the ½ included) and `theta0` is in
-//! **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
-//! to radians once, at construction.
+//! Harmonic angle (LAMMPS `angle_style harmonic`).
 
-use molrs::store::schema::block_names::ANGLES;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Harmonic angle potential with pre-resolved flat arrays. Its own `theta0`
-/// array is in radians (the parameter is degrees; see [`angle_harmonic_ctor`]).
+/// array is in radians (the parameter is degrees; see [`angle_harmonic_constructor`]).
+///
+/// LAMMPS `angle_style harmonic`: E = k·(θ − θ0)².
+///
+/// `k` is LAMMPS's `K` (energy/rad², the ½ included) and `theta0` is in
+/// **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
+/// to radians once, at construction.
 pub struct AngleHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -126,11 +129,11 @@ impl IndexedTerms for AngleHarmonic {
 }
 
 /// Construct an [`AngleHarmonic`] from style params, type params, and Frame topology.
-pub fn angle_harmonic_ctor(
+pub fn angle_harmonic_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -165,15 +168,9 @@ pub fn angle_harmonic_ctor(
             .get(label.as_str())
             .ok_or_else(|| format!("AngleHarmonic: unknown angle type '{}'", label))?;
         // `k` is LAMMPS's `K`: E = k(θ − θ0)², no ½.
-        let k = params
-            .get("k")
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'k'", label))?
-            as F;
+        let k = param_reads::type_num("harmonic", label, params, "k")?;
         // theta0 is a parameter in degrees (LAMMPS); the kernel works in radians.
-        let theta0_rad = params
-            .get("theta0")
-            .ok_or_else(|| format!("AngleHarmonic type '{}': missing 'theta0'", label))?
-            .to_radians() as F;
+        let theta0_rad = param_reads::type_num("harmonic", label, params, "theta0")?.to_radians();
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
@@ -182,7 +179,7 @@ pub fn angle_harmonic_ctor(
         theta0_vec.push(theta0_rad);
     }
 
-    Ok(Member::indexed(AngleHarmonic::new(
+    Ok(ForceTerm::indexed(AngleHarmonic::new(
         atom_i, atom_j, atom_k, k_vec, theta0_vec,
     )))
 }
@@ -193,8 +190,8 @@ mod tests {
 
     /// Atoms at (1,0,0), (0,0,0), (0,1,0): one 90° angle of type `label`.
     fn right_angle_frame(label: &str) -> Frame {
-        use molrs::store::block::Block;
-        use molrs::types::Idx;
+        use molrs::core::Block;
+        use molrs::op::Idx;
         use ndarray::Array1;
         let mut atoms = Block::new();
         for (key, v) in [
@@ -234,7 +231,7 @@ mod tests {
             )
             .unwrap();
         let frame = right_angle_frame("A-A-A");
-        let pots = crate::ff::potential::PotentialCompiler::new(&ff)
+        let pots = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap();
         // The frame's angle is 90 degrees.

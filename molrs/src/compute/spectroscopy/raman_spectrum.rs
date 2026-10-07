@@ -5,8 +5,8 @@ use rustfft::FftPlanner;
 
 use super::spectra::RamanSpectrumResult;
 use super::{acf_to_intensities, acf_to_spectrum, bose_factor, cosine_sq_window};
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Parallel polarization: `I_∥ = I_iso + (4/45)·I_aniso`.
 const PARALLEL_ANISO_COEFF: f64 = 4.0 / 45.0;
@@ -64,8 +64,7 @@ impl Fit for RamanSpectrum {
         }
 
         let max_lag = n - 1;
-        // Pre-compute CosineSq window once and apply to both ACFs — identical to
-        // the historical Raman transform tail.
+        // Pre-compute the CosineSq window once and apply it to both ACFs.
         let window = cosine_sq_window(max_lag + 1);
         let win_iso: Array1<f64> = acf_iso.iter().zip(&window).map(|(a, w)| a * w).collect();
         let win_aniso: Array1<f64> = acf_aniso.iter().zip(&window).map(|(a, w)| a * w).collect();
@@ -124,8 +123,8 @@ impl Fit for RamanSpectrum {
 mod tests {
     use super::super::raman_tensor::RamanTensor;
     use super::*;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;
 
@@ -182,7 +181,12 @@ mod tests {
         let mut pol = Array2::zeros((n, 6));
         for t in 0..n {
             let tf = t as f64 * dt;
-            let val = (2.0 * std::f64::consts::PI * 30.0 * 1e-3 * tf).sin();
+            let val = (2.0
+                * std::f64::consts::PI
+                * 30.0
+                * crate::core::unit_factors::THZ_TO_PER_FS.get()
+                * tf)
+                .sin();
             for c in 0..6 {
                 pol[[t, c]] = val * (1.0 + 0.1 * c as f64);
             }

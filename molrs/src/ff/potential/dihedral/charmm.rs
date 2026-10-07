@@ -1,36 +1,39 @@
-//! CHARMM proper dihedral (LAMMPS `dihedral_style charmm`):
-//!
-//! E(φ) = k·[1 + cos(n·φ − d)]
-//!
-//! `k` is LAMMPS's `K` (energy), `periodicity` its integer `n`, and `phase` its
-//! `d` in **degrees** (LAMMPS takes an integer number of degrees; any value is
-//! accepted here). The kernel converts the phase to radians once.
-//!
-//! # The weight `w`
-//!
-//! LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
-//! *dihedral* computes — its end atoms, with the `epsilon14` / `sigma14` of
-//! the `lj/charmm` pair style and the full Coulomb, beside `special_bonds`
-//! 1-4 weights of zero. This kernel prices the torsion alone; the compiler
-//! routes every dihedral's `w` pair to the 1-4 exceptions kernel
-//! ([`crate::ff::potential::pair::exceptions`]), which also makes LAMMPS's
-//! checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
-//! `w = 0` (or absent) is the AMBER use of the style.
+//! CHARMM proper dihedral (LAMMPS `dihedral_style charmm`).
 
-use molrs::store::schema::block_names::DIHEDRALS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// CHARMM proper dihedral with pre-resolved flat arrays.
+///
+/// CHARMM proper dihedral (LAMMPS `dihedral_style charmm`):
+///
+/// E(φ) = k·[1 + cos(n·φ − d)]
+///
+/// `k` is LAMMPS's `K` (energy), `periodicity` its integer `n`, and `phase` its
+/// `d` in **degrees** (LAMMPS takes an integer number of degrees; any value is
+/// accepted here). The kernel converts the phase to radians once.
+///
+/// # The weight `w`
+///
+/// LAMMPS's fourth coefficient `w` weights a 1-4 non-bonded pair that the
+/// *dihedral* computes — its end atoms, with the `epsilon14` / `sigma14` of
+/// the `lj/charmm` pair style and the full Coulomb, beside `special_bonds`
+/// 1-4 weights of zero. This kernel prices the torsion alone; the compiler
+/// routes every dihedral's `w` pair to the 1-4 exceptions kernel
+/// ([`PairExceptions`](crate::ff::potential::pair::PairExceptions)), which also makes LAMMPS's
+/// checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
+/// `w = 0` (or absent) is the AMBER use of the style.
 pub struct DihedralCharmm {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -124,13 +127,13 @@ impl IndexedTerms for DihedralCharmm {
 
 /// Construct a [`DihedralCharmm`] from per-type params (`k`, `periodicity`,
 /// `phase` in degrees) and a Frame's `"dihedrals"` block
-/// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see the module
-/// docs).
-pub fn dihedral_charmm_ctor(
+/// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see
+/// [`DihedralCharmm`]).
+pub fn dihedral_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -177,14 +180,13 @@ pub fn dihedral_charmm_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(p.get("k").ok_or("dihedral_charmm: missing k")? as F);
-        nn.push(
-            p.get("periodicity")
-                .ok_or("dihedral_charmm: missing periodicity")? as F,
-        );
-        dd.push(p.get("phase").unwrap_or(0.0).to_radians() as F); // degrees → radians
+        let label = tc[idx].as_str();
+        kk.push(param_reads::type_num("charmm", label, p, "k")?);
+        nn.push(param_reads::type_num("charmm", label, p, "periodicity")?);
+        // degrees → radians
+        dd.push(param_reads::type_num("charmm", label, p, "phase")?.to_radians());
     }
-    Ok(Member::indexed(DihedralCharmm {
+    Ok(ForceTerm::indexed(DihedralCharmm {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -207,14 +209,14 @@ mod tests {
     /// A LAMMPS-read `dihedral_style charmm` field and a frame with its one
     /// dihedral at φ = 60°.
     fn lammps_charmm(w: &str) -> (crate::ff::forcefield::ForceField, Frame) {
-        use crate::ff::forcefield::readers::ForceFieldReader;
-        use molrs::store::block::Block;
-        use molrs::types::Idx;
+        use crate::io::reader::ForceFieldReader;
+        use molrs::core::Block;
+        use molrs::op::Idx;
         use ndarray::Array1;
         let text = format!(
             "special_bonds charmm\ndihedral_style charmm\ndihedral_coeff a-b-c-d 0.2 3 180 {w}\n"
         );
-        let ff = crate::ff::forcefield::readers::lammps::LammpsFfReader::new()
+        let ff = crate::io::lammps::forcefield_reader::LammpsForcefieldReader::new()
             .read_str(&text)
             .unwrap();
         let mut dihedrals = Block::new();
@@ -241,15 +243,18 @@ mod tests {
     #[test]
     fn a_nonzero_weight_needs_lj_charmm_and_a_weight_in_range() {
         let (ff, frame) = lammps_charmm("1.0");
-        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+        let err = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("lj/charmm"), "{err}");
+        assert!(err.to_string().contains("lj/charmm"), "{err}");
         let (ff, frame) = lammps_charmm("1.5");
-        let err = crate::ff::potential::PotentialCompiler::new(&ff)
+        let err = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap_err();
-        assert!(err.contains("a-b-c-d") && err.contains("[0, 1]"), "{err}");
+        assert!(
+            err.to_string().contains("a-b-c-d") && err.to_string().contains("[0, 1]"),
+            "{err}"
+        );
     }
 
     /// `w = 0` is the AMBER use of the style and prices LAMMPS's
@@ -257,7 +262,7 @@ mod tests {
     #[test]
     fn a_zero_weight_compiles_to_the_lammps_energy() {
         let (ff, frame) = lammps_charmm("0.0");
-        let pots = crate::ff::potential::PotentialCompiler::new(&ff)
+        let pots = crate::ff::compile::PotentialCompiler::new(&ff)
             .compile(&frame)
             .unwrap();
         let phi = 60.0_f64.to_radians();

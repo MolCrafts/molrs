@@ -15,12 +15,12 @@ import itertools
 
 import molrs
 import pytest
-from molrs import _lib
+from molrs import _native
 
 
-def _chain(*bead_types: str) -> tuple[molrs.CoarseGrain, list[int]]:
+def _chain(*bead_types: str) -> tuple[molrs.core.CoarseGrain, list[int]]:
     """A linear bead chain of ``bead_types``, and its handles in that order."""
-    cg = molrs.CoarseGrain()
+    cg = molrs.core.CoarseGrain()
     handles = [cg.add_bead(bead_type) for bead_type in bead_types]
     for a, b in itertools.pairwise(handles):
         cg.add_bond(a, b)
@@ -28,7 +28,7 @@ def _chain(*bead_types: str) -> tuple[molrs.CoarseGrain, list[int]]:
 
 
 def test_subgraph_matcher_is_published_from_molrs_perceive() -> None:
-    assert molrs.perceive.SubgraphMatcher is _lib.SubgraphMatcher
+    assert molrs.perceive.SubgraphMatcher is _native.SubgraphMatcher
     assert "SubgraphMatcher" in molrs.perceive.__all__
     assert molrs.perceive.SubgraphMatcher.__module__ == "molrs.perceive"
 
@@ -37,7 +37,7 @@ def test_find_returns_one_group_of_live_handles_in_pattern_order() -> None:
     pattern, _ = _chain("1", "4")
     # The target is built type-4 first, so pattern order differs from the
     # target's own bead order.
-    target = molrs.CoarseGrain()
+    target = molrs.core.CoarseGrain()
     four = target.add_bead("4")
     one = target.add_bead("1")
     target.add_bond(four, one)
@@ -57,7 +57,7 @@ def test_find_without_a_match_is_an_empty_list() -> None:
 
 def test_find_on_an_atomistic_target_is_a_type_error() -> None:
     pattern, _ = _chain("1", "4")
-    target = molrs.Atomistic()
+    target = molrs.core.Atomistic()
     target.add_atom("C", 0.0, 0.0, 0.0)
 
     with pytest.raises(TypeError):

@@ -4,8 +4,8 @@ use ndarray::Array1;
 
 use super::raman_spectrum::RamanSpectrum;
 use super::spectra::RamanSpectrumResult;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// ROA (Raman optical activity) spectrum transform of **raw ROA iso/aniso
 /// cross-correlations** from [`RoaCrossTensor`](super::RoaCrossTensor).

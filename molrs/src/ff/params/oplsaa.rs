@@ -24,7 +24,7 @@
 //!
 //! # Conversions
 //!
-//! Every number is converted by `GromacsTopFfReader`, the one GROMACS parser
+//! Every number is converted by `GromacsTopForcefieldReader`, the one GROMACS parser
 //! in molrs; the generator only writes its result.
 //!
 //! | GROMACS | molrs |
@@ -77,12 +77,6 @@ pub const OPLSAA_NAME: &str = "OPLS-AA";
 
 /// The combining rule — geometric in σ and ε (`[ defaults ]` comb-rule 3).
 pub const OPLSAA_MIXING: &str = "geometric";
-
-/// The 1-4 Lennard-Jones scale weight (`[ defaults ]` fudgeLJ).
-pub const OPLSAA_LJ_14: f64 = 0.5;
-
-/// The 1-4 Coulomb scale weight (`[ defaults ]` fudgeQQ).
-pub const OPLSAA_COULOMB_14: f64 = 0.5;
 
 /// The 813 `[ atomtypes ]` rows of `ffnonbonded.itp`, in file order.
 #[rustfmt::skip]

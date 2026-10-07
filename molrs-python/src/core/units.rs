@@ -1,12 +1,23 @@
-//! Python bindings for molrs' native unit engine.
+//! Python bindings for `molrs::core` (`molrs.core`): the native unit
+//! engine (`Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`), its
+//! `UnitsError`, and the physical constants other subsystems need by name
+//! (`AMBER_COULOMB`).
 
 use crate::error::units_error;
-use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset};
+use molrs::core::{
+    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_unit_preset,
+};
 use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-#[pyclass(module = "molrs", name = "Unit", frozen, skip_from_py_object, subclass)]
+#[pyclass(
+    module = "molrs.core",
+    name = "Unit",
+    frozen,
+    skip_from_py_object,
+    subclass
+)]
 #[derive(Clone)]
 pub struct PyUnit {
     inner: Unit,
@@ -75,7 +86,7 @@ impl PyUnit {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let unit = &slf.borrow().inner;
-        crate::helpers::reduce_via_type(
+        crate::pickle::reduce_via_type(
             slf.as_any(),
             (
                 unit.factor(),
@@ -88,7 +99,7 @@ impl PyUnit {
 }
 
 #[pyclass(
-    module = "molrs",
+    module = "molrs.core",
     name = "Quantity",
     frozen,
     skip_from_py_object,
@@ -121,7 +132,7 @@ impl PyQuantity {
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let this = slf.borrow();
-        crate::helpers::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
+        crate::pickle::reduce_via_type(slf.as_any(), (this.magnitude(), this.unit()))
     }
 
     #[getter]
@@ -236,7 +247,7 @@ impl PyQuantity {
 /// [`UnitDef`]: `(name, aliases, symbol, factor, offset, dimension, prefixable)`.
 type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
 
-#[pyclass(module = "molrs", name = "UnitRegistry", subclass, dict)]
+#[pyclass(module = "molrs.core", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
     pub(crate) inner: UnitRegistry,
 }
@@ -285,6 +296,13 @@ impl PyUnitRegistry {
 
     fn parse(&self, expression: &str) -> PyResult<PyUnit> {
         self.parse_inner(expression)
+    }
+
+    /// The factor converting a value in ``from_unit`` to ``to_unit``
+    /// (``value_to = value_from * factor``); a power of ten is the correctly
+    /// rounded one (Å → nm is ``0.1``).
+    fn factor(&self, from_unit: &str, to_unit: &str) -> PyResult<f64> {
+        self.inner.factor(from_unit, to_unit).map_err(units_error)
     }
 
     fn quantity(&self, value: f64, expression: &str) -> PyResult<PyQuantity> {
@@ -352,7 +370,7 @@ impl PyUnitRegistry {
     }
 
     fn __repr__(&self) -> &'static str {
-        "<molrs.UnitRegistry>"
+        "<molrs.core.UnitRegistry>"
     }
 
     fn __reduce__<'py>(
@@ -383,9 +401,9 @@ impl PyUnitRegistry {
 }
 
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
-/// this is the Python spelling of `molrs::units::UnitPreset`.
+/// this is the Python spelling of `molrs::core::UnitPreset`.
 #[pyclass(
-    module = "molrs",
+    module = "molrs.core",
     name = "UnitPreset",
     frozen,
     from_py_object,
@@ -400,7 +418,7 @@ pub struct PyUnitPreset {
 impl PyUnitPreset {
     #[new]
     fn new(name: &str) -> PyResult<Self> {
-        lookup_preset(name)
+        lookup_unit_preset(name)
             .map(|inner| Self { inner })
             .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
     }
@@ -412,13 +430,63 @@ impl PyUnitPreset {
         }
     }
 
+    /// Every registered preset name, sorted: the LAMMPS styles (``real``,
+    /// ``metal``, ``si``, ``cgs``, ``electron``, ``lj``, ``micro``, ``nano``),
+    /// ``openmm``, and any :meth:`register` added.
+    #[staticmethod]
+    fn names() -> Vec<String> {
+        molrs::core::unit_preset_names()
+    }
+
+    /// Register a preset of your own under ``name`` (process-wide) and return
+    /// it; ``UnitPreset(name)`` finds it afterwards.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Preset name.
+    /// units : dict[str, str]
+    ///     The unit expression of each of the ten dimensions (``mass``,
+    ///     ``length``, ``time``, ``energy``, ``temperature``, ``charge``,
+    ///     ``pressure``, ``velocity``, ``force``, ``density``).
+    /// boltzmann, coulomb : float
+    ///     The two constants in this preset's units.
+    /// overwrite : bool
+    ///     Replace a preset already under ``name`` (a built-in included).
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     A dimension is missing or unknown, a unit is empty, or ``name`` is
+    ///     taken and ``overwrite`` is false.
+    #[staticmethod]
+    #[pyo3(signature = (name, units, *, boltzmann, coulomb, overwrite = false))]
+    fn register(
+        name: &str,
+        units: std::collections::HashMap<String, String>,
+        boltzmann: f64,
+        coulomb: f64,
+        overwrite: bool,
+    ) -> PyResult<Self> {
+        let preset =
+            UnitPreset::new(name, units, boltzmann, coulomb).map_err(PyValueError::new_err)?;
+        if overwrite {
+            molrs::core::replace_unit_preset(name, preset.clone())
+                .map_err(PyValueError::new_err)?;
+        } else {
+            molrs::core::register_unit_preset(name, preset.clone())
+                .map_err(PyValueError::new_err)?;
+        }
+        Ok(Self { inner: preset })
+    }
+
     #[getter]
     fn name(&self) -> &str {
         self.inner.name()
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
-        crate::helpers::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
+        crate::pickle::reduce_via_type(slf.as_any(), (slf.borrow().name().to_owned(),))
     }
 
     /// Boltzmann constant **in this preset's energy / temperature units**
@@ -469,4 +537,24 @@ impl PyUnitPreset {
     fn __repr__(&self) -> String {
         format!("UnitPreset({:?})", self.inner.name())
     }
+}
+
+/// Register `molrs.core.constants`: every constant of
+/// `molrs::core::constants` ([`molrs::core::constants::ALL`]), by its Rust
+/// name.
+pub fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    for &(name, value) in molrs::core::constants::ALL {
+        m.add(name, value)?;
+    }
+    Ok(())
+}
+
+/// Register the unit engine on `molrs.core`.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("UnitsError", m.py().get_type::<crate::error::UnitsError>())?;
+    m.add_class::<PyUnit>()?;
+    m.add_class::<PyQuantity>()?;
+    m.add_class::<PyUnitRegistry>()?;
+    m.add_class::<PyUnitPreset>()?;
+    Ok(())
 }

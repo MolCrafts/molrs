@@ -1,18 +1,11 @@
 //! [`CumulativeTrapezoid`] — cumulative trapezoidal integral of a curve.
-//!
-//! Consumes a curve `y` sampled on uniform step `dt` and returns the running
-//! integral `∫₀^{k·dt} y(t) dt` at every point. The trapezoid recurrence is the
-//! same one lifted into `running_trapezoid` from
-//! the Green–Kubo ionic conductivity, so a `CumulativeTrapezoid` over the same JACF
-//! and `dt` reproduces that function's running integral bit-for-bit (before the
-//! Green–Kubo prefactor).
 
 use ndarray::Array1;
 
 use super::running_trapezoid;
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::Fit;
 
 /// Result of a running trapezoidal integration.
 #[derive(Debug, Clone)]
@@ -28,6 +21,13 @@ impl ComputeResult for CumulativeTrapezoidResult {}
 ///
 /// Stateless: the step `dt` and the optional lag count travel with the input,
 /// not the struct, since they are properties of the upstream curve / request.
+///
+/// Consumes a curve `y` sampled on uniform step `dt` and returns the running
+/// integral `∫₀^{k·dt} y(t) dt` at every point. The trapezoid recurrence is the
+/// same one lifted into `running_trapezoid` from
+/// the Green–Kubo ionic conductivity, so a `CumulativeTrapezoid` over the same JACF
+/// and `dt` reproduces that function's running integral bit-for-bit (before the
+/// Green–Kubo prefactor).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CumulativeTrapezoid;
 

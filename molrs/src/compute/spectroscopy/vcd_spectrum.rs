@@ -5,13 +5,13 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// VCD (vibrational circular dichroism) spectrum transform of a **raw VCD
 /// cross-correlation** `⟨μ̇(0)·ṁ(τ)⟩` from [`VcdCrossFlux`](super::VcdCrossFlux).
 ///
-/// Identical window + one-sided FFT pipeline as [`IRSpectrum`](super::IRSpectrum)
+/// Identical window + one-sided FFT pipeline as [`IrSpectrum`](super::IrSpectrum)
 /// (calls `window_and_fft`), so the cm⁻¹ grid matches
 /// IR/Raman exactly — only the supplied cross-correlation differs. The
 /// resulting intensities are **signed**: enantiomers produce sign-flipped

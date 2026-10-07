@@ -1,43 +1,20 @@
 //! Thole dipole-dipole screening (CL&Pol short-range damping).
-//!
-//! Screens the Coulomb interaction between Drude-related point charges at short
-//! range with the exponential Thole function
-//!
-//! ```text
-//! T_ij(r) = 1 - (1 + s_ij r / 2) exp(-s_ij r)
-//! s_ij    = a_ij / (alpha_i alpha_j)^(1/6),   a_ij = (a_i + a_j) / 2
-//! ```
-//!
-//! so the damped energy of a pair is `T_ij(r) * q_i q_j / r`. The screening
-//! `s_ij` depends on **both** endpoints' atomic polarizabilities, so the
-//! constructor resolves per-atom-type `charge` / `alpha` / `damp` from the
-//! `atoms` block and precomputes `(s_ij, q_i q_j)` per pair. `alpha` and
-//! `damp` (the Thole `a`) are LAMMPS `pair_style thole`'s `pair_coeff` names;
-//! the per-type `charge` is molrs's (LAMMPS damps the Drude charges of the
-//! atoms).
-//!
-//! Units: r in A, alpha in A^3, a dimensionless, q in e (energy in the same
-//! Coulomb units as the accompanying electrostatic kernel — Thole is a
-//! multiplicative screen on `q_i q_j / r`).
-//!
-//! Reference: Thole, Chem. Phys. 59 (1981) 341,
-//! DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
-//! polarizer (LAMMPS `pair_style thole`).
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::op::F;
 
 /// Thole-screened Coulomb pair potential with pre-resolved flat arrays.
 ///
@@ -68,6 +45,31 @@ enum Source {
     },
 }
 
+/// Thole dipole-dipole screening (CL&Pol short-range damping).
+///
+/// Screens the Coulomb interaction between Drude-related point charges at short
+/// range with the exponential Thole function
+///
+/// ```text
+/// T_ij(r) = 1 - (1 + s_ij r / 2) exp(-s_ij r)
+/// s_ij    = a_ij / (alpha_i alpha_j)^(1/6),   a_ij = (a_i + a_j) / 2
+/// ```
+///
+/// so the damped energy of a pair is `T_ij(r) * q_i q_j / r`. The screening
+/// `s_ij` depends on **both** endpoints' atomic polarizabilities, so the
+/// constructor resolves per-atom-type `charge` / `alpha` / `damp` from the
+/// `atoms` block and precomputes `(s_ij, q_i q_j)` per pair. `alpha` and
+/// `damp` (the Thole `a`) are LAMMPS `pair_style thole`'s `pair_coeff` names;
+/// the per-type `charge` is molrs's (LAMMPS damps the Drude charges of the
+/// atoms).
+///
+/// Units: r in A, alpha in A^3, a dimensionless, q in e (energy in the same
+/// Coulomb units as the accompanying electrostatic kernel — Thole is a
+/// multiplicative screen on `q_i q_j / r`).
+///
+/// Reference: Thole, Chem. Phys. 59 (1981) 341,
+/// DOI 10.1016/0301-0104(81)85176-2; as emitted by the paduagroup/clandpol
+/// polarizer (LAMMPS `pair_style thole`).
 pub struct PairThole {
     source: Source,
 }
@@ -88,7 +90,7 @@ impl PairThole {
     }
 
     /// Per-atom `(q, α, a)`, combined when a pair turns up by the same rule
-    /// [`pair_thole_ctor`] applies: `a_ij = ½(aᵢ + aⱼ)`, `s = a_ij/(αᵢαⱼ)^(1/6)`.
+    /// [`pair_thole_constructor`] applies: `a_ij = ½(aᵢ + aⱼ)`, `s = a_ij/(αᵢαⱼ)^(1/6)`.
     pub fn typed(q: Vec<F>, alpha: Vec<F>, a_thole: Vec<F>) -> Self {
         assert_eq!(q.len(), alpha.len());
         assert_eq!(q.len(), a_thole.len());
@@ -305,11 +307,11 @@ impl PairDriven for PairThole {
 /// The thole style's per-type definitions are keyed by **atom type name** and
 /// carry `charge`, `alpha`, `damp`. Each pair's screening is resolved from
 /// its two endpoints' atom types (read from the `atoms` block `type` column).
-pub fn pair_thole_ctor(
+pub fn pair_thole_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
@@ -336,22 +338,13 @@ pub fn pair_thole_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairThole: pairs block missing \"atomj\" column".to_string())?;
 
-    let lookup = |type_name: &str| -> Result<(F, F, F), String> {
+    let lookup = |type_name: &str| -> Result<(F, F, F), crate::ff::potential::CompileError> {
         let p = type_map
             .get(type_name)
             .ok_or_else(|| format!("PairThole: unknown atom type '{}'", type_name))?;
-        let q = p
-            .get("charge")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'charge'", type_name))?
-            as F;
-        let alpha = p
-            .get("alpha")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'alpha'", type_name))?
-            as F;
-        let a = p
-            .get("damp")
-            .ok_or_else(|| format!("PairThole type '{}': missing 'damp'", type_name))?
-            as F;
+        let q = param_reads::type_num("thole", type_name, p, "charge")?;
+        let alpha = param_reads::type_num("thole", type_name, p, "alpha")?;
+        let a = param_reads::type_num("thole", type_name, p, "damp")?;
         Ok((q, alpha, a))
     };
 
@@ -380,20 +373,22 @@ pub fn pair_thole_ctor(
         });
     }
 
-    Ok(Member::pair(PairThole::new(atom_i, atom_j, s_vec, qq_vec)))
+    Ok(ForceTerm::pair(PairThole::new(
+        atom_i, atom_j, s_vec, qq_vec,
+    )))
 }
 
 /// Construct a neighbour-driven [`PairThole`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_thole_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_thole_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_thole_typed_ctor(
+pub fn pair_thole_typed_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -401,17 +396,13 @@ pub fn pair_thole_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("PairThole: unknown atom type '{l}'"))?;
-        let get = |k: &str| {
-            p.get(k)
-                .ok_or_else(|| format!("PairThole type '{l}': missing '{k}'"))
-                .map(|v| v as F)
-        };
+        let get = |k: &str| param_reads::type_num("thole", l, p, k);
         per_type.push((get("charge")?, get("alpha")?, get("damp")?));
     }
     let pick = |f: fn(&(F, F, F)) -> F| -> Vec<F> {
         type_id.iter().map(|&t| f(&per_type[t as usize])).collect()
     };
-    Ok(Member::pair(PairThole::typed(
+    Ok(ForceTerm::pair(PairThole::typed(
         pick(|p| p.0),
         pick(|p| p.1),
         pick(|p| p.2),
@@ -425,7 +416,7 @@ mod tests {
     /// combined them earlier against a fixed list — bit for bit.
     #[test]
     fn per_atom_parameters_score_a_pair_exactly_as_compiled_ones() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 

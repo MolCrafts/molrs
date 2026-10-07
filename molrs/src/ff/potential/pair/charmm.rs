@@ -1,58 +1,19 @@
-//! The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`, as molrs
-//! splits `lj/cut/coul/cut` into `lj/cut` + `coul/cut`:
-//!
-//! * `pair lj/charmm` — Lennard-Jones 12-6 with CHARMM's energy switch,
-//!   per type `epsilon`, `sigma`, `epsilon14`, `sigma14`;
-//! * `pair coul/charmm` — Coulomb with the same switch.
-//!
-//! Both follow `pair_lj_charmm_coul_charmm.cpp` term for term. With
-//! `r_in` = `inner`, `r_c` = `cutoff` and
-//!
-//! ```text
-//! S(r)  = (r_c² − r²)² (r_c² + 2r² − 3r_in²) / (r_c² − r_in²)³     r_in < r < r_c
-//! ```
-//!
-//! (1 below `r_in`, 0 from `r_c` on):
-//!
-//! ```text
-//! E_lj   = 4ε[(σ/r)¹² − (σ/r)⁶] · S(r)        F_lj = −dE_lj/dr  (consistent)
-//! E_coul = C qᵢqⱼ / r · S(r)                   F_coul = C qᵢqⱼ / r² · S(r)
-//! ```
-//!
-//! The Coulomb force is LAMMPS's: the switched force, **not** the gradient of
-//! the switched energy (LAMMPS's `forcecoul *= switch1` drops the `E·S′`
-//! term). Inside `r_in` the two agree; between `r_in` and `r_c` they differ,
-//! exactly as in LAMMPS. The Lennard-Jones force is the true gradient
-//! (LAMMPS adds `philj · switch2`).
-//!
-//! `epsilon14` / `sigma14` (absent → `epsilon` / `sigma`, as a two-number
-//! `pair_coeff` line in LAMMPS) are not used by this kernel: LAMMPS prices
-//! them only inside `dihedral_style charmm`, which molrs routes to the 1-4
-//! exceptions kernel ([`super::exceptions`]). A 1-4 pair this style meets on
-//! the `pairs` list is weighted by `special_bonds` with the regular `epsilon`
-//! / `sigma`, as LAMMPS's pair style does.
-//!
-//! Cross pairs: an explicit cross row, else the style's `mixing` (LAMMPS's
-//! default for the CHARMM styles is `arithmetic`); `epsilon14` / `sigma14`
-//! mix the same way, as LAMMPS's `init_one` does.
-//!
-//! The switch is part of the style's energy, so **both** compile doors apply
-//! it: the compiled (pair-list) form prices a pair beyond `cutoff` at zero,
-//! as LAMMPS does, where the compiled `lj/cut` has no cutoff at all.
+//! The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`: `lj/charmm` and `coul/charmm`.
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::CombiningRule;
+use crate::ff::ir::IrError;
+use crate::ff::ir::{Params, pair_key};
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{CompileError, ForceTerm, PairDriven, Potential, param_reads};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::op::F;
 
 const MIN_R2: F = 1e-24;
 
@@ -65,16 +26,22 @@ struct Switch {
 }
 
 impl Switch {
-    fn new(inner: F, outer: F, who: &str) -> Result<Self, String> {
+    fn new(inner: F, outer: F, style: &str) -> Result<Self, IrError> {
         if !(inner.is_finite() && outer.is_finite() && inner > 0.0) {
-            return Err(format!(
-                "{who}: inner = {inner} and cutoff = {outer} must be finite and positive"
+            return Err(param_reads::bad(
+                style,
+                "",
+                "inner",
+                format!("= {inner} with cutoff = {outer}: both must be finite and positive"),
             ));
         }
         // LAMMPS: "Pair inner cutoff >= Pair outer cutoff".
         if inner >= outer {
-            return Err(format!(
-                "{who}: inner cutoff {inner} must be below the outer cutoff {outer}"
+            return Err(param_reads::bad(
+                style,
+                "",
+                "inner",
+                format!("= {inner} is not below the outer cutoff {outer}"),
             ));
         }
         let (inner2, outer2) = (inner * inner, outer * outer);
@@ -100,17 +67,11 @@ impl Switch {
     }
 }
 
-/// `inner` and `cutoff` of a CHARMM style; both are required.
-fn switch_of(style: &Params, who: &str) -> Result<Switch, String> {
-    let get = |key: &str| {
-        style.get(key).map(|v| v as F).ok_or_else(|| {
-            format!(
-                "{who}: style must declare '{key}' (LAMMPS's inner and outer switching \
-                 cutoffs are part of the CHARMM energy)"
-            )
-        })
-    };
-    Switch::new(get("inner")?, get("cutoff")?, who)
+/// `inner` and `cutoff` of a CHARMM style; both are required (LAMMPS's
+/// inner and outer switching cutoffs are part of the CHARMM energy).
+fn switch_of(params: &Params, style: &str) -> Result<Switch, IrError> {
+    let get = |key: &str| param_reads::style_num(style, params, key);
+    Switch::new(get("inner")?, get("cutoff")?, style)
 }
 
 /// LAMMPS's `lj1..lj4` for one `(ε, σ)`: `48εσ¹²`, `24εσ⁶`, `4εσ¹²`, `4εσ⁶`.
@@ -125,11 +86,14 @@ pub(crate) fn lj_coeffs(epsilon: F, sigma: F) -> [F; 4] {
     ]
 }
 
-/// The mixing rule of a CHARMM style: declared, or LAMMPS's `arithmetic`.
-pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, String> {
+/// The mixing rule of a CHARMM style: declared, or the IR's (and
+/// LAMMPS's) default [`CombiningRule::UNDECLARED`], `arithmetic`.
+pub(crate) fn charmm_mixing(style: &Params) -> Result<CombiningRule, IrError> {
     match style.get_str("mixing") {
-        Some(name) => Mixing::parse(name).map_err(|e| format!("lj/charmm: {e}")),
-        None => Ok(Mixing::Arithmetic),
+        Some(name) => {
+            CombiningRule::parse(name).map_err(|e| param_reads::bad("lj/charmm", "", "mixing", e))
+        }
+        None => Ok(CombiningRule::UNDECLARED),
     }
 }
 
@@ -137,12 +101,8 @@ pub(crate) fn charmm_mixing(style: &Params) -> Result<Mixing, String> {
 pub(crate) type CharmmParams = ((F, F), (F, F));
 
 /// `((ε, σ), (ε₁₄, σ₁₄))` of one `lj/charmm` row.
-fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, String> {
-    let need = |k: &str| {
-        p.get(k)
-            .map(|v| v as F)
-            .ok_or_else(|| format!("lj/charmm type '{key}': missing '{k}'"))
-    };
+fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, IrError> {
+    let need = |k: &str| param_reads::type_num("lj/charmm", key, p, k);
     let (eps, sigma) = (need("epsilon")?, need("sigma")?);
     let eps14 = p.get("epsilon14").map(|v| v as F).unwrap_or(eps);
     let sigma14 = p.get("sigma14").map(|v| v as F).unwrap_or(sigma);
@@ -154,20 +114,21 @@ fn charmm_row(p: &Params, key: &str) -> Result<CharmmParams, String> {
 /// rows mixed by `mixing` otherwise — LAMMPS's `init_one`.
 pub(crate) fn charmm_pair_params(
     rows: &HashMap<&str, &Params>,
-    mixing: Mixing,
+    mixing: CombiningRule,
     a: &str,
     b: &str,
-) -> Result<CharmmParams, String> {
-    if a != b
-        && let Some(p) = rows.get(pair_key(a, b)?.as_str())
-    {
-        return charmm_row(p, &pair_key(a, b)?);
+) -> Result<CharmmParams, CompileError> {
+    if a != b {
+        let key = pair_key(a, b)?;
+        if let Some(p) = rows.get(key.as_str()) {
+            return Ok(charmm_row(p, &key)?);
+        }
     }
-    let own = |t: &str| -> Result<CharmmParams, String> {
+    let own = |t: &str| -> Result<CharmmParams, CompileError> {
         let p = rows
             .get(t)
             .ok_or_else(|| format!("lj/charmm: unknown atom type '{t}'"))?;
-        charmm_row(p, t)
+        Ok(charmm_row(p, t)?)
     };
     let (ra, r14a) = own(a)?;
     let (rb, r14b) = own(b)?;
@@ -194,13 +155,50 @@ enum LjSource {
 }
 
 /// LAMMPS `pair_style lj/charmm/coul/charmm`, van-der-Waals half.
+///
+/// The two halves of LAMMPS's `pair_style lj/charmm/coul/charmm`, as molrs
+/// splits `lj/cut/coul/cut` into `lj/cut` + `coul/cut`:
+///
+/// * `pair lj/charmm` — Lennard-Jones 12-6 with CHARMM's energy switch,
+///   per type `epsilon`, `sigma`, `epsilon14`, `sigma14`;
+/// * `pair coul/charmm` — Coulomb with the same switch.
+///
+/// Both follow `pair_lj_charmm_coul_charmm.cpp` term for term. With
+/// `r_in` = `inner`, `r_c` = `cutoff` and
+///
+/// ```text
+/// S(r)  = (r_c² − r²)² (r_c² + 2r² − 3r_in²) / (r_c² − r_in²)³     r_in < r < r_c
+/// ```
+///
+/// (1 below `r_in`, 0 from `r_c` on):
+///
+/// ```text
+/// E_lj   = 4ε[(σ/r)¹² − (σ/r)⁶] · S(r)        F_lj = −dE_lj/dr  (consistent)
+/// E_coul = C qᵢqⱼ / r · S(r)                   F_coul = C qᵢqⱼ / r² · S(r)
+/// ```
+///
+/// `epsilon14` / `sigma14` (absent → `epsilon` / `sigma`, as a two-number
+/// `pair_coeff` line in LAMMPS) are not used by this kernel: LAMMPS prices
+/// them only inside `dihedral_style charmm`, which molrs routes to the 1-4
+/// exceptions kernel ([`PairExceptions`](super::PairExceptions)). A 1-4 pair this style meets on
+/// the `pairs` list is weighted by `special_bonds` with the regular `epsilon`
+/// / `sigma`, as LAMMPS's pair style does.
+///
+/// Cross pairs: an explicit cross row, else the style's `mixing` (LAMMPS's
+/// default for the CHARMM styles is `arithmetic`); `epsilon14` / `sigma14`
+/// mix the same way, as LAMMPS's `init_one` does.
+///
+/// The switch is part of the style's energy, so **both** compile doors apply
+/// it: the compiled (pair-list) form prices a pair at or beyond `cutoff` at
+/// zero, as LAMMPS does — as every pair style's compiled form truncates at
+/// its `cutoff`.
 #[derive(Clone, Debug)]
-pub struct PairLJCharmm {
+pub struct PairLjCharmm {
     switch: Switch,
     source: LjSource,
 }
 
-impl PairLJCharmm {
+impl PairLjCharmm {
     /// A kernel over a fixed pair list: one `[ε, σ]` and one weight per row.
     pub fn compiled(
         inner: F,
@@ -209,7 +207,7 @@ impl PairLJCharmm {
         atom_j: Vec<usize>,
         eps_sigma: &[(F, F)],
         weight: Vec<F>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), eps_sigma.len());
         assert_eq!(atom_i.len(), weight.len());
@@ -226,15 +224,20 @@ impl PairLJCharmm {
 
     /// A kernel keyed on the atoms: `type_id` per atom and a full
     /// `ntypes × ntypes` table of `(ε, σ)`, laid out `ti * ntypes + tj`.
-    pub fn typed(inner: F, cutoff: F, type_id: Vec<u32>, table: &[(F, F)]) -> Result<Self, String> {
+    pub fn typed(
+        inner: F,
+        cutoff: F,
+        type_id: Vec<u32>,
+        table: &[(F, F)],
+    ) -> Result<Self, CompileError> {
         let ntypes = (table.len() as f64).sqrt().round() as usize;
         if ntypes * ntypes != table.len() || ntypes == 0 {
             return Err("lj/charmm: the type-pair table must be square and non-empty".into());
         }
         if type_id.iter().any(|&t| t as usize >= ntypes) {
-            return Err(format!(
-                "lj/charmm: an atom type is outside the {ntypes} tabulated"
-            ));
+            return Err(
+                format!("lj/charmm: an atom type is outside the {ntypes} tabulated").into(),
+            );
         }
         let n_owned = type_id.len();
         Ok(Self {
@@ -363,6 +366,14 @@ enum CoulSource {
 }
 
 /// LAMMPS `pair_style lj/charmm/coul/charmm`, Coulomb half.
+///
+/// The Coulomb force is LAMMPS's: the switched force, **not** the gradient of
+/// the switched energy (LAMMPS's `forcecoul *= switch1` drops the `E·S′`
+/// term). Inside `r_in` the two agree; between `r_in` and `r_c` they differ,
+/// exactly as in LAMMPS. The Lennard-Jones force is the true gradient
+/// (LAMMPS adds `philj · switch2`).
+///
+/// The switch `S(r)` and the cross-pair rules are [`PairLjCharmm`]'s.
 #[derive(Clone, Debug)]
 pub struct PairCoulCharmm {
     switch: Switch,
@@ -381,7 +392,7 @@ impl PairCoulCharmm {
         atom_j: Vec<usize>,
         qiqj: Vec<F>,
         weight: Vec<F>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, CompileError> {
         assert_eq!(atom_i.len(), atom_j.len());
         assert_eq!(atom_i.len(), qiqj.len());
         assert_eq!(atom_i.len(), weight.len());
@@ -398,7 +409,7 @@ impl PairCoulCharmm {
     }
 
     /// A kernel that forms `qᵢqⱼ` from per-atom charges.
-    pub fn typed(inner: F, cutoff: F, k: F, q: Vec<F>) -> Result<Self, String> {
+    pub fn typed(inner: F, cutoff: F, k: F, q: Vec<F>) -> Result<Self, CompileError> {
         let n_owned = q.len();
         Ok(Self {
             switch: Switch::new(inner, cutoff, "coul/charmm")?,
@@ -552,10 +563,10 @@ macro_rules! pair_member_impls {
     };
 }
 
-pair_member_impls!(PairLJCharmm, LjSource::Compiled);
+pair_member_impls!(PairLjCharmm, LjSource::Compiled);
 pair_member_impls!(PairCoulCharmm, CoulSource::Compiled);
 
-impl PairLJCharmm {
+impl PairLjCharmm {
     fn gather(&mut self, owner: &[u32]) {
         if let LjSource::Typed {
             type_id, n_owned, ..
@@ -617,11 +628,11 @@ fn atom_types(frame: &Frame, who: &str) -> Result<Vec<String>, String> {
 }
 
 /// Construct a compiled `lj/charmm` from the frame's `pairs` block.
-pub fn pair_lj_charmm_ctor(
+pub fn pair_lj_charmm_constructor(
     style: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
@@ -632,7 +643,7 @@ pub fn pair_lj_charmm_ctor(
         eps_sigma.push(charmm_pair_params(&rows, mixing, &types[i], &types[j])?.0);
     }
     let weight = row_weights(ai.len(), &is_14, style.get("lj14scale").unwrap_or(1.0));
-    let kernel = PairLJCharmm {
+    let kernel = PairLjCharmm {
         switch,
         source: LjSource::Compiled {
             atom_i: ai,
@@ -641,15 +652,15 @@ pub fn pair_lj_charmm_ctor(
             weight,
         },
     };
-    Ok(Member::pair(kernel))
+    Ok(ForceTerm::pair(kernel))
 }
 
 /// Construct a neighbour-driven `lj/charmm`, keyed on the atoms' types.
-pub fn pair_lj_charmm_typed_ctor(
+pub fn pair_lj_charmm_typed_constructor(
     style: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "lj/charmm")?;
     let mixing = charmm_mixing(style)?;
     let rows: HashMap<&str, &Params> = type_params.iter().copied().collect();
@@ -663,7 +674,7 @@ pub fn pair_lj_charmm_typed_ctor(
         }
     }
     let n_owned = type_id.len();
-    let kernel = PairLJCharmm {
+    let kernel = PairLjCharmm {
         switch,
         source: LjSource::Typed {
             type_id,
@@ -672,16 +683,13 @@ pub fn pair_lj_charmm_typed_ctor(
             n_owned,
         },
     };
-    Ok(Member::pair(kernel))
+    Ok(ForceTerm::pair(kernel))
 }
 
-/// `coulomb / dielectric`, both required (no kernel default; see `coul/cut`).
-fn coulomb_constant(style: &Params) -> Result<F, String> {
-    let need = |k: &str| {
-        style.get(k).map(|v| v as F).ok_or_else(|| {
-            format!("coul/charmm: style must declare '{k}' (force-field data, no default)")
-        })
-    };
+/// `coulomb / dielectric`: `coulomb` the force field's to state, `dielectric`
+/// gathered with its declared default (1, LAMMPS's).
+fn coulomb_constant(style: &Params) -> Result<F, IrError> {
+    let need = |k: &str| param_reads::style_num("coul/charmm", style, k);
     Ok(need("coulomb")? / need("dielectric")?)
 }
 
@@ -695,11 +703,11 @@ fn charges(frame: &Frame) -> Result<Vec<F>, String> {
 }
 
 /// Construct a compiled `coul/charmm` from per-atom charges and `pairs`.
-pub fn pair_coul_charmm_ctor(
+pub fn pair_coul_charmm_constructor(
     style: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "coul/charmm")?;
     let k = coulomb_constant(style)?;
     let q = charges(frame)?;
@@ -716,15 +724,15 @@ pub fn pair_coul_charmm_ctor(
             weight,
         },
     };
-    Ok(Member::pair(kernel))
+    Ok(ForceTerm::pair(kernel))
 }
 
 /// Construct a neighbour-driven `coul/charmm` from per-atom charges.
-pub fn pair_coul_charmm_typed_ctor(
+pub fn pair_coul_charmm_typed_constructor(
     style: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let switch = switch_of(style, "coul/charmm")?;
     let k = coulomb_constant(style)?;
     let q = charges(frame)?;
@@ -734,13 +742,13 @@ pub fn pair_coul_charmm_typed_ctor(
         k,
         source: CoulSource::PerAtom { q, n_owned },
     };
-    Ok(Member::pair(kernel))
+    Ok(ForceTerm::pair(kernel))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::pair::testing::{
+    use crate::ff::potential::pair::fixtures::{
         assert_same, assert_virial_matches_forces, table_over,
     };
 
@@ -769,7 +777,7 @@ mod tests {
     fn lj_hand_values_inside_across_and_beyond_the_switch() {
         let (eps, sigma, ri, rc) = (0.2, 3.1, 4.0, 6.0);
         let k =
-            PairLJCharmm::compiled(ri, rc, vec![0], vec![1], &[(eps, sigma)], vec![1.0]).unwrap();
+            PairLjCharmm::compiled(ri, rc, vec![0], vec![1], &[(eps, sigma)], vec![1.0]).unwrap();
         for r in [3.0, 3.9, 4.5, 5.2, 5.99, 6.0, 7.0] {
             let want = lj(eps, sigma, r) * s(r, ri, rc);
             let got = k.calc_energy(&two(r));
@@ -783,7 +791,7 @@ mod tests {
     #[test]
     fn lj_force_is_the_gradient_through_the_switch() {
         let k =
-            PairLJCharmm::compiled(4.0, 6.0, vec![0], vec![1], &[(0.2, 3.1)], vec![0.7]).unwrap();
+            PairLjCharmm::compiled(4.0, 6.0, vec![0], vec![1], &[(0.2, 3.1)], vec![0.7]).unwrap();
         for r in [3.3, 4.6, 5.5] {
             let (_, f) = k.calc_energy_forces(&two(r));
             let h = 1e-6;
@@ -819,10 +827,17 @@ mod tests {
     #[test]
     fn inner_must_be_below_the_cutoff() {
         assert!(PairCoulCharmm::typed(6.0, 6.0, 1.0, vec![]).is_err());
-        assert!(PairLJCharmm::typed(7.0, 6.0, vec![], &[(0.1, 3.0)]).is_err());
+        assert!(PairLjCharmm::typed(7.0, 6.0, vec![], &[(0.1, 3.0)]).is_err());
         let style = Params::from_pairs(&[("cutoff", 10.0)]);
         let err = switch_of(&style, "lj/charmm").unwrap_err();
-        assert!(err.contains("inner"), "{err}");
+        assert_eq!(
+            err,
+            IrError::MissingParam {
+                style: "lj/charmm".into(),
+                type_: String::new(),
+                param: "inner".into()
+            }
+        );
     }
 
     /// The compiled list and the type-pair table are the same numbers on the
@@ -840,7 +855,7 @@ mod tests {
         let mut table = Vec::new();
         for a in per {
             for b in per {
-                table.push(Mixing::Arithmetic.combine(a, b));
+                table.push(CombiningRule::Arithmetic.combine(a, b));
             }
         }
         let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3), (0, 3)];
@@ -853,8 +868,8 @@ mod tests {
         let qq = links.iter().map(|&(i, j)| q[i] * q[j]).collect();
         let ones = vec![1.0; links.len()];
         let lj_c =
-            PairLJCharmm::compiled(3.5, 5.0, ai.clone(), aj.clone(), &es, ones.clone()).unwrap();
-        let lj_t = PairLJCharmm::typed(3.5, 5.0, type_id, &table).unwrap();
+            PairLjCharmm::compiled(3.5, 5.0, ai.clone(), aj.clone(), &es, ones.clone()).unwrap();
+        let lj_t = PairLjCharmm::typed(3.5, 5.0, type_id, &table).unwrap();
         let co_c = PairCoulCharmm::compiled(3.5, 5.0, 332.0, ai, aj, qq, ones).unwrap();
         let co_t = PairCoulCharmm::typed(3.5, 5.0, 332.0, q).unwrap();
         let nb = table_over(&coords, &links);
@@ -889,11 +904,11 @@ mod tests {
         let mut rows: HashMap<&str, &Params> = HashMap::new();
         rows.insert("A", &a);
         rows.insert("B", &b);
-        let (reg, r14) = charmm_pair_params(&rows, Mixing::Arithmetic, "A", "B").unwrap();
+        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "A", "B").unwrap();
         assert_eq!(reg, ((0.1_f64 * 0.4).sqrt(), 3.3));
         assert_eq!(r14, ((0.05_f64 * 0.4).sqrt(), 0.5 * (2.8 + 3.6)));
         rows.insert(key.as_str(), &ab);
-        let (reg, r14) = charmm_pair_params(&rows, Mixing::Arithmetic, "B", "A").unwrap();
+        let (reg, r14) = charmm_pair_params(&rows, CombiningRule::Arithmetic, "B", "A").unwrap();
         assert_eq!(reg, (0.9, 2.0));
         assert_eq!(r14, (0.9, 2.0), "a 2-number cross row is its own 1-4 row");
     }

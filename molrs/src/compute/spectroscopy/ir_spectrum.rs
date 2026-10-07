@@ -5,19 +5,19 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**.
 ///
 /// Identical window+FFT pipeline as [`PowerSpectrum`](super::PowerSpectrum);
 /// the difference between IR and the power spectrum is entirely in *which* ACF
 /// is supplied (dipole flux vs velocity), computed upstream by the
-/// [`IRFlux`](super::IRFlux) raw compute.
+/// [`IrFlux`](super::IrFlux) raw compute.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IRSpectrum;
+pub struct IrSpectrum;
 
-impl Fit for IRSpectrum {
+impl Fit for IrSpectrum {
     /// `(acf, dt_fs)` — the raw dipole-flux ACF (1D) and timestep (fs, > 0).
     type Input<'a> = (&'a Array1<f64>, f64);
     type Output = SpectrumResult;
@@ -52,10 +52,10 @@ impl Fit for IRSpectrum {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ir_flux::IRFlux;
+    use super::super::ir_flux::IrFlux;
     use super::*;
-    use crate::compute::traits::Compute;
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;
 
@@ -64,7 +64,7 @@ mod tests {
         Vec::new()
     }
 
-    /// Rebuild the raw dipole-flux ACF the IRFlux compute / IRSpectrum consume.
+    /// Rebuild the raw dipole-flux ACF the IrFlux compute / IrSpectrum consume.
     fn ir_acf(dm: &Array2<f64>, dt_fs: f64, max_lag: usize) -> Array1<f64> {
         let n_frames = dm.shape()[0];
         let inv_2dt = 0.5 / dt_fs;
@@ -84,25 +84,30 @@ mod tests {
 
     #[test]
     fn irflux_plus_ir_transform_matches_manual_acf_path() {
-        // ac-003/ac-007 (IR): IRFlux returns the unwindowed dipole-flux ACF the
-        // IRSpectrum transform consumes; IRFlux + IRSpectrum == manual path.
+        // ac-003/ac-007 (IR): IrFlux returns the unwindowed dipole-flux ACF the
+        // IrSpectrum transform consumes; IrFlux + IrSpectrum == manual path.
         let n = 1024;
         let dt = 0.5;
         let res = 200;
         let mut dm = Array2::zeros((n, 3));
         for t in 0..n {
             let tf = t as f64 * dt;
-            dm[[t, 2]] = (2.0 * std::f64::consts::PI * 10.0 * 1e-3 * tf).sin();
+            dm[[t, 2]] = (2.0
+                * std::f64::consts::PI
+                * 10.0
+                * crate::core::unit_factors::THZ_TO_PER_FS.get()
+                * tf)
+                .sin();
         }
         let flux_len = n - 2;
         let max_lag = res.min(flux_len - 1);
         let acf = ir_acf(&dm, dt, max_lag);
 
-        let raw = IRFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
-        assert_eq!(raw.acf, acf); // IRFlux returns the raw unwindowed ACF.
+        let raw = IrFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
+        assert_eq!(raw.acf, acf); // IrFlux returns the raw unwindowed ACF.
 
-        let from_raw = IRSpectrum.fit((&raw.acf, dt)).unwrap();
-        let from_manual = IRSpectrum.fit((&acf, dt)).unwrap();
+        let from_raw = IrSpectrum.fit((&raw.acf, dt)).unwrap();
+        let from_manual = IrSpectrum.fit((&acf, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
         assert_eq!(from_raw.intensities, from_manual.intensities);
     }

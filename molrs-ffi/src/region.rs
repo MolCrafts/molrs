@@ -6,7 +6,7 @@
 //! of this handle, and a consuming Rust binding (e.g. molpack) resolves the
 //! capsule back to a `RegionRef`, takes the shared [`Region`] through
 //! [`RegionRef::region`], and calls its methods. No marshalling, no parallel
-//! data type — and, unlike a frame, no store: a region is a self-contained
+//! data type — and, unlike a frame, no arena: a region is a self-contained
 //! `Arc`.
 //!
 //! Always compiled: `Region` lives in molrs `core`, which every consumer
@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use molrs::spatial::region::Region;
+use molrs::core::Region;
 
 /// Shared-ownership handle to a [`Region`]. Cheap to clone (one `Arc` bump).
 #[derive(Clone)]
@@ -65,7 +65,7 @@ impl RegionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::spatial::region::Sphere;
+    use molrs::core::Sphere;
     use ndarray::Array1;
 
     #[test]

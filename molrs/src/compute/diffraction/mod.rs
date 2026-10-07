@@ -7,9 +7,9 @@
 //! | [`StaticStructureFactorDirect`] | direct k-grid evaluation of `S(k)` from `⟨\|ρ(k)\|²⟩` |
 //! | [`DiffractionPattern`] | 2-D FFT diffraction image of a projected frame |
 
-pub mod debye;
-pub mod diffraction_pattern;
-pub mod direct;
+mod debye;
+mod diffraction_pattern;
+mod direct;
 
 pub use debye::{StaticStructureFactorDebye, StaticStructureFactorDebyeResult};
 pub use diffraction_pattern::{DiffractionPattern, DiffractionPatternResult};

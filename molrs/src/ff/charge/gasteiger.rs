@@ -1,65 +1,9 @@
 //! [`GasteigerModel`] — Gasteiger/PEOE, aligned with `antechamber -c gas`.
-//!
-//! The **zero-QM corner** of the charge 2×2: no AM1 charges, no solver, no
-//! [`Option`] to unwrap — a molecule goes in and charges come out of the bond graph
-//! alone. It reaches the caller through the same [`ChargeModel`] trait as AM1-BCC,
-//! with no branch anywhere in the plumbing for the fact that it needs no QM input.
-//! That is what says [`ChargeModel`] did not quietly assume "QM base charges plus a
-//! correction".
-//!
-//! # The model
-//!
-//! Partial equalization of orbital electronegativity (Gasteiger–Marsili). Each atom's
-//! electronegativity is a quadratic in its own charge,
-//!
-//! ```text
-//! chi_i(q) = a_i + b_i * q_i + c_i * q_i^2
-//! ```
-//!
-//! and along every bond, charge flows from the lower-χ atom (which therefore goes
-//! positive) to the higher-χ one, normalised by the **donor's** cation
-//! electronegativity χ⁺ and damped by one further factor of a half per sweep:
-//!
-//! ```text
-//! dq = (chi_high - chi_low) / chi_plus[donor] * 0.5^(sweep + 1)
-//! ```
-//!
-//! The transfer is antisymmetric — one atom gains exactly what the other loses — so
-//! the total charge never moves off the seeds it started from.
-//!
-//! # Three things it is not
-//!
-//! * **Not a fixed six iterations.** antechamber runs a damped convergence loop
-//!   ([`CONVERGENCE`] 1e-5, [`MAX_SWEEPS`] 500), and every one of the 37 oracle
-//!   molecules needs more than six sweeps — methane 7, methylammonium 15. Truncating
-//!   at six leaves methylammonium's nitrogen 0.0131 e short, 131× the 1e-4 gate.
-//! * **`chi_plus` is a DIVISOR, not a quartic coefficient.** `GASPARM.DAT`'s columns
-//!   run `a`, `b`, `c`, `d`, `formal_charge`, and reading `d` as `+ d*q^3` is the one
-//!   catastrophic misreading of the table. It is χ⁺ = χ(q = 1): for every heavy row
-//!   `d == a + b + c` exactly (`c3`: 7.98 + 9.18 + 1.88 = 19.04 = d). **Hydrogen is
-//!   the exception** — H⁺ is a bare proton, so its polynomial χ⁺ is meaningless and
-//!   the table substitutes a fixed 20.02 eV where `a + b + c` would give 12.85. The
-//!   model reads the column; it never rebuilds it from `a + b + c`.
-//! * **Not renormalized to the formal net charge.** `-c gas` ignores `-nc`: what is
-//!   conserved is the sum of the SEED charges (`GASPARM.DAT`'s `formal_charge`
-//!   column), which is not always the net charge. `ATOMTYPE_GAS.DEF` has no aromatic
-//!   N⁺ type, so imidazolium — a +1 cation — is typed all-neutral, seeded at 0, and
-//!   antechamber's own `-c gas` charges for it sum to 0. Renormalizing it to +1 would
-//!   conserve *something* perfectly while sitting a whole electron from the oracle.
-//!
-//! # It is Jacobi
-//!
-//! The whole χ array is built from the previous sweep's charges **before** any
-//! transfer is applied; the transfers accumulate into the running charges, and the
-//! snapshot χ is read from is only rolled forward at the end of the sweep. Feeding a
-//! half-updated charge back into χ mid-sweep (Gauss–Seidel) changes the convergence
-//! trajectory and the answer.
 
-use molrs::{AtomId, Atomistic};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
-use crate::ff::typifier::atd::{AtdParameterSet, AtdTypifier};
-use molrs::perceive::Perceive;
+use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
 
 use super::error::ChargeError;
 use super::model::{
@@ -97,10 +41,58 @@ const CHI_FLOOR: f64 = 1.0e-10;
 /// tables `-c gas` has, so a constructor taking a set would be offering a choice that
 /// does not exist.
 ///
+/// # The model
+///
+/// Partial equalization of orbital electronegativity (Gasteiger–Marsili). Each atom's
+/// electronegativity is a quadratic in its own charge,
+///
+/// ```text
+/// chi_i(q) = a_i + b_i * q_i + c_i * q_i^2
+/// ```
+///
+/// and along every bond, charge flows from the lower-χ atom (which therefore goes
+/// positive) to the higher-χ one, normalised by the **donor's** cation
+/// electronegativity χ⁺ and damped by one further factor of a half per sweep:
+///
+/// ```text
+/// dq = (chi_high - chi_low) / chi_plus[donor] * 0.5^(sweep + 1)
+/// ```
+///
+/// The transfer is antisymmetric — one atom gains exactly what the other loses — so
+/// the total charge never moves off the seeds it started from.
+///
+/// # Three things it is not
+///
+/// * **Not a fixed six iterations.** antechamber runs a damped convergence loop
+///   (convergence at 1e-5, at most 500 sweeps), and every one of the 37 oracle
+///   molecules needs more than six sweeps — methane 7, methylammonium 15. Truncating
+///   at six leaves methylammonium's nitrogen 0.0131 e short, 131× the 1e-4 gate.
+/// * **`chi_plus` is a DIVISOR, not a quartic coefficient.** `GASPARM.DAT`'s columns
+///   run `a`, `b`, `c`, `d`, `formal_charge`, and reading `d` as `+ d*q^3` is the one
+///   catastrophic misreading of the table. It is χ⁺ = χ(q = 1): for every heavy row
+///   `d == a + b + c` exactly (`c3`: 7.98 + 9.18 + 1.88 = 19.04 = d). **Hydrogen is
+///   the exception** — H⁺ is a bare proton, so its polynomial χ⁺ is meaningless and
+///   the table substitutes a fixed 20.02 eV where `a + b + c` would give 12.85. The
+///   model reads the column; it never rebuilds it from `a + b + c`.
+/// * **Not renormalized to the formal net charge.** `-c gas` ignores `-nc`: what is
+///   conserved is the sum of the SEED charges (`GASPARM.DAT`'s `formal_charge`
+///   column), which is not always the net charge. `ATOMTYPE_GAS.DEF` has no aromatic
+///   N⁺ type, so imidazolium — a +1 cation — is typed all-neutral, seeded at 0, and
+///   antechamber's own `-c gas` charges for it sum to 0. Renormalizing it to +1 would
+///   conserve *something* perfectly while sitting a whole electron from the oracle.
+///
+/// # It is Jacobi
+///
+/// The whole χ array is built from the previous sweep's charges **before** any
+/// transfer is applied; the transfers accumulate into the running charges, and the
+/// snapshot χ is read from is only rolled forward at the end of the sweep. Feeding a
+/// half-updated charge back into χ mid-sweep (Gauss–Seidel) changes the convergence
+/// trajectory and the answer.
+///
 /// # Examples
 ///
 /// ```
-/// use molrs::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::charge::{ChargeModel, GasteigerModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -162,66 +154,16 @@ impl ChargeModel for GasteigerModel {
     /// fallback value.
     fn assign(&self, mol: &Atomistic, _qm: Option<&[f64]>) -> Result<Vec<f64>, ChargeError> {
         let work = without_type_columns(mol)?;
-        let perceived = Perceive::new().find_bond_types(&work);
-
         let set = AtdParameterSet::Gas;
-        let types = AtdTypifier::new(set)
-            .types_of(&perceived)
-            .map_err(charge_error)?;
+        let typifier = AtdTypifier::new(set);
+        let perceived = typifier.perceive_bond_types(&work);
+        let types = typifier.types_of(&perceived).map_err(charge_error)?;
         reject_dummy_types(&perceived, &types, set.table().name)?;
 
         let rows = parameter_rows(&perceived, &types)?;
         let bonds = bond_pairs(&perceived)?;
         Ok(equalize(&rows, &bonds))
     }
-}
-
-/// Gasteiger charges paired with the atoms they belong to.
-///
-/// The free-function face of [`GasteigerModel`], kept because the graph-level API
-/// (and molrs-python's `compute_gasteiger_charges`) wants handles rather than a
-/// positional slice. It **delegates** — there is exactly one PEOE implementation in
-/// molrs, and it is the model above.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule, with explicit hydrogens.
-///
-/// # Returns
-///
-/// `(atom, charge)` for **every** atom, hydrogens included, in graph atom order.
-///
-/// # Errors
-///
-/// [`ChargeError`] — as [`GasteigerModel::assign`].
-///
-/// # Examples
-///
-/// ```
-/// use molrs::Atomistic;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
-/// for [x, y, z] in [
-///     [0.63, 0.63, 0.63],
-///     [-0.63, -0.63, 0.63],
-///     [-0.63, 0.63, -0.63],
-///     [0.63, -0.63, -0.63],
-/// ] {
-///     let h = mol.add_atom_xyz("H", x, y, z);
-///     mol.add_bond(c, h)?;
-/// }
-///
-/// let q = molrs::ff::charge::compute_gasteiger_charges(&mol)?;
-/// assert_eq!(q.len(), 5, "one charge per atom — hydrogens are atoms");
-/// assert!(q.iter().map(|(_, q)| q).sum::<f64>().abs() < 1e-12, "methane is neutral");
-/// # Ok(())
-/// # }
-/// ```
-pub fn compute_gasteiger_charges(mol: &Atomistic) -> Result<Vec<(AtomId, f64)>, ChargeError> {
-    let charges = GasteigerModel.assign(mol, None)?;
-    Ok(atom_ids(mol).into_iter().zip(charges).collect())
 }
 
 /// The `GASPARM.DAT` row of every atom, in graph atom order.
@@ -262,7 +204,7 @@ fn parameter_rows(
 ///
 /// [`ChargeError::Malformed`] when a bond's endpoint is not an atom of the molecule.
 fn bond_pairs(mol: &Atomistic) -> Result<Vec<(usize, usize)>, ChargeError> {
-    let index: std::collections::HashMap<AtomId, usize> = atom_ids(mol)
+    let index: std::collections::HashMap<NodeId, usize> = atom_ids(mol)
         .into_iter()
         .enumerate()
         .map(|(i, aid)| (aid, i))
@@ -366,7 +308,7 @@ fn rms_change(previous: &[f64], current: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::keys;
+    use molrs::core::keys;
 
     /// Methane — the smallest molecule that still needs seven sweeps.
     fn methane() -> Atomistic {

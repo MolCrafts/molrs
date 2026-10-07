@@ -57,7 +57,9 @@ full = ["io", "compute", "smiles", "ff", "conformer", "signal", "voronoi", "md",
 # Structure builders (graphene, nanotubes, self-avoiding walks); no unique deps.
 builder   = []
 io        = ["dep:flate2"]
-# `smiles` lives inside the `io` module.
+# `smiles` gates the line notations' shared grammar (`line_notation`): the
+# SMILES format in `io::smiles` and the SMARTS matcher (`perceive::smarts`)
+# both compile from it.
 smiles    = ["io"]
 signal    = ["dep:rustfft"]
 # `compute` depends on the `signal` module (gets rustfft via it).
@@ -65,14 +67,17 @@ compute   = ["signal"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
-# `ff` reads force-field files through `io`'s format parsers (prmtop sections).
-ff        = ["io", "dep:rustfft", "dep:roxmltree"]
+# `ff` types atoms with `perceive::smarts`, which compiles from `line_notation`.
+# With `ff` on, the force-field file formats of `io` (over
+# `roxmltree` for XML) compiles too; `ff` itself reads no file.
+ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
-# In-process MD (integrators, shifted LJ). Science only; pair search is
-# core NeighborList. Python composer / hooks live in molrs-python. Consumes
-# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`.
-md        = ["ff"]
+# In-process MD: integrators and force providers (the kernels are
+# `ff::potential`). Pair search is core NeighborList. Python composer / hooks live in molrs-python. Consumes
+# the one `ff::potential::Potential`/`Potentials` seam, so it enables `ff`; its
+# kinetic observables (kinetic energy, centre-of-mass velocity) are `compute`'s.
+md        = ["ff", "compute"]
 # serde `Serialize`/`Deserialize` for the core model (Frame/Block/Column/SimBox).
 # No new deps — serde is already always-on; the feature just enables the impls.
 serde     = []
@@ -95,10 +100,14 @@ rayon      = ["dep:rayon"]
 #
 # `zstd` is in molrec's must-decode set, so the base tier decodes it too: a
 # pure-Rust decoder (`ruzstd`) registered with zarrs as the `zstd` codec
-# (`io/zarr/zstd_decode.rs`). It is registered only without `zarr-codecs`,
+# (`io/mrec/zarr_storage/zstd_decode.rs`). It is registered only without `zarr-codecs`,
 # whose C-backed codec owns the name and also encodes. `numcodecs.shuffle`
 # needs nothing: zarrs builds it on every target.
-zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
+#
+# A record's `forcefield` section validates its style tables against the
+# force-field IR's vocabulary (`ff::ir` categories and table columns, the
+# mixing and 1-4 rules), so the record codec (`io::mrec`) needs `ff`.
+zarr       = ["ff", "dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
 filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 
@@ -135,9 +144,9 @@ ruzstd         = { version = "0.9", optional = true, default-features = false, f
 inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
-roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
+roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
-# `io/zarr/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
+# `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.mrec.zip` a closed
 # directory store packs into, `zarrs_zip` reads it back. Both hang on
 # `filesystem`, so a build without that feature compiles neither — which is
 # what keeps them out of the wasm graph. `zip` is built with default-features

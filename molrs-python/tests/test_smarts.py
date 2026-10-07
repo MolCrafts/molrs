@@ -10,13 +10,13 @@ only assert the PyO3 surface and Daylight atom-map semantics.
 import molrs
 
 
-def _methanol() -> "molrs.Atomistic":
+def _methanol() -> "molrs.core.Atomistic":
     """Methanol (CH3-OH) with explicit hydrogens.
 
     Connectivity: C-O, O-H(hydroxyl), plus three C-H. The C-O-H path is the
     single ``[C][O][H]`` embedding.
     """
-    mol = molrs.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     ho = mol.add_atom("H", 2.0, 0.0, 0.0)
@@ -28,9 +28,9 @@ def _methanol() -> "molrs.Atomistic":
     return mol, c, o, ho
 
 
-def _ethane() -> "molrs.Atomistic":
+def _ethane() -> "molrs.core.Atomistic":
     """Ethane (C2H6) with explicit hydrogens (no O — for non-match tests)."""
-    mol = molrs.Atomistic()
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     for c, (x, y, z) in [
@@ -47,9 +47,9 @@ def _ethane() -> "molrs.Atomistic":
     return mol, c1, c2
 
 
-def _methylamine() -> "molrs.Atomistic":
+def _methylamine() -> "molrs.core.Atomistic":
     """Methylamine (CH3-NH2) with explicit hydrogens; N carries 2 explicit H."""
-    mol = molrs.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     n = mol.add_atom("N", 1.47, 0.0, 0.0)
     mol.add_bond(c, n)
@@ -74,14 +74,14 @@ def test_smarts_pattern_is_exposed():
     assert pat is not None
 
 
-def test_mapped_true_captures_map_numbers():
-    """find_matches(..., mapped=True) returns map-number keyed matches."""
+def test_mapping_captures_map_numbers():
+    """A match's mapping is keyed by the query's map numbers."""
     mol, c, o, ho = _methanol()
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    matches = pat.find_matches(mol, mapped=True)
+    matches = pat.find_matches(mol)
     assert isinstance(matches, list)
     assert len(matches) == 1
-    m = matches[0]
+    m = matches[0].mapping
     assert set(m.keys()) == {1, 2, 3}
     # Handles map to the expected atoms / elements.
     assert m[1] == c
@@ -102,15 +102,13 @@ def test_default_matches_are_objects():
     assert isinstance(match, molrs.perceive.SmartsMatch)
     assert match.atoms == [c, o, ho]
     assert match.mapping == {1: c, 2: o, 3: ho}
-    assert match.as_list() == [c, o, ho]
-    assert match.as_dict() == {1: c, 2: o, 3: ho}
 
 
-def test_mapped_true_empty_on_non_match():
+def test_no_match_is_empty():
     """A molecule lacking the group yields an empty match list."""
     mol, _c1, _c2 = _ethane()
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    assert pat.find_matches(mol, mapped=True) == []
+    assert pat.find_matches(mol) == []
     assert pat.has_match(mol) is False
 
 
@@ -118,12 +116,12 @@ def test_primary_amine_matches_NH2():
     """[N;H2:1] matches a primary amine nitrogen (2 explicit H)."""
     mol, n = _methylamine()
     pat = molrs.perceive.SmartsPattern("[N;H2:1]")
-    matches = pat.find_matches(mol, mapped=True)
+    matches = pat.find_matches(mol)
     assert len(matches) == 1
-    assert matches[0] == {1: n}
+    assert matches[0].mapping == {1: n}
     # Ethane (no N) does not match.
     ethane, _c1, _c2 = _ethane()
-    assert pat.find_matches(ethane, mapped=True) == []
+    assert pat.find_matches(ethane) == []
 
 
 # ---------------------------------------------------------------------------
@@ -141,15 +139,15 @@ def test_map_number_adds_no_constraint():
 
 
 def test_map_label_and_num_query_atoms():
-    """map_label / num_query_atoms expose the parsed query metadata."""
+    """map_label / n_query_atoms expose the parsed query metadata."""
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    assert pat.num_query_atoms == 3
+    assert pat.n_query_atoms == 3
     assert pat.map_label(0) == 1
     assert pat.map_label(1) == 2
     assert pat.map_label(2) == 3
 
     plain = molrs.perceive.SmartsPattern("[C]")
-    assert plain.num_query_atoms == 1
+    assert plain.n_query_atoms == 1
     assert plain.map_label(0) is None
 
 

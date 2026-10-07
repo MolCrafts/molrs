@@ -5,7 +5,7 @@
 //! |--------|-------|--------|
 //! | [`Acf`] | a vector series | [`AcfResult`] — C(t) over all time origins |
 //! | [`VanHove`] | trajectory frames | [`VanHoveResult`] — self/distinct G(r, t) |
-//! | [`pair_survival_tcf`] | per-frame pair presence | [`PersistResult`] — survival time-correlation |
+//! | [`pair_survival_tcf`] | per-frame pair presence | [`PairSurvivalResult`] — survival time-correlation |
 //!
 //! Complements [`transport`](crate::compute::transport) (which reduces motion
 //! to scalar coefficients): these methods keep the full space- and/or
@@ -15,10 +15,10 @@
 //! let gvh = VanHove::new(n_rbins, r_max, vec![0, 10, 100])?.compute(&frames, ())?;
 //! ```
 
-pub mod acf;
-pub mod persist;
-pub mod van_hove;
+mod acf;
+mod pair_survival;
+mod van_hove;
 
 pub use acf::{Acf, AcfArgs, AcfResult, autocorrelation};
-pub use persist::{PersistResult, SurvivalMethod, pair_survival_tcf};
+pub use pair_survival::{PairSurvivalResult, SurvivalMethod, pair_survival_tcf};
 pub use van_hove::{VanHove, VanHoveResult};

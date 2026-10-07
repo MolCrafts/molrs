@@ -6,8 +6,12 @@
 # LAMMPS's f_cmap energy and per-atom forces beside molrs's, the numbers the
 # test pins. Run it where cargo may build (a compute node), with `lmp` (or
 # $LMP) built with the MOLECULE package.
+# $PYTHON (default python3) needs molrs installed: it reads LAMMPS's log
+# with molrs.io.read_lammps_log (scripts/engine_check_tables.py).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
+PYTHON=${PYTHON:-python3}
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 
@@ -29,17 +33,17 @@ dump            d all custom 1 forces.dump id fx fy fz
 dump_modify     d format float %.17g sort id
 run             0
 IN
-(cd "$dir" && "${LMP:-lmp}" -in in.lammps -log log.lammps -screen none)
+(cd "$dir" && without_slurm_step "${LMP:-lmp}" -in in.lammps -log log.lammps -screen none)
 
-python3 - "$dir" <<'PY'
+PYTHONPATH=scripts "$PYTHON" - "$dir" <<'PY'
 import sys
 from pathlib import Path
 
+from engine_check_tables import lammps_thermo
+
 d = Path(sys.argv[1])
-lines = (d / "log.lammps").read_text().splitlines()
-head = next(i for i, l in enumerate(lines) if l.split()[:3] == ["Step", "PotEng", "f_cmap"])
-step, pe, ecmap = lines[head + 1].split()
-print(f"lammps energy {float(ecmap):.17e} (pe {float(pe):.17e})")
+thermo = lammps_thermo(d / "log.lammps")
+print(f"lammps energy {thermo['f_cmap']:.17e} (pe {thermo['PotEng']:.17e})")
 dump = (d / "forces.dump").read_text().splitlines()
 start = dump.index("ITEM: ATOMS id fx fy fz") + 1
 for row in dump[start:]:

@@ -5,11 +5,11 @@ use std::collections::{BTreeSet, HashMap};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, StyleDefs};
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
-use molrs::types::Idx;
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
+use molrs::core::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
+use molrs::op::Idx;
 
 /// Build `frame`'s `cmaps` block from its dihedrals and `ff`'s `cmap` rows,
 /// and return the number of crossterms.
@@ -107,7 +107,7 @@ fn match_chains(
     let Some(dihedrals) = frame.get(DIHEDRALS) else {
         return Ok(Vec::new());
     };
-    let n_dihedrals = dihedrals.nrows().unwrap_or(0);
+    let n_dihedrals = dihedrals.n_rows().unwrap_or(0);
     if n_dihedrals == 0 {
         return Ok(Vec::new());
     }
@@ -182,7 +182,7 @@ fn match_chains(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Params;
+    use crate::ff::ir::Params;
     use ndarray::ArrayD;
 
     /// Atoms of `types`, and the dihedrals `rows` (any direction).
@@ -222,7 +222,7 @@ mod tests {
     fn rows(frame: &Frame) -> Vec<([u64; 5], String)> {
         let b = &frame[CMAPS];
         let types = b.get(TYPE).unwrap().as_string().unwrap();
-        (0..b.nrows().unwrap())
+        (0..b.n_rows().unwrap())
             .map(|r| {
                 let atoms = [ATOMI, ATOMJ, ATOMK, ATOML, ATOMM]
                     .map(|k| b.get(k).unwrap().as_uint().unwrap()[[r]]);

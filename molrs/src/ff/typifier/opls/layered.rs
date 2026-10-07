@@ -4,7 +4,7 @@
 //! [`OplsDependencyAnalyzer`] to order defs so that a def referencing a type
 //! name through a `%label` context predicate is only matched *after* that type
 //! has been assigned in an earlier level. It accumulates a
-//! `HashMap<AtomId, String>` of assigned types and feeds it back as the SMARTS
+//! `HashMap<NodeId, String>` of assigned types and feeds it back as the SMARTS
 //! **context-label map** (so `%opls_NNN` predicates can read the current
 //! assignments).
 //!
@@ -31,11 +31,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::{AtomId, Atomistic};
 
-use super::deps::OplsDependencyAnalyzer;
-use super::meta::OplsTypingMeta;
+use super::dependency::OplsDependencyAnalyzer;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// Maximum fixed-point iterations for a circular-dependency level.
 pub const MAX_CIRCULAR_ITERATIONS: usize = 10;
@@ -84,8 +84,8 @@ impl Dominance {
     /// `Err` naming both types when an override names a type absent from
     /// `meta`, and `Err` naming every member when the declared overrides form
     /// a cycle.
-    pub(super) fn new(meta: &OplsTypingMeta) -> Result<Self, String> {
-        let mut named: Vec<(&String, &super::meta::OplsTypeRow)> = meta.iter().collect();
+    pub(super) fn new(meta: &OplsTypingMetadata) -> Result<Self, String> {
+        let mut named: Vec<(&String, &super::typing_metadata::OplsTypeRow)> = meta.iter().collect();
         named.sort_by(|a, b| a.0.cmp(b.0));
         for (name, row) in &named {
             if let Some(missing) = row.overrides.iter().find(|o| meta.get(o).is_none()) {
@@ -162,12 +162,12 @@ impl LayeredTypingEngine {
     /// `Err` naming the type for a malformed SMARTS `def`; naming both types
     /// for an override of a type absent from `meta`; naming every member for
     /// an overrides cycle.
-    pub fn build(meta: &OplsTypingMeta) -> Result<Self, String> {
+    pub fn build(meta: &OplsTypingMetadata) -> Result<Self, String> {
         let dominance = Dominance::new(meta)?;
         let analyzer = OplsDependencyAnalyzer::new(meta);
 
         // Deterministic definition order: sort by type name.
-        let mut named: Vec<(&String, &super::meta::OplsTypeRow)> = meta.iter().collect();
+        let mut named: Vec<(&String, &super::typing_metadata::OplsTypeRow)> = meta.iter().collect();
         named.sort_by(|a, b| a.0.cmp(b.0));
 
         let max_level = analyzer.max_level().unwrap_or(0);
@@ -175,12 +175,12 @@ impl LayeredTypingEngine {
 
         for (order, (name, row)) in named.into_iter().enumerate() {
             let Some(def) = row.def.as_deref() else {
-                continue; // legacy / no-def row
+                continue; // no-def row
             };
             let pattern = compile_def(def).map_err(|e| {
                 format!("OPLS type {name:?}: failed to parse SMARTS def {def:?}: {e}")
             })?;
-            let specificity = pattern.num_query_atoms();
+            let specificity = pattern.n_query_atoms();
             let level = analyzer.level(name).unwrap_or(0);
             if level >= by_level.len() {
                 by_level.resize_with(level + 1, Vec::new);
@@ -207,8 +207,8 @@ impl LayeredTypingEngine {
     /// is threaded into each level's SMARTS matching as the context-label map,
     /// so `%opls_NNN` defs see the prior levels' results. A level whose defs lie
     /// in a circular-dependency group is resolved by fixed-point iteration.
-    pub fn assign(&self, mol: &Atomistic) -> HashMap<AtomId, String> {
-        let mut assignments: HashMap<AtomId, String> = HashMap::new();
+    pub fn assign(&self, mol: &Atomistic) -> HashMap<NodeId, String> {
+        let mut assignments: HashMap<NodeId, String> = HashMap::new();
         for level in 0..self.by_level.len() {
             let defs = &self.by_level[level];
             if defs.is_empty() {
@@ -232,10 +232,10 @@ impl LayeredTypingEngine {
         &self,
         defs: &[RankedDef],
         mol: &Atomistic,
-        current: HashMap<AtomId, String>,
-    ) -> HashMap<AtomId, String> {
+        current: HashMap<NodeId, String>,
+    ) -> HashMap<NodeId, String> {
         // Candidate defs per atom, each def at most once.
-        let mut candidates: HashMap<AtomId, Vec<usize>> = HashMap::new();
+        let mut candidates: HashMap<NodeId, Vec<usize>> = HashMap::new();
         for (k, d) in defs.iter().enumerate() {
             for m in d.pattern.find(
                 mol,
@@ -289,8 +289,8 @@ impl LayeredTypingEngine {
         &self,
         defs: &[RankedDef],
         mol: &Atomistic,
-        current: HashMap<AtomId, String>,
-    ) -> HashMap<AtomId, String> {
+        current: HashMap<NodeId, String>,
+    ) -> HashMap<NodeId, String> {
         let mut assignments = current;
         for _ in 0..MAX_CIRCULAR_ITERATIONS {
             let prev = assignments.clone();
@@ -303,6 +303,7 @@ impl LayeredTypingEngine {
     }
 
     /// Access the underlying dependency analyzer (levels / circular groups).
+    #[cfg(test)]
     pub fn analyzer(&self) -> &OplsDependencyAnalyzer {
         &self.analyzer
     }
@@ -310,7 +311,7 @@ impl LayeredTypingEngine {
 
 /// Compile a single SMARTS `def`, reading a bare element symbol (`Li`, which
 /// SMARTS only admits in brackets) as its bracket atom (`[Li]`) for XML inputs.
-fn compile_def(def: &str) -> Result<SmartsPattern, molrs::MolRsError> {
+fn compile_def(def: &str) -> Result<SmartsPattern, molrs::core::MolRsError> {
     match SmartsPattern::parse(def) {
         Ok(p) => Ok(p),
         Err(e) => {
@@ -336,8 +337,8 @@ fn is_bare_element_symbol(def: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::opls::meta::OplsTypeRow;
-    use molrs::Atom;
+    use crate::ff::typifier::OplsTypeRow;
+    use molrs::core::Atom;
 
     fn row(class: &str, def: Option<&str>, overrides: &[&str]) -> OplsTypeRow {
         OplsTypeRow {
@@ -349,8 +350,8 @@ mod tests {
         }
     }
 
-    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMeta {
-        let mut m = OplsTypingMeta::new();
+    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMetadata {
+        let mut m = OplsTypingMetadata::new();
         for (name, r) in rows {
             m.insert(*name, r.clone());
         }
@@ -358,7 +359,7 @@ mod tests {
     }
 
     /// Ethanol skeleton C-C-O with explicit Hs; returns (graph, O id, H-on-O id).
-    fn ethanol() -> (Atomistic, AtomId, AtomId) {
+    fn ethanol() -> (Atomistic, NodeId, NodeId) {
         let mut g = Atomistic::new();
         let cm = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         let ch = g.add_atom(Atom::xyz("C", 1.5, 0.0, 0.0));
@@ -493,7 +494,7 @@ mod tests {
     }
 
     /// The type the engine built from `meta` assigns to ethanol's oxygen.
-    fn oxygen_type(meta: &OplsTypingMeta) -> Option<String> {
+    fn oxygen_type(meta: &OplsTypingMetadata) -> Option<String> {
         let engine = LayeredTypingEngine::build(meta).expect("engine builds");
         let (g, o, _ho) = ethanol();
         engine.assign(&g).get(&o).cloned()

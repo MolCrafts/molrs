@@ -6,7 +6,7 @@
 //!
 //! A tool, not a test, and not published (`exclude = ["examples/"]`). It
 //! checks the three input files against the SHA-256s pinned below, reads them
-//! with molrs's own [`GromacsTopFfReader`] — the only GROMACS parser in the
+//! with molrs's own [`GromacsTopForcefieldReader`] — the only GROMACS parser in the
 //! repository, which does every unit conversion — and writes the typed table.
 //! The same pinned inputs always produce the same bytes.
 //!
@@ -19,9 +19,13 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use molrs::ff::forcefield::{Params, StyleDefs};
-use molrs::ff::{ForceField, ForceFieldReader, GromacsTopFfReader};
-use molrs::units::constants::COULOMB_REAL;
+use molrs::core::constants::{COULOMB_REAL, OPLS_COULOMB_14, OPLS_LJ_14};
+use molrs::core::unit_factors::KCAL_TO_KJ;
+use molrs::ff::forcefield::ForceField;
+use molrs::ff::forcefield::StyleDefs;
+use molrs::ff::ir::Params;
+use molrs::ff::ir::torsion::{MultiHarmonicForm, OplsForm};
+use molrs::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
 use sha2::{Digest, Sha256};
 
 /// The pinned GROMACS release.
@@ -56,8 +60,13 @@ const WALKED: [(&str, &str); 6] = [
     ("pair", "coul/cut"),
     ("bond", "harmonic"),
     ("angle", "harmonic"),
-    ("dihedral", "opls"),
+    ("dihedral", "multi/harmonic"),
 ];
+
+/// GROMACS prints RB coefficients with 5 decimals; a row whose ΣCₙ (its
+/// energy at φ = 180°, which the OPLS form fixes at 0) is further from 0 than
+/// six roundings has an offset the table's Fourier row cannot hold.
+const RB_SUM_TOL_KJ: f64 = 1e-4;
 
 /// The table's own path, independent of where cargo was invoked.
 const OUTPUT: &str = "src/ff/params/oplsaa.rs";
@@ -79,7 +88,7 @@ fn run() -> Result<String, String> {
     let dir = gromacs_dir()?;
     let digests = verify_pinned(&dir)?;
     let counts = SourceCount::of(&dir)?;
-    let ff = GromacsTopFfReader::new()
+    let ff = GromacsTopForcefieldReader::new()
         .with_include(true)
         .with_skipped_directive("constrainttypes")
         .read(&dir.join("forcefield.itp").display().to_string())?;
@@ -299,8 +308,6 @@ struct DihedralRow {
 
 /// The rows the force field holds, in the table's shape.
 struct Table {
-    lj_14: f64,
-    coulomb_14: f64,
     atoms: Vec<AtomRow>,
     bonds: Vec<BondRow>,
     angles: Vec<AngleRow>,
@@ -334,15 +341,14 @@ impl Table {
         let sb = ff
             .declared_special_bonds()
             .ok_or("the force field declares no special bonds ([ defaults ])")?;
-        if sb.lj != [0.0, 0.0, 0.5] || sb.coul != [0.0, 0.0, 0.5] {
+        if sb.lj != [0.0, 0.0, OPLS_LJ_14] || sb.coul != [0.0, 0.0, OPLS_COULOMB_14] {
             return Err(format!(
-                "special bonds are {sb:?}; OPLS-AA is [0, 0, 0.5] for both LJ and Coulomb"
+                "special bonds are {sb:?}; OPLS-AA is [0, 0, {OPLS_LJ_14}] for LJ and \
+                 [0, 0, {OPLS_COULOMB_14}] for Coulomb (core::constants)"
             ));
         }
 
         let mut table = Self {
-            lj_14: sb.lj[2],
-            coulomb_14: sb.coul[2],
             atoms: Vec::new(),
             bonds: Vec::new(),
             angles: Vec::new(),
@@ -424,7 +430,29 @@ impl Table {
                 }
                 StyleDefs::Dihedral(types) => {
                     for t in types {
-                        let what = format!("dihedral/opls {}", t.name);
+                        // The reader keeps RB exactly (`multi/harmonic`); the
+                        // table holds its OPLS Fourier projection, exact when
+                        // ΣCₙ = 0 (C₅ = 0 is what `multi/harmonic` means).
+                        let what = format!("dihedral/multi/harmonic {}", t.name);
+                        let a = [
+                            param(&t.params, "a1", &what)?,
+                            param(&t.params, "a2", &what)?,
+                            param(&t.params, "a3", &what)?,
+                            param(&t.params, "a4", &what)?,
+                            param(&t.params, "a5", &what)?,
+                        ];
+                        let series = MultiHarmonicForm { a }.to_series();
+                        let sum = series.energy(std::f64::consts::PI);
+                        if sum.abs() * KCAL_TO_KJ.get() > RB_SUM_TOL_KJ {
+                            return Err(format!(
+                                "{what}: sum of C = {} kJ/mol is a constant offset the OPLS \
+                                 Fourier row cannot hold",
+                                sum * KCAL_TO_KJ.get()
+                            ));
+                        }
+                        // The sum is zero to the tolerance above, so the
+                        // cosines are the OPLS row (its constant is its own).
+                        let f = OplsForm::nearest(&series).k;
                         table.dihedrals.push(DihedralRow {
                             ends: [
                                 t.itom.clone(),
@@ -432,12 +460,7 @@ impl Table {
                                 t.ktom.clone(),
                                 t.ltom.clone(),
                             ],
-                            f: [
-                                param(&t.params, "k1", &what)?,
-                                param(&t.params, "k2", &what)?,
-                                param(&t.params, "k3", &what)?,
-                                param(&t.params, "k4", &what)?,
-                            ],
+                            f,
                         });
                     }
                 }
@@ -541,7 +564,7 @@ impl Table {
 //!
 //! # Conversions
 //!
-//! Every number is converted by `GromacsTopFfReader`, the one GROMACS parser
+//! Every number is converted by `GromacsTopForcefieldReader`, the one GROMACS parser
 //! in molrs; the generator only writes its result.
 //!
 //! | GROMACS | molrs |
@@ -595,12 +618,6 @@ pub const OPLSAA_NAME: &str = \"OPLS-AA\";
 /// The combining rule — geometric in σ and ε (`[ defaults ]` comb-rule 3).
 pub const OPLSAA_MIXING: &str = \"geometric\";
 
-/// The 1-4 Lennard-Jones scale weight (`[ defaults ]` fudgeLJ).
-pub const OPLSAA_LJ_14: f64 = {};
-
-/// The 1-4 Coulomb scale weight (`[ defaults ]` fudgeQQ).
-pub const OPLSAA_COULOMB_14: f64 = {};
-
 /// The {} `[ atomtypes ]` rows of `ffnonbonded.itp`, in file order.
 #[rustfmt::skip]
 pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[
@@ -622,8 +639,6 @@ pub const OPLSAA_ATOMS: &[OplsAtomRow] = &[
             counts.dihedral_macros,
             dummies.len(),
             dummies.join(", "),
-            Lit(self.lj_14),
-            Lit(self.coulomb_14),
             self.atoms.len(),
         );
         for a in &self.atoms {

@@ -11,30 +11,30 @@
 use molrs_ffi::{BlockHandle, FrameId};
 use slotmap::{Key, new_key_type};
 
-// --- SlotMap keys for SimBox and ForceField ---
+// --- SlotMap keys for Box and ForceField ---
 
 new_key_type! {
-    /// Key for SimBox entries in the CStore.
+    /// Key for Box entries in the HandleRegistry.
     pub struct BoxKey;
 }
 
 new_key_type! {
-    /// Key for ForceField entries in the CStore.
-    pub struct FFKey;
+    /// Key for ForceField entries in the HandleRegistry.
+    pub struct ForceFieldKey;
 }
 
 new_key_type! {
-    /// Key for Region entries in the CStore.
+    /// Key for Region entries in the HandleRegistry.
     pub struct RegionKey;
 }
 
 // --- repr(C) handle structs ---
 
-/// Opaque handle to a Frame stored in the global object store.
+/// Opaque handle to a Frame in the handle registry.
 ///
-/// Obtained from [`molrs_frame_new`](crate::frame::molrs_frame_new) or
-/// [`molrs_frame_from_smiles`](crate::frame::molrs_frame_from_smiles).
-/// Freed with [`molrs_frame_drop`](crate::frame::molrs_frame_drop).
+/// Obtained from [`molrs_frame_new`](crate::molrs_frame_new) or
+/// [`molrs_read_smiles_str`](crate::molrs_read_smiles_str).
+/// Freed with [`molrs_frame_drop`](crate::molrs_frame_drop).
 ///
 /// # Layout (C)
 ///
@@ -59,7 +59,7 @@ pub struct MolrsFrameHandle {
 /// Opaque handle to a Block (column group) inside a Frame.
 ///
 /// A block handle is obtained from
-/// [`molrs_frame_get_block`](crate::frame::molrs_frame_get_block) and
+/// [`molrs_frame_get_block`](crate::molrs_frame_get_block) and
 /// carries an embedded [`MolrsFrameHandle`], an interned key identifier,
 /// and a version counter for invalidation tracking.
 ///
@@ -87,12 +87,12 @@ pub struct MolrsBlockHandle {
     pub block_version: u64,
 }
 
-/// Opaque handle to a SimBox (simulation cell) in the global store.
+/// Opaque handle to a Box (simulation cell) in the handle registry.
 ///
-/// Obtained from [`molrs_box_new`](crate::simbox::molrs_box_new),
-/// [`molrs_box_cube`](crate::simbox::molrs_box_cube), or
-/// [`molrs_box_ortho`](crate::simbox::molrs_box_ortho).
-/// Freed with [`molrs_box_drop`](crate::simbox::molrs_box_drop).
+/// Obtained from [`molrs_box_new`](crate::molrs_box_new),
+/// [`molrs_box_cube`](crate::molrs_box_cube), or
+/// [`molrs_box_ortho`](crate::molrs_box_ortho).
+/// Freed with [`molrs_box_drop`](crate::molrs_box_drop).
 ///
 /// # Layout (C)
 ///
@@ -111,11 +111,11 @@ pub struct MolrsBoxHandle {
     pub version: u32,
 }
 
-/// Opaque handle to a Region in the global store.
+/// Opaque handle to a Region in the handle registry.
 ///
 /// Obtained from any `molrs_region_*` constructor, or from a boolean
 /// composition of two regions. Freed with
-/// [`molrs_region_drop`](crate::region::molrs_region_drop).
+/// [`molrs_region_drop`](crate::molrs_region_drop).
 ///
 /// # Layout (C)
 ///
@@ -134,11 +134,11 @@ pub struct MolrsRegionHandle {
     pub version: u32,
 }
 
-/// Opaque handle to a ForceField in the global store.
+/// Opaque handle to a ForceField in the handle registry.
 ///
-/// Obtained from [`molrs_ff_new`](crate::forcefield::molrs_ff_new) or
-/// [`molrs_ff_from_json`](crate::forcefield::molrs_ff_from_json).
-/// Freed with [`molrs_ff_drop`](crate::forcefield::molrs_ff_drop).
+/// Obtained from [`molrs_forcefield_new`](crate::molrs_forcefield_new) or
+/// [`molrs_forcefield_from_json`](crate::molrs_forcefield_from_json).
+/// Freed with [`molrs_forcefield_drop`](crate::molrs_forcefield_drop).
 ///
 /// # Layout (C)
 ///
@@ -187,9 +187,9 @@ pub(crate) fn handle_to_box_key(h: MolrsBoxHandle) -> BoxKey {
     BoxKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: FFKey ↔ MolrsForceFieldHandle ---
+// --- Conversion: ForceFieldKey ↔ MolrsForceFieldHandle ---
 
-pub(crate) fn ff_key_to_handle(key: FFKey) -> MolrsForceFieldHandle {
+pub(crate) fn forcefield_key_to_handle(key: ForceFieldKey) -> MolrsForceFieldHandle {
     let ffi = key.data().as_ffi();
     MolrsForceFieldHandle {
         idx: ffi as u32,
@@ -197,16 +197,16 @@ pub(crate) fn ff_key_to_handle(key: FFKey) -> MolrsForceFieldHandle {
     }
 }
 
-pub(crate) fn handle_to_ff_key(h: MolrsForceFieldHandle) -> FFKey {
+pub(crate) fn handle_to_forcefield_key(h: MolrsForceFieldHandle) -> ForceFieldKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
-    FFKey::from(slotmap::KeyData::from_ffi(ffi))
+    ForceFieldKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
 // --- Conversion: BlockHandle ↔ MolrsBlockHandle ---
 
 /// Convert a Rust `BlockHandle` to a C `MolrsBlockHandle`.
 ///
-/// Requires the CStore to look up the interned key_id.
+/// Requires the HandleRegistry to look up the interned key_id.
 pub(crate) fn block_handle_to_c(
     bh: &BlockHandle,
     key_to_id: &std::collections::HashMap<String, u32>,
@@ -221,7 +221,7 @@ pub(crate) fn block_handle_to_c(
 
 /// Convert a C `MolrsBlockHandle` to a Rust `BlockHandle`.
 ///
-/// Requires the CStore to look up the key string from key_id.
+/// Requires the HandleRegistry to look up the key string from key_id.
 pub(crate) fn c_to_block_handle(
     ch: &MolrsBlockHandle,
     interned_keys: &[std::ffi::CString],

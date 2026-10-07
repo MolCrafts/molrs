@@ -1,43 +1,16 @@
 //! Combined Distribution Functions (CDF): joint 2-D / 3-D observable histograms.
-//!
-//! A [`CombinedDistribution`] jointly histograms two or three [`Observable`]s
-//! evaluated on aligned per-frame selections, producing a correlated density
-//! (RDF×ADF, distance×dihedral, angle×angle, …) whose marginals recover the
-//! link-01 1-D [`DistributionResult`](super::DistributionResult)s.
-//!
-//! Ported from the reference implementation (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
-//! - The flat **row-major** bin layout `m_pBin[iy*m_iRes[0]+ix]` of `C2DF`
-//!   (axis 0 fastest-varying) — generalized here to N axes with
-//!   `flat = Σ_a idx[a]·stride[a]`, `stride[0]=1`.
-//! - The skip-out-of-range / running-entry bookkeeping of
-//!   `C2DF::AddToBin(double x, double y)` (`m_fSkipEntries` / `m_fBinEntries`).
-//! - The **bilinear / trilinear cloud-in-cell** deposition of
-//!   `C2DF`/`C3DF::AddToBin`: each sample is spread over the `2^N` straddling
-//!   bins as the tensor product of the per-axis cloud-in-cell weights (the
-//!   N-D extension of link-01's [`Histogram1d::add`](super::Histogram1d::add)).
-//!   Because it is the tensor product of the same per-axis CIC scheme, summing
-//!   the joint histogram over the other axes reproduces the link-01 1-D CIC
-//!   distribution *exactly* — the defining CDF marginal-consistency contract
-//!   (ac-001) holds, now bit-for-bit with reference implementation rather than via a nearest-bin
-//!   approximation.
-//!
-//! # References
-//! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
-//! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 
 use super::observable::{AtomGroups, Observable};
 use super::{AngleObservable, DihedralObservable, DistanceObservable, DistributionResult};
-
-/// Boltzmann constant in molrs energy units, kcal/(mol·K).
-pub const KB_KCAL_PER_MOL_K: F = 1.987204e-3;
+use crate::core::UnitPreset;
 
 /// One axis of a [`CombinedDistribution`]: bin count + range + optional
 /// solid-angle weighting (mirrors link-01's sin θ ADF correction).
@@ -132,13 +105,13 @@ impl AxisSpec {
 /// This enum is the object-safe stand-in for the spec's "boxed observables":
 /// it carries any of the link-01 concretes and dispatches statically.
 #[derive(Debug, Clone)]
-pub enum AnyObservable {
+pub enum InternalCoordinate {
     Distance(DistanceObservable),
     Angle(AngleObservable),
     Dihedral(DihedralObservable),
 }
 
-impl AnyObservable {
+impl InternalCoordinate {
     /// Parse an observable-kind string into the variant and its arity:
     /// `"distance"` → 2, `"angle"` → 3, `"dihedral"` → 4.
     pub fn from_kind(kind: &str) -> Result<(Self, usize), ComputeError> {
@@ -148,7 +121,7 @@ impl AnyObservable {
             "dihedral" => Self::Dihedral(DihedralObservable),
             other => {
                 return Err(ComputeError::OutOfRange {
-                    field: "AnyObservable::kind",
+                    field: "InternalCoordinate::kind",
                     value: other.to_string(),
                 });
             }
@@ -188,17 +161,17 @@ impl AnyObservable {
     }
 }
 
-impl From<DistanceObservable> for AnyObservable {
+impl From<DistanceObservable> for InternalCoordinate {
     fn from(o: DistanceObservable) -> Self {
         Self::Distance(o)
     }
 }
-impl From<AngleObservable> for AnyObservable {
+impl From<AngleObservable> for InternalCoordinate {
     fn from(o: AngleObservable) -> Self {
         Self::Angle(o)
     }
 }
-impl From<DihedralObservable> for AnyObservable {
+impl From<DihedralObservable> for InternalCoordinate {
     fn from(o: DihedralObservable) -> Self {
         Self::Dihedral(o)
     }
@@ -212,15 +185,42 @@ impl From<DihedralObservable> for AnyObservable {
 /// observables must emit the same number of samples per frame (equal
 /// `AtomGroups` lengths), validated as a typed [`ComputeError`] — never a
 /// silent zip-truncation.
+///
+/// A [`CombinedDistribution`] jointly histograms two or three [`Observable`]s
+/// evaluated on aligned per-frame selections, producing a correlated density
+/// (RDF×ADF, distance×dihedral, angle×angle, …) whose marginals recover the
+/// link-01 1-D [`DistributionResult`](super::DistributionResult)s.
+///
+/// Ported from the reference implementation (`src/2df.cpp`, `src/2df.h`, `src/3df.h`):
+/// - The flat **row-major** bin layout `m_pBin[iy*m_iRes[0]+ix]` of `C2DF`
+///   (axis 0 fastest-varying) — generalized here to N axes with
+///   `flat = Σ_a idx[a]·stride[a]`, `stride[0]=1`.
+/// - The skip-out-of-range / running-entry bookkeeping of
+///   `C2DF::AddToBin(double x, double y)` (`m_fSkipEntries` / `m_fBinEntries`).
+/// - The **bilinear / trilinear cloud-in-cell** deposition of
+///   `C2DF`/`C3DF::AddToBin`: each sample is spread over the `2^N` straddling
+///   bins as the tensor product of the per-axis cloud-in-cell weights (the
+///   N-D extension of link-01's [`Histogram1d::add`](super::Histogram1d::add)).
+///   Because it is the tensor product of the same per-axis CIC scheme, summing
+///   the joint histogram over the other axes reproduces the link-01 1-D CIC
+///   distribution *exactly* — the defining CDF marginal-consistency contract
+///   (ac-001) holds bit for bit, not through a nearest-bin approximation.
+///
+/// # References
+/// - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
+/// - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 #[derive(Debug, Clone)]
 pub struct CombinedDistribution {
-    observables: Vec<AnyObservable>,
+    observables: Vec<InternalCoordinate>,
     axes: Vec<AxisSpec>,
 }
 
 impl CombinedDistribution {
     /// Build from N observables and N axis specs (N ∈ {2, 3}).
-    pub fn new(observables: Vec<AnyObservable>, axes: Vec<AxisSpec>) -> Result<Self, ComputeError> {
+    pub fn new(
+        observables: Vec<InternalCoordinate>,
+        axes: Vec<AxisSpec>,
+    ) -> Result<Self, ComputeError> {
         let n = observables.len();
         if !(2..=3).contains(&n) {
             return Err(ComputeError::OutOfRange {
@@ -563,7 +563,7 @@ impl CombinedDistributionResult {
     /// barrier) rather than `+∞`, so the surface is finite everywhere. Returns
     /// the flat row-major array aligned with [`density`](Self::density).
     pub fn free_energy(&self, temperature: F) -> Array1<F> {
-        let kt = KB_KCAL_PER_MOL_K * temperature;
+        let kt = UnitPreset::real().boltzmann() * temperature;
         let mut g = Array1::<F>::zeros(self.density.len());
         let mut g_max = F::NEG_INFINITY;
         for (i, &p) in self.density.iter().enumerate() {

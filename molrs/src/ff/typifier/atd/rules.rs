@@ -5,7 +5,7 @@
 //! tried in file order and the first match wins, so the table's own ordering —
 //! most specific first — is load-bearing and must never be sorted or dedup'd.
 
-use molrs::AtomId;
+use molrs::core::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{AtdRule, AtdTable};
@@ -24,7 +24,7 @@ use crate::ff::params::{AtdRule, AtdTable};
 /// second name out of the caller's reach.
 pub(super) fn assign_rule(
     table: &AtdTable,
-    aid: AtomId,
+    aid: NodeId,
     facts: &MolFacts,
 ) -> Option<&'static AtdRule> {
     table
@@ -34,7 +34,7 @@ pub(super) fn assign_rule(
 }
 
 /// Test one pre-parsed `ATD` rule against an atom.
-fn rule_matches(rule: &AtdRule, aid: AtomId, facts: &MolFacts) -> bool {
+fn rule_matches(rule: &AtdRule, aid: NodeId, facts: &MolFacts) -> bool {
     let Ok(i) = facts.index_of(aid) else {
         return false;
     };

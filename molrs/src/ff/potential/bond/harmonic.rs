@@ -1,20 +1,23 @@
-//! Harmonic bond (LAMMPS `bond_style harmonic`): E = k·(r − r0)².
-//!
-//! `k` is LAMMPS's `K`, energy/length², and carries the usual ½: there is no
-//! hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
+//! Harmonic bond (LAMMPS `bond_style harmonic`).
 
-use molrs::store::schema::block_names::BONDS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Harmonic bond potential with pre-resolved flat arrays.
+///
+/// LAMMPS `bond_style harmonic`: E = k·(r − r0)².
+///
+/// `k` is LAMMPS's `K`, energy/length², and carries the usual ½: there is no
+/// hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
 pub struct BondHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -129,11 +132,11 @@ impl IndexedTerms for BondHarmonic {
 }
 
 /// Construct a [`BondHarmonic`] from style params, type params, and Frame topology.
-pub fn bond_harmonic_ctor(
+pub fn bond_harmonic_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -163,14 +166,8 @@ pub fn bond_harmonic_ctor(
             .get(label.as_str())
             .ok_or_else(|| format!("BondHarmonic: unknown bond type '{}'", label))?;
         // `k` is LAMMPS's `K` (= AMBER's `RK`): E = k(r − r0)², no ½.
-        let k = params
-            .get("k")
-            .ok_or_else(|| format!("BondHarmonic type '{}': missing 'k'", label))?
-            as F;
-        let r0 = params
-            .get("r0")
-            .ok_or_else(|| format!("BondHarmonic type '{}': missing 'r0'", label))?
-            as F;
+        let k = param_reads::type_num("harmonic", label, params, "k")?;
+        let r0 = param_reads::type_num("harmonic", label, params, "r0")?;
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
@@ -178,7 +175,7 @@ pub fn bond_harmonic_ctor(
         r0_vec.push(r0);
     }
 
-    Ok(Member::indexed(BondHarmonic::new(
+    Ok(ForceTerm::indexed(BondHarmonic::new(
         atom_i, atom_j, k_vec, r0_vec,
     )))
 }

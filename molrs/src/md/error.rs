@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use molrs::spatial::neighbors::SkinError;
+use molrs::core::{GhostError, SkinError};
 
 /// Failures on the MD surface: construction, binding, and policy guards.
 #[derive(Debug)]
@@ -31,5 +31,11 @@ impl From<SkinError> for MdError {
             SkinError::Invalid(msg) => Self::Invalid(msg),
             SkinError::Guard(msg) => Self::Neighbor(msg),
         }
+    }
+}
+
+impl From<GhostError> for MdError {
+    fn from(err: GhostError) -> Self {
+        Self::Invalid(err.to_string())
     }
 }

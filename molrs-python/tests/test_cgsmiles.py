@@ -1,10 +1,10 @@
 """Python surface for the CGsmiles IR (cgsmiles-01e-python-ir).
 
-These are FFI-seam tests: they prove that ``molrs.io.CGSmilesIR`` imports,
+These are FFI-seam tests: they prove that ``molrs.io.cgsmiles.CgSmilesIr`` imports,
 constructs, hands every fact of the notation across the boundary with the
 right Python type and spelling, and maps a malformed string to ``ValueError``.
 They re-derive no numeric: every count asserted here is a value the Rust unit
-tests in ``molrs/src/io/smiles/cgsmiles/`` already prove (F2 in
+tests in ``molrs/src/io/cgsmiles/`` already prove (F2 in
 ``resolve.rs`` / ``to_atomistic.rs``, F8 in ``resolve.rs`` /
 ``instantiate.rs``), reused only to show Python sees the same number.
 
@@ -28,17 +28,17 @@ F8 = (
 )
 
 # A symmetric-descriptor fixture. Only a *coarse* body exposes its bonding
-# descriptors to Python (``SmilesIR`` publishes none), so the ``[$]`` under
+# descriptors to Python (``SmilesIr`` publishes none), so the ``[$]`` under
 # test is written on the intermediate table's body, not on F2's atomistic one.
 F_SYM = "{[#A][#A]}.{#A=[$][#B][#B][$]}.{#B=[$]CC[$]}"
 
 # The eight classes this binding publishes, all from ``molrs.io``.
 CG_NAMES = (
-    "CGSmilesIR",
-    "CGGraph",
-    "CGNode",
-    "CGEdge",
-    "CGFragmentDef",
+    "CgSmilesIr",
+    "CgGraph",
+    "CgNode",
+    "CgEdge",
+    "CgFragmentDef",
     "ResolvedPair",
     "PairEnd",
     "BondingDescriptor",
@@ -72,18 +72,18 @@ PAIR_END_TAGS = frozenset({"sub", "body"})
 
 
 def test_f2_has_one_resolution_level() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert len(ir.levels) == 1
 
 
 def test_f2_level_has_five_nodes_and_four_edges() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert len(level.nodes) == 5
     assert len(level.edges) == 4
 
 
 def test_f2_node_names_are_the_written_bead_names() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert [node.name for node in level.nodes] == [
         "OH",
         "PEO",
@@ -94,55 +94,55 @@ def test_f2_node_names_are_the_written_bead_names() -> None:
 
 
 def test_f2_nodes_carry_no_charge() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert all(node.charge is None for node in level.nodes)
 
 
 def test_f2_nodes_carry_no_annotations() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert all(node.annotations == [] for node in level.nodes)
 
 
 def test_f2_base_level_nodes_have_no_parent() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert all(node.parent is None for node in level.nodes)
 
 
 def test_f2_edges_all_have_multiplicity_one() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert [edge.multiplicity for edge in level.edges] == [1, 1, 1, 1]
 
 
 def test_f2_edges_are_all_written_not_derived() -> None:
-    level = molrs.io.CGSmilesIR(F2).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0]
     assert all(edge.derived_from is None for edge in level.edges)
 
 
 def test_f2_has_one_fragment_table_naming_both_beads() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert len(ir.fragments) == 1
     assert set(ir.fragments[0]) == {"OH", "PEO"}
 
 
 def test_f2_resolves_four_pairs() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert len(ir.pairs[0]) == 4
 
 
 def test_f2_pairs_are_all_single_bonds() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert [resolved.kind for resolved in ir.pairs[0]] == ["single"] * 4
 
 
 def test_f2_pair_ends_are_body_ends() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     for resolved in ir.pairs[0]:
         assert resolved.src.end == "body"
         assert resolved.dst.end == "body"
 
 
 def test_f2_pair_indices_cross_as_ints() -> None:
-    resolved = molrs.io.CGSmilesIR(F2).pairs[0][0]
+    resolved = molrs.io.cgsmiles.CgSmilesIr(F2).pairs[0][0]
     assert isinstance(resolved.edge, int)
     assert isinstance(resolved.bond, int)
     assert isinstance(resolved.src.index, int)
@@ -155,28 +155,28 @@ def test_f2_pair_indices_cross_as_ints() -> None:
 
 
 def test_f8_has_two_resolution_levels() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     assert len(ir.levels) == 2
 
 
 def test_f8_level_zero_has_three_nodes_and_two_edges() -> None:
-    level = molrs.io.CGSmilesIR(F8).levels[0]
+    level = molrs.io.cgsmiles.CgSmilesIr(F8).levels[0]
     assert len(level.nodes) == 3
     assert len(level.edges) == 2
 
 
 def test_f8_level_one_has_six_nodes() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     assert len(ir.levels[1].nodes) == 6
 
 
 def test_f8_level_one_nodes_point_back_at_the_bead_they_came_from() -> None:
-    level = molrs.io.CGSmilesIR(F8).levels[1]
+    level = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1]
     assert [node.parent for node in level.nodes] == [0, 0, 1, 1, 2, 2]
 
 
 def test_f8_level_one_node_names_come_from_the_expanded_bodies() -> None:
-    level = molrs.io.CGSmilesIR(F8).levels[1]
+    level = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1]
     assert [node.name for node in level.nodes] == [
         "PEO",
         "PEO",
@@ -188,54 +188,54 @@ def test_f8_level_one_node_names_come_from_the_expanded_bodies() -> None:
 
 
 def test_f8_level_one_has_five_edges() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     assert len(ir.levels[1].edges) == 5
 
 
 def test_f8_written_edges_of_level_one_have_no_provenance() -> None:
-    edges = molrs.io.CGSmilesIR(F8).levels[1].edges
+    edges = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1].edges
     assert [edge.derived_from for edge in edges[:3]] == [None, None, None]
 
 
 def test_f8_derived_edges_name_the_pair_that_induced_them() -> None:
-    edges = molrs.io.CGSmilesIR(F8).levels[1].edges
+    edges = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1].edges
     assert edges[3].derived_from == (0, 0)
     assert edges[4].derived_from == (0, 1)
 
 
 def test_f8_coarse_fragment_body_is_a_cg_graph() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
-    assert isinstance(ir.fragments[0]["B1"].body, molrs.io.CGGraph)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
+    assert isinstance(ir.fragments[0]["B1"].body, molrs.io.cgsmiles.CgGraph)
 
 
 def test_f8_coarse_body_opens_with_an_unlabelled_orderless_right_descriptor() -> None:
-    body = molrs.io.CGSmilesIR(F8).fragments[0]["B1"].body
+    body = molrs.io.cgsmiles.CgSmilesIr(F8).fragments[0]["B1"].body
     descriptor = body.nodes[0].descriptors[0]
     assert (descriptor.kind, descriptor.label, descriptor.order) == (">", "", None)
 
 
 def test_f8_coarse_body_closes_with_a_left_descriptor() -> None:
-    body = molrs.io.CGSmilesIR(F8).fragments[0]["B1"].body
+    body = molrs.io.cgsmiles.CgSmilesIr(F8).fragments[0]["B1"].body
     assert body.nodes[1].descriptors[0].kind == "<"
 
 
 def test_symmetric_descriptor_crosses_as_the_dollar_glyph() -> None:
-    body = molrs.io.CGSmilesIR(F_SYM).fragments[0]["A"].body
+    body = molrs.io.cgsmiles.CgSmilesIr(F_SYM).fragments[0]["A"].body
     assert body.nodes[0].descriptors[0].kind == "$"
 
 
 def test_f8_last_fragment_table_holds_atomistic_bodies() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
-    assert isinstance(ir.fragments[1]["PEO"].body, molrs.io.SmilesIR)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
+    assert isinstance(ir.fragments[1]["PEO"].body, molrs.io.smiles.SmilesIr)
 
 
 def test_f8_has_two_fragment_tables() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     assert len(ir.fragments) == 2
 
 
 def test_f8_level_zero_pairs_reach_into_the_child_level() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     assert ir.pairs[0][0].src.end == "sub"
 
 
@@ -247,7 +247,7 @@ def test_f8_level_zero_pairs_reach_into_the_child_level() -> None:
 def test_every_enum_crosses_as_its_documented_spelling() -> None:
     """Bond kinds and pair-end tags cross as lowercase variant names; a
     descriptor kind crosses as the glyph the notation wrote."""
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     seen = 0
     for level_pairs in ir.pairs:
         for resolved in level_pairs:
@@ -258,7 +258,7 @@ def test_every_enum_crosses_as_its_documented_spelling() -> None:
     for table in ir.fragments:
         for definition in table.values():
             body = definition.body
-            if not isinstance(body, molrs.io.CGGraph):
+            if not isinstance(body, molrs.io.cgsmiles.CgGraph):
                 continue
             for node in body.nodes:
                 for descriptor in node.descriptors:
@@ -269,73 +269,52 @@ def test_every_enum_crosses_as_its_documented_spelling() -> None:
 
 
 def test_charge_crosses_as_a_float() -> None:
-    node = molrs.io.CGSmilesIR("{[#A;q=-0.5]}").levels[0].nodes[0]
+    node = molrs.io.cgsmiles.CgSmilesIr("{[#A;q=-0.5]}").levels[0].nodes[0]
     assert isinstance(node.charge, float)
     assert abs(node.charge - (-0.5)) < 1e-10
 
 
 def test_annotations_cross_as_a_list_of_string_pairs() -> None:
-    node = molrs.io.CGSmilesIR("{[#A;q=-0.5;kind=ether]}").levels[0].nodes[0]
+    node = molrs.io.cgsmiles.CgSmilesIr("{[#A;q=-0.5;kind=ether]}").levels[0].nodes[0]
     assert node.annotations == [("kind", "ether")]
 
 
 def test_edge_endpoints_and_multiplicity_cross_as_ints() -> None:
-    edge = molrs.io.CGSmilesIR(F2).levels[0].edges[0]
+    edge = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0].edges[0]
     assert isinstance(edge.i, int)
     assert isinstance(edge.j, int)
     assert isinstance(edge.multiplicity, int)
 
 
 def test_parent_crosses_as_an_int_on_an_expanded_level() -> None:
-    node = molrs.io.CGSmilesIR(F8).levels[1].nodes[0]
+    node = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1].nodes[0]
     assert isinstance(node.parent, int)
 
 
 def test_derived_from_crosses_as_a_two_tuple_of_ints() -> None:
-    derived_from = molrs.io.CGSmilesIR(F8).levels[1].edges[3].derived_from
+    derived_from = molrs.io.cgsmiles.CgSmilesIr(F8).levels[1].edges[3].derived_from
     assert isinstance(derived_from, tuple)
     assert len(derived_from) == 2
     assert all(isinstance(value, int) for value in derived_from)
 
 
 def test_fragment_definition_carries_its_own_name() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert ir.fragments[0]["PEO"].name == "PEO"
 
 
 # ---------------------------------------------------------------------------
-# One spelling per fact
+# One public path
 # ---------------------------------------------------------------------------
 
 
-def test_cg_edge_has_no_second_spelling_of_its_order_or_origin() -> None:
-    edge = molrs.io.CGSmilesIR(F2).levels[0].edges[0]
-    assert not hasattr(edge, "order")
-    assert not hasattr(edge, "origin")
-
-
-def test_cg_fragment_def_has_no_body_kind() -> None:
-    definition = molrs.io.CGSmilesIR(F2).fragments[0]["PEO"]
-    assert not hasattr(definition, "body_kind")
-
-
-def test_cg_smiles_ir_has_no_n_levels() -> None:
-    ir = molrs.io.CGSmilesIR(F2)
-    assert not hasattr(ir, "n_levels")
-
-
-def test_io_namespace_has_no_cgsmiles_reader() -> None:
-    assert not hasattr(molrs.io, "CGSmilesReader")
-
-
-def test_molrs_has_no_parse_cgsmiles_free_function() -> None:
-    assert not hasattr(molrs, "parse_cgsmiles")
-
-
-def test_all_eight_classes_are_public_names_of_molrs_io() -> None:
+def test_the_classes_are_public_names_of_their_notation_modules() -> None:
+    """The CGsmiles records are ``molrs.io.cgsmiles``'s; the bonding
+    descriptor is the SMILES fragment grammar's, ``molrs.io.smiles``'s."""
     for name in CG_NAMES:
-        assert hasattr(molrs.io, name), name
-        assert name in molrs.io.__all__, name
+        module = molrs.io.smiles if name == "BondingDescriptor" else molrs.io.cgsmiles
+        assert hasattr(module, name), name
+        assert name in module.__all__, name
 
 
 # ---------------------------------------------------------------------------
@@ -345,22 +324,22 @@ def test_all_eight_classes_are_public_names_of_molrs_io() -> None:
 
 def test_unterminated_block_raises_value_error() -> None:
     with pytest.raises(ValueError) as excinfo:
-        molrs.io.CGSmilesIR("{[#A]")
+        molrs.io.cgsmiles.CgSmilesIr("{[#A]")
     assert str(excinfo.value)
 
 
 def test_empty_string_raises_value_error() -> None:
     with pytest.raises(ValueError) as excinfo:
-        molrs.io.CGSmilesIR("")
+        molrs.io.cgsmiles.CgSmilesIr("")
     assert str(excinfo.value)
 
 
 def test_repr_echoes_the_input_string() -> None:
-    assert F2 in repr(molrs.io.CGSmilesIR(F2))
+    assert F2 in repr(molrs.io.cgsmiles.CgSmilesIr(F2))
 
 
 def test_nested_records_reject_attribute_assignment() -> None:
-    ir = molrs.io.CGSmilesIR(F8)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F8)
     level = ir.levels[1]
     definition = ir.fragments[0]["B1"]
     resolved = ir.pairs[0][0]
@@ -380,7 +359,7 @@ def test_nested_records_reject_attribute_assignment() -> None:
 
 def test_cg_node_is_not_constructible_from_python() -> None:
     with pytest.raises(TypeError):
-        molrs.io.CGNode()
+        molrs.io.cgsmiles.CgNode()
 
 
 # ---------------------------------------------------------------------------
@@ -396,12 +375,12 @@ def test_cgsmiles_f2_public_api() -> None:
     bodies carry two bonds each and the four resolved pairs add one bond each,
     so 6 + 4 = 10 bonds. No third-party tool produced these numbers.
     """
-    ir = molrs.io.CGSmilesIR(F2)
+    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
     assert len(ir.levels) == 1
     assert len(ir.pairs[0]) == 4
 
     mol = ir.to_atomistic()
-    assert isinstance(mol, molrs.Atomistic)
+    assert isinstance(mol, molrs.core.Atomistic)
     assert mol.n_atoms == 11
     assert mol.n_relations("bonds") == 10
 
@@ -413,9 +392,9 @@ def test_cgsmiles_f2_public_api() -> None:
 
 def test_to_coarsegrain_crosses_as_a_coarse_grain() -> None:
     # Four written beads, three written edges; the counts are the ones the
-    # Rust doctest of ``CGSmilesIR::to_coarsegrain`` pins.
-    cg = molrs.io.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+    # Rust doctest of ``CgSmilesIr::to_coarsegrain`` pins.
+    cg = molrs.io.cgsmiles.CgSmilesIr("{[#1][#1][#1][#4]}").to_coarsegrain()
 
-    assert type(cg) is molrs.CoarseGrain
+    assert type(cg) is molrs.core.CoarseGrain
     assert cg.n_beads == 4
     assert cg.n_relations("bonds") == 3

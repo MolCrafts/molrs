@@ -1,26 +1,6 @@
 //! What an estimate cost, and how it was reached.
-//!
-//! An estimated parameter that does not say it *is* one cannot be audited, so
-//! every estimate this module produces carries a [`Provenance`]: the penalty
-//! parmchk2's weight table charges for it, the [`PenaltyTier`] that lands it in,
-//! the analog it was copied from, and how ([`EstimateMethod`]).
-//!
-//! # The provenance convention
-//!
-//! [`Provenance::write_onto`] writes four keys onto an estimated term's
-//! [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
-//! the parmchk2 oracle test) reads the same four:
-//!
-//! | key | type | meaning |
-//! |---|---|---|
-//! | `estimated` | numeric `1.0` | flag: this term was estimated, not matched |
-//! | `estimate_penalty` | numeric | total additive penalty (f64) |
-//! | `estimate_method` | string | `"analogy"`, `"empirical"`, or `"generic-wildcard"` |
-//! | `estimate_analog` | string | source type name copied from, or `""` |
-//!
-//! A term the table covered outright carries **none** of them — see [`Estimate`].
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
 
 /// Penalty tier for an estimate, following the CGenFF confidence bands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +60,26 @@ impl EstimateMethod {
 }
 
 /// How an estimated term was produced, and what it cost.
+///
+/// An estimated parameter that does not say it *is* one cannot be audited, so
+/// every estimate the estimator produces carries a [`Provenance`]: the penalty
+/// parmchk2's weight table charges for it, the [`PenaltyTier`] that lands it in,
+/// the analog it was copied from, and how ([`EstimateMethod`]).
+///
+/// # The provenance convention
+///
+/// [`Provenance::apply_to`] writes four keys onto an estimated term's
+/// [`Params`], and every consumer (the OPLS assign seam, the GAFF typifier,
+/// the parmchk2 oracle test) reads the same four:
+///
+/// | key | type | meaning |
+/// |---|---|---|
+/// | `estimated` | numeric `1.0` | flag: this term was estimated, not matched |
+/// | `estimate_penalty` | numeric | total additive penalty (f64) |
+/// | `estimate_method` | string | `"analogy"`, `"empirical"`, or `"generic-wildcard"` |
+/// | `estimate_analog` | string | source type name copied from, or `""` |
+///
+/// A term the table covered outright carries **none** of them — see [`Estimate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct Provenance {
     /// The additive penalty score charged for the substitutions made.
@@ -135,7 +135,7 @@ impl Provenance {
     ];
 
     /// Write the four provenance keys onto an estimated term's params.
-    pub fn write_onto(&self, params: &mut Params) {
+    pub fn apply_to(&self, params: &mut Params) {
         params.set(Self::KEYS[0], 1.0);
         params.set(Self::KEYS[1], self.penalty);
         params.set_str(Self::KEYS[2], self.method.as_str());
@@ -143,10 +143,10 @@ impl Provenance {
     }
 
     /// The provenance `params` carry: the inverse of
-    /// [`write_onto`](Self::write_onto). `None` for a term that was matched,
+    /// [`apply_to`](Self::apply_to). `None` for a term that was matched,
     /// not estimated (no `estimated` key), or whose `estimate_method` is not
     /// one this module writes.
-    pub fn read_from(params: &Params) -> Option<Self> {
+    pub fn from_params(params: &Params) -> Option<Self> {
         params.get(Self::KEYS[0])?;
         let method = EstimateMethod::parse(params.get_str(Self::KEYS[2])?)?;
         Some(Self {
@@ -221,7 +221,7 @@ impl Estimate {
     /// failed to match the term against its own tables, so from its point of view
     /// the generic row is a fallback and it needs to be told so. A caller that
     /// reads the parameter table itself
-    /// ([`typifier::gaff`](crate::ff::typifier::gaff)) matches on [`Estimate`]
+    /// ([`GaffTypifier`](crate::ff::typifier::GaffTypifier)) matches on [`Estimate`]
     /// instead and keeps the distinction, which is what the parmchk2 oracle
     /// demands of it.
     pub fn into_params(self) -> Params {
@@ -229,7 +229,7 @@ impl Estimate {
             Self::Covered { params, analog } => (params, Provenance::wildcard(0.0, analog)),
             Self::Estimated { params, provenance } => (params, provenance),
         };
-        provenance.write_onto(&mut params);
+        provenance.apply_to(&mut params);
         params
     }
 }
@@ -262,23 +262,23 @@ mod tests {
     }
 
     #[test]
-    fn read_from_inverts_write_onto() {
+    fn from_params_inverts_apply_to() {
         let written = Provenance::analogy(2.5, "c3-oh");
         let mut params = Params::from_pairs(&[("k", 300.9)]);
-        written.write_onto(&mut params);
-        assert_eq!(Provenance::read_from(&params), Some(written));
+        written.apply_to(&mut params);
+        assert_eq!(Provenance::from_params(&params), Some(written));
     }
 
     #[test]
     fn a_matched_term_reads_as_no_provenance() {
         let params = Params::from_pairs(&[("k", 300.9)]);
-        assert_eq!(Provenance::read_from(&params), None);
+        assert_eq!(Provenance::from_params(&params), None);
     }
 
     #[test]
     fn provenance_writes_the_four_keys() {
         let mut params = Params::from_pairs(&[("k", 300.9)]);
-        Provenance::analogy(2.5, "c3-oh").write_onto(&mut params);
+        Provenance::analogy(2.5, "c3-oh").apply_to(&mut params);
         assert_eq!(params.get("estimated"), Some(1.0));
         assert_eq!(params.get("estimate_penalty"), Some(2.5));
         let strings: Vec<(&str, &str)> = params.iter_strings().collect();

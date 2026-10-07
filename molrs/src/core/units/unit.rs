@@ -3,7 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::types::F;
+use crate::op::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;
@@ -88,7 +88,7 @@ impl Unit {
     /// Batch-rescale coordinates from nm to Å (factor 10):
     ///
     /// ```
-    /// use molrs::units::{UnitRegistry, UnitsError};
+    /// use molrs::core::{UnitRegistry, UnitsError};
     ///
     /// let reg = UnitRegistry::new();
     /// let nm = reg.parse("nm")?;
@@ -146,7 +146,7 @@ impl FromStr for Unit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::registry::UnitRegistry;
+    use crate::core::UnitRegistry;
 
     fn unit(expr: &str) -> Unit {
         UnitRegistry::new().parse(expr).unwrap()

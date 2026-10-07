@@ -1,22 +1,22 @@
 //! Shared 1-D histogram with probability-density normalization.
-//!
-//! Ported from the reference implementation `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
-//! commit 220729): linear binning with `m_fFac = resolution / (max - min)`,
-//! out-of-range samples skipped (reference implementation `m_fSkipEntries`), and running
-//! sum / sum-of-squares / input min-max bookkeeping. The probability-density
-//! normalization (∫ p dx = 1) is the molrs reading of the reference implementation's binned
-//! distribution divided by the total entry count and bin width.
-//!
-//! This is the single 1-D histogram implementation behind every geometric
-//! distribution function (ADF, DDF, distance DF).
 
-use molrs::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 /// A linear 1-D histogram over `[min, max]` with `n_bins` equal-width bins.
 ///
 /// Mirrors the reference implementation `CDF`: samples outside `[min, max]` are counted as skipped
 /// (not binned), and the in-range count plus running statistics are retained.
+///
+/// Ported from the reference implementation `src/df.cpp` (`CDF::AddToBin(double)` and `CDF::Create`,
+/// commit 220729): linear binning with `m_fFac = resolution / (max - min)`,
+/// out-of-range samples skipped (reference implementation `m_fSkipEntries`), and running
+/// sum / sum-of-squares / input min-max bookkeeping. The probability-density
+/// normalization (∫ p dx = 1) is the molrs reading of the reference implementation's binned
+/// distribution divided by the total entry count and bin width.
+///
+/// This is the single 1-D histogram implementation behind every geometric
+/// distribution function (ADF, DDF, distance DF).
 #[derive(Debug, Clone)]
 pub struct Histogram1d {
     n_bins: usize,
@@ -90,7 +90,7 @@ impl Histogram1d {
 
     /// **Nearest-bin** deposition (the simple `floor((d−min)·fac)` rule, *not*
     /// cloud-in-cell). Use this for RDF-family consumers that must match
-    /// [`compute::rdf`](crate::compute::rdf)'s nearest-bin convention — namely
+    /// [`Rdf`](crate::compute::Rdf)'s nearest-bin convention — namely
     /// the Van Hove distinct part `G_d`, whose `G_d(r,0) = ρ g(r)` contract is
     /// checked against `compute::rdf`. The geometric ADF/DDF/distance and CDF
     /// family use the reference implementation cloud-in-cell [`add`](Self::add) instead.

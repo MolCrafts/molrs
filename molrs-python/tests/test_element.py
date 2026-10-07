@@ -12,7 +12,7 @@ import pytest
     ],
 )
 def test_element_lookup(identifier, number, name, symbol):
-    element = molrs.Element(identifier)
+    element = molrs.core.Element(identifier)
     assert element.number == number
     assert element.name == name
     assert element.symbol == symbol
@@ -21,17 +21,17 @@ def test_element_lookup(identifier, number, name, symbol):
 
 def test_all_real_elements_round_trip_through_rust_table():
     for number in range(1, 119):
-        element = molrs.Element(number)
-        assert molrs.Element(element.symbol) == element
-        assert molrs.Element(element.name.upper()) == element
+        element = molrs.core.Element(number)
+        assert molrs.core.Element(element.symbol) == element
+        assert molrs.core.Element(element.name.upper()) == element
         assert element.mass > 0.0
         assert element.vdw > 0.0
         assert element.covalent > 0.0
 
 
 def test_element_convenience_lookups():
-    assert molrs.Element.get_symbols([1, "carbon", "o", 7]) == ["H", "C", "O", "N"]
-    assert molrs.Element.get_atomic_number("fe") == 26
+    assert molrs.core.Element.get_symbols([1, "carbon", "o", 7]) == ["H", "C", "O", "N"]
+    assert molrs.core.Element.get_atomic_number("fe") == 26
 
 
 @pytest.mark.parametrize(
@@ -39,4 +39,4 @@ def test_element_convenience_lookups():
 )
 def test_invalid_element_fails_fast(identifier):
     with pytest.raises(KeyError, match="Element not found"):
-        molrs.Element(identifier)
+        molrs.core.Element(identifier)

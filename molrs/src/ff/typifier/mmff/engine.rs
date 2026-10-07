@@ -2,23 +2,23 @@
 //!
 //! MMFF94 and MMFF94s are the same typing pipeline over two parameter sets, so
 //! there is exactly one implementation here and the public surface
-//! ([`MMFF94Typifier`](super::MMFF94Typifier) /
-//! [`MMFF94STypifier`](super::MMFF94STypifier)) is two newtypes over it. The
+//! ([`Mmff94Typifier`](super::Mmff94Typifier) /
+//! [`Mmff94sTypifier`](super::Mmff94sTypifier)) is two newtypes over it. The
 //! [`MmffVariant`] is a **private field** of this engine: users pick a variant by
 //! picking a front door, never by passing a flag.
 //!
 //! The variant reaches the parameters by two independent paths, and both must be
 //! fed or MMFF94s is only half-applied:
 //!
-//! 1. **Frame annotation** — `frame_builder::annotate_mmff` resolves the
+//! 1. **Frame annotation** — `assignment::annotate_mmff` resolves the
 //!    per-instance numbers the typing base stamps onto the typed graph: `koop` on
 //!    impropers and `(v1, v2, v3)` on dihedrals. These are exactly the columns the
 //!    `mmff_oop` / `mmff_torsion` kernels read, so this is where the 94/94s
 //!    numerical difference physically enters an energy.
 //! 2. **The [`ForceField`] tree** — assembled from the compiled table under the
-//!    front door's own name ([`embedded`](super::embedded)); the typing output is
+//!    front door's own name ([`shipped_forcefield`](super::shipped_forcefield)); the typing output is
 //!    seeded from it and compiled by
-//!    [`PotentialCompiler::compile`](crate::ff::potential::PotentialCompiler::compile).
+//!    [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile).
 //!    It carries the force-field name and the style skeleton.
 //!
 //! Feeding only path 1 leaves a tree that still calls itself `MMFF94`; feeding
@@ -30,27 +30,24 @@
 //! It matches a graph and it owns a library. Turning the typed graph and the
 //! typing output into [`Potentials`](crate::ff::potential::Potentials) is
 //! `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — the same call
-//! every other force field in molrs goes through. There used to be a `build(mol)`
-//! convenience that did typify → `to_frame` → `intramolecular_pairs` →
-//! `PotentialCompiler::compile` behind one method name, which made MMFF the only
-//! typifier in the crate that could also compile; it is gone. A typifier's
-//! contract is `match`.
+//! every other force field in molrs goes through. A typifier does not compile;
+//! its contract is `assign`.
 
 use std::sync::Arc;
 
+use super::properties::MmffVariant;
 use crate::ff::forcefield::ForceField;
-use crate::ff::mmff::MmffVariant;
-use crate::ff::typifier::Match;
-use molrs::Atomistic;
+use crate::ff::typifier::TypeAssignment;
+use molrs::core::Atomistic;
 
-use super::frame_builder;
-use super::params::MMFFParams;
+use super::assignment;
+use super::atom_properties::MmffAtomProperties;
 
 /// Typing metadata + potential parameters: what an MMFF typifier matches
 /// against. The shipped sets are built once per variant and shared
-/// ([`embedded::library`](super::embedded::library)).
+/// ([`shipped_forcefield::library`](super::shipped_forcefield::library)).
 pub(super) struct MmffLibrary {
-    pub(super) params: MMFFParams,
+    pub(super) params: MmffAtomProperties,
     pub(super) ff: ForceField,
 }
 
@@ -65,16 +62,18 @@ pub(super) struct MmffEngine {
 }
 
 impl MmffEngine {
-    /// Parse both halves (typing metadata + force field) out of one XML string.
+    /// A caller's library: typing metadata and the force field it prices with.
     ///
     /// `variant` is supplied by the front door, never by a user.
-    pub(super) fn from_xml_str(variant: MmffVariant, xml: &str) -> Result<Self, String> {
-        let params = crate::ff::forcefield::xml::read_mmff_params_xml_str(xml)?;
-        let ff = crate::ff::forcefield::xml::read_forcefield_xml_str(xml)?;
-        Ok(Self {
+    pub(super) fn from_parts(
+        variant: MmffVariant,
+        params: MmffAtomProperties,
+        ff: ForceField,
+    ) -> Self {
+        Self {
             variant,
             library: Arc::new(MmffLibrary { params, ff }),
-        })
+        }
     }
 
     /// One of the **shipped** parameter sets, shared from the compiled table.
@@ -83,24 +82,24 @@ impl MmffEngine {
     /// memoised. `variant` is supplied by the front door and is the only thing
     /// the two doors disagree about — both read the same
     /// [`ff::params::mmff`](crate::ff::params::mmff) rows.
-    pub(super) fn embedded(variant: MmffVariant) -> Self {
+    pub(super) fn shipped(variant: MmffVariant) -> Self {
         Self {
             variant,
-            library: super::embedded::library(variant),
+            library: super::shipped_forcefield::library(variant),
         }
     }
 
-    pub(super) fn params(&self) -> &MMFFParams {
+    pub(super) fn params(&self) -> &MmffAtomProperties {
         &self.library.params
     }
 
-    pub(super) fn library(&self) -> &ForceField {
+    pub(super) fn source_forcefield(&self) -> &ForceField {
         &self.library.ff
     }
 
     /// Path 1: match the graph and resolve this variant's per-instance
     /// parameters.
-    pub(super) fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
-        frame_builder::annotate_mmff(graph, &self.library.params, &self.library.ff, self.variant)
+    pub(super) fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        assignment::annotate_mmff(graph, &self.library.params, &self.library.ff, self.variant)
     }
 }

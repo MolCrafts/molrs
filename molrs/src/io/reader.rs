@@ -1,4 +1,4 @@
-use crate::store::frame::Frame;
+use crate::core::Frame;
 use flate2::read::GzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Result, Seek};
@@ -40,7 +40,7 @@ pub trait FrameReader: Reader {
     /// `read_as::<Atomistic>()` hands it over instead of going
     /// `Atomistic -> Frame -> Atomistic`.
     ///
-    /// [`Atomistic`]: crate::system::atomistic::Atomistic
+    /// [`Atomistic`]: crate::core::Atomistic
     fn read_as<T: FromFrame>(&mut self) -> Result<Option<T>> {
         match self.read()? {
             Some(frame) => Ok(Some(T::from_frame(&frame)?)),
@@ -51,8 +51,7 @@ pub trait FrameReader: Reader {
 
 /// Build a value from a [`Frame`].
 ///
-/// The target side of [`FrameReader::read_as`] and the source side of
-/// [`FrameWriter::write_from`](crate::io::writer::FrameWriter::write_from).
+/// The target side of [`FrameReader::read_as`].
 pub trait FromFrame: Sized {
     /// Convert, or explain why the frame cannot express this type.
     fn from_frame(frame: &Frame) -> Result<Self>;
@@ -69,8 +68,8 @@ pub trait FromFrame: Sized {
     /// one of the twelve file readers, all of which natively produce frames,
     /// to serve the one reader that does not.
     ///
-    /// [`Atomistic`]: crate::system::atomistic::Atomistic
-    fn from_atomistic(mol: crate::system::atomistic::Atomistic) -> Result<Self> {
+    /// [`Atomistic`]: crate::core::Atomistic
+    fn from_atomistic(mol: crate::core::Atomistic) -> Result<Self> {
         let frame = mol
             .to_frame()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
@@ -84,22 +83,21 @@ impl FromFrame for Frame {
     }
 }
 
-impl FromFrame for crate::system::atomistic::Atomistic {
+impl FromFrame for crate::core::Atomistic {
     fn from_frame(frame: &Frame) -> Result<Self> {
-        crate::system::atomistic::Atomistic::from_frame(frame)
+        crate::core::Atomistic::from_frame(frame)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    fn from_atomistic(mol: crate::system::atomistic::Atomistic) -> Result<Self> {
+    fn from_atomistic(mol: crate::core::Atomistic) -> Result<Self> {
         Ok(mol)
     }
 }
 
 /// Drain a [`FrameReader`] into a `Vec`.
 ///
-/// `FrameReader::read_all` used to live on the trait, duplicating
-/// [`TrajectoryReader`]'s job — multi-frame access is that trait's whole
-/// purpose. Formats that are genuinely indexable should use
+/// A free function rather than a `FrameReader` method: multi-frame access is
+/// [`TrajectoryReader`]'s whole purpose. Formats that are genuinely indexable should use
 /// [`TrajectoryReader::iter`]; this is for the ones that can only stream
 /// forward.
 pub fn collect_frames<R: FrameReader>(reader: &mut R) -> Result<Vec<Frame>> {
@@ -152,8 +150,8 @@ impl Default for FrameIndex {
     }
 }
 
-/// Iterator over the frames of a [`TrajectoryReader`], from step 0 until
-/// [`TrajectoryReader::read_step`] yields `None`.
+/// Iterator over the frames of a [`TrajectoryReader`], from frame 0 until
+/// [`TrajectoryReader::read_frame`] yields `None`.
 ///
 /// Yields `Result<Frame>`. An `Err` leaves the cursor where it was, so the
 /// iteration must be stopped on the first one rather than polled past it.
@@ -166,7 +164,7 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
     type Item = Result<Frame>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.reader.read_step(self.current) {
+        match self.reader.read_frame(self.current) {
             Ok(Some(frame)) => {
                 self.current += 1;
                 Some(Ok(frame))
@@ -177,24 +175,24 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
     }
 }
 
-/// Random access by step over an ordered sequence of frames, whatever it is
-/// stored in.
+/// Random access by frame index over an ordered sequence of frames, whatever
+/// it is stored in.
 ///
 /// A *trajectory* here is any ordered sequence of [`Frame`]s addressed by a
-/// 0-based step index. The contract is deliberately **backend-neutral**: it
+/// 0-based frame index — the position in the sequence, not the MD step label a
+/// frame may carry. The contract is deliberately **backend-neutral**: it
 /// says nothing about files, byte offsets or seeking, so a reader over a DCD
-/// file and a reader over a Zarr store (`io::zarr`'s `FrameSequence`) implement
+/// file and a reader over a Zarr store (`io::mrec::zarr_storage`'s `MrecReader`) implement
 /// the same three methods. That is also why [`Reader`] — which demands an
 /// underlying `BufRead` — is **not** a supertrait of this one: a store-backed
 /// reader has no byte stream to name.
 ///
-/// Dropping that supertrait also made this trait **dyn-compatible** — a
-/// capability callers now rely on, so re-adding one would break them.
-/// [`Reader`] is itself dyn-incompatible (`fn new(Self::R) -> Self` takes no
+/// Without that supertrait this trait is **dyn-compatible**, and callers rely
+/// on it. [`Reader`] is itself dyn-incompatible (`fn new(Self::R) -> Self` takes no
 /// receiver and returns `Self` by value), and a dyn-incompatible supertrait
 /// makes `&mut dyn TrajectoryReader` illegal. The one method a trait object
 /// cannot reach is [`iter`](Self::iter), which is `where Self: Sized`; a `dyn`
-/// caller loops on [`read_step`](Self::read_step) until it yields `None`.
+/// caller loops on [`read_frame`](Self::read_frame) until it yields `None`.
 ///
 /// # Errors
 ///
@@ -205,13 +203,13 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
 /// backend's error type. A caller who needs the structured error uses the
 /// concrete reader's own doors.
 pub trait TrajectoryReader {
-    /// Build and cache whatever per-step index the backend needs for random
+    /// Build and cache whatever per-frame index the backend needs for random
     /// access. File readers cache byte offsets; store-backed readers cache
-    /// their per-step index arrays.
+    /// their per-frame index arrays.
     ///
     /// Calling it is never *required* — an implementation may already have its
     /// index (a store-backed reader builds one when it opens) and answer with
-    /// `Ok(())` — but a caller about to make many [`read_step`](Self::read_step)
+    /// `Ok(())` — but a caller about to make many [`read_frame`](Self::read_frame)
     /// calls should call it once first, since a reader that scans lazily would
     /// otherwise pay for the scan on the first read.
     ///
@@ -220,22 +218,22 @@ pub trait TrajectoryReader {
     /// Whatever the backend raised while scanning or reading its index.
     fn build_index(&mut self) -> Result<()>;
 
-    /// Read the frame at a given step index (0-based).
+    /// Read the frame at `index` (0-based).
     ///
-    /// `Ok(None)` means `step` is past the end — the sequence has no such
+    /// `Ok(None)` means `index` is past the end — the sequence has no such
     /// frame. It is a terminator, not a failure, and it is how
     /// [`FrameIterator`] knows to stop; an implementation must not return
-    /// `Ok(None)` for a step it merely could not decode.
+    /// `Ok(None)` for a frame it merely could not decode.
     ///
     /// # Errors
     ///
     /// Whatever the backend raised while reading or decoding the frame.
-    fn read_step(&mut self, step: usize) -> Result<Option<Frame>>;
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>>;
 
     /// Total number of frames the reader can serve.
     ///
     /// Every index in `0..len()` yields `Some` from
-    /// [`read_step`](Self::read_step), and every index at or past it yields
+    /// [`read_frame`](Self::read_frame), and every index at or past it yields
     /// `None`. A backend that commits in batches counts only what it has
     /// committed.
     ///
@@ -254,7 +252,7 @@ pub trait TrajectoryReader {
         Ok(self.len()? == 0)
     }
 
-    /// Iterate frames from step 0 until [`read_step`](Self::read_step) yields
+    /// Iterate frames from frame 0 until [`read_frame`](Self::read_frame) yields
     /// `None`.
     ///
     /// Each item is a `Result`. An `Err` does **not** advance the cursor and
@@ -349,23 +347,15 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
     }
 }
 
-/// Open a file with automatic gzip detection based on extension.
-///
-/// This is a compatibility wrapper that returns a seekable reader.
-pub fn open_file<P: AsRef<Path>>(path: P) -> Result<Box<dyn ReadSeek>> {
-    open_seekable(path)
-}
-
-/// Check a freshly-read frame against the Frame schema.
+/// Check a freshly-read frame against the Frame schema — the read-side mirror
+/// of [`check_write_frame`](crate::io::writer::check_write_frame).
 ///
 /// Every [`FrameReader::read`] returns through this. The report names
 /// every offending column at once, so a malformed file takes one round trip to
 /// diagnose rather than one per bad column.
-pub fn validated<F: crate::store::frame_access::FrameAccess>(
-    frame: Option<F>,
-) -> Result<Option<F>> {
+pub fn check_read_frame<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
     if let Some(ref f) = frame {
-        crate::store::schema::Validator::canonical()
+        crate::core::schema::Validator::canonical()
             .validate(f)
             .map_err(|report| {
                 std::io::Error::new(
@@ -375,6 +365,39 @@ pub fn validated<F: crate::store::frame_access::FrameAccess>(
             })?;
     }
     Ok(frame)
+}
+
+#[cfg(feature = "ff")]
+/// Parse a force-field file into a molrs
+/// [`ForceField`](crate::ff::forcefield::ForceField), normalized to the
+/// force-field IR (adopts the LAMMPS standard).
+///
+/// Implemented by each force-field format's reader class
+/// ([`LammpsForcefieldReader`](crate::io::lammps::LammpsForcefieldReader),
+/// [`GromacsTopForcefieldReader`](crate::io::gromacs::GromacsTopForcefieldReader),
+/// [`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader),
+/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)). A reader owns
+/// the translation from its format — element and attribute names, **and unit
+/// and factor normalization** — so the resulting `ForceField` needs no
+/// downstream fixup.
+///
+/// Implementors own format-specific element/attribute mapping and unit
+/// conversion. Reading is **total**: a malformed document or a missing required
+/// attribute is an `Err`, never a silently-skipped parameter that would later
+/// read as zero.
+pub trait ForceFieldReader {
+    /// Parse from an in-memory string.
+    fn read_str(
+        &self,
+        text: &str,
+    ) -> std::result::Result<crate::ff::forcefield::ForceField, String>;
+
+    /// Parse from a file on disk. Defaults to reading the file and delegating to
+    /// [`read_str`](ForceFieldReader::read_str).
+    fn read(&self, path: &str) -> std::result::Result<crate::ff::forcefield::ForceField, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path, e))?;
+        self.read_str(&text)
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +413,7 @@ mod tests {
     /// A [`TrajectoryReader`] backed by nothing at all — no file, no
     /// `BufRead`, no `Seek`.
     ///
-    /// This is the guard for the Zarr-backed `FrameSequence`: a backend whose
+    /// This is the guard for the Zarr-backed `MrecReader`: a backend whose
     /// frames come out of a store rather than a byte stream must be able to
     /// implement [`TrajectoryReader`] without an underlying reader. It
     /// deliberately does **not** `impl Reader` (which would demand
@@ -406,8 +429,8 @@ mod tests {
             Ok(())
         }
 
-        fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
-            if step < self.frames {
+        fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
+            if index < self.frames {
                 Ok(Some(Frame::new()))
             } else {
                 Ok(None)
@@ -455,9 +478,9 @@ mod tests {
             .build_index()
             .expect("build_index on a store-less reader");
         assert_eq!(reader.len().expect("len"), 2);
-        assert!(reader.read_step(0).expect("read_step(0)").is_some());
-        assert!(reader.read_step(1).expect("read_step(1)").is_some());
-        assert!(reader.read_step(2).expect("read_step(2)").is_none());
+        assert!(reader.read_frame(0).expect("read_frame(0)").is_some());
+        assert!(reader.read_frame(1).expect("read_frame(1)").is_some());
+        assert!(reader.read_frame(2).expect("read_frame(2)").is_none());
 
         let frames: Vec<Frame> = reader
             .iter()

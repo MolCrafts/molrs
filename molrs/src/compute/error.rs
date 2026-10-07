@@ -4,12 +4,7 @@
 
 use std::fmt;
 
-use molrs::MolRsError;
-
-/// Node identifier (formerly from `crate::compute::graph`, now defined locally
-/// since the graph module is decoupled from the crate).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NodeId(pub u32);
+use molrs::core::MolRsError;
 
 /// Error type for compute operations.
 #[derive(Debug)]
@@ -45,27 +40,7 @@ pub enum ComputeError {
     /// `frames` slice is empty but the compute needs at least one frame.
     EmptyInput,
 
-    /// Graph DAG contains a cycle involving these nodes.
-    CyclicDependency { nodes: Vec<NodeId> },
-
-    /// `Inputs` did not bind a value for this input slot.
-    MissingInput { slot: NodeId },
-
-    /// Value stored at a slot has a different type than the accessor expects.
-    TypeMismatch {
-        slot: NodeId,
-        expected: &'static str,
-        got: &'static str,
-    },
-
-    /// A compute node failed; `source` carries the original error, `node_id`
-    /// identifies which node in the Graph raised it.
-    Node {
-        node_id: NodeId,
-        source: Box<ComputeError>,
-    },
-
-    /// Forwarded from molrs-core.
+    /// Forwarded from `molrs::core`.
     MolRs(MolRsError),
 }
 
@@ -95,23 +70,6 @@ impl fmt::Display for ComputeError {
                 write!(f, "{field} out of range: {value}")
             }
             Self::EmptyInput => write!(f, "empty frames slice"),
-            Self::CyclicDependency { nodes } => {
-                write!(f, "cyclic dependency among nodes {nodes:?}")
-            }
-            Self::MissingInput { slot } => {
-                write!(f, "input slot {slot:?} not bound in Inputs")
-            }
-            Self::TypeMismatch {
-                slot,
-                expected,
-                got,
-            } => write!(
-                f,
-                "type mismatch for slot {slot:?}: expected {expected}, got {got}"
-            ),
-            Self::Node { node_id, source } => {
-                write!(f, "node {node_id:?} failed: {source}")
-            }
             Self::MolRs(e) => write!(f, "{e}"),
         }
     }
@@ -121,7 +79,6 @@ impl std::error::Error for ComputeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::MolRs(e) => Some(e),
-            Self::Node { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }

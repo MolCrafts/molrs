@@ -1,32 +1,22 @@
-//! CHARMM angle with Urey–Bradley (LAMMPS `angle_style charmm`):
-//! E = k·(θ − θ0)² + k_ub·(r₁₃ − r_ub)².
-//!
-//! `k` is LAMMPS's `K` (energy/rad², no ½), `theta0` is in **degrees**, `k_ub`
-//! is LAMMPS's `K_ub` (energy/length², no ½) and `r_ub` a length — the four
-//! numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order. The
-//! kernel converts `theta0` to radians once, at construction.
-//!
-//! r₁₃ is the distance between the angle's end atoms `i` and `k`. The
-//! Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it adds
-//! no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
-//! sees is `special_bonds`'s answer, as for any angle).
+//! CHARMM angle with Urey–Bradley (LAMMPS `angle_style charmm`).
 
-use molrs::store::schema::block_names::ANGLES;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{compute_angle, sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// One `angle charmm` type's numbers as the kernel holds them (`theta0` in
 /// radians).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CharmmAngleParams {
+pub struct AngleCharmmParams {
     /// Bending constant, energy/rad².
     pub k: F,
     /// Equilibrium angle, **radians**.
@@ -38,11 +28,24 @@ pub struct CharmmAngleParams {
 }
 
 /// CHARMM angle + Urey–Bradley potential with pre-resolved flat arrays.
+///
+/// LAMMPS `angle_style charmm`:
+/// E = k·(θ − θ0)² + k_ub·(r₁₃ − r_ub)².
+///
+/// `k` is LAMMPS's `K` (energy/rad², no ½), `theta0` is in **degrees**, `k_ub`
+/// is LAMMPS's `K_ub` (energy/length², no ½) and `r_ub` a length — the four
+/// numbers of an `angle_coeff t K theta0 K_ub r_ub` line, in that order. The
+/// kernel converts `theta0` to radians once, at construction.
+///
+/// r₁₃ is the distance between the angle's end atoms `i` and `k`. The
+/// Urey–Bradley term is a 1-3 harmonic spring that this angle owns: it adds
+/// no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
+/// sees is `special_bonds`'s answer, as for any angle).
 pub struct AngleCharmm {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
-    params: Vec<CharmmAngleParams>,
+    params: Vec<AngleCharmmParams>,
 }
 
 impl AngleCharmm {
@@ -50,7 +53,7 @@ impl AngleCharmm {
         atom_i: Vec<usize>,
         atom_j: Vec<usize>,
         atom_k: Vec<usize>,
-        params: Vec<CharmmAngleParams>,
+        params: Vec<AngleCharmmParams>,
     ) -> Self {
         let n = atom_i.len();
         assert_eq!(atom_j.len(), n);
@@ -151,11 +154,11 @@ impl IndexedTerms for AngleCharmm {
 
 /// Construct an [`AngleCharmm`] from style params, type params, and Frame
 /// topology. Every type needs all four of `k`, `theta0` (deg), `k_ub`, `r_ub`.
-pub fn angle_charmm_ctor(
+pub fn angle_charmm_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -185,15 +188,11 @@ pub fn angle_charmm_ctor(
         let p = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("AngleCharmm: unknown angle type '{label}'"))?;
-        let need = |key: &str| {
-            p.get(key)
-                .map(|v| v as F)
-                .ok_or_else(|| format!("AngleCharmm type '{label}': missing '{key}'"))
-        };
+        let need = |key: &str| param_reads::type_num("charmm", label, p, key);
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         ak.push(k_col[idx] as usize);
-        params.push(CharmmAngleParams {
+        params.push(AngleCharmmParams {
             k: need("k")?,
             // A parameter in degrees (LAMMPS); the kernel works in radians.
             theta0: need("theta0")?.to_radians(),
@@ -202,16 +201,18 @@ pub fn angle_charmm_ctor(
         });
     }
 
-    Ok(Member::indexed(AngleCharmm::new(ai, aj, ak, params)))
+    Ok(ForceTerm::indexed(AngleCharmm::new(ai, aj, ak, params)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{ForceField, SpecialBonds};
-    use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::SpecialBonds;
+    use crate::ff::potential::intramolecular_pairs;
+    use molrs::core::Block;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     const K: F = 33.43;
@@ -224,7 +225,7 @@ mod tests {
             vec![0],
             vec![1],
             vec![2],
-            vec![CharmmAngleParams {
+            vec![AngleCharmmParams {
                 k: K,
                 theta0: theta0_deg.to_radians(),
                 k_ub: K_UB,
@@ -315,7 +316,7 @@ mod tests {
             vec![0],
             vec![1],
             vec![2],
-            vec![CharmmAngleParams {
+            vec![AngleCharmmParams {
                 k: 0.0,
                 theta0: 0.0,
                 k_ub: K_UB,
@@ -422,7 +423,14 @@ mod tests {
             .compile(&frame("A", &coords))
             .map(|_| ())
             .unwrap_err();
-        assert!(err.contains("'r_ub'"), "{err}");
+        assert!(
+            matches!(
+                err.ir(),
+                Some(crate::ff::ir::IrError::MissingParam { style, type_, param })
+                    if style == "charmm" && type_ == "A" && param == "r_ub"
+            ),
+            "{err}"
+        );
     }
 
     /// Urey–Bradley creates no exclusion: whether the 1-3 pair of a charmm
@@ -474,8 +482,8 @@ mod tests {
     /// the energy to LAMMPS's `pe` (= `eangle`) at 1e-10 relative and the
     /// forces to its `fx fy fz` at 1e-10 of the largest component.
     fn agrees_with_lammps(include: &str, frame: &Frame, pe: F, forces: &[[F; 3]]) {
-        use crate::ff::forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader};
-        let ff = LammpsFfReader::new().read_str(include).unwrap();
+        use crate::io::{lammps::LammpsForcefieldReader, reader::ForceFieldReader};
+        let ff = LammpsForcefieldReader::new().read_str(include).unwrap();
         let coords: Vec<F> = frame.coords().unwrap().into_iter().collect();
         let (e, f) = PotentialCompiler::new(&ff)
             .compile(frame)
@@ -625,7 +633,8 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let stray = molecule(&xyz, &[(0, 1, 2, "CT-CT-CT"), (3, 0, 1, "XX-XX-XX")]);
         let err = compiler.compile(&stray).map(|_| ()).unwrap_err();
         assert!(
-            err.contains("'XX-XX-XX' is defined by no angle style"),
+            err.to_string()
+                .contains("'XX-XX-XX' is defined by no angle style"),
             "{err}"
         );
     }

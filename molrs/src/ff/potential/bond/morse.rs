@@ -1,22 +1,25 @@
-//! Morse bond (LAMMPS `bond_style morse`): E = d0·(1 − e^{−alpha·(r − r0)})²
-//!
-//! Anharmonic bond with a finite dissociation energy. Parameters per type, as
-//! LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
-//! (steepness, 1/length), `r0` (equilibrium length).
+//! Morse bond (LAMMPS `bond_style morse`).
 
-use molrs::store::schema::block_names::BONDS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::term_table;
-use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::term_table;
+use crate::ff::potential::flat_coords::validate_coords;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Morse bond potential with pre-resolved flat arrays.
+///
+/// LAMMPS `bond_style morse`: E = d0·(1 − e^{−alpha·(r − r0)})²
+///
+/// Anharmonic bond with a finite dissociation energy. Parameters per type, as
+/// LAMMPS names them: `d0` (LAMMPS `D0`, well depth, energy), `alpha`
+/// (steepness, 1/length), `r0` (equilibrium length).
 pub struct BondMorse {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -141,11 +144,11 @@ impl IndexedTerms for BondMorse {
 }
 
 /// Construct a [`BondMorse`] from style params, type params, and Frame topology.
-pub fn bond_morse_ctor(
+pub fn bond_morse_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -166,11 +169,7 @@ pub fn bond_morse_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut dv, mut av, mut rv) = (Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("BondMorse type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("morse", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -183,7 +182,7 @@ pub fn bond_morse_ctor(
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Member::indexed(BondMorse::new(ai, aj, dv, av, rv)))
+    Ok(ForceTerm::indexed(BondMorse::new(ai, aj, dv, av, rv)))
 }
 
 #[cfg(test)]

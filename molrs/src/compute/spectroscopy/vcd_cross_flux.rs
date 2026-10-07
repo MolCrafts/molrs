@@ -1,17 +1,18 @@
 //! VCD electric×magnetic dipole cross-correlation raw compute — the
 //! VCD-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, lag_times, sum_column_xcorr};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use super::{central_diff_series, sum_column_xcorr};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
 #[derive(Debug, Clone)]
-pub struct VcdCrossResult {
+pub struct VcdCrossFluxResult {
     /// Lag times τ = i·dt, length `max_lag + 1`.
     pub lag_times: ndarray::Array1<f64>,
     /// VCD cross-correlation `C(τ) = Σ_d ⟨μ̇_d(0)·ṁ_d(τ)⟩` summed over the 3
@@ -20,7 +21,7 @@ pub struct VcdCrossResult {
     pub acf: ndarray::Array1<f64>,
 }
 
-impl ComputeResult for VcdCrossResult {}
+impl ComputeResult for VcdCrossFluxResult {}
 
 /// Raw VCD cross-flux compute: cross-correlation of the electric-dipole
 /// derivative `μ̇` with the magnetic-dipole derivative `ṁ`.
@@ -38,11 +39,11 @@ pub struct VcdCrossFlux;
 /// `(electric_dipole (n,3), magnetic_dipole (n,3), dt, resolution)` for
 /// [`VcdCrossFlux`]. Both series are `(n_frames, 3)`; the central-difference
 /// derivatives drop the first and last frame.
-pub type VcdCrossArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
+pub type VcdCrossFluxArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
 
 impl Compute for VcdCrossFlux {
-    type Args<'a> = VcdCrossArgs<'a>;
-    type Output = VcdCrossResult;
+    type Args<'a> = VcdCrossFluxArgs<'a>;
+    type Output = VcdCrossFluxResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
@@ -79,7 +80,7 @@ impl Compute for VcdCrossFlux {
         let mu_dot = central_diff_series(electric, dt);
         let m_dot = central_diff_series(magnetic, dt);
         let acf = sum_column_xcorr(&mu_dot, &m_dot, max_lag);
-        Ok(VcdCrossResult {
+        Ok(VcdCrossFluxResult {
             lag_times: lag_times(max_lag, dt),
             acf,
         })

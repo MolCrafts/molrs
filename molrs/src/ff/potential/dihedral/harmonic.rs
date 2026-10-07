@@ -1,37 +1,39 @@
-//! Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`):
-//!
-//! E(φ) = k · [1 + sign · cos(n·φ)]
-//!
-//! `k` is LAMMPS's `K` (energy), `sign` its `d` (±1 — a sign, not a phase) and
-//! `periodicity` its `n`. It is the same function of the dihedral as LAMMPS
-//! `improper_style cvff`, so it shares that kernel
-//! ([`signed_cosine_ctor`]),
-//! evaluated over the `"dihedrals"` block.
+//! Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`).
 
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::Frame;
+use molrs::core::schema::block_names::DIHEDRALS;
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::Member;
-use crate::ff::potential::improper::cvff::signed_cosine_ctor;
+use crate::ff::ir::Params;
+use crate::ff::potential::ForceTerm;
+use crate::ff::potential::improper::cvff::signed_cosine_constructor;
 
 /// Construct a harmonic dihedral from per-type params (`k`, `sign`,
 /// `periodicity`) and a Frame's `"dihedrals"` block.
-pub fn dihedral_harmonic_ctor(
+///
+/// Harmonic proper dihedral (LAMMPS `dihedral_style harmonic`):
+///
+/// E(φ) = k · [1 + sign · cos(n·φ)]
+///
+/// `k` is LAMMPS's `K` (energy), `sign` its `d` (±1 — a sign, not a phase) and
+/// `periodicity` its `n`. It is the same function of the dihedral as LAMMPS
+/// `improper_style cvff`, so it shares that kernel
+/// ([`ImproperCvff`](crate::ff::potential::improper::ImproperCvff)),
+/// evaluated over the `"dihedrals"` block.
+pub fn dihedral_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    signed_cosine_ctor(DIHEDRALS, "dihedral_harmonic", tp, frame)
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    signed_cosine_constructor(DIHEDRALS, "harmonic", tp, frame)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
-    use crate::ff::potential::PotentialCompiler;
-    use molrs::store::block::Block;
-    use molrs::types::{F, Idx};
+    use molrs::core::Block;
+    use molrs::op::{F, Idx};
     use ndarray::Array1;
 
     /// LAMMPS `dihedral_style harmonic`: E = K[1 + d·cos(nφ)], here

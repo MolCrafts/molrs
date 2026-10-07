@@ -2,7 +2,10 @@
 //! `CarbonTubeBuilder` and `GrapheneBuilder`, each building a fresh `Frame`,
 //! and site-graph assembly — `Assembler(library, SitePlacer(),
 //! AxisOrienter()).assemble(sites)`, which orients, places and links one world
-//! `Fragment`.
+//! `Fragment` — and coarse-graining: `Coarsener(source).coarsen(groups,
+//! names)` maps disjoint node groups of a held `CoarseGrain` or `Atomistic`
+//! onto the sites of a new `CoarseGrain` (centre of mass, summed mass, one
+//! type per group).
 
 use std::collections::HashMap;
 
@@ -10,18 +13,18 @@ use molrs::builder::{
     AssembleError, Assembler, AxisOrienter, GrowthPlacer, OrientError, PlaceError, Placer,
     SitePlacer,
 };
-use molrs::system::link::LinkManyError;
-use molrs::system::molgraph::MolGraph;
-use molrs::{CarbonTubeBuilder, GrapheneBuilder};
+use molrs::builder::{CarbonTubeBuilder, CoarsenError, Coarsener, GrapheneBuilder};
+use molrs::core::LinkManyError;
+use molrs::core::{MolGraph, NodeId, node_from_u64};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
-use crate::core::spatial::simbox::PyBox;
-use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::{
-    AnyGraph, GraphClass, PyCoarseGrain, center_error_message, link_error_message,
+use crate::core::frame::PyFrame;
+use crate::core::molgraph::{
+    AnyGraph, GraphClass, PyAtomistic, PyCoarseGrain, center_error_message, link_error_message,
 };
+use crate::core::simbox::PyBox;
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molrs.builder", name = "CarbonTubeBuilder", subclass)]
@@ -297,8 +300,8 @@ impl PyAxisOrienter {
 ///
 /// Parameters
 /// ----------
-/// library : Mapping[str, Graph]
-///     Name → template, copied at construction: any graph (``Graph``,
+/// library : Mapping[str, MolGraph]
+///     Name → template, copied at construction: any graph (``MolGraph``,
 ///     ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
 ///     template without ports can only fill an unbonded site.
 /// placer : SitePlacer | GrowthPlacer
@@ -318,12 +321,12 @@ impl PyAxisOrienter {
 ///
 /// Examples
 /// --------
-/// >>> sites = molrs.perceive.Coarsener(cg).coarsen(groups, names)
+/// >>> sites = molrs.builder.Coarsener(cg).coarsen(groups, names)
 /// >>> world = molrs.builder.Assembler(
 /// ...     {"PMA": pma, "Li": li},
 /// ...     molrs.builder.SitePlacer(),
 /// ...     molrs.builder.AxisOrienter(),
-/// ... ).assemble(sites, molrs.Atomistic)
+/// ... ).assemble(sites, molrs.core.Atomistic)
 #[pyclass(module = "molrs.builder", name = "Assembler", frozen)]
 pub struct PyAssembler {
     inner: Assembler,
@@ -357,7 +360,7 @@ impl PyAssembler {
             let template = AnyGraph::of(&value)
                 .map_err(|_| {
                     PyTypeError::new_err(format!(
-                        "library['{name}'] must be a graph (Graph, Atomistic, CoarseGrain)"
+                        "library['{name}'] must be a graph (MolGraph, Atomistic, CoarseGrain)"
                     ))
                 })?
                 .to_molgraph()?;
@@ -379,12 +382,12 @@ impl PyAssembler {
     ///     each bond joins two copies; its optional position (Å) and axis
     ///     are read by the placer and the orienter.
     /// cls : type, optional
-    ///     The graph class to build the world as — ``Graph`` (the default),
+    ///     The graph class to build the world as — ``MolGraph`` (the default),
     ///     ``Atomistic`` or ``CoarseGrain``.
     ///
     /// Returns
     /// -------
-    /// Graph
+    /// MolGraph
     ///     The world, an instance of ``cls``; ports without a site bond stay
     ///     on it. Empty when ``sites`` is empty.
     ///
@@ -418,7 +421,7 @@ impl PyAssembler {
 }
 
 /// The message of an [`AssembleError`] as Python sees it: node and port ids
-/// as int handles, never `NodeId(..)` / `PortId(..)`. Every variant is
+/// as int handles, never `NodeId(..)` / `RelationId(..)`. Every variant is
 /// matched by name; the wording of the outer sentence is the core's.
 fn assemble_error_message(e: AssembleError) -> String {
     match e {
@@ -469,4 +472,135 @@ fn assemble_error_message(e: AssembleError) -> String {
         | AssembleError::Ports { .. }
         | AssembleError::Replicate { .. }) => e.to_string(),
     }
+}
+
+/// The graph a [`PyCoarsener`] holds: either public leaf that carries nodes
+/// with positions and masses.
+enum CoarsenSource {
+    CoarseGrain(Py<PyCoarseGrain>),
+    Atomistic(Py<PyAtomistic>),
+}
+
+/// Coarse-graining of a held source graph — `molrs.builder.Coarsener`.
+///
+/// Site ``I`` of the result stands for ``groups[I]``: it sits at the group's
+/// mass-weighted centre (Å; no periodic imaging, so unwrap first), carries the
+/// group's summed ``mass`` and ``bead_type = names[I]``, and records the
+/// group's handles as its members. Two sites are bonded once when a source
+/// bond joins their groups. The groups must be disjoint; ``SubgraphMatcher``
+/// returns overlapping ones, so the caller selects first.
+///
+/// Parameters
+/// ----------
+/// source : CoarseGrain or Atomistic
+///     The graph whose nodes are grouped. The object is held, not copied, and
+///     read at each :meth:`coarsen` call.
+///
+/// Raises
+/// ------
+/// TypeError
+///     If ``source`` is neither a :class:`~molrs.core.CoarseGrain` nor an
+///     :class:`~molrs.core.Atomistic`.
+///
+/// Examples
+/// --------
+/// >>> groups = molrs.perceive.SubgraphMatcher(pattern).find(cg)
+/// >>> sites = molrs.builder.Coarsener(cg).coarsen(groups, ["PMA"] * len(groups))
+#[pyclass(module = "molrs.builder", name = "Coarsener", frozen)]
+pub struct PyCoarsener {
+    source: CoarsenSource,
+}
+
+#[pymethods]
+impl PyCoarsener {
+    #[new]
+    fn new(source: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let source = if let Ok(cg) = source.cast::<PyCoarseGrain>() {
+            CoarsenSource::CoarseGrain(cg.clone().unbind())
+        } else if let Ok(mol) = source.cast::<PyAtomistic>() {
+            CoarsenSource::Atomistic(mol.clone().unbind())
+        } else {
+            return Err(PyTypeError::new_err(format!(
+                "Coarsener source must be a CoarseGrain or an Atomistic, not {}",
+                source.get_type().name()?
+            )));
+        };
+        Ok(Self { source })
+    }
+
+    /// A new :class:`~molrs.core.CoarseGrain` with one site per group.
+    ///
+    /// The GIL is released while mapping.
+    ///
+    /// Parameters
+    /// ----------
+    /// groups : Sequence[Sequence[int]]
+    ///     Disjoint, non-empty node-handle groups of the source.
+    /// names : Sequence[str]
+    ///     One site ``bead_type`` per group.
+    ///
+    /// Returns
+    /// -------
+    /// CoarseGrain
+    ///     The sites, in group order; empty when ``groups`` is empty.
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     If ``groups`` and ``names`` differ in length, a group is empty, a
+    ///     handle is listed twice, or a group has no centre (a stale handle, a
+    ///     missing coordinate or mass, a non-positive total mass); handles are
+    ///     named by their int value.
+    fn coarsen(
+        &self,
+        py: Python<'_>,
+        groups: Vec<Vec<u64>>,
+        names: Vec<String>,
+    ) -> PyResult<Py<PyCoarseGrain>> {
+        let groups: Vec<Vec<NodeId>> = groups
+            .into_iter()
+            .map(|group| group.into_iter().map(node_from_u64).collect())
+            .collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let run = |graph: &MolGraph| py.detach(|| Coarsener::new(graph).coarsen(&groups, &names));
+        let sites = match &self.source {
+            CoarsenSource::CoarseGrain(cg) => run(cg.bind(py).borrow().core().as_molgraph()),
+            CoarsenSource::Atomistic(mol) => run(mol.bind(py).borrow().core().as_molgraph()),
+        }
+        .map_err(|e| PyValueError::new_err(coarsen_error_message(e)))?;
+        PyCoarseGrain::from_core(py, sites)
+    }
+
+    fn __repr__(&self) -> String {
+        let source = match self.source {
+            CoarsenSource::CoarseGrain(_) => "CoarseGrain",
+            CoarsenSource::Atomistic(_) => "Atomistic",
+        };
+        format!("Coarsener(<{source}>)")
+    }
+}
+
+/// The message of a [`CoarsenError`] as Python sees it: node ids as int
+/// handles, never `NodeId(..)`. Every variant is matched by name.
+fn coarsen_error_message(e: CoarsenError) -> String {
+    match e {
+        CoarsenError::Center { group, source } => {
+            format!("group {group}: {}", center_error_message(source))
+        }
+        e @ (CoarsenError::LengthMismatch { .. }
+        | CoarsenError::EmptyGroup { .. }
+        | CoarsenError::Overlap { .. }) => e.to_string(),
+    }
+}
+
+/// Register `molrs.builder`.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyCarbonTubeBuilder>()?;
+    m.add_class::<PyGrapheneBuilder>()?;
+    m.add_class::<PySitePlacer>()?;
+    m.add_class::<PyGrowthPlacer>()?;
+    m.add_class::<PyAxisOrienter>()?;
+    m.add_class::<PyAssembler>()?;
+    m.add_class::<PyCoarsener>()?;
+    Ok(())
 }

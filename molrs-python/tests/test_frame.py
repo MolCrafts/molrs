@@ -8,10 +8,10 @@ import pickle
 import molrs
 import numpy as np
 import pytest
-from molrs import Block, Frame, MetaValue
+from molrs.core import Block, Frame, MetaValue
 
 
-class _SubFrame(molrs.Frame):
+class _SubFrame(molrs.core.Frame):
     """Module level, so pickle can find it."""
 
 
@@ -31,7 +31,7 @@ class TestFrameConstruction:
         f.meta = {"source": MetaValue("string", "pytest")}
 
         assert sorted(f.keys()) == ["atoms"]
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
         assert list(f["atoms"]["symbol"]) == ["C", "H"]
         np.testing.assert_allclose(f["atoms"]["x"], [0.0, 1.0])
         assert f.meta["source"] == "pytest"
@@ -46,15 +46,15 @@ class TestOneFrame:
     """There is one ``Frame``: the PyO3 class, constructed and read natively."""
 
     def test_molrs_frame_is_the_native_class(self):
-        assert molrs.Frame is molrs._lib.Frame
+        assert molrs.core.Frame is molrs._native.Frame
 
     def test_a_frame_can_be_subclassed(self):
         """Core data classes are extensible; a subclass is still a Frame."""
 
-        class Sub(molrs.Frame):
+        class Sub(molrs.core.Frame):
             pass
 
-        assert isinstance(Sub(), molrs.Frame)
+        assert isinstance(Sub(), molrs.core.Frame)
 
     def test_a_frame_subclass_pickles_as_itself(self):
         sub = _SubFrame()
@@ -67,11 +67,11 @@ class TestOneFrame:
 
     def test_readers_return_the_one_class(self, tmp_path):
         path = tmp_path / "one.xyz"
-        path.write_text("1\n\nH 0.0 0.0 0.0\n")
+        path.write_text("1\n\nH 0.0 0.0 0.0\n", encoding="utf-8")
         assert type(molrs.io.read_xyz(str(path))) is Frame
 
     def test_a_graph_serialises_to_the_one_class(self):
-        mol = molrs.Atomistic()
+        mol = molrs.core.Atomistic()
         mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
         frame = mol.to_frame()
         assert type(frame) is Frame
@@ -81,7 +81,7 @@ class TestOneFrame:
         f = Frame(
             {"atoms": {"x": [1.0, 2.0]}, "bonds": Block({"atomi": [0], "atomj": [1]})},
             meta={"title": MetaValue("string", "t")},
-            box=molrs.Box.cube(5.0),
+            box=molrs.core.Box.cube(5.0),
         )
         assert sorted(f.keys()) == ["atoms", "bonds"]
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0])
@@ -97,7 +97,7 @@ class TestOneFrame:
     def test_setitem_accepts_a_mapping(self):
         f = Frame()
         f["atoms"] = {"x": [1.0, 2.0], "id": np.array([1, 2], dtype=np.int64)}
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
         assert f["atoms"].dtype("id") == "uint"
 
     def test_setitem_refuses_anything_else(self):
@@ -132,8 +132,8 @@ class TestFrameBlockHandle:
         rows = self._grid_frame()["atoms"].select_rows([2, 0])
         np.testing.assert_array_equal(rows["x"], [3.0, 1.0])
 
-    def test_write_block_csv_writes_the_stored_rows(self):
-        text = molrs.io.write_block_csv(self._grid_frame()["atoms"])
+    def test_write_csv_block_str_writes_the_stored_rows(self):
+        text = molrs.io.write_csv_block_str(self._grid_frame()["atoms"])
         lines = text.splitlines()
         assert lines[0] == "x"
         assert [float(v) for v in lines[1:]] == [1.0, 2.0, 3.0]
@@ -141,7 +141,7 @@ class TestFrameBlockHandle:
     def test_resize_writes_through_to_the_frame(self):
         f = self._grid_frame()
         f["atoms"].resize(5)
-        assert f["atoms"].nrows == 5
+        assert f["atoms"].n_rows == 5
         np.testing.assert_array_equal(f["atoms"]["x"], [1.0, 2.0, 3.0, 0.0, 0.0])
 
     def test_a_column_write_through_the_handle_lands_in_the_frame(self):
@@ -153,7 +153,7 @@ class TestFrameBlockHandle:
 class TestFrameCopy:
     def test_copy_does_not_share_buffers(self):
         f = Frame({"atoms": {"x": np.array([1.0, 2.0])}})
-        f.box = molrs.Box.cube(5.0)
+        f.box = molrs.core.Box.cube(5.0)
         g = f.copy()
         assert not np.shares_memory(f["atoms"]["x"], g["atoms"]["x"])
         g["atoms"]["x"][0] = 9.0
@@ -178,7 +178,7 @@ class TestFramePickle:
             "tag", np.array([4, 0], dtype=np.int32), [True, False]
         )
         f.meta["temperature"] = MetaValue("f64", 300.0)
-        f.box = molrs.Box.cube(2.0)
+        f.box = molrs.core.Box.cube(2.0)
         restored = pickle.loads(pickle.dumps(f))
         assert type(restored) is Frame
         np.testing.assert_array_equal(restored["atoms"]["x"], [1.0, 2.0])
@@ -197,7 +197,7 @@ class TestFrameBlockAccess:
         assert len(f) == 1
 
         atoms = f["atoms"]
-        assert atoms.nrows == 2
+        assert atoms.n_rows == 2
 
     def test_getitem_returns_live_block_handle(self):
         f = Frame()
@@ -264,12 +264,12 @@ class TestFrameBlockAccess:
         b1 = Block()
         b1.insert("x", np.array([1.0], dtype=np.float64))
         f["atoms"] = b1
-        assert f["atoms"].nrows == 1
+        assert f["atoms"].n_rows == 1
 
         b2 = Block()
         b2.insert("x", np.array([1.0, 2.0], dtype=np.float64))
         f["atoms"] = b2
-        assert f["atoms"].nrows == 2
+        assert f["atoms"].n_rows == 2
 
 
 class TestFrameBox:
@@ -278,20 +278,20 @@ class TestFrameBox:
 
     def test_set_box(self):
         f = Frame()
-        box_ = molrs.Box.cube(10.0)
+        box_ = molrs.core.Box.cube(10.0)
         f.box = box_
         assert f.box is not None
         assert pytest.approx(f.box.volume(), abs=1) == 1000.0
 
     def test_clear_box(self):
         f = Frame()
-        f.box = molrs.Box.cube(10.0)
+        f.box = molrs.core.Box.cube(10.0)
         f.box = None
         assert f.box is None
 
     def test_repr_with_box(self):
         f = Frame()
-        f.box = molrs.Box.cube(10.0)
+        f.box = molrs.core.Box.cube(10.0)
         assert "yes" in repr(f)
 
 
@@ -310,8 +310,8 @@ class TestFrameMeta:
 
     def test_json_document_values_are_accepted(self):
         f = Frame()
-        f.meta = {"legacy": "string-only", "nested": {"tool": "molrec", "run": 3}}
-        assert f.meta["legacy"] == "string-only"
+        f.meta = {"label": "string-only", "nested": {"tool": "molrec", "run": 3}}
+        assert f.meta["label"] == "string-only"
         assert f.meta["nested"] == {"tool": "molrec", "run": 3}
         assert f.meta.dtype("nested") == "json"
 
@@ -353,7 +353,7 @@ class TestFrameMeta:
         # the process, so asserting in-process would take pytest down with it.
         script = (
             "import molrs\n"
-            "from molrs._lib import Frame\n"
+            "from molrs._native import Frame\n"
             "a = []\n"
             "a.append(a)\n"
             "try:\n"
@@ -368,6 +368,7 @@ class TestFrameMeta:
             text=True,
             timeout=120,
             check=False,
+            encoding="utf-8",
         )
         assert child.returncode == 0, (child.returncode, child.stderr[-2000:])
 
@@ -389,7 +390,7 @@ class TestFrameMeta:
         assert "title" not in f.meta
 
     def test_narrow_float_dtypes_are_refused(self):
-        # One float: `f64`. The narrow tags are gone, not promoted.
+        # One float: `f64`. A narrow tag is refused, not promoted.
         with pytest.raises(TypeError, match="unknown metadata dtype"):
             MetaValue("f32", 300.0)
 
@@ -666,7 +667,7 @@ class TestFrameMeta:
             assert key == dtype
             assert isinstance(value, tuple) and value == payload
 
-        # A dict-literal comparison uses the frozen value, so a list no longer matches.
+        # A dict-literal comparison uses the frozen value, so a list does not match.
         stress = self._vector_meta("f64x6", (1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
         assert stress == {"f64x6": (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)}
         assert stress != {"f64x6": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]}
@@ -704,14 +705,14 @@ class TestMetaDocument:
         # while `isinstance(..., dict)` is false, and neither may drift.
         assert doc == expected
         assert isinstance(doc, dict) is False
-        assert isinstance(doc, molrs.MetaDocument)
+        assert isinstance(doc, molrs.core.MetaDocument)
         assert isinstance(doc, Mapping)
         assert (doc != expected) is False
         assert doc != {"tool": "molrec", "run": 3, "tags": [1, 2], "inner": {"step": 1}}
         assert doc["tags"] == (1, 2)
         assert doc["tags"] != [1, 2]
         assert isinstance(doc["tags"], tuple)
-        assert isinstance(doc["inner"], molrs.MetaDocument)
+        assert isinstance(doc["inner"], molrs.core.MetaDocument)
         assert doc["inner"] == {"step": 1}
         other = Frame()
         other.meta["run"] = {
@@ -782,7 +783,7 @@ class TestMetaDocument:
         assert isinstance(plain["tags"], list)
         assert isinstance(plain["rows"], list)
         assert isinstance(plain["rows"][0], dict)
-        assert not isinstance(plain["rows"][0], molrs.MetaDocument)
+        assert not isinstance(plain["rows"][0], molrs.core.MetaDocument)
         assert json.loads(json.dumps(plain)) == plain
         plain["step"] = 9
         plain["rows"][0]["a"] = 5
@@ -792,7 +793,7 @@ class TestMetaDocument:
             "rows": ({"a": 1}, {"a": None}),
         }
         assert isinstance(frame.meta["run"]["rows"], tuple)
-        assert isinstance(frame.meta["run"]["rows"][0], molrs.MetaDocument)
+        assert isinstance(frame.meta["run"]["rows"][0], molrs.core.MetaDocument)
 
     def test_json_array_written_back_stays_an_array(self):
         frame = Frame()
@@ -823,17 +824,17 @@ class TestFrameValidation:
 
 
 class TestFrameSubset:
-    """Seam of ``molrs.Frame.subset``.
+    """Seam of ``molrs.core.Frame.subset``.
 
     Row gathering and relation renumbering are proven by
-    ``molrs/src/core/store/frame.rs``; these check the return type, the row
+    ``molrs/src/core/frame.rs``; these check the return type, the row
     normaliser (bool mask, int rows, negative wrap) and the error mapping.
     """
 
     @staticmethod
-    def _chain() -> molrs.Frame:
+    def _chain() -> molrs.core.Frame:
         # 4 atoms at x = 0..3 (Å) in two molecules, bonded (0,1), (1,2), (2,3).
-        return molrs.Frame(
+        return molrs.core.Frame(
             {
                 "atoms": {
                     "x": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float64),
@@ -849,10 +850,10 @@ class TestFrameSubset:
     def test_subset_returns_a_frame_with_the_selected_rows(self):
         sub = self._chain().subset([2, 3])
 
-        assert type(sub) is molrs.Frame
+        assert type(sub) is molrs.core.Frame
         np.testing.assert_array_equal(sub["atoms"]["x"], [2.0, 3.0])
         np.testing.assert_array_equal(sub["atoms"]["mol_id"], [2, 2])
-        assert sub["bonds"].nrows == 1
+        assert sub["bonds"].n_rows == 1
         np.testing.assert_array_equal(sub["bonds"]["atomi"], [0])
         np.testing.assert_array_equal(sub["bonds"]["atomj"], [1])
 
@@ -864,7 +865,7 @@ class TestFrameSubset:
 
         np.testing.assert_array_equal(by_mask["atoms"]["x"], by_rows["atoms"]["x"])
         np.testing.assert_array_equal(by_mask["atoms"]["x"], [0.0, 2.0])
-        assert by_mask["bonds"].nrows == by_rows["bonds"].nrows == 0
+        assert by_mask["bonds"].n_rows == by_rows["bonds"].n_rows == 0
 
     def test_a_negative_row_wraps(self):
         sub = self._chain().subset([-1])
@@ -877,7 +878,7 @@ class TestFrameSubset:
         one = frame.subset(frame["atoms"]["mol_id"] == 1)
 
         np.testing.assert_array_equal(one["atoms"]["x"], [0.0, 1.0])
-        assert one["bonds"].nrows == 1
+        assert one["bonds"].n_rows == 1
 
     def test_a_row_past_the_end_is_a_value_error(self):
         with pytest.raises(ValueError):
@@ -890,3 +891,38 @@ class TestFrameSubset:
     def test_a_missing_block_is_a_key_error(self):
         with pytest.raises(KeyError):
             self._chain().subset([0], block="missing")
+
+
+class TestFrameConcat:
+    @staticmethod
+    def _chain(n: int, charge: bool = False) -> molrs.core.Frame:
+        frame = molrs.core.Frame()
+        atoms = molrs.core.Block()
+        atoms.insert("x", np.arange(n, dtype=np.float64))
+        if charge:
+            atoms.insert("charge", np.zeros(n))
+        bonds = molrs.core.Block()
+        bonds.insert("atomi", np.arange(n - 1, dtype=np.uint64))
+        bonds.insert("atomj", np.arange(1, n, dtype=np.uint64))
+        frame["atoms"] = atoms
+        frame["bonds"] = bonds
+        return frame
+
+    def test_endpoints_are_offset_past_earlier_parts(self):
+        joined = molrs.core.Frame.concat([self._chain(2), self._chain(3)])
+        assert joined["atoms"].n_rows == 5
+        assert list(joined["bonds"]["atomi"]) == [0, 2, 3]
+        assert list(joined["bonds"]["atomj"]) == [1, 3, 4]
+
+    def test_concat_of_copies_equals_replicate(self):
+        chain = self._chain(3)
+        joined = molrs.core.Frame.concat([chain, chain])
+        tiled = chain.replicate(2)
+        assert list(joined["bonds"]["atomj"]) == list(tiled["bonds"]["atomj"])
+
+    def test_a_column_one_part_lacks_is_null_there(self):
+        joined = molrs.core.Frame.concat([self._chain(2, charge=True), self._chain(2)])
+        assert list(joined["atoms"].validity("charge")) == [True, True, False, False]
+
+    def test_no_parts_give_an_empty_frame(self):
+        assert len(molrs.core.Frame.concat([])) == 0

@@ -1,15 +1,16 @@
 //! Raman polarizability iso/aniso ACF raw compute — the Raman-spectrum raw
 //! input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use super::{acf_accumulate_into, central_diff_series, lag_times};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use super::{acf_accumulate_into, central_diff_series};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Weight for diagonal anisotropy components in the Raman ACF.
 pub(super) const DIAG_ANISO_WEIGHT: f64 = 0.5;
@@ -38,7 +39,7 @@ impl ComputeResult for RamanTensorResult {}
 /// decomposition + FFT-ACF block (the part *before* windowing +
 /// cross-section/Bose prefactors), returning only the raw iso/aniso ACFs. The
 /// window + FFT + prefactor step is then the
-/// [`RamanSpectrum`](super::RamanSpectrum) [`Fit`](crate::compute::traits::Fit).
+/// [`RamanSpectrum`](super::RamanSpectrum) [`Fit`](crate::compute::Fit).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RamanTensor;
 

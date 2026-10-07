@@ -1,53 +1,53 @@
 //! Native periodic radical (Laguerre) Voronoi tessellation.
-//!
-//! Builds one [`VoronoiCells`] entry per generator by clipping a box-sized
-//! convex polyhedron against the radical plane of nearby periodic neighbours
-//! ([`super::cell::Poly::clip`]). This is the cell-by-cell strategy of voro++
-//! (`container_periodic::compute_cell`, `src/v_container_prd.cpp`, driven as in
-//! reference implementation `vorowrapper.cpp`), with the radical/power plane offset from
-//! `radius_poly` (`src/v_rad_option.h`).
-//!
-//! # Candidate search — O(N) at constant density
-//! voro++ only clips a cell against particles near enough that their cut plane
-//! can still reach the cell; it walks its container blocks outward and stops
-//! once no closer plane can cut. molrs mirrors this: a one-pass cell-list grid
-//! (built once, O(N)) yields each generator's candidate neighbours — including
-//! periodic images — in increasing distance, and the cell is clipped in that
-//! order until the **termination bound** is reached:
-//!
-//! A neighbour `j` at centre distance `d` cuts the cell along the radical plane
-//! at signed distance `p_j = (d² + Rᵢ² − Rⱼ²) / (2d)` from the generator. If
-//! `p_j` exceeds the cell's farthest vertex radius `R_max`, the plane lies
-//! wholly outside the cell and cannot cut it. Taking the largest radius in the
-//! system `R_⋆` as the conservative worst case (`Rⱼ = R_⋆`), no neighbour past
-//! `d_stop = R_max + √(R_max² + R_⋆² − Rᵢ²)` can ever cut the cell, so the
-//! distance-ordered walk stops there. For equal radii this is the familiar
-//! `d > 2·R_max` Voronoi cutoff. `R_max` only shrinks as clipping proceeds, so
-//! the bound is monotone and safe.
-//!
-//! If the grid cutoff turns out too small to reach `d_stop` for a cell (sparse
-//! regions, large voids, a lone atom whose cell is the whole box), that cell
-//! falls back to an exact exhaustive growing-shell search — the same
-//! plane-cut semantics, so the result is identical; only the *candidate set*
-//! differs, and the fast path is accepted only once it provably contains every
-//! cutting plane. Correctness is pinned by `Σ volume == box volume` and the
-//! analytic radical-plane / single-atom tests.
-//!
-//! # Radical plane
-//! Between generators i, j at displacement `r = x_j − x_i` with radii `Rᵢ`,
-//! `Rⱼ`, the radical plane is `|x|² − Rᵢ² = |x − r|² − Rⱼ²`, i.e.
-//! `x·r = (|r|² + Rᵢ² − Rⱼ²)/2`; the cell keeps the generator side
-//! (`x·r ≤ off`). Equal radii reduce to the plain Voronoi bisector at `r/2`.
 
-use molrs::spatial::simbox::SimBox;
-use molrs::types::F;
+use molrs::core::SimBox;
+use molrs::op::F;
 use ndarray::ArrayView2;
 
-use super::cell::{BOUNDARY, Face, Poly, VoronoiCells};
-use crate::compute::error::ComputeError;
+use super::cell::{Poly, VORONOI_BOUNDARY, VoronoiCells, VoronoiFace};
+use crate::compute::ComputeError;
 
 /// Builder for the periodic radical-Voronoi tessellation. Orthorhombic boxes
 /// only (triclinic is out of scope; see the spec).
+///
+/// Builds one [`VoronoiCells`] entry per generator by clipping a box-sized
+/// convex polyhedron against the radical plane of nearby periodic neighbours
+/// (`Poly::clip`). This is the cell-by-cell strategy of voro++
+/// (`container_periodic::compute_cell`, `src/v_container_prd.cpp`, driven as in
+/// reference implementation `vorowrapper.cpp`), with the radical/power plane offset from
+/// `radius_poly` (`src/v_rad_option.h`).
+///
+/// # Candidate search — O(N) at constant density
+/// voro++ only clips a cell against particles near enough that their cut plane
+/// can still reach the cell; it walks its container blocks outward and stops
+/// once no closer plane can cut. molrs mirrors this: a one-pass cell-list grid
+/// (built once, O(N)) yields each generator's candidate neighbours — including
+/// periodic images — in increasing distance, and the cell is clipped in that
+/// order until the **termination bound** is reached:
+///
+/// A neighbour `j` at centre distance `d` cuts the cell along the radical plane
+/// at signed distance `p_j = (d² + Rᵢ² − Rⱼ²) / (2d)` from the generator. If
+/// `p_j` exceeds the cell's farthest vertex radius `R_max`, the plane lies
+/// wholly outside the cell and cannot cut it. Taking the largest radius in the
+/// system `R_⋆` as the conservative worst case (`Rⱼ = R_⋆`), no neighbour past
+/// `d_stop = R_max + √(R_max² + R_⋆² − Rᵢ²)` can ever cut the cell, so the
+/// distance-ordered walk stops there. For equal radii this is the familiar
+/// `d > 2·R_max` Voronoi cutoff. `R_max` only shrinks as clipping proceeds, so
+/// the bound is monotone and safe.
+///
+/// If the grid cutoff turns out too small to reach `d_stop` for a cell (sparse
+/// regions, large voids, a lone atom whose cell is the whole box), that cell
+/// falls back to an exact exhaustive growing-shell search — the same
+/// plane-cut semantics, so the result is identical; only the *candidate set*
+/// differs, and the fast path is accepted only once it provably contains every
+/// cutting plane. Correctness is pinned by `Σ volume == box volume` and the
+/// analytic radical-plane / single-atom tests.
+///
+/// # Radical plane
+/// Between generators i, j at displacement `r = x_j − x_i` with radii `Rᵢ`,
+/// `Rⱼ`, the radical plane is `|x|² − Rᵢ² = |x − r|² − Rⱼ²`, i.e.
+/// `x·r = (|r|² + Rᵢ² − Rⱼ²)/2`; the cell keeps the generator side
+/// (`x·r ≤ off`). Equal radii reduce to the plain Voronoi bisector at `r/2`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RadicalVoronoi;
 
@@ -122,7 +122,7 @@ impl RadicalVoronoi {
         // buffer reuse) and `collect` preserves generator order, so the result is
         // bit-identical to the serial build — only the geometry algorithm's driver
         // loop is parallelized, never the geometry itself.
-        let build = |i: usize, cand: &mut Vec<(F, [F; 3], usize)>| -> (F, Vec<Face>) {
+        let build = |i: usize, cand: &mut Vec<(F, [F; 3], usize)>| -> (F, Vec<VoronoiFace>) {
             let gi = [positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]];
             let ri2 = radii[i] * radii[i];
             match self.build_cell_fast(&grid, &gi, ri2, r_star2, radii, &l, r_cut, cand) {
@@ -132,7 +132,7 @@ impl RadicalVoronoi {
         };
 
         #[cfg(feature = "rayon")]
-        let cells: Vec<(F, Vec<Face>)> = {
+        let cells: Vec<(F, Vec<VoronoiFace>)> = {
             use rayon::prelude::*;
             (0..n)
                 .into_par_iter()
@@ -140,7 +140,7 @@ impl RadicalVoronoi {
                 .collect()
         };
         #[cfg(not(feature = "rayon"))]
-        let cells: Vec<(F, Vec<Face>)> = {
+        let cells: Vec<(F, Vec<VoronoiFace>)> = {
             let mut cand: Vec<(F, [F; 3], usize)> = Vec::new();
             (0..n).map(|i| build(i, &mut cand)).collect()
         };
@@ -169,7 +169,7 @@ impl RadicalVoronoi {
         l: &[F; 3],
         r_cut: F,
         cand: &mut Vec<(F, [F; 3], usize)>,
-    ) -> Option<(F, Vec<Face>)> {
+    ) -> Option<(F, Vec<VoronoiFace>)> {
         grid.collect(gi, r_cut, l, cand);
         cand.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
@@ -204,7 +204,7 @@ impl RadicalVoronoi {
         gi: &[F; 3],
         ri2: F,
         l: &[F; 3],
-    ) -> (F, Vec<Face>) {
+    ) -> (F, Vec<VoronoiFace>) {
         let n = positions.nrows();
         let (lx, ly, lz) = (l[0], l[1], l[2]);
         let mut shell = 1;
@@ -236,7 +236,7 @@ impl RadicalVoronoi {
             let cf = poly.cell_faces();
             let unbounded = cf
                 .iter()
-                .any(|f| f.neighbor == BOUNDARY && f.area > FACE_EPS);
+                .any(|f| f.neighbor == VORONOI_BOUNDARY && f.area > FACE_EPS);
             if !unbounded || shell >= MAX_SHELL {
                 return (poly.volume(), cf);
             }

@@ -8,7 +8,7 @@
 //!     `getExperimentalTorsions`
 //!     (`$RDBASE/Code/GraphMol/ForceFieldHelpers/CrystalFF/TorsionPreferences.cpp`).
 //!
-//! `molrs::MolGraph` does not carry an RDKit-style `ChiralTag`. For a
+//! `molrs::core::MolGraph` does not carry an RDKit-style `ChiralTag`. For a
 //! stereocentre we therefore take the **sign of the signed tetrahedral volume
 //! of the supplied 3D coordinates** as the chirality reference: this is what
 //! actually distinguishes R from S, and is the quantity the downstream
@@ -16,9 +16,11 @@
 //! `Unknown` and only the volume magnitude bounds are emitted.
 
 use crate::op::vec3::{cross, dot, sub};
-use molrs::system::atomistic::{AtomId, Atomistic};
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
 
-use super::mol_features::{Hybridization, Perceived};
+use super::mol_features::DgFeatures;
+use molrs::perceive::Hybridization;
 
 /// Sign of a chiral constraint's signed tetrahedral volume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,13 +55,9 @@ pub struct ChiralConstraint {
 pub struct ImproperConstraint {
     /// `[n0, center, n2, n3]` atom indices.
     pub atoms: [usize; 4],
-    /// Atomic number of the central atom.
-    pub center_atomic_num: u8,
-    /// `true` when the sp2 carbon is bound to an sp2 oxygen.
-    pub bound_to_sp2_o: bool,
 }
 
-fn coord(mol: &Atomistic, id: AtomId) -> Option<[f64; 3]> {
+fn coord(mol: &Atomistic, id: NodeId) -> Option<[f64; 3]> {
     let a = mol.get_atom(id).ok()?;
     Some([a.get_f64("x")?, a.get_f64("y")?, a.get_f64("z")?])
 }
@@ -69,7 +67,7 @@ fn signed_volume(p0: [f64; 3], p1: [f64; 3], p2: [f64; 3], p3: [f64; 3]) -> f64 
     dot(sub(p0, p3), cross(sub(p1, p3), sub(p2, p3)))
 }
 
-impl Perceived {
+impl DgFeatures {
     /// Chiral constraints (RDKit `findChiralSets`, restricted to tetrahedral
     /// C/N centres), using the input 3D coordinates to fix the volume sign.
     pub fn chiral_constraints(&self, mol: &Atomistic) -> Vec<ChiralConstraint> {
@@ -83,7 +81,7 @@ impl Perceived {
     }
 }
 
-fn chiral_constraints(mol: &Atomistic, p: &Perceived) -> Vec<ChiralConstraint> {
+fn chiral_constraints(mol: &Atomistic, p: &DgFeatures) -> Vec<ChiralConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
         let z = atom.element.z();
@@ -144,7 +142,7 @@ fn chiral_constraints(mol: &Atomistic, p: &Perceived) -> Vec<ChiralConstraint> {
     out
 }
 
-fn improper_constraints(p: &Perceived) -> Vec<ImproperConstraint> {
+fn improper_constraints(p: &DgFeatures) -> Vec<ImproperConstraint> {
     let mut out = Vec::new();
     for (i, atom) in p.atoms.iter().enumerate() {
         let z = atom.element.z();
@@ -158,20 +156,9 @@ fn improper_constraints(p: &Perceived) -> Vec<ImproperConstraint> {
         if nbrs.len() != 3 {
             continue;
         }
-        let mut bound_to_sp2_o = false;
-        for &nb in nbrs {
-            if z == 6
-                && p.atoms[nb].element.z() == 8
-                && p.atoms[nb].hybridization == Hybridization::Sp2
-            {
-                bound_to_sp2_o = true;
-            }
-        }
         // RDKit packs as [n0, center, n2, n3]: position 1 is the centre.
         out.push(ImproperConstraint {
             atoms: [nbrs[0], i, nbrs[1], nbrs[2]],
-            center_atomic_num: z,
-            bound_to_sp2_o,
         });
     }
     out

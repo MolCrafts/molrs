@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Run molrec's conformance suite against the Rust core and write its snapshot.
 
-The suite enters through ``molrs.io.mrec``, the path door implemented in
-``molrs/src``. This does not collect ``molrs-python/tests`` or any other
-binding suite. An adapter author writes two methods; every assertion stays
+The suite enters through the ``*.mrec`` doors at the top of ``molrs.io``
+(``read_mrec_frame`` / ``write_mrec_frame``, ``read_mrec_system`` /
+``write_mrec_system``, ``read_mrec_trajectory``, ``read_mrec_meta``, …) and
+the store classes of
+``molrs.io.mrec`` (``MrecReader``, ``MrecWriter``, ``SequenceSchema``,
+``ForceFieldSection``), all implemented in ``molrs/src/io/mrec``. This does not
+collect ``molrs-python/tests`` or any other binding suite. An adapter author writes two methods; every assertion stays
 in molrec.
 """
 
@@ -14,20 +18,21 @@ import sys
 from pathlib import Path
 
 import molci as mci
-import molrec
 from molcrafts_ci.producers import detect_profile, github_source
+from molrec.report import CaseResult, Report
+from molrec.suite import ConformanceSuite
 
 _DETAIL_LIMIT = 500
 
 
-def _detail(result: molrec.CaseResult) -> str:
+def _detail(result: CaseResult) -> str:
     text = result.message or "; ".join(str(v) for v in result.violations)
     if len(text) <= _DETAIL_LIMIT:
         return text
     return text[: _DETAIL_LIMIT - 1] + "…"
 
 
-def _payload(report: molrec.Report) -> dict:
+def _payload(report: Report) -> dict:
     passed = failed = skipped = 0
     failures: list[dict[str, str]] = []
     for result in report.results:
@@ -96,7 +101,9 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="molrec's tests directory, which holds molrs_adapter.py",
     )
-    parser.add_argument("--out", type=Path, required=True, help="Snapshot JSON to write")
+    parser.add_argument(
+        "--out", type=Path, required=True, help="Snapshot JSON to write"
+    )
     parser.add_argument(
         "--track",
         action="store_true",
@@ -114,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
 
     implementation = molrs_adapter.Molrs()
     modules = sorted(implementation.adapters())
-    report = molrec.ConformanceSuite(implementation, modules=modules).run()
+    report = ConformanceSuite(implementation, modules=modules).run()
     print(report.table())
 
     try:

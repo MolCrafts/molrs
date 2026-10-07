@@ -1,28 +1,31 @@
-//! Polynomial-in-cos φ proper dihedrals: LAMMPS `dihedral_style
-//! multi/harmonic` and `dihedral_style nharmonic`,
-//!
-//! E(φ) = Σ_{i=1..N} A_i · cos^(i−1)(φ)
-//!
-//! `multi/harmonic` is the N = 5 case (`a1..a5`, an absent one 0);
-//! `nharmonic` takes any N ≥ 1 (`a1..aN`, contiguous — LAMMPS's
-//! `dihedral_coeff t N A1 … AN`). The coefficients are energies. One kernel
-//! prices both.
+//! Polynomial-in-cos φ proper dihedrals (LAMMPS `multi/harmonic`, `nharmonic`).
 
-use molrs::store::schema::block_names::DIHEDRALS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::forcefield::torsion::nharmonic_coefficients;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::ir::torsion::nharmonic_coefficients;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Multi/harmonic (or nharmonic) proper dihedral with pre-resolved flat arrays.
+///
+/// Polynomial-in-cos φ proper dihedrals: LAMMPS `dihedral_style
+/// multi/harmonic` and `dihedral_style nharmonic`,
+///
+/// E(φ) = Σ_{i=1..N} A_i · cos^(i−1)(φ)
+///
+/// `multi/harmonic` is the N = 5 case (`a1..a5`, an absent one 0);
+/// `nharmonic` takes any N ≥ 1 (`a1..aN`, contiguous — LAMMPS's
+/// `dihedral_coeff t N A1 … AN`). The coefficients are energies. One kernel
+/// prices both.
 pub struct DihedralMultiHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -124,41 +127,44 @@ impl IndexedTerms for DihedralMultiHarmonic {
 /// Construct a [`DihedralMultiHarmonic`] from per-type params (`a1`..`a5`,
 /// an absent one 0) and a Frame's `"dihedrals"` block
 /// (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_multi_harmonic_ctor(
+pub fn dihedral_multi_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    cos_polynomial_ctor("dihedral_multi_harmonic", tp, frame, |p| {
-        Ok(["a1", "a2", "a3", "a4", "a5"]
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    cos_polynomial_constructor("dihedral_multi_harmonic", tp, frame, |label, p| {
+        ["a1", "a2", "a3", "a4", "a5"]
             .iter()
-            .map(|key| p.get(key).unwrap_or(0.0) as F)
-            .collect())
+            .map(|key| param_reads::type_num("multi/harmonic", label, p, key))
+            .collect()
     })
 }
 
 /// Construct the LAMMPS `dihedral_style nharmonic` kernel from per-type
 /// params `a1..aN` (contiguous, N ≥ 1) and a Frame's `"dihedrals"` block.
-pub fn dihedral_nharmonic_ctor(
+pub fn dihedral_nharmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    cos_polynomial_ctor("dihedral_nharmonic", tp, frame, |p| {
-        Ok(nharmonic_coefficients(p)?
-            .into_iter()
-            .map(|a| a as F)
-            .collect())
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    cos_polynomial_constructor("dihedral_nharmonic", tp, frame, |label, p| {
+        // The first coefficient absent: `a1`, or the one a gap skips.
+        nharmonic_coefficients(p).map_err(|_| {
+            let m = (1..)
+                .take_while(|m| p.get(&format!("a{m}")).is_some())
+                .count();
+            param_reads::missing("nharmonic", label, &format!("a{}", m + 1))
+        })
     })
 }
 
 /// The one constructor of both styles; `coefficients` reads a type's `A_i`.
-fn cos_polynomial_ctor(
+fn cos_polynomial_constructor(
     what: &str,
     tp: &[(&str, &Params)],
     frame: &Frame,
-    coefficients: impl Fn(&Params) -> Result<Vec<F>, String>,
-) -> Result<Member, String> {
+    coefficients: impl Fn(&str, &Params) -> Result<Vec<F>, crate::ff::ir::IrError>,
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -201,9 +207,9 @@ fn cos_polynomial_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        a.push(coefficients(p).map_err(|e| format!("{what}[{}]: {e}", tc[idx]))?);
+        a.push(coefficients(&tc[idx], p)?);
     }
-    Ok(Member::indexed(DihedralMultiHarmonic {
+    Ok(ForceTerm::indexed(DihedralMultiHarmonic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -279,17 +285,18 @@ mod tests {
 
 #[cfg(test)]
 mod nharmonic_tests {
-    use crate::ff::forcefield::{ForceField, Params};
-    use crate::ff::potential::PotentialCompiler;
-    use molrs::store::block::Block;
-    use molrs::store::frame::Frame;
-    use molrs::types::{F, Idx};
+    use crate::ff::compile::PotentialCompiler;
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::op::{F, Idx};
     use ndarray::Array1;
 
     fn one_dihedral(
         style: &str,
         params: Params,
-    ) -> Result<crate::ff::potential::Potentials, String> {
+    ) -> Result<crate::ff::potential::Potentials, crate::ff::potential::CompileError> {
         let mut ff = ForceField::new("t");
         ff.def_style("dihedral", style, Params::new())
             .unwrap()
@@ -332,16 +339,20 @@ mod nharmonic_tests {
         let got = pots.calc_energy(&coords);
         assert!((got - want).abs() < 1e-12, "{got} vs {want}");
         let coords: Vec<F> = vec![0.1, 1.0, 0.2, 0.0, 0.0, 0.0, 1.0, 0.0, -0.1, 1.2, -0.8, 0.5];
-        crate::ff::potential::test_util::assert_forces_are_negative_gradient(&pots, &coords, 1e-5);
+        crate::ff::potential::fixtures::assert_forces_are_negative_gradient(&pots, &coords, 1e-5);
     }
 
     /// No `a1`, or a coefficient past a gap, is refused at compile time.
     #[test]
     fn a_missing_or_gapped_coefficient_is_refused() {
+        let missing = |err: crate::ff::potential::CompileError| match err.ir() {
+            Some(crate::ff::ir::IrError::MissingParam { param, .. }) => param.clone(),
+            _ => panic!("{err}"),
+        };
         let err = one_dihedral("nharmonic", Params::from_pairs(&[("a2", 1.0)])).unwrap_err();
-        assert!(err.contains("a1"), "{err}");
+        assert_eq!(missing(err), "a1");
         let err =
             one_dihedral("nharmonic", Params::from_pairs(&[("a1", 1.0), ("a3", 1.0)])).unwrap_err();
-        assert!(err.contains("a3"), "{err}");
+        assert_eq!(missing(err), "a2");
     }
 }

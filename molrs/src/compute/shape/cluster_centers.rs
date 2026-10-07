@@ -1,26 +1,28 @@
 //! Geometric cluster centers computed with minimum image convention.
-//!
-//! The unweighted counterpart of
-//! [`CenterOfMass`](crate::compute::shape::CenterOfMass). Reads
-//! `atoms.{x,y,z}` (Å); takes one
-//! [`ClusterResult`] per frame as
-//! `Args`. Output: per-cluster geometric centers (Å), one
-//! [`ClusterCentersResult`] per frame.
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::{ComputeResult, DescriptorRow};
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::sub;
+use molrs::core::{Mic, SimBox};
 
 /// Computes the geometric center of each cluster per frame using the minimum
 /// image convention (MIC).
 ///
 /// Algorithm: for each cluster, pick the first particle as reference,
 /// accumulate MIC-corrected displacements, then average.
+///
+/// The unweighted counterpart of
+/// [`CenterOfMass`](crate::compute::CenterOfMass). Reads
+/// `atoms.{x,y,z}` (Å); takes one
+/// [`ClusterResult`] per frame as
+/// `Args`. Output: per-cluster geometric centers (Å), one
+/// [`ClusterCentersResult`] per frame.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterCenters;
 
@@ -39,8 +41,8 @@ impl ClusterCenters {
         let xs = xs_p.slice();
         let ys = ys_p.slice();
         let zs = zs_p.slice();
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
-        let nc = clusters.num_clusters;
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        let nc = clusters.n_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
         let mut sum_delta = vec![[0.0 as F; 3]; nc];
@@ -59,7 +61,7 @@ impl ClusterCenters {
                 has_ref[c] = true;
             }
 
-            let d = mic.disp(ref_pos[c], pos);
+            let d = mic.apply(sub(pos, ref_pos[c]));
             sum_delta[c][0] += d[0];
             sum_delta[c][1] += d[1];
             sum_delta[c][2] += d[2];
@@ -157,11 +159,11 @@ impl DescriptorRow for ClusterCentersResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::cluster::Cluster;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::Cluster;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -195,7 +197,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }
@@ -216,7 +218,7 @@ mod tests {
         ];
         let frame = frame_with(&pos, 6.0, [false, false, false]);
         let cl = clusters_via_nlist(&frame, 0.5);
-        assert_eq!(cl.num_clusters, 2);
+        assert_eq!(cl.n_clusters, 2);
 
         let (ca, cb) = if cl.cluster_idx[0] == 0 {
             (0, 1)
@@ -236,7 +238,7 @@ mod tests {
         let pos = [[0.5, 5.0, 5.0], [9.5, 5.0, 5.0]];
         let frame = frame_with(&pos, 10.0, [true, true, true]);
         let cl = clusters_via_nlist(&frame, 2.0);
-        assert_eq!(cl.num_clusters, 1);
+        assert_eq!(cl.n_clusters, 1);
 
         let centers = centers_single(&frame, cl);
         let cx = centers.centers[0][0];

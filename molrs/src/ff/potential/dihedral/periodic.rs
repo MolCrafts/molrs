@@ -1,28 +1,19 @@
-//! Periodic / Fourier proper dihedral (AMBER / GAFF):
-//!
-//! E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
-//!
-//! AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
-//! encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
-//! (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
-//! writes it — the kernel converts it to radians once),
-//! scanned upward from `m = 1` until a term is absent. A single unindexed
-//! `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
-//! GAFF default), keeping the form identical to one CHARMM term. This is the
-//! canonical encoding the molpy → molrs ForceField bridge emits.
+//! Periodic / Fourier proper dihedral (AMBER / GAFF).
 
-use molrs::store::schema::block_names::DIHEDRALS;
+use crate::ff::ir::IrError;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// One cosine term `k·[1 + cos(n·φ − γ)]` with the phase `γ` in radians.
 #[derive(Clone, Copy)]
@@ -33,6 +24,19 @@ struct Term {
 }
 
 /// Periodic / Fourier proper dihedral with pre-resolved flat arrays.
+///
+/// Periodic / Fourier proper dihedral (AMBER / GAFF):
+///
+/// E(φ) = Σ_m k_m · [1 + cos(n_m·φ − γ_m)]
+///
+/// AMBER-family torsions are a sum of cosine terms per quadruple. The parameter
+/// encoding is **per-term indexed keys** `k{m}`, `periodicity{m}`, `phase{m}`
+/// (1-indexed, the phase in **degrees**, as LAMMPS `dihedral_style fourier`
+/// writes it — the kernel converts it to radians once),
+/// scanned upward from `m = 1` until a term is absent. A single unindexed
+/// `k`/`periodicity`/`phase` triple is accepted as the one-term case (the common
+/// GAFF default), keeping the form identical to one CHARMM term. This is the
+/// canonical encoding the molpy → molrs ForceField bridge emits.
 pub struct DihedralPeriodic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -124,56 +128,52 @@ impl IndexedTerms for DihedralPeriodic {
 }
 
 /// Collect the cosine terms from a per-type [`Params`] using the indexed
-/// `k{m}`/`periodicity{m}`/`phase{m}` encoding, falling back to a single
-/// `k`/`periodicity`/`phase` triple.
-fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, String> {
-    let mut terms = Vec::new();
-    let mut m = 1;
-    loop {
-        let kk = p.get(&format!("k{m}"));
-        if kk.is_none() {
-            break;
-        }
-        let n = p
-            .get(&format!("periodicity{m}"))
-            .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity{m}"))?;
-        let d = p.get(&format!("phase{m}")).unwrap_or(0.0);
-        terms.push(Term {
-            k: kk.unwrap() as F,
-            n: n as F,
-            d: d.to_radians() as F, // degrees → radians
-        });
-        m += 1;
+/// `k{m}`/`periodicity{m}`/`phase{m}` encoding (contiguous from 1), or the
+/// single-term `k`/`periodicity`/`phase` spelling.
+fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
+    let num = |key: &str| param_reads::type_num("periodic", label, p, key);
+    let term = |m: &str| -> Result<Term, IrError> {
+        Ok(Term {
+            k: num(&format!("k{m}"))?,
+            n: num(&format!("periodicity{m}"))?,
+            d: num(&format!("phase{m}"))?.to_radians(), // degrees → radians
+        })
+    };
+    let m = (1..)
+        .take_while(|m| p.get(&format!("k{m}")).is_some())
+        .count();
+    let beyond = p.iter().any(|(key, _)| {
+        key.strip_prefix('k')
+            .and_then(|i| i.parse::<usize>().ok())
+            .is_some_and(|i| i > m)
+    });
+    if beyond {
+        return Err(param_reads::missing(
+            "periodic",
+            label,
+            &format!("k{}", m + 1),
+        ));
     }
-    if terms.is_empty() {
-        // single-term fallback
-        if let Some(k) = p.get("k") {
-            let n = p
-                .get("periodicity")
-                .ok_or_else(|| format!("dihedral_periodic[{label}]: missing periodicity"))?;
-            let d = p.get("phase").unwrap_or(0.0);
-            terms.push(Term {
-                k: k as F,
-                n: n as F,
-                d: d.to_radians() as F, // degrees → radians
-            });
-        } else {
-            return Err(format!(
-                "dihedral_periodic[{label}]: no terms \
-                 (need k1/periodicity1/phase1… or k/periodicity/phase)"
-            ));
-        }
+    match (m, p.get("k").is_some()) {
+        (0, true) => Ok(vec![term("")?]),
+        (0, false) => Err(param_reads::missing("periodic", label, "k1")),
+        (_, true) => Err(param_reads::bad(
+            "periodic",
+            label,
+            "k",
+            "is given beside `k1`: spell one term `k`, or every term `k<m>`",
+        )),
+        (m, false) => (1..=m).map(|i| term(&i.to_string())).collect(),
     }
-    Ok(terms)
 }
 
 /// Construct a [`DihedralPeriodic`] from per-type params and a Frame's
 /// `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_periodic_ctor(
+pub fn dihedral_periodic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -218,7 +218,7 @@ pub fn dihedral_periodic_ctor(
         al.push(lc[idx] as usize);
         terms.push(collect_terms(p, tc[idx].as_str())?);
     }
-    Ok(Member::indexed(DihedralPeriodic {
+    Ok(ForceTerm::indexed(DihedralPeriodic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -286,6 +286,7 @@ mod tests {
         let mut q = Params::new();
         q.set("k", 2.0);
         q.set("periodicity", 3.0);
+        q.set("phase", 0.0);
         let t2 = collect_terms(&q, "y").unwrap();
         assert_eq!(t2.len(), 1);
         assert_eq!(t2[0].n, 3.0);

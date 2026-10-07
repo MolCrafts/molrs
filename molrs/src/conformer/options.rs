@@ -4,7 +4,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForceFieldKind {
     /// Merck Molecular Force Field 94.
-    MMFF94,
+    Mmff94,
     /// Universal Force Field.
     Uff,
     /// Prefer MMFF94, fall back to UFF.

@@ -1,72 +1,19 @@
 //! CHARMM CMAP crossterm (LAMMPS `fix cmap`).
-//!
-//! A crossterm names five atoms `(a, b, c, d, e)` and is priced from an N×N
-//! energy grid over the two dihedrals it spans:
-//!
-//! ```text
-//! φ = dihedral(a, b, c, d),   ψ = dihedral(b, c, d, e),   E = map(φ, ψ)
-//! ```
-//!
-//! # The grid
-//!
-//! A type's `grid` array param is the map, **φ-major**: element `[i][j]` is
-//! the energy at φ = −180° + i·Δ, ψ = −180° + j·Δ, Δ = 360°/N (CHARMM:
-//! N = 24, Δ = 15°) — the order of a LAMMPS / CHARMM `.cmap` file.
-//!
-//! # The interpolation is LAMMPS's
-//!
-//! This is a port of LAMMPS `src/MOLECULE/fix_cmap.cpp`, step for step, so a
-//! molrs energy is the `fix cmap` energy (molrs-python docs, "Force-field
-//! conventions", CMAP):
-//!
-//! 1. **Node derivatives** (`set_map_derivatives`). The map is extended
-//!    periodically to 2N × 2N (φ, ψ ∈ [−360°, 360°)), each φ row gets a
-//!    *natural* cubic spline along ψ; at every node, the row splines give
-//!    `E` and `∂E/∂ψ` down the 2N φ column, which are splined along φ again.
-//!    The node's `∂E/∂φ`, `∂E/∂ψ` and `∂²E/∂φ∂ψ` (per degree) are those
-//!    splines' values and slopes. The doubled map keeps the spline's natural
-//!    end conditions half a period away from every node it is read at.
-//! 2. **Patch** (`bc_coeff`, `bc_interpol`). The cell holding (φ, ψ) gets the
-//!    16 bicubic coefficients from its four corners' values and derivatives
-//!    (Numerical Recipes' `bcucof` weight matrix), and E, ∂E/∂φ, ∂E/∂ψ are
-//!    the bicubic polynomial and its slopes at the point; the slopes are
-//!    converted from per degree to per radian.
-//! 3. **Angles and forces** (`post_force`). φ and ψ are LAMMPS's
-//!    `atan2` dihedrals in degrees, in [−180°, 180°) (180° reads as −180°),
-//!    and the forces are LAMMPS's `dφ/dr`, `dψ/dr` expressions, so the
-//!    crossterm is distributed onto the five atoms exactly as LAMMPS does.
-//!
-//! Two LAMMPS behaviours are kept on purpose, as they change energies:
-//!
-//! - a crossterm whose dihedral planes are degenerate — any of the four
-//!   cross products `|b_ij × b_jk|²` below 10⁻⁴ Å⁴ — contributes **nothing**
-//!   (`fix cmap` skips it);
-//! - the dihedrals are LAMMPS's, which equal molrs's
-//!   [`compute_dihedral`](crate::ff::potential::geometry::compute_dihedral)
-//!   (the IUPAC sign) to rounding.
-//!
-//! One is not: LAMMPS fixes N = 24 and at most six maps (`CMAPDIM`,
-//! `CMAPMAX`); this kernel takes any N ≥ 2 and any number of maps, with
-//! Δ = 360°/N. LAMMPS stores the derivative grids rotated by N/2 and finds
-//! their cell from φ wrapped to [0°, 360°); here they are stored unrotated
-//! and read at the value cell — the same numbers, except where a float tie on
-//! a cell edge sent LAMMPS's two lookups to neighbouring cells.
 
+use crate::ff::potential::param_reads;
 use std::collections::HashMap;
-use std::f64::consts::PI;
 
 use ndarray::{Array2, ArrayD, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::CMAPS;
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
-use molrs::types::F;
-
-/// The array param a `cmap` type keeps its map under.
-pub const GRID: &str = "grid";
+use crate::ff::ir::CMAP_GRID;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{compute_dihedral, sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use crate::op::vec3::{cross, dot, scale};
+use molrs::core::Frame;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
+use molrs::core::schema::block_names::CMAPS;
+use molrs::op::F;
 
 /// Lower grid edge, degrees (LAMMPS `CMAPXMIN2`).
 const ORIGIN: F = -180.0;
@@ -123,12 +70,12 @@ impl CmapGrid {
             [a, b] if a == b && *a >= 2 => *a,
             _ => {
                 return Err(format!(
-                    "a cmap grid is a square N×N array with N >= 2, found shape {shape:?}"
+                    "is not a square N×N array with N >= 2: its shape is {shape:?}"
                 ));
             }
         };
         if let Some(bad) = grid.iter().find(|v| !v.is_finite()) {
-            return Err(format!("a cmap grid holds {bad}; its values are finite"));
+            return Err(format!("holds {bad}; a cmap grid's values are finite"));
         }
         let e: Vec<F> = grid.iter().copied().collect();
         let dx = 360.0 / n as F;
@@ -238,7 +185,7 @@ impl CmapGrid {
             de_dphi = u * de_dphi + (3.0 * cij[3][i] * t + 2.0 * cij[2][i]) * t + cij[1][i];
             de_dpsi = t * de_dpsi + (3.0 * cij[i][3] * u + 2.0 * cij[i][2]) * u + cij[i][1];
         }
-        let per_radian = 180.0 / PI / dx;
+        let per_radian = (1.0 / dx).to_degrees();
         (e, de_dphi * per_radian, de_dpsi * per_radian)
     }
 }
@@ -261,44 +208,58 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
     ddy
 }
 
-#[inline]
-fn sub(a: &[F], i: usize, j: usize) -> [F; 3] {
-    [
-        a[3 * i] - a[3 * j],
-        a[3 * i + 1] - a[3 * j + 1],
-        a[3 * i + 2] - a[3 * j + 2],
-    ]
-}
-
-#[inline]
-fn neg(v: [F; 3]) -> [F; 3] {
-    [-v[0], -v[1], -v[2]]
-}
-
-/// `u × v`, spelled as `fix cmap` spells its cross products.
-#[inline]
-fn cross(u: [F; 3], v: [F; 3]) -> [F; 3] {
-    [
-        u[1] * v[2] - u[2] * v[1],
-        u[2] * v[0] - u[0] * v[2],
-        u[0] * v[1] - u[1] * v[0],
-    ]
-}
-
-#[inline]
-fn dot(u: [F; 3], v: [F; 3]) -> F {
-    u[0] * v[0] + u[1] * v[1] + u[2] * v[2]
-}
-
-/// LAMMPS `FixCMAP::dihedral_angle_atan2`, degrees.
-#[inline]
-fn dihedral_deg(f: [F; 3], a: [F; 3], b: [F; 3], absg: F) -> F {
-    let arg1 = absg * dot(f, b);
-    let arg2 = dot(a, b);
-    arg1.atan2(arg2) * 180.0 / PI
-}
-
 /// The CHARMM CMAP crossterm over pre-resolved atoms and maps.
+///
+/// A crossterm names five atoms `(a, b, c, d, e)` and is priced from an N×N
+/// energy grid over the two dihedrals it spans:
+///
+/// ```text
+/// φ = dihedral(a, b, c, d),   ψ = dihedral(b, c, d, e),   E = map(φ, ψ)
+/// ```
+///
+/// # The grid
+///
+/// A type's `grid` array param is the map, **φ-major**: element `[i][j]` is
+/// the energy at φ = −180° + i·Δ, ψ = −180° + j·Δ, Δ = 360°/N (CHARMM:
+/// N = 24, Δ = 15°) — the order of a LAMMPS / CHARMM `.cmap` file.
+///
+/// # The interpolation is LAMMPS's
+///
+/// This is a port of LAMMPS `src/MOLECULE/fix_cmap.cpp`, step for step, so a
+/// molrs energy is the `fix cmap` energy (molrs-python docs, "Force-field
+/// conventions", CMAP):
+///
+/// 1. **Node derivatives** (`set_map_derivatives`). The map is extended
+///    periodically to 2N × 2N (φ, ψ ∈ [−360°, 360°)), each φ row gets a
+///    *natural* cubic spline along ψ; at every node, the row splines give
+///    `E` and `∂E/∂ψ` down the 2N φ column, which are splined along φ again.
+///    The node's `∂E/∂φ`, `∂E/∂ψ` and `∂²E/∂φ∂ψ` (per degree) are those
+///    splines' values and slopes. The doubled map keeps the spline's natural
+///    end conditions half a period away from every node it is read at.
+/// 2. **Patch** (`bc_coeff`, `bc_interpol`). The cell holding (φ, ψ) gets the
+///    16 bicubic coefficients from its four corners' values and derivatives
+///    (Numerical Recipes' `bcucof` weight matrix), and E, ∂E/∂φ, ∂E/∂ψ are
+///    the bicubic polynomial and its slopes at the point; the slopes are
+///    converted from per degree to per radian.
+/// 3. **Angles and forces** (`post_force`). φ and ψ are LAMMPS's
+///    `atan2` dihedrals in degrees, in [−180°, 180°) (180° reads as −180°),
+///    and the forces are LAMMPS's `dφ/dr`, `dψ/dr` expressions, so the
+///    crossterm is distributed onto the five atoms exactly as LAMMPS does.
+///
+/// Two LAMMPS behaviours are kept on purpose, as they change energies:
+///
+/// - a crossterm whose dihedral planes are degenerate — any of the four
+///   cross products `|b_ij × b_jk|²` below 10⁻⁴ Å⁴ — contributes **nothing**
+///   (`fix cmap` skips it);
+/// - the dihedrals are [`op::vec3::dihedral`](crate::op::vec3::dihedral) in
+///   degrees, which is LAMMPS's `atan2` dihedral (the IUPAC sign) to rounding.
+///
+/// One is not: LAMMPS fixes N = 24 and at most six maps (`CMAPDIM`,
+/// `CMAPMAX`); this kernel takes any N ≥ 2 and any number of maps, with
+/// Δ = 360°/N. LAMMPS stores the derivative grids rotated by N/2 and finds
+/// their cell from φ wrapped to [0°, 360°); here they are stored unrotated
+/// and read at the value cell — the same numbers, except where a float tie on
+/// a cell edge sent LAMMPS's two lookups to neighbouring cells.
 pub struct CmapCharmm {
     atoms: [Vec<usize>; 5],
     /// Map index of each crossterm into `maps`.
@@ -333,13 +294,13 @@ impl CmapCharmm {
         let mut energy = 0.0;
         for t in 0..n_terms {
             let [i1, i2, i3, i4, i5] = atoms(t);
-            let vb21 = sub(x, i2, i1);
-            let vb12 = neg(vb21);
-            let vb32 = sub(x, i3, i2);
-            let vb23 = neg(vb32);
-            let vb34 = sub(x, i3, i4);
-            let vb43 = neg(vb34);
-            let vb45 = sub(x, i4, i5);
+            let vb21 = sub3(x, i2, x, i1);
+            let vb12 = scale(vb21, -1.0);
+            let vb32 = sub3(x, i3, x, i2);
+            let vb23 = scale(vb32, -1.0);
+            let vb34 = sub3(x, i3, x, i4);
+            let vb43 = scale(vb34, -1.0);
+            let vb45 = sub3(x, i4, x, i5);
 
             let a1 = cross(vb12, vb23);
             let b1 = cross(vb43, vb23);
@@ -360,8 +321,11 @@ impl CmapCharmm {
             let dpr32r43 = dot(vb32, vb43);
             let dpr45r43 = dot(vb45, vb43);
 
-            let phi = dihedral_deg(vb21, a1, b1, r32);
-            let psi = dihedral_deg(vb32, a2, b2, r43);
+            // LAMMPS's `FixCMAP::dihedral_angle_atan2` is this angle: the
+            // IUPAC sign, `atan2(|b₂| b₁·n₂, n₁·n₂)`. Its −180° is the +180°
+            // here, which `CmapGrid::eval` reads as −180°.
+            let phi = compute_dihedral(x, i1, i2, i3, i4).to_degrees();
+            let psi = compute_dihedral(x, i2, i3, i4, i5).to_degrees();
             let (e, de_dphi, de_dpsi) = self.maps[self.map[t]].eval(phi, psi);
             energy += e;
 
@@ -442,11 +406,11 @@ impl IndexedTerms for CmapCharmm {
 /// Only the maps a crossterm uses are prepared. `Err` on a missing column, an
 /// unknown type label, a type without a `grid`, or a grid [`CmapGrid::new`]
 /// refuses.
-pub fn cmap_charmm_ctor(
+pub fn cmap_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(CMAPS)
@@ -482,9 +446,12 @@ pub fn cmap_charmm_ctor(
                     .get(label)
                     .ok_or_else(|| format!("cmap_charmm: unknown type '{label}'"))?;
                 let grid = params
-                    .get_array(GRID)
-                    .ok_or_else(|| format!("cmap_charmm[{label}]: no `{GRID}` array param"))?;
-                maps.push(CmapGrid::new(grid).map_err(|e| format!("cmap_charmm[{label}]: {e}"))?);
+                    .get_array(CMAP_GRID)
+                    .ok_or_else(|| param_reads::missing("charmm", label, CMAP_GRID))?;
+                maps.push(
+                    CmapGrid::new(grid)
+                        .map_err(|e| param_reads::bad("charmm", label, CMAP_GRID, e))?,
+                );
                 index.insert(label, maps.len() - 1);
                 maps.len() - 1
             }
@@ -492,18 +459,18 @@ pub fn cmap_charmm_ctor(
         atoms.push(std::array::from_fn(|p| cols[p][[row]] as usize));
         map.push(m);
     }
-    Ok(Member::indexed(CmapCharmm::new(atoms, map, maps)))
+    Ok(ForceTerm::indexed(CmapCharmm::new(atoms, map, maps)))
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ff::compile::PotentialCompiler;
     use crate::ff::forcefield::ForceField;
-    use crate::ff::forcefield::readers::lammps::read_lammps_cmap_str;
-    use crate::ff::potential::PotentialCompiler;
-    use crate::ff::potential::geometry::compute_dihedral;
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use crate::ff::potential::flat_coords::compute_dihedral;
+    use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
+    use molrs::core::Block;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     /// The CHARMM36 alanine map (LAMMPS `potentials/charmm36.cmap`, type 1).
@@ -730,12 +697,12 @@ pub(crate) mod tests {
         let mut ff = ForceField::new("t");
         let style = ff.def_style("cmap", "charmm", Params::new()).unwrap();
         let mut ala = Params::new();
-        ala.set_array(GRID, alanine());
+        ala.set_array(CMAP_GRID, alanine());
         style
             .def_type("ala", &["C", "NH1", "CT1", "C", "NH1"], ala)
             .unwrap();
         let mut flat = Params::new();
-        flat.set_array(GRID, alanine().mapv(|v| 0.5 * v + 0.1));
+        flat.set_array(CMAP_GRID, alanine().mapv(|v| 0.5 * v + 0.1));
         style
             .def_type("flat", &["NH1", "CT1", "C", "NH1", "CT1"], flat)
             .unwrap();
@@ -788,7 +755,7 @@ pub(crate) mod tests {
         assert_eq!(f0, f1);
         assert!(e0 != 0.0);
 
-        let Member::Indexed(k) = &pots.members()[0] else {
+        let ForceTerm::Indexed(k) = &pots.members()[0] else {
             panic!("a cmap member is indexed")
         };
         let terms = k.terms();
@@ -809,11 +776,11 @@ pub(crate) mod tests {
             .map(|_| ())
             .unwrap_err();
         assert!(
-            err.contains("grid") || err.contains("unknown type"),
+            err.to_string().contains("grid") || err.to_string().contains("unknown type"),
             "{err}"
         );
         let mut odd = Params::new();
-        odd.set_array(GRID, ArrayD::zeros(vec![3, 4]));
-        assert!(CmapGrid::new(odd.get_array(GRID).unwrap()).is_err());
+        odd.set_array(CMAP_GRID, ArrayD::zeros(vec![3, 4]));
+        assert!(CmapGrid::new(odd.get_array(CMAP_GRID).unwrap()).is_err());
     }
 }

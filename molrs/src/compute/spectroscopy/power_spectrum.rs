@@ -5,15 +5,15 @@ use rustfft::FftPlanner;
 
 use super::spectra::SpectrumResult;
 use super::window_and_fft;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::Fit;
 
 /// Velocity power spectrum (VDOS) transform of a **raw velocity ACF**.
 ///
 /// Applies the CosineSq window + zero-padded forward FFT (the
 /// `window_and_fft` pipeline) to a raw, unnormalized
-/// velocity ACF — the [`VacfResult`](crate::compute::transport::VacfResult) of
-/// the [`VACF`](crate::compute::transport::VACF) compute.
+/// velocity ACF — the [`VacfResult`](crate::compute::VacfResult) of
+/// the [`Vacf`](crate::compute::Vacf) compute.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PowerSpectrum;
 
@@ -53,9 +53,9 @@ impl Fit for PowerSpectrum {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::traits::Compute;
-    use crate::compute::transport::VACF;
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use crate::compute::Vacf;
+    use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;
 
@@ -95,7 +95,12 @@ mod tests {
         let mut v = Array2::zeros((n, 3));
         for t in 0..n {
             let tf = t as f64 * dt_fs;
-            v[[t, 0]] = (2.0 * std::f64::consts::PI * freq_thz * 1e-3 * tf).sin();
+            v[[t, 0]] = (2.0
+                * std::f64::consts::PI
+                * freq_thz
+                * crate::core::unit_factors::THZ_TO_PER_FS.get()
+                * tf)
+                .sin();
         }
         v
     }
@@ -111,7 +116,7 @@ mod tests {
         let max_lag = res.min(n - 1);
         let acf = power_acf(&v, max_lag);
 
-        let raw = VACF.compute(&no_frames(), (&v, dt, res)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, dt, res)).unwrap();
         assert_eq!(raw.acf, acf); // VACF returns unbiased unwindowed ACF.
 
         let from_raw = PowerSpectrum.fit((&raw.acf, dt)).unwrap();
@@ -127,7 +132,7 @@ mod tests {
         let n = 4096;
         let dt = 0.5;
         let v = sine_velocities(n, dt, 10.0);
-        let raw = VACF.compute(&no_frames(), (&v, dt, 200)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, dt, 200)).unwrap();
         let spec = PowerSpectrum.fit((&raw.acf, dt)).unwrap();
         let n_bins = spec.intensities.len();
         let search_end = n_bins.saturating_sub(3);

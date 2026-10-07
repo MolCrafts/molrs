@@ -20,15 +20,12 @@ nav = [
   { "Guides" = [
     { "Record files (*.mrec)" = "guides/records.md" },
     { "Force-field IR" = "guides/forcefield-ir.md" },
+    { "Extending the force-field IR" = "guides/extending-forcefield-ir.md" },
   ] },
   { "Reference" = [
     { "Rust" = "reference/rust.md" },
     { "Python" = "reference/python.md" },
     { "WASM" = "reference/wasm.md" },
-  ] },
-  { "Release 0.15" = [
-    { "What's new in 0.15" = "release-notes.md" },
-    { "Migration guide" = "migration.md" },
   ] },
   { "Contributing" = "contributing.md" },
 ]
@@ -60,9 +57,9 @@ default_handler = "python"
 
 [project.plugins.mkdocstrings.handlers.python]
 # Do NOT set paths = ["python"]. Cloudflare Pages / CI run
-# `pip install ".[doc]"` first, so the installed wheel (with _lib.abi3.so) lives
+# `pip install ".[doc]"` first, so the installed wheel (with _native.abi3.so) lives
 # in site-packages. Pointing paths at the bare checkout makes griffe import the
-# pure-Python tree without the compiled extension → ModuleNotFoundError: molrs._lib.
+# pure-Python tree without the compiled extension → ModuleNotFoundError: molrs._native.
 # Local: `maturin develop` / `pip install -e ".[doc]"` then `zensical build`.
 
 [project.plugins.mkdocstrings.handlers.python.options]
@@ -71,6 +68,7 @@ members_order = "source"
 show_root_heading = true
 show_root_full_path = false
 show_source = false
-# PyO3 classes use ``module = "molrs"``; force runtime inspection so griffe
-# resolves extension types and re-exports (Frame/Block wrappers, compute.*).
+# Every PyO3 class declares its public module (``module = "molrs.core"``, …)
+# and lives in the private ``molrs._native``; force runtime inspection so griffe
+# resolves the extension types through the package's re-exports.
 force_inspection = true

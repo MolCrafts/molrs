@@ -1,20 +1,21 @@
 //! ROA polarizability×optical-activity cross-correlation raw compute — the
 //! ROA-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use super::raman_tensor::{DIAG_ANISO_WEIGHT, OFFDIAG_ANISO_WEIGHT};
-use super::{central_diff_series, lag_times, xcorr_accumulate_into};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use super::{central_diff_series, xcorr_accumulate_into};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw ROA cross-correlation iso/aniso curves — the ROA-spectrum raw input.
 #[derive(Debug, Clone)]
-pub struct RoaCrossResult {
+pub struct RoaCrossTensorResult {
     /// Lag times τ = i·dt, length `max_lag + 1`.
     pub lag_times: Array1<f64>,
     /// Isotropic ROA cross-correlation of `α̇` (electric polarizability
@@ -26,7 +27,7 @@ pub struct RoaCrossResult {
     pub acf_aniso: Array1<f64>,
 }
 
-impl ComputeResult for RoaCrossResult {}
+impl ComputeResult for RoaCrossTensorResult {}
 
 /// Raw ROA cross-tensor compute: cross-correlation of the electric
 /// polarizability derivative `α̇` with the optical-activity tensor derivative
@@ -44,11 +45,11 @@ pub struct RoaCrossTensor;
 
 /// `(electric_pol (n,6), g_tensor (n,6), dt, resolution)` for [`RoaCrossTensor`],
 /// both in Voigt notation `[xx, yy, zz, xy, xz, yz]`.
-pub type RoaCrossArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
+pub type RoaCrossTensorArgs<'a> = (&'a Array2<f64>, &'a Array2<f64>, f64, usize);
 
 impl Compute for RoaCrossTensor {
-    type Args<'a> = RoaCrossArgs<'a>;
-    type Output = RoaCrossResult;
+    type Args<'a> = RoaCrossTensorArgs<'a>;
+    type Output = RoaCrossTensorResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
@@ -149,7 +150,7 @@ impl Compute for RoaCrossTensor {
             );
         }
 
-        Ok(RoaCrossResult {
+        Ok(RoaCrossTensorResult {
             lag_times: lag_times(max_lag, dt),
             acf_iso,
             acf_aniso,

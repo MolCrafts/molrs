@@ -1,34 +1,20 @@
 //! Tang-Toennies charge / induced-dipole damping (CL&Pol short-range damping).
-//!
-//! Damps the Coulomb interaction between a charge and an induced dipole (a Drude
-//! shell) at short range, preventing the polarization catastrophe:
-//!
-//! ```text
-//! f_n(r) = 1 - c exp(-b r) sum_{k=0}^{n} (b r)^k / k!
-//! ```
-//!
-//! so the damped pair energy is `f_n(r) * q_i q_j / r`. The derivative collapses
-//! to a single term: `f'_n(r) = c b exp(-b r) (b r)^n / n!`. CL&Pol canonical
-//! settings: `order = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
-//! params; the per-atom-type `charge` comes from the atoms block.
-//!
-//! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
-//! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::op::F;
 
 /// Tang-Toennies damped Coulomb pair potential. `b`/`n`/`c` are style-level;
 /// `qq[idx]` is the charge product `q_i q_j` of each pair.
@@ -53,6 +39,22 @@ enum Charges {
     },
 }
 
+/// Tang-Toennies charge / induced-dipole damping (CL&Pol short-range damping).
+///
+/// Damps the Coulomb interaction between a charge and an induced dipole (a Drude
+/// shell) at short range, preventing the polarization catastrophe:
+///
+/// ```text
+/// f_n(r) = 1 - c exp(-b r) sum_{k=0}^{n} (b r)^k / k!
+/// ```
+///
+/// so the damped pair energy is `f_n(r) * q_i q_j / r`. The derivative collapses
+/// to a single term: `f'_n(r) = c b exp(-b r) (b r)^n / n!`. CL&Pol canonical
+/// settings: `order = 4`, `b = 4.5` (1/A), `c = 1.0` — taken from the pair style's
+/// params; the per-atom-type `charge` comes from the atoms block.
+///
+/// Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
+/// DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 pub struct PairTangToennies {
     charges: Charges,
     b: F,
@@ -271,20 +273,34 @@ impl PairDriven for PairTangToennies {
     }
 }
 
+/// The damping `b`, the order `n` (a non-negative integer) and the scale `c`
+/// of a gathered `coul/tt` style.
+fn tt_style(style_params: &Params) -> Result<(F, usize, F), crate::ff::ir::IrError> {
+    let get = |key: &str| param_reads::style_num("coul/tt", style_params, key);
+    let order = get("order")?;
+    if order < 0.0 || order.fract() != 0.0 {
+        return Err(param_reads::bad(
+            "coul/tt",
+            "",
+            "order",
+            format!("= {order} is not a non-negative integer"),
+        ));
+    }
+    Ok((get("b")?, order as usize, get("c")?))
+}
+
 /// Construct a [`PairTangToennies`] from style params, per-atom-type charge, and topology.
 ///
 /// Style params: `b` (default 4.5), `order` (the damping order n, default 4),
 /// `c` (default 1.0). The
 /// thole-like per-atom-type `charge` is read from the atoms block.
-pub fn pair_tang_toennies_ctor(
+pub fn pair_tang_toennies_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let b = style_params.get("b").unwrap_or(4.5) as F;
-    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
-    let c = style_params.get("c").unwrap_or(1.0) as F;
+    let (b, n, c) = tt_style(style_params)?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in the charge product, so scaling it
     // is exactly scaling the pair.
@@ -310,13 +326,11 @@ pub fn pair_tang_toennies_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairTangToennies: pairs block missing \"atomj\" column".to_string())?;
 
-    let charge = |type_name: &str| -> Result<F, String> {
-        type_map
+    let charge = |type_name: &str| -> Result<F, crate::ff::potential::CompileError> {
+        let p = type_map
             .get(type_name)
-            .ok_or_else(|| format!("PairTangToennies: unknown atom type '{}'", type_name))?
-            .get("charge")
-            .ok_or_else(|| format!("PairTangToennies type '{}': missing 'charge'", type_name))
-            .map(|v| v as F)
+            .ok_or_else(|| format!("PairTangToennies: unknown atom type '{type_name}'"))?;
+        Ok(param_reads::type_num("coul/tt", type_name, p, "charge")?)
     };
 
     let mut atom_i = Vec::with_capacity(i_col.len());
@@ -337,26 +351,24 @@ pub fn pair_tang_toennies_ctor(
         });
     }
 
-    Ok(Member::pair(PairTangToennies::new(
+    Ok(ForceTerm::pair(PairTangToennies::new(
         atom_i, atom_j, qq, b, n, c,
     )))
 }
 
 /// Construct a neighbour-driven [`PairTangToennies`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_tang_toennies_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_tang_toennies_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_tang_toennies_typed_ctor(
+pub fn pair_tang_toennies_typed_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
-    let b = style_params.get("b").unwrap_or(4.5) as F;
-    let n = style_params.get("order").unwrap_or(4.0).round() as usize;
-    let c = style_params.get("c").unwrap_or(1.0) as F;
+    let (b, n, c) = tt_style(style_params)?;
 
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -364,14 +376,10 @@ pub fn pair_tang_toennies_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("PairTangToennies: unknown atom type '{l}'"))?;
-        per_type.push(
-            p.get("charge")
-                .ok_or_else(|| format!("PairTangToennies type '{l}': missing 'charge'"))?
-                as F,
-        );
+        per_type.push(param_reads::type_num("coul/tt", l, p, "charge")?);
     }
     let q: Vec<F> = type_id.iter().map(|&t| per_type[t as usize]).collect();
-    Ok(Member::pair(PairTangToennies::typed(q, b, n, c)))
+    Ok(ForceTerm::pair(PairTangToennies::typed(q, b, n, c)))
 }
 
 #[cfg(test)]
@@ -381,7 +389,7 @@ mod tests {
     /// earlier against a fixed list — bit for bit, on the same pairs.
     #[test]
     fn per_atom_charges_score_a_pair_exactly_as_compiled_products() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 

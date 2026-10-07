@@ -23,7 +23,7 @@ def _amine_plus_ester():
     Ester  : carbonyl C0 =O1, single -O2- to methyl C3
              (matches ``[C:2](=O)OC``; leaving group = O2 + C3).
     """
-    mol = molrs.Atomistic()
+    mol = molrs.core.Atomistic()
     # amine
     n0 = mol.add_atom("N", 0.0, 0.0, 0.0)
     h1 = mol.add_atom("H", 0.6, 0.8, 0.0)
@@ -46,9 +46,9 @@ def _bind(reaction, mol):
     """Match each reactant component and merge the map->handle dicts."""
     binding = {}
     for pat in reaction.reactant_patterns:
-        matches = pat.find_matches(mol, mapped=True)
+        matches = pat.find_matches(mol)
         assert matches, f"pattern {pat!r} did not match the fixture"
-        binding.update(matches[0])
+        binding.update(matches[0].mapping)
     return binding
 
 
@@ -58,24 +58,24 @@ def _bind(reaction, mol):
 
 
 def test_parse_two_reactant_components_and_product():
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     pats = rxn.reactant_patterns
     assert len(pats) == 2
     assert all(isinstance(p, molrs.perceive.SmartsPattern) for p in pats)
     # component 0 is the amine (1 query atom), component 1 the ester (4 atoms)
-    assert pats[0].num_query_atoms == 1
-    assert pats[1].num_query_atoms == 4
+    assert pats[0].n_query_atoms == 1
+    assert pats[1].n_query_atoms == 4
 
 
 def test_parse_tolerates_agent_field():
     # "A > agent > B" three-part form must not crash; the agent is ignored.
-    rxn = molrs.Reaction("[C:1]=[C:2].[S;H1:3] > [Pt] > [C:1][C:2][S:3]")
+    rxn = molrs.perceive.Reaction("[C:1]=[C:2].[S;H1:3] > [Pt] > [C:1][C:2][S:3]")
     assert len(rxn.reactant_patterns) == 2
 
 
 def test_parse_rejects_missing_arrow():
     with pytest.raises(ValueError):
-        molrs.Reaction("[C:1][O:2]")
+        molrs.perceive.Reaction("[C:1][O:2]")
 
 
 # ---------------------------------------------------------------------------
@@ -84,20 +84,20 @@ def test_parse_rejects_missing_arrow():
 
 
 def test_forming_bonds_amide():
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     assert rxn.forming_bonds == [(1, 2)]
 
 
 def test_forming_bonds_thiol_ene_is_only_the_new_bond():
     # (1,2) merely changes order (2->1) so it is NOT a forming bond; (2,3) is.
-    rxn = molrs.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
+    rxn = molrs.perceive.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
     assert rxn.forming_bonds == [(2, 3)]
 
 
 def test_one_sided_map_is_an_error():
     # :2 appears only on the reactant side -> Daylight pairwise rule violated.
     with pytest.raises(ValueError):
-        molrs.Reaction("[C:1][O:2] >> [C:1]")
+        molrs.perceive.Reaction("[C:1][O:2] >> [C:1]")
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ def test_one_sided_map_is_an_error():
 
 
 def test_apply_amide_forms_bond_and_drops_leaving_group():
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, _h = _amine_plus_ester()
     n_before = mol.n_atoms
     assert not molrs.perceive.SmartsPattern("[N][C]=O").has_match(mol)
@@ -115,7 +115,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
     assert set(binding) == {1, 2}
     touched = rxn.apply(mol, binding)
 
-    # apply now reports the touched (surviving) atom handles as a list[int]
+    # apply reports the touched (surviving) atom handles as a list[int]
     assert isinstance(touched, list)
     assert all(isinstance(t, int) for t in touched)
     # leaving atoms (ester O + alkyl C) removed -> exactly 2 fewer atoms
@@ -127,7 +127,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
 
 
 def test_apply_reuses_core_and_leaves_binding_atoms_alive():
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, _h = _amine_plus_ester()
     binding = _bind(rxn, mol)
     touched = rxn.apply(mol, binding)
@@ -144,8 +144,8 @@ def test_apply_reuses_core_and_leaves_binding_atoms_alive():
 
 def test_apply_adds_unmapped_product_atom():
     # substitution: C-Br -> C-O ; Br leaves, O is a brand-new atom.
-    rxn = molrs.Reaction("[C:1]Br >> [C:1]O")
-    mol = molrs.Atomistic()
+    rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
+    mol = molrs.core.Atomistic()
     c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
     br = mol.add_atom("Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
@@ -172,7 +172,7 @@ def test_apply_adds_unmapped_product_atom():
 
 
 def test_smarts_matcher_still_works():
-    mol = molrs.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     mol.add_bond(c, o)
@@ -188,7 +188,7 @@ def test_apply_touched_amide_endpoints_and_leaving_neighbor():
     """ac-001: touched has the formed-bond endpoints N/C plus the leaving
     group's surviving neighbor; the deleted atoms' own handles are absent; the
     result is deduped."""
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     mol, h = _amine_plus_ester()
     binding = _bind(rxn, mol)
     touched = rxn.apply(mol, binding)
@@ -207,8 +207,8 @@ def test_apply_touched_amide_endpoints_and_leaving_neighbor():
 def test_apply_touched_includes_added_atom():
     """ac-002: a reaction adding an RHS atom includes the new atom's handle;
     the surviving carbon is touched, the deleted Br handle is not."""
-    rxn = molrs.Reaction("[C:1]Br >> [C:1]O")
-    mol = molrs.Atomistic()
+    rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
+    mol = molrs.core.Atomistic()
     c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
     br = mol.add_atom("Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
@@ -225,8 +225,8 @@ def test_apply_touched_includes_added_atom():
 def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     """ac-002: thiol-ene touched = the two carbons (order change) + the sulfur
     (formed bond); the sulfur's spectator H is not touched."""
-    rxn = molrs.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
-    mol = molrs.Atomistic()
+    rxn = molrs.perceive.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.3, 0.0, 0.0)
     s3 = mol.add_atom("S", 3.0, 0.0, 0.0)
@@ -241,7 +241,7 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
 
 
 def test_apply_many_compiles_all_leaving_groups_before_mutation():
-    rxn = molrs.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
+    rxn = molrs.perceive.Reaction("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O")
     first, _ = _amine_plus_ester()
     second, _ = _amine_plus_ester()
     binding_first = _bind(rxn, first)
@@ -265,8 +265,8 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
 
 
 def test_apply_many_detailed_preserves_rhs_creation_order():
-    reaction = molrs.Reaction("[N:1].[C:2]>>[N:1][C:2]([O])[S]")
-    mol = molrs.Atomistic()
+    reaction = molrs.perceive.Reaction("[N:1].[C:2]>>[N:1][C:2]([O])[S]")
+    mol = molrs.core.Atomistic()
     n = mol.add_atom("N")
     c = mol.add_atom("C")
 

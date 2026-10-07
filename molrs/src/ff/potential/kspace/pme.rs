@@ -1,31 +1,22 @@
 //! Particle Mesh Ewald (PME) electrostatic potential.
-//!
-//! Implements the full PME algorithm: self-energy, direct-space, exclusion
-//! correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
-//!
-//! Registered in [`KernelRegistry`](crate::ff::potential::KernelRegistry) as
-//! `("pair", "coul/long/pme")`.
-//! The constructor reads charges from `frame["atoms"]["charge"]` (float),
-//! box vectors from style_params (`box_xx`, `box_yy`, `box_zz`, etc.),
-//! and exclusion pairs from `frame["exclusions"]` (`atomi`, `atomj` columns).
 
-use molrs::store::schema::block_names::{ATOMS, EXCLUSIONS};
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::{ATOMS, EXCLUSIONS};
+use std::f64::consts::PI;
 use std::sync::{Arc, Mutex};
 
 use rustfft::num_complex::Complex;
 use rustfft::{Fft, FftPlanner};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::{Member, Potential};
-use molrs::spatial::simbox::Mic;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::{ForceTerm, Potential};
+use molrs::core::Frame;
+use molrs::core::Mic;
+use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // Math helpers
 // ---------------------------------------------------------------------------
-
-const PI: F = std::f64::consts::PI;
 
 #[inline]
 fn erfc_f(x: F) -> F {
@@ -43,7 +34,7 @@ fn erf_f(x: F) -> F {
 
 /// PME configuration parameters.
 #[derive(Debug, Clone)]
-pub struct PmeParams {
+pub struct PairCoulLongPmeParams {
     /// Ewald splitting parameter (1/length).
     pub alpha: F,
     /// Real-space cutoff distance.
@@ -80,12 +71,23 @@ struct PmeScratch {
 }
 
 // ---------------------------------------------------------------------------
-// PmePotential
+// PairCoulLongPme
 // ---------------------------------------------------------------------------
 
 /// Full PME electrostatic potential implementing [`Potential`].
-pub struct PmePotential {
-    params: PmeParams,
+///
+/// Implements the full PME algorithm: self-energy, direct-space, exclusion
+/// correction, and reciprocal-space (via 3D FFT built from 1D `rustfft`).
+///
+/// Registered as the built-in kernel
+/// `("pair", "coul/long/pme")`.
+/// The constructor reads charges from `frame["atoms"]["charge"]` (float),
+/// the periodic cell from the frame's own box ([`Frame::simbox`]) — frame
+/// data, as LAMMPS's kspace reads its simulation box, never a force-field
+/// parameter — and exclusion pairs from `frame["exclusions"]` (`atomi`,
+/// `atomj` columns).
+pub struct PairCoulLongPme {
+    params: PairCoulLongPmeParams,
     n_atoms: usize,
     charges: Vec<F>,
     h: [[F; 3]; 3],       // box matrix (row-major, lower-triangular)
@@ -101,7 +103,7 @@ pub struct PmePotential {
     mic: Mic,
 }
 
-impl PmePotential {
+impl PairCoulLongPme {
     /// Construct a new PME potential.
     ///
     /// * `charges` — per-atom partial charges (length `n_atoms`).
@@ -109,7 +111,7 @@ impl PmePotential {
     /// * `exclusions` — pairs `[i, j]` with `i < j` whose reciprocal-space
     ///   interaction must be subtracted.
     pub fn new(
-        params: PmeParams,
+        params: PairCoulLongPmeParams,
         charges: Vec<F>,
         box_vectors: [[F; 3]; 3],
         exclusions: Vec<[usize; 2]>,
@@ -756,10 +758,10 @@ impl PmePotential {
 // Potential trait
 // ---------------------------------------------------------------------------
 
-impl Potential for PmePotential {
+impl Potential for PairCoulLongPme {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-        let e = PmePotential::energy(self, coords);
-        let f = PmePotential::forces(self, coords);
+        let e = PairCoulLongPme::energy(self, coords);
+        let f = PairCoulLongPme::forces(self, coords);
         (e, f)
     }
 }
@@ -878,32 +880,47 @@ fn compute_bspline_moduli(grid_size: usize, order: usize) -> Vec<F> {
 }
 
 // ---------------------------------------------------------------------------
-// KernelRegistry constructor
+// BuiltinKernels constructor
 // ---------------------------------------------------------------------------
 
 /// Constructor for the kernel registry.
 ///
-/// **`style_params`** keys: `alpha`, `cutoff`, `grid_x`, `grid_y`, `grid_z`,
-/// `order`, `coulomb`, and box vectors `box_xx`, `box_yx`, ..., `box_zz`
-/// (9 elements, row-major lower-triangular).
+/// **`style_params`** keys — exactly the spec's: `alpha`, `cutoff`,
+/// `grid_x`, `grid_y`, `grid_z`, `order`, `coulomb`.
 ///
-/// **`frame`** blocks:
+/// **`frame`**:
+/// - its box ([`Frame::simbox`]): periodic in all three directions, the cell
+///   in LAMMPS's restricted triclinic form (`a` along x, `b` in the xy
+///   plane). Anything else is [`CompileError::NoBox`].
 /// - `"atoms"` with `"charge"` column (f64/f32) — per-atom charges.
 /// - `"exclusions"` with `"atomi"`, `"atomj"` columns (u32) — exclusion pairs.
-pub fn pme_ctor(
+///
+/// [`CompileError::NoBox`]: crate::ff::potential::CompileError::NoBox
+pub fn pair_coul_long_pme_constructor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
-    let alpha = style_params.get("alpha").ok_or("PME: missing 'alpha'")? as F;
-    let cutoff = style_params.get("cutoff").ok_or("PME: missing 'cutoff'")? as F;
-    let grid_x = style_params.get("grid_x").ok_or("PME: missing 'grid_x'")? as usize;
-    let grid_y = style_params.get("grid_y").ok_or("PME: missing 'grid_y'")? as usize;
-    let grid_z = style_params.get("grid_z").ok_or("PME: missing 'grid_z'")? as usize;
-    let order = style_params.get("order").ok_or("PME: missing 'order'")? as usize;
-    let coulomb = style_params
-        .get("coulomb")
-        .ok_or("PME: missing 'coulomb'")? as F;
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    let get = |key: &str| param_reads::style_num("coul/long/pme", style_params, key);
+    let count = |key: &str| -> Result<usize, crate::ff::ir::IrError> {
+        let v = get(key)?;
+        if v < 1.0 || v.fract() != 0.0 {
+            return Err(param_reads::bad(
+                "coul/long/pme",
+                "",
+                key,
+                format!("= {v} is not a positive integer"),
+            ));
+        }
+        Ok(v as usize)
+    };
+    let alpha = get("alpha")?;
+    let cutoff = get("cutoff")?;
+    let grid_x = count("grid_x")?;
+    let grid_y = count("grid_y")?;
+    let grid_z = count("grid_z")?;
+    let order = count("order")?;
+    let coulomb = get("coulomb")?;
 
     // Read charges from Frame's "atoms" block
     let atoms = frame
@@ -915,21 +932,7 @@ pub fn pme_ctor(
         return Err("PME: atoms block missing \"charge\" float column".into());
     };
 
-    // Read box vectors from style_params
-    let box_xx = style_params.get("box_xx").ok_or("PME: missing 'box_xx'")? as F;
-    let box_xy = style_params.get("box_xy").unwrap_or(0.0) as F;
-    let box_xz = style_params.get("box_xz").unwrap_or(0.0) as F;
-    let box_yx = style_params.get("box_yx").unwrap_or(0.0) as F;
-    let box_yy = style_params.get("box_yy").ok_or("PME: missing 'box_yy'")? as F;
-    let box_yz = style_params.get("box_yz").unwrap_or(0.0) as F;
-    let box_zx = style_params.get("box_zx").unwrap_or(0.0) as F;
-    let box_zy = style_params.get("box_zy").unwrap_or(0.0) as F;
-    let box_zz = style_params.get("box_zz").ok_or("PME: missing 'box_zz'")? as F;
-    let box_vectors = [
-        [box_xx, box_xy, box_xz],
-        [box_yx, box_yy, box_yz],
-        [box_zx, box_zy, box_zz],
-    ];
+    let box_vectors = box_vectors(frame)?;
 
     // Read exclusions from Frame's "exclusions" block (optional)
     let mut exclusions = Vec::new();
@@ -944,7 +947,7 @@ pub fn pme_ctor(
         }
     }
 
-    let params = PmeParams {
+    let params = PairCoulLongPmeParams {
         alpha,
         cutoff,
         grid_size: [grid_x, grid_y, grid_z],
@@ -952,12 +955,58 @@ pub fn pme_ctor(
         coulomb,
     };
 
-    Ok(Member::plain(PmePotential::new(
+    Ok(ForceTerm::plain(PairCoulLongPme::new(
         params,
         charges,
         box_vectors,
         exclusions,
     )))
+}
+
+/// The frame's periodic cell as [`PairCoulLongPme::new`] takes it: the lattice
+/// vectors as **rows** (lower-triangular), the transpose of
+/// [`SimBox::matrix`](molrs::core::SimBox::matrix), whose columns
+/// they are.
+///
+/// # Errors
+/// [`CompileError::NoBox`](crate::ff::potential::CompileError::NoBox): the
+/// frame has no box, a box not periodic in x, y and z (LAMMPS: "Cannot use
+/// nonperiodic boundaries with PPPM"), an undefined cell, or a cell outside
+/// LAMMPS's restricted triclinic form (`a` along x, `b` in the xy plane,
+/// positive lengths) — a general cell's coordinates rotate with it, which
+/// is the caller's to do.
+fn box_vectors(frame: &Frame) -> Result<[[F; 3]; 3], crate::ff::potential::CompileError> {
+    let refuse = |reason: &str| crate::ff::potential::CompileError::NoBox {
+        category: "pair".into(),
+        style: "coul/long/pme".into(),
+        reason: reason.into(),
+    };
+    let bx = frame
+        .simbox
+        .as_ref()
+        .ok_or_else(|| refuse("the frame has no box"))?;
+    if !bx.is_cell_defined() {
+        return Err(refuse("the frame's box has no cell"));
+    }
+    if bx.pbc() != [true; 3] {
+        return Err(refuse(&format!(
+            "the box is periodic in {:?} (x, y, z); Ewald sums need all three",
+            bx.pbc()
+        )));
+    }
+    let h = bx.matrix();
+    // Columns are the lattice vectors: a = (h00, h10, h20), b = (h01, h11, h21).
+    if h[1][0] != 0.0
+        || h[2][0] != 0.0
+        || h[2][1] != 0.0
+        || (0..3).any(|i| h[i][i].is_nan() || h[i][i] <= 0.0)
+    {
+        return Err(refuse(&format!(
+            "the cell {h:?} is not in LAMMPS's restricted triclinic form \
+             (a along x, b in the xy plane, positive lengths)"
+        )));
+    }
+    Ok(std::array::from_fn(|r| std::array::from_fn(|c| h[c][r])))
 }
 
 // ---------------------------------------------------------------------------
@@ -1028,14 +1077,14 @@ mod tests {
 
     #[test]
     fn test_fft_roundtrip() {
-        let params = PmeParams {
+        let params = PairCoulLongPmeParams {
             alpha: 0.3,
             cutoff: 5.0,
             grid_size: [4, 4, 4],
             order: 4,
             coulomb: 1.0,
         };
-        let pme = PmePotential::new(params, vec![1.0], cubic_box(10.0), vec![]);
+        let pme = PairCoulLongPme::new(params, vec![1.0], cubic_box(10.0), vec![]);
         let n = 4 * 4 * 4;
         let mut grid: Vec<Complex<F>> = (0..n).map(|i| Complex::new(i as F, 0.0)).collect();
         let original = grid.clone();
@@ -1086,7 +1135,7 @@ mod tests {
         let r: F = 3.0;
         let alpha: F = 0.3;
         let coulomb: F = 1.0;
-        let params = PmeParams {
+        let params = PairCoulLongPmeParams {
             alpha,
             cutoff: 9.0,
             grid_size: [32, 32, 32],
@@ -1095,7 +1144,7 @@ mod tests {
         };
         let charges = vec![1.0, -1.0];
         let exclusions = vec![];
-        let pme = PmePotential::new(params, charges, cubic_box(box_l), exclusions);
+        let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![
             box_l / 2.0,
@@ -1124,7 +1173,7 @@ mod tests {
     #[test]
     fn test_numerical_forces() {
         let box_l: F = 10.0;
-        let params = PmeParams {
+        let params = PairCoulLongPmeParams {
             alpha: 0.4,
             cutoff: 4.5,
             grid_size: [16, 16, 16],
@@ -1133,7 +1182,7 @@ mod tests {
         };
         let charges = vec![0.5, -0.3, 0.2];
         let exclusions = vec![[0, 1]]; // exclude the 0-1 pair
-        let pme = PmePotential::new(params, charges, cubic_box(box_l), exclusions);
+        let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![2.0, 3.0, 4.0, 5.0, 3.5, 4.5, 7.0, 6.0, 5.0];
 
@@ -1162,7 +1211,7 @@ mod tests {
     #[test]
     fn test_newton_third_law() {
         let box_l: F = 10.0;
-        let params = PmeParams {
+        let params = PairCoulLongPmeParams {
             alpha: 0.35,
             cutoff: 4.5,
             grid_size: [32, 32, 32],
@@ -1171,7 +1220,7 @@ mod tests {
         };
         let charges = vec![0.5, -0.3, 0.4, -0.6];
         let exclusions = vec![[0, 1], [2, 3]];
-        let pme = PmePotential::new(params, charges, cubic_box(box_l), exclusions);
+        let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), exclusions);
 
         let coords: Vec<F> = vec![1.0, 2.0, 3.0, 4.0, 2.5, 3.5, 6.0, 7.0, 2.0, 8.0, 7.5, 2.5];
         let forces = pme.calc_energy_forces(&coords).1;
@@ -1182,15 +1231,15 @@ mod tests {
         }
     }
 
-    // --- Integration test: PME + PairLJCut in Potentials ---
+    // --- Integration test: PME + PairLjCut in Potentials ---
 
     #[test]
     fn test_pme_in_potentials_collection() {
         use crate::ff::potential::Potentials;
-        use crate::ff::potential::pair::lj_cut::LJCut;
+        use crate::ff::potential::pair::PairLjCut;
 
         let box_l: F = 10.0;
-        let params = PmeParams {
+        let params = PairCoulLongPmeParams {
             alpha: 0.3,
             cutoff: 4.5,
             grid_size: [16, 16, 16],
@@ -1198,13 +1247,13 @@ mod tests {
             coulomb: 1.0,
         };
         let charges = vec![0.5, -0.5];
-        let pme = PmePotential::new(params, charges, cubic_box(box_l), vec![]);
+        let pme = PairCoulLongPme::new(params, charges, cubic_box(box_l), vec![]);
 
-        let lj = LJCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let lj = PairLjCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
 
         let mut pots = Potentials::new();
-        pots.push(Member::plain(pme));
-        pots.push(Member::pair(lj));
+        pots.push(ForceTerm::plain(pme));
+        pots.push(ForceTerm::pair(lj));
 
         let coords: Vec<F> = vec![
             box_l / 2.0,
@@ -1223,6 +1272,97 @@ mod tests {
         for (i, &f) in forces.iter().enumerate() {
             assert!(F::is_finite(f), "forces[{}] should be finite", i);
         }
+    }
+
+    // --- The box is the frame's ---
+
+    /// `pair coul/long/pme` compiles against the frame's own periodic box,
+    /// as LAMMPS's kspace reads its simulation box, and prices what the
+    /// kernel built on that cell prices — a restricted triclinic cell too;
+    /// a frame without a usable box is refused by name.
+    #[test]
+    fn the_cell_is_the_frames_box_and_none_is_refused_by_name() {
+        use crate::ff::compile::PotentialCompiler;
+        use crate::ff::forcefield::ForceField;
+        use crate::ff::potential::CompileError;
+        use molrs::core::Block;
+        use molrs::core::SimBox;
+        use ndarray::{Array1, array};
+
+        let coords: Vec<F> = vec![4.0, 5.0, 5.0, 6.5, 5.3, 4.6, 5.1, 3.8, 6.2];
+        let charges = vec![0.6, -0.4, -0.2];
+        let mut atoms = Block::new();
+        for (d, key) in ["x", "y", "z"].iter().enumerate() {
+            let col: Vec<F> = coords.iter().skip(d).step_by(3).copied().collect();
+            atoms
+                .insert(*key, Array1::from_vec(col).into_dyn())
+                .unwrap();
+        }
+        atoms
+            .insert("charge", Array1::from_vec(charges.clone()).into_dyn())
+            .unwrap();
+        let mut frame = Frame::new();
+        frame.insert(ATOMS, atoms);
+        let mut ff = ForceField::new("pme");
+        ff.def_style(
+            "pair",
+            "coul/long/pme",
+            Params::from_pairs(&[
+                ("coulomb", 332.06371),
+                ("cutoff", 4.5),
+                ("alpha", 0.35),
+                ("order", 4.0),
+                ("grid_x", 16.0),
+                ("grid_y", 16.0),
+                ("grid_z", 16.0),
+            ]),
+        )
+        .unwrap();
+        let params = PairCoulLongPmeParams {
+            alpha: 0.35,
+            cutoff: 4.5,
+            grid_size: [16, 16, 16],
+            order: 4,
+            coulomb: 332.06371,
+        };
+        let compile = |frame: &Frame| PotentialCompiler::new(&ff).compile(frame);
+
+        // The columns of `SimBox::matrix` are the lattice vectors; the
+        // kernel takes them as rows.
+        let tilted = [[10.0, 1.5, -0.5], [0.0, 9.0, 2.0], [0.0, 0.0, 11.0]];
+        let rows = [[10.0, 0.0, 0.0], [1.5, 9.0, 0.0], [-0.5, 2.0, 11.0]];
+        for (h, h_rows) in [(cubic_box(10.0), cubic_box(10.0)), (tilted, rows)] {
+            let mut boxed = frame.clone();
+            boxed.simbox = Some(SimBox::from_matrix(h, [0.0; 3], [true; 3]).unwrap());
+            let want = PairCoulLongPme::new(params.clone(), charges.clone(), h_rows, vec![])
+                .energy(&coords);
+            let got = compile(&boxed).unwrap().calc_energy(&coords);
+            assert_eq!(got.to_bits(), want.to_bits(), "{h:?}: {got} vs {want}");
+        }
+
+        let refused = |frame: &Frame| match compile(frame) {
+            Err(CompileError::NoBox {
+                category, style, ..
+            }) => assert_eq!(
+                (category.as_str(), style.as_str()),
+                ("pair", "coul/long/pme")
+            ),
+            other => panic!("NoBox expected, got {other:?}", other = other.map(|_| ())),
+        };
+        refused(&frame);
+        let mut slab = frame.clone();
+        slab.simbox = Some(SimBox::cube(10.0, array![0.0, 0.0, 0.0], [true, true, false]).unwrap());
+        refused(&slab);
+        let mut general = frame.clone();
+        general.simbox = Some(
+            SimBox::from_matrix(
+                [[10.0, 0.0, 0.0], [1.0, 9.0, 0.0], [0.0, 0.0, 11.0]],
+                [0.0; 3],
+                [true; 3],
+            )
+            .unwrap(),
+        );
+        refused(&general);
     }
 
     // --- Box inversion test ---

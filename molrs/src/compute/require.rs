@@ -12,7 +12,7 @@
 //! distance `|r_j − r_i|²` in Å², and `disp`, the displacement `r_j − r_i`
 //! itself in Å, pointing from `i` to `j` and left unnormalized. Which of them
 //! a table holds is decided when it is materialized, by
-//! [`NeighborsStorage`](molrs::spatial::neighbors::NeighborsStorage).
+//! [`NeighborColumns`](molrs::core::NeighborColumns).
 //!
 //! A table reports a column it never stored as `None`, never as a fabricated
 //! zero: `disp()` on an indices-only table is `None`, not a view full of
@@ -36,8 +36,8 @@
 //! the owning type lives in `core`, one layer below this one, and must not learn
 //! about [`ComputeError`] to answer a question `core` never asks.
 
-use molrs::spatial::neighbors::{Neighbors, QueryMode};
-use molrs::types::{F, FNx3View};
+use molrs::core::{Neighbors, QueryMode};
+use molrs::op::{F, Fnx3View};
 
 use super::error::ComputeError;
 
@@ -53,11 +53,11 @@ use super::error::ComputeError;
 /// # Errors
 ///
 /// [`ComputeError::BadShape`] when the table was materialized without
-/// [`NeighborsStorage::disp`](molrs::spatial::neighbors::NeighborsStorage::disp)
+/// [`NeighborColumns::disp`](molrs::core::NeighborColumns::disp)
 /// — that is, with any policy other than `DISP` or `FULL`. The `expected` text
 /// names the missing column and the pair count it was needed for, and `got`
 /// describes the table that arrived; nothing is substituted for the column.
-pub(crate) fn require_disp(nlist: &Neighbors) -> Result<FNx3View<'_>, ComputeError> {
+pub(crate) fn require_disp(nlist: &Neighbors) -> Result<Fnx3View<'_>, ComputeError> {
     nlist
         .disp()
         .ok_or_else(|| missing_column("disp", nlist.n_pairs()))
@@ -74,7 +74,7 @@ pub(crate) fn require_disp(nlist: &Neighbors) -> Result<FNx3View<'_>, ComputeErr
 /// # Errors
 ///
 /// [`ComputeError::BadShape`] when the table was materialized without
-/// [`NeighborsStorage::dist_sq`](molrs::spatial::neighbors::NeighborsStorage::dist_sq)
+/// [`NeighborColumns::dist_sq`](molrs::core::NeighborColumns::dist_sq)
 /// — that is, with any policy other than `DIST_SQ` or `FULL`. The `expected`
 /// text names the missing column and the pair count it was needed for, and
 /// `got` describes the table that arrived.
@@ -96,11 +96,11 @@ pub(crate) fn require_dist_sq(nlist: &Neighbors) -> Result<&[F], ComputeError> {
 /// by that factor. Nothing about the rows themselves reveals this, so the mode
 /// is the only thing that can be checked.
 ///
-/// Kernels that *adapt* to the mode instead of refusing it — [`BondOrder`] and
+/// Kernels that *adapt* to the mode instead of refusing it — [`BondOrientationalOrder`] and
 /// [`LocalDensity`] add the symmetric contribution only when the table is
 /// half-shell — match on [`Neighbors::mode`] directly and do not call this.
 ///
-/// [`BondOrder`]: crate::compute::BondOrder
+/// [`BondOrientationalOrder`]: crate::compute::BondOrientationalOrder
 /// [`LocalDensity`]: crate::compute::LocalDensity
 ///
 /// # Errors

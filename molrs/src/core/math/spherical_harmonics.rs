@@ -1,25 +1,10 @@
-//! Complex spherical harmonics `Y_ℓ^m(θ, φ)` with the physics / Condon–Shortley
-//! phase convention.
-//!
-//! `Y_ℓ^m(θ, φ) = N · P_ℓ^m(cos θ) · e^{i m φ}` with
-//! `N = √((2ℓ+1)/(4π) · (ℓ−m)!/(ℓ+m)!)` and the Condon-Shortley `(−1)^m`
-//! phase baked into the associated Legendre polynomial via the upward
-//! recursion. Matches `scipy.special.sph_harm` and freud's `Wigner3j.cc` /
-//! `Steinhardt.cc` conventions.
-//!
-//! Negative-m values use the symmetry `Y_ℓ^{−m} = (−1)^m · conj(Y_ℓ^m)`.
-//!
-//! # References
-//!
-//! - Press et al., *Numerical Recipes in C*, §6.8 (recursion form).
-//! - Condon & Shortley, *The Theory of Atomic Spectra*, Ch. III.
+//! Complex and real spherical harmonics with the physics / Condon–Shortley phase convention.
 
 use libm::lgamma;
 
-use crate::math::complex::Complex;
-use crate::types::F;
-
-const FOUR_PI: F = 4.0 * std::f64::consts::PI;
+use super::FOUR_PI;
+use crate::core::Complex;
+use crate::op::F;
 
 /// Associated Legendre polynomial `P_ℓ^m(x)` for `|x| ≤ 1`, `0 ≤ m ≤ ℓ`.
 ///
@@ -77,6 +62,21 @@ pub fn ylm_normalization(l: u32, m: u32) -> F {
 /// `θ ∈ [0, π]` is the polar angle, `φ ∈ [0, 2π)` the azimuthal angle.
 ///
 /// `m` may be negative; `|m| ≤ ℓ` is required.
+///
+/// # Convention
+///
+/// `Y_ℓ^m(θ, φ) = N · P_ℓ^m(cos θ) · e^{i m φ}` with
+/// `N = √((2ℓ+1)/(4π) · (ℓ−m)!/(ℓ+m)!)` ([`ylm_normalization`]) and the
+/// Condon-Shortley `(−1)^m` phase baked into the associated Legendre polynomial
+/// ([`legendre_plm`]) via the upward recursion. Matches
+/// `scipy.special.sph_harm` and freud's `Wigner3j.cc` / `Steinhardt.cc`
+/// conventions. Negative-m values use the symmetry
+/// `Y_ℓ^{−m} = (−1)^m · conj(Y_ℓ^m)`.
+///
+/// # References
+///
+/// - Press et al., *Numerical Recipes in C*, §6.8 (recursion form).
+/// - Condon & Shortley, *The Theory of Atomic Spectra*, Ch. III.
 pub fn ylm_complex(l: u32, m: i32, theta: F, phi: F) -> Complex {
     let abs_m = m.unsigned_abs();
     debug_assert!(abs_m <= l, "ylm_complex: |m|={abs_m} must be ≤ ℓ={l}");

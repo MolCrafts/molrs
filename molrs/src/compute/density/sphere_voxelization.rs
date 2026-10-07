@@ -1,29 +1,29 @@
 //! Boolean voxel rasterisation of point particles as hard spheres.
-//!
-//! Mirrors `freud.density.SphereVoxelization`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/SphereVoxelization.cc)).
-//!
-//! For each particle of radius `r_max`, every voxel whose centre lies inside
-//! that sphere is set to `1`. The output is the boolean overlap mask
-//! (stored as a `u32` grid so callers can also use it for "count of
-//! overlapping particles per voxel" by reading the `raw_counts` field).
-//!
-//! Like [`GaussianDensity`](super::gaussian_density::GaussianDensity), this
-//! is orthorhombic-box only and PBC-aware via wrap-around grid indexing.
 
 use super::wrap_index;
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use ndarray::Array3;
 
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::BoxKind;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 
 /// Sphere-voxelisation calculator.
+///
+/// Mirrors `freud.density.SphereVoxelization`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/SphereVoxelization.cc)).
+///
+/// For each particle of radius `r_max`, every voxel whose centre lies inside
+/// that sphere is set to `1`. The output is the boolean overlap mask
+/// (stored as a `u32` grid so callers can also use it for "count of
+/// overlapping particles per voxel" by reading the `raw_counts` field).
+///
+/// Like [`GaussianDensity`](super::gaussian_density::GaussianDensity), this
+/// is orthorhombic-box only and PBC-aware via wrap-around grid indexing.
 #[derive(Debug, Clone, Copy)]
 pub struct SphereVoxelization {
     nx: usize,
@@ -180,9 +180,9 @@ impl ComputeResult for SphereVoxelizationResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -210,7 +210,7 @@ mod tests {
         let voxel_vol = (10.0_f64 / 50.0).powi(3);
         let filled: u64 = r.voxels.iter().map(|&v| v as u64).sum();
         let measured_vol = filled as F * voxel_vol;
-        let analytic = (4.0 / 3.0) * std::f64::consts::PI * 1.5_f64.powi(3);
+        let analytic = crate::core::FOUR_THIRDS_PI * 1.5_f64.powi(3);
         // Voxelisation error: a couple of percent at 50³ grid.
         assert!(
             ((measured_vol - analytic) / analytic).abs() < 0.05,

@@ -1,58 +1,58 @@
 //! 2-D `(x, y)` Pair Mode Fourier Transform.
-//!
-//! Mirrors `freud.pmft.PMFTXY`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PMFTXY.cc)).
-//!
-//! For every neighbor pair the bond vector `(dx, dy)` (ignoring `dz`) is
-//! binned into a 2-D histogram on `[−x_max, x_max] × [−y_max, y_max]`.
-//! The result is the **PMF** estimate
-//!
-//! ```text
-//!   PMF(x, y) = −ln( ρ(x, y) / ρ_ref )
-//! ```
-//!
-//! where `ρ_ref` is the bulk number density (`N / (Lx · Ly)` for an
-//! orthorhombic 2-D box). Empty bins return `+∞` for the PMF; the raw
-//! density and per-bin counts are also exposed.
-//!
-//! When per-particle 2-D orientations are supplied via
-//! [`PMFTXYArgs::query_orientations`], every bond is rotated into the
-//! query particle's local frame before binning (matches freud's
-//! `query_orientations` argument). Without orientations the analyzer
-//! works in the lab frame.
 
-use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::BoxKind;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 use ndarray::Array2;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
 
-/// `PMFTXY` analyzer.
+/// `PmftXy` analyzer.
+///
+/// Mirrors `freud.pmft.PmftXy`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXy.cc)).
+///
+/// For every neighbor pair the bond vector `(dx, dy)` (ignoring `dz`) is
+/// binned into a 2-D histogram on `[−x_max, x_max] × [−y_max, y_max]`.
+/// The result is the **PMF** estimate
+///
+/// ```text
+///   PMF(x, y) = −ln( ρ(x, y) / ρ_ref )
+/// ```
+///
+/// where `ρ_ref` is the bulk number density (`N / (Lx · Ly)` for an
+/// orthorhombic 2-D box). Empty bins return `+∞` for the PMF; the raw
+/// density and per-bin counts are also exposed.
+///
+/// When per-particle 2-D orientations are supplied via
+/// [`PmftXyArgs::query_orientations`], every bond is rotated into the
+/// query particle's local frame before binning (matches freud's
+/// `query_orientations` argument). Without orientations the analyzer
+/// works in the lab frame.
 #[derive(Debug, Clone, Copy)]
-pub struct PMFTXY {
+pub struct PmftXy {
     x_max: F,
     y_max: F,
     n_x: usize,
     n_y: usize,
 }
 
-impl PMFTXY {
+impl PmftXy {
     /// Body-frame window `±x_max × ±y_max` (Å); `n_x × n_y` bins.
     pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize) -> Result<Self, ComputeError> {
         if x_max.is_nan() || x_max <= 0.0 || y_max.is_nan() || y_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXY ranges",
+                field: "PmftXy ranges",
                 value: format!("x_max={x_max}, y_max={y_max}"),
             });
         }
         if n_x == 0 || n_y == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXY bin counts",
+                field: "PmftXy bin counts",
                 value: format!("n_x={n_x}, n_y={n_y}"),
             });
         }
@@ -82,13 +82,13 @@ impl PMFTXY {
         frame: &FA,
         nlist: &Neighbors,
         orientations: Option<&[F]>,
-    ) -> Result<PMFTXYResult, ComputeError> {
+    ) -> Result<PmftXyResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
         let (lx, ly) = match simbox.kind() {
             BoxKind::Ortho { len, .. } => (len[0], len[1]),
             BoxKind::Triclinic => {
                 return Err(ComputeError::OutOfRange {
-                    field: "PMFTXY::simbox",
+                    field: "PmftXy::simbox",
                     value: "triclinic boxes not supported".into(),
                 });
             }
@@ -104,10 +104,7 @@ impl PMFTXY {
         let n_pairs = nlist.n_pairs();
         // The pair coordinate is built from the bond vector itself.
         let disp = require_disp(nlist)?;
-        let symmetric = matches!(
-            nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-        );
+        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
 
         let push = |dxp: F, dyp: F, counts: &mut Array2<u64>| {
             if dxp.abs() >= self.x_max || dyp.abs() >= self.y_max {
@@ -131,7 +128,7 @@ impl PMFTXY {
                         return Err(ComputeError::DimensionMismatch {
                             expected: i + 1,
                             got: o.len(),
-                            what: "PMFTXY orientations length",
+                            what: "PmftXy orientations length",
                         });
                     }
                     let c = o[i].cos();
@@ -149,7 +146,7 @@ impl PMFTXY {
                             return Err(ComputeError::DimensionMismatch {
                                 expected: j + 1,
                                 got: o.len(),
-                                what: "PMFTXY orientations length",
+                                what: "PmftXy orientations length",
                             });
                         }
                         let c = o[j].cos();
@@ -162,8 +159,8 @@ impl PMFTXY {
         }
 
         // ρ_ref = N_query · (N_points − 1) / area  (per-pair density in the box).
-        let n_q = nlist.num_query_points() as F;
-        let n_p = nlist.num_points() as F;
+        let n_q = nlist.n_query_points() as F;
+        let n_p = nlist.n_points() as F;
         let n_pairs_total = if symmetric {
             n_p * (n_p - 1.0)
         } else {
@@ -191,7 +188,7 @@ impl PMFTXY {
         let x_edges: Vec<F> = (0..=self.n_x).map(|i| -self.x_max + i as F * dx).collect();
         let y_edges: Vec<F> = (0..=self.n_y).map(|i| -self.y_max + i as F * dy).collect();
 
-        Ok(PMFTXYResult {
+        Ok(PmftXyResult {
             density,
             raw_counts: counts,
             pmf,
@@ -201,15 +198,15 @@ impl PMFTXY {
     }
 }
 
-/// `Args` for [`PMFTXY`]. When `query_orientations` is `Some`, each entry
+/// `Args` for [`PmftXy`]. When `query_orientations` is `Some`, each entry
 /// is a per-frame `Vec<F>` of 2-D angles (radians) used to rotate every
 /// bond into the query particle's local frame before binning.
-pub struct PMFTXYArgs<'a> {
+pub struct PmftXyArgs<'a> {
     pub nlists: &'a [Neighbors],
     pub query_orientations: Option<&'a [Vec<F>]>,
 }
 
-impl<'a> From<&'a [Neighbors]> for PMFTXYArgs<'a> {
+impl<'a> From<&'a [Neighbors]> for PmftXyArgs<'a> {
     fn from(v: &'a [Neighbors]) -> Self {
         Self {
             nlists: v,
@@ -218,15 +215,15 @@ impl<'a> From<&'a [Neighbors]> for PMFTXYArgs<'a> {
     }
 }
 
-impl Compute for PMFTXY {
-    type Args<'a> = PMFTXYArgs<'a>;
-    type Output = Vec<PMFTXYResult>;
+impl Compute for PmftXy {
+    type Args<'a> = PmftXyArgs<'a>;
+    type Output = Vec<PmftXyResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: PMFTXYArgs<'a>,
-    ) -> Result<Vec<PMFTXYResult>, ComputeError> {
+        args: PmftXyArgs<'a>,
+    ) -> Result<Vec<PmftXyResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -243,7 +240,7 @@ impl Compute for PMFTXY {
             return Err(ComputeError::DimensionMismatch {
                 expected: frames.len(),
                 got: o.len(),
-                what: "PMFTXY orientations frame count",
+                what: "PmftXy orientations frame count",
             });
         }
         #[cfg(feature = "rayon")]
@@ -273,9 +270,9 @@ impl Compute for PMFTXY {
     }
 }
 
-/// Per-frame PMFTXY result.
+/// Per-frame PmftXy result.
 #[derive(Debug, Clone, Default)]
-pub struct PMFTXYResult {
+pub struct PmftXyResult {
     /// Number-density histogram, `(n_x, n_y)`, normalised to the bin area
     /// and total expected pair count.
     pub density: Array2<F>,
@@ -289,15 +286,15 @@ pub struct PMFTXYResult {
     pub y_edges: Vec<F>,
 }
 
-impl ComputeResult for PMFTXYResult {}
+impl ComputeResult for PmftXyResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -326,11 +323,11 @@ mod tests {
         // count = 1 in (+1, 0) bin and count = 1 in (−1, 0) bin.
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 1.5);
-        let r = &PMFTXY::new(2.0, 2.0, 8, 8)
+        let r = &PmftXy::new(2.0, 2.0, 8, 8)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: &[nl],
                     query_orientations: None,
                 },
@@ -350,11 +347,11 @@ mod tests {
     fn pmf_is_finite_only_in_occupied_bins() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 1.5);
-        let r = &PMFTXY::new(2.0, 2.0, 4, 4)
+        let r = &PmftXy::new(2.0, 2.0, 4, 4)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: &[nl],
                     query_orientations: None,
                 },
@@ -374,11 +371,11 @@ mod tests {
         // Bond length 5 → outside the (x_max=2, y_max=2) box → no count.
         let frame = frame_with(&[[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 6.0);
-        let r = &PMFTXY::new(2.0, 2.0, 8, 8)
+        let r = &PmftXy::new(2.0, 2.0, 8, 8)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: &[nl],
                     query_orientations: None,
                 },
@@ -389,18 +386,18 @@ mod tests {
 
     #[test]
     fn invalid_args_error() {
-        assert!(PMFTXY::new(0.0, 2.0, 4, 4).is_err());
-        assert!(PMFTXY::new(2.0, 2.0, 0, 4).is_err());
+        assert!(PmftXy::new(0.0, 2.0, 4, 4).is_err());
+        assert!(PmftXy::new(2.0, 2.0, 0, 4).is_err());
     }
 
     #[test]
     fn empty_input_error() {
         let frames: Vec<&Frame> = Vec::new();
-        let err = PMFTXY::new(2.0, 2.0, 4, 4)
+        let err = PmftXy::new(2.0, 2.0, 4, 4)
             .unwrap()
             .compute(
                 &frames,
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: &[],
                     query_orientations: None,
                 },
@@ -419,11 +416,11 @@ mod tests {
         let nl = build_nlist(&frame, 1.5);
         let orient = vec![std::f64::consts::FRAC_PI_2, 0.0];
 
-        let with_orient = &PMFTXY::new(2.0, 2.0, 8, 8)
+        let with_orient = &PmftXy::new(2.0, 2.0, 8, 8)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: std::slice::from_ref(&nl),
                     query_orientations: Some(std::slice::from_ref(&orient)),
                 },
@@ -452,11 +449,11 @@ mod tests {
     fn parallel_matches_serial() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 1.5);
-        let p = PMFTXY::new(2.0, 2.0, 8, 8).unwrap();
+        let p = PmftXy::new(2.0, 2.0, 8, 8).unwrap();
         let solo = p
             .compute(
                 &[&frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: std::slice::from_ref(&nl),
                     query_orientations: None,
                 },
@@ -466,7 +463,7 @@ mod tests {
         let par = p
             .compute(
                 &[&frame, &frame],
-                PMFTXYArgs {
+                PmftXyArgs {
                     nlists: &nls,
                     query_orientations: None,
                 },

@@ -1,76 +1,23 @@
-//! The missing-parameter estimator: one cascade, one seam, every force field.
-//!
-//! A force field's tables never cover every term of every molecule. What fills the
-//! gap is [`Parmchk2Estimator`] — the parmchk2 analogy cascade (exact →
-//! equivalent → **wildcard row** → corresponding, plus a CGenFF-style additive
-//! penalty with inner atoms weighted ×10) backed by the GAFF empirical formulas
-//! (Badger bond `k`, mean-of-neighbours θ₀, the Wang2004 Eq. 5 angle `K_θ`, and a
-//! never-fabricate rule for torsions). **No ab-initio / QM fitting is ever
-//! performed.**
-//!
-//! It reaches its callers two ways, and they are the same object:
-//!
-//! * **as an interpolation seam** — it implements [`ParameterInterpolator`] for
-//!   [`BondedTerm`] and is injected into the OPLS bonded matcher via
-//!   [`OPLSAATypifier::with_estimator`](super::opls::OPLSAATypifier::with_estimator). Exact matches
-//!   always win first; with `strict=true` the interpolator is never consulted; with
-//!   none attached the assign path is byte-identical to pre-interpolator behaviour.
-//! * **as a table reader** — [`typifier::gaff`](crate::ff::typifier::gaff)
-//!   builds it over `gaff.dat` / `gaff2.dat` and asks it for every term the tables'
-//!   wildcard-free rows do not cover. That path needs the
-//!   [`Covered`](Estimate::Covered) / [`Estimated`](Estimate::Estimated)
-//!   distinction, so it consumes [`Estimate`] directly rather than through the seam.
-//!
-//! # The tables are GAFF's. That is a limitation, and it is deliberate.
-//!
-//! Every constant the cascade scores with comes from AmberTools' GAFF data: the
-//! atom-type equivalences and correspondences (`PARMCHK.DAT`), the penalty weights
-//! and defaults (its `WEIGHT_*` / `DEFAULT_*` block), and the empirical bond /
-//! angle constants (`PARM_BLBA_GAFF*.DAT`). They are keyed by **GAFF atom-type
-//! names** — `c3`, `os`, `ca`.
-//!
-//! A GAFF-typed molecule therefore gets the full cascade. **Any other force field
-//! borrows it and degrades**: `opls_135` appears in no row of the substitution
-//! table, so no equivalence and no correspondence can ever be found for it, and the
-//! estimator falls back on what it *can* still say — a type-name / class-name match
-//! (penalty 0), element compatibility at the arity's default penalty, and the
-//! element-keyed empirical formulas. That is a real floor, and an honest one: an
-//! OPLS estimate is a coarser thing than a GAFF estimate, and its penalty says so.
-//!
-//! # Provenance
-//!
-//! Every estimated term carries the four provenance keys of
-//! [`Provenance::write_onto`] (`estimated`, `estimate_penalty`, `estimate_method`,
-//! `estimate_analog`) so a consumer can audit and tier it. A term a wildcard row
-//! *covers* carries none of them — it is a parameter, not an estimate.
-//!
-//! # Units
-//!
-//! molrs's convention, LAMMPS's: angles (θ₀, phases) in **degrees**, lengths Å,
-//! harmonic force constants un-halved (`E = K·(x − x₀)²`) — what a candidate
-//! table must present. Force constants are copied **verbatim** from the
-//! candidate table, and the empirical formulas produce the same `K` that
-//! `gaff.dat` itself tabulates (see [`empirical`]).
-
-pub mod candidate;
+pub(crate) mod candidate;
 mod cascade;
-pub mod empirical;
-pub mod provenance;
-pub mod tables;
-pub mod term;
+pub(crate) mod empirical;
+mod provenance;
+mod tables;
+mod term;
 
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use molrs::Element;
+use molrs::core::Element;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::params::{EmpiricalTable, ParmchkTable};
 
-use super::opls::meta::OplsTypingMeta;
+use super::opls::typing_metadata::OplsTypingMetadata;
 
-pub use candidate::{Candidate, CandidateSet};
-pub use cascade::DEFAULT_IMPROPER;
+use candidate::CandidateSet;
+pub(crate) use cascade::DEFAULT_IMPROPER;
 pub use provenance::{Estimate, EstimateMethod, PenaltyTier, Provenance};
 pub use tables::EmpiricalSet;
 pub use term::BondedTerm;
@@ -98,18 +45,18 @@ pub trait ParameterInterpolator {
 /// type-to-element map for the empirical fallbacks. Keeping them here is what lets
 /// a non-OPLS typifier build the same estimator without pretending to be OPLS.
 #[derive(Debug, Clone, Default)]
-pub struct TypifierParameterContext {
+pub struct EstimationInputs {
     type_to_class: HashMap<String, String>,
     type_to_element: HashMap<String, String>,
 }
 
-impl TypifierParameterContext {
-    /// Create an empty interpolation context.
+impl EstimationInputs {
+    /// Create an empty interpolation input set.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build a context from `(type_name, class_name)` pairs.
+    /// Build an input set from `(type_name, class_name)` pairs.
     pub fn from_type_classes<I, K, V>(classes: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -138,13 +85,13 @@ impl TypifierParameterContext {
     /// The empirical formulas need a per-atom **element**, but a force-field reader
     /// keeps only `name` + `mass` per type. Rather than plumb a new element channel
     /// through every reader, each type's element is inferred from its tabulated mass
-    /// by nearest standard-atomic-mass match ([`molrs::Element`]). This is
+    /// by nearest standard-atomic-mass match ([`molrs::core::Element`]). This is
     /// force-field agnostic, and the analogy cascade itself never needs an element —
     /// it works on type / class names.
     ///
     /// A class-keyed force field's bonded rows name **classes** (`CA`, `OS`), and a
     /// class is never an atom type with a mass. So every class already known to this
-    /// context also takes the mass-derived element of its member types; a class with
+    /// input set also takes the mass-derived element of its member types; a class with
     /// no member type falls back on reading its name (`element_from_token`).
     pub fn with_forcefield_elements(mut self, ff: &ForceField) -> Self {
         for at in ff.get_atomtypes() {
@@ -200,12 +147,115 @@ impl TypifierParameterContext {
 /// estimated-term set, the same values, the same confidence bands). A force field
 /// that is not GAFF may still use it, and the OPLS typifier does, but it borrows
 /// GAFF's tables to do so and degrades where they cannot speak its type names. See
-/// the [module docs](self#the-tables-are-gaffs-that-is-a-limitation-and-it-is-deliberate).
+/// [below](Self#the-tables-are-gaffs-that-is-a-limitation-and-it-is-deliberate).
+///
+/// The generic missing-parameter estimator: a parmchk2-style cascade any force
+/// field can borrow.
+///
+/// A force field's tables never cover every term of every molecule. What fills the
+/// gap for a force field with no estimator of its own is [`Parmchk2Estimator`] —
+/// a cascade modelled on parmchk2's (exact → equivalent → **wildcard row** →
+/// corresponding, plus an additive penalty with inner atoms weighted ×10) backed
+/// by the GAFF empirical formulas (Badger bond `k`, mean-of-neighbours θ₀, the
+/// Wang2004 Eq. 5 angle `K_θ`, and a never-fabricate rule for torsions). **No
+/// ab-initio / QM fitting is ever performed.**
+///
+/// It is **not** parmchk2. GAFF itself does not use it:
+/// [`GaffTypifier`](crate::ff::typifier::GaffTypifier) reproduces parmchk2's own
+/// searches exactly, quirks and all (`gaff::analog`, `gaff::torsion`,
+/// `gaff::improper`), because GAFF's estimates are AmberTools' by definition.
+/// This cascade keeps its own, simpler scoring, which the OPLS-AA typifier's
+/// estimates and tests are built on:
+///
+/// | Term | Column read per substituted atom (`PARMCHK.DAT`) | Weight |
+/// |---|---|---|
+/// | bond | `bl` | `WEIGHT_BL` |
+/// | angle | `cba` (the centre column), at every atom | `WEIGHT_BA`, ×`WEIGHT_BA_CTR` at the vertex |
+/// | torsion, inner atom | `tor`, else ½·`ctor` + ½·similarity | ×`WEIGHT_TOR_CTR` |
+/// | torsion, outer atom | `ctor`, else `DEFAULT_TOR` | 1 |
+///
+/// parmchk2 scores an angle end by `ba` + `baf` and its vertex by `cba` +
+/// `cbaf`, a bond by `bl` + `blf`, a torsion's inner atom by `ctor` and its
+/// outer by `tor`, and adds group and conjugation penalties; a penalty this
+/// cascade reports is therefore its own, not parmchk2's.
+///
+/// It reaches its callers as an interpolation seam: it implements
+/// [`ParameterInterpolator`] for [`BondedTerm`] and is injected into the OPLS
+/// bonded matcher via
+/// [`OplsAaTypifier::with_estimator`](super::opls::OplsAaTypifier::with_estimator). Exact matches
+/// always win first; with `strict=true` the interpolator is never consulted; with
+/// none attached the assign path is byte-identical to pre-interpolator behaviour.
+/// [`Parmchk2Estimator::estimate`] keeps the [`Covered`](Estimate::Covered) /
+/// [`Estimated`](Estimate::Estimated) distinction for a caller that reads a
+/// table directly.
+///
+/// # The cascade: exact → equivalent → wildcard row → corresponding → empirical
+///
+/// One set of tiers, modelled on parmchk2's order, for every arity (the
+/// generic estimator — GAFF itself reproduces parmchk2 exactly in
+/// `typifier::gaff`). The tiers are what the whole estimator is:
+///
+/// 1. **exact / class match** — the row is written for these very types. Penalty 0.
+/// 2. **equivalent-type substitution** (`EQUA`) — `gaff2`'s `ns` *is* `n`, so the
+///    specific row `o-c-n -hn` covers `o-c-ns-hn` and costs **nothing**. This tier
+///    outranks the next: a specific row for an equivalent type beats a generic row
+///    for this one.
+/// 3. **a wildcard row that matches outright** (`X -c3-c3-X ` over ethane's
+///    `hc-c3-c3-hc`) — the table *covers* the term, so this is a **parameter, not
+///    an estimate**: nothing is substituted, no penalty is charged, and the result
+///    carries no provenance ([`Estimate::covered`]). This is the half that stops an
+///    estimator fabricating an analogy for the ~145 terms per molecule AMBER simply
+///    looks up.
+/// 4. **corresponding-type substitution** (`CORR`) — scored. Specific rows are
+///    searched before wildcard ones, then by how badly the substitution disturbs
+///    the term's inner atoms, then in file order.
+/// 5. **empirical formula** — nothing left to copy; Wang et al. 2004's formulas (see Units).
+///
+/// ## Impropers are not a fourth kind of proper term
+///
+/// A proper term is a walk along bonds and reads the same backwards, so a row is
+/// tried in both orientations. An improper is a planarity constraint on a
+/// **centre** whose three peripherals are an unordered *set*, so its row is tried
+/// against all six assignments of peripherals to slots and the cheapest is paid
+/// for. And a **specific** improper row is an exact match or nothing — so
+/// methyl methacrylate's `c -c2-ce-c3` comes out as the default rather than as
+/// a substituted `c -c2-c2-c3`.
+///
+/// # The tables are GAFF's. That is a limitation, and it is deliberate.
+///
+/// Every constant the cascade scores with comes from AmberTools' GAFF data: the
+/// atom-type equivalences and correspondences (`PARMCHK.DAT`), the penalty weights
+/// and defaults (its `WEIGHT_*` / `DEFAULT_*` block), and the empirical bond /
+/// angle constants (`PARM_BLBA_GAFF*.DAT`). They are keyed by **GAFF atom-type
+/// names** — `c3`, `os`, `ca`.
+///
+/// A GAFF-typed term therefore gets the full cascade. **Any other force field
+/// borrows it and degrades**: `opls_135` appears in no row of the substitution
+/// table, so no equivalence and no correspondence can ever be found for it, and the
+/// estimator falls back on what it *can* still say — a type-name / class-name match
+/// (penalty 0), element compatibility at the arity's default penalty, and the
+/// element-keyed empirical formulas. That is a real floor, and an honest one: an
+/// OPLS estimate is a coarser thing than a GAFF estimate, and its penalty says so.
+///
+/// # Provenance
+///
+/// Every estimated term carries the four provenance keys of
+/// [`Provenance::apply_to`] (`estimated`, `estimate_penalty`, `estimate_method`,
+/// `estimate_analog`) so a consumer can audit and tier it. A term a wildcard row
+/// *covers* carries none of them — it is a parameter, not an estimate.
+///
+/// # Units
+///
+/// molrs's convention, LAMMPS's: angles (θ₀, phases) in **degrees**, lengths Å,
+/// harmonic force constants un-halved (`E = K·(x − x₀)²`) — what a candidate
+/// table must present. Force constants are copied **verbatim** from the
+/// candidate table, and the empirical formulas produce the same `K` that
+/// `gaff.dat` itself tabulates (see the `empirical` stage).
 pub struct Parmchk2Estimator {
     /// The rows the cascade scans, by arity.
     candidates: CandidateSet,
     /// Typifier-side type metadata (class + element).
-    context: TypifierParameterContext,
+    inputs: EstimationInputs,
     /// `PARMCHK.DAT`: equivalences, correspondences, penalty weights, and the
     /// improper-centre column.
     substitutions: ParmchkTable,
@@ -218,30 +268,30 @@ impl Parmchk2Estimator {
     ///
     /// The `type → class` map comes from `meta`; the `type → element` map is
     /// inferred from each atom type's tabulated mass.
-    pub fn new(ff: &ForceField, meta: &OplsTypingMeta) -> Self {
-        let context = TypifierParameterContext::from_type_classes(
+    pub fn new(ff: &ForceField, meta: &OplsTypingMetadata) -> Self {
+        let inputs = EstimationInputs::from_type_classes(
             meta.iter()
                 .map(|(name, row)| (name.clone(), row.class.clone())),
         )
         .with_forcefield_elements(ff);
 
-        Self::with_context(ff, context)
+        Self::with_inputs(ff, inputs)
     }
 
-    /// Build an estimator from a force field and an explicit interpolation context.
+    /// Build an estimator from a force field and an explicit interpolation input set.
     ///
     /// This is the constructor a non-OPLS typifier uses — it is how
-    /// [`typifier::gaff`](crate::ff::typifier::gaff) builds the estimator over
+    /// [`GaffTypifier`](crate::ff::typifier::GaffTypifier) builds the estimator over
     /// `gaff.dat`.
     ///
     /// The candidate rows are flattened out of every bonded style the force field
     /// declares, by style **kind** and never by style *name*: GAFF's dihedral style
     /// is `periodic` and OPLS's is `opls`, and an extractor that asks for one by
     /// name is an extractor with an empty table for the other.
-    pub fn with_context(ff: &ForceField, context: TypifierParameterContext) -> Self {
+    pub fn with_inputs(ff: &ForceField, inputs: EstimationInputs) -> Self {
         Self {
             candidates: CandidateSet::from_forcefield(ff),
-            context,
+            inputs,
             substitutions: tables::substitution_table(),
             empirical: EmpiricalSet::Gaff.table(),
         }
@@ -330,7 +380,7 @@ impl Parmchk2Estimator {
             Some(estimate) => Some(estimate.into_params()),
             None => {
                 let mut params = self.no_torsion();
-                Provenance::wildcard(self.no_torsion_penalty(), "").write_onto(&mut params);
+                Provenance::wildcard(self.no_torsion_penalty(), "").apply_to(&mut params);
                 Some(params)
             }
         }
@@ -349,7 +399,7 @@ impl Parmchk2Estimator {
     /// the type name read as an element token (`c3` → C), then `PARMCHK.DAT`'s own
     /// atomic-number column.
     pub(crate) fn element_of(&self, name: &str) -> Option<String> {
-        self.context
+        self.inputs
             .element_of(name)
             .or_else(|| self.substitutions.element(name).map(str::to_owned))
     }
@@ -447,11 +497,30 @@ fn element_from_token(token: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::gaff::{GaffParameterSet, gaff_estimator};
+    use std::sync::OnceLock;
 
-    /// The estimator over `gaff.dat`, exactly as the force-field builder makes it.
+    use crate::ff::typifier::Typifier;
+    use crate::ff::typifier::{GaffParameterSet, GaffTypifier};
+
+    /// The cascade over a GAFF table's candidate rows and empirical constants.
+    fn over(set: GaffParameterSet) -> &'static Parmchk2Estimator {
+        static GAFF: OnceLock<Parmchk2Estimator> = OnceLock::new();
+        static GAFF2: OnceLock<Parmchk2Estimator> = OnceLock::new();
+        let (cell, empirical) = match set {
+            GaffParameterSet::Gaff => (&GAFF, EmpiricalSet::Gaff),
+            GaffParameterSet::Gaff2 => (&GAFF2, EmpiricalSet::Gaff2),
+        };
+        cell.get_or_init(|| {
+            let gaff = GaffTypifier::new(set);
+            let candidates = gaff.source_forcefield();
+            let inputs = EstimationInputs::new().with_forcefield_elements(candidates);
+            Parmchk2Estimator::with_inputs(candidates, inputs).with_empirical(empirical)
+        })
+    }
+
+    /// The cascade over `gaff.dat`.
     fn gaff() -> &'static Parmchk2Estimator {
-        gaff_estimator(GaffParameterSet::Gaff)
+        over(GaffParameterSet::Gaff)
     }
 
     fn types<const N: usize>(names: [&str; N]) -> [String; N] {
@@ -476,7 +545,7 @@ mod tests {
     #[test]
     fn tier_equivalent_type_substitutes_free_of_charge() {
         // gaff2's `ns` is `n`: the specific row `o-c-n -hn` covers `o-c-ns-hn`.
-        let estimate = gaff_estimator(GaffParameterSet::Gaff2)
+        let estimate = over(GaffParameterSet::Gaff2)
             .estimate(&BondedTerm::Dihedral(types(["o", "c", "ns", "hn"])))
             .expect("an equivalent-type match");
         let provenance = estimate.provenance().expect("estimated");
@@ -600,7 +669,7 @@ mod tests {
     // --- orientation symmetry of a dihedral estimate ------------------------
 
     /// A one-row OPLS-shaped library, `CZ-CT-CT-CW` under `dihedral/opls`,
-    /// and a context for four carbon types: `ta` (class `CZ`), `tb` / `tc`
+    /// and an input set for four carbon types: `ta` (class `CZ`), `tb` / `tc`
     /// (class `CT`) and `td` (class `CY`). No class is a GAFF type, so every
     /// substitution is priced by element compatibility at `DEFAULT_TOR`.
     fn one_row_dihedral_estimator() -> Parmchk2Estimator {
@@ -613,16 +682,16 @@ mod tests {
                 Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
             )
             .unwrap();
-        let mut context = TypifierParameterContext::from_type_classes([
+        let mut inputs = EstimationInputs::from_type_classes([
             ("ta", "CZ"),
             ("tb", "CT"),
             ("tc", "CT"),
             ("td", "CY"),
         ]);
         for name in ["ta", "tb", "tc", "td"] {
-            context.insert_element(name, "C");
+            inputs.insert_element(name, "C");
         }
-        Parmchk2Estimator::with_context(&ff, context)
+        Parmchk2Estimator::with_inputs(&ff, inputs)
     }
 
     /// A proper torsion reads the same backwards (`BondedTerm::Dihedral`'s
@@ -739,7 +808,7 @@ mod tests {
     // --- all-caps OPLS classes through the cascade ---------------------------
 
     /// An OPLS-shaped estimator: `ff` carries the bonded rows, and each
-    /// `(type, class, mass)` becomes an `atom/full` type whose element the context
+    /// `(type, class, mass)` becomes an `atom/full` type whose element the input set
     /// infers from its mass — exactly how [`Parmchk2Estimator::new`] builds it.
     fn opls_class_estimator(
         mut ff: ForceField,
@@ -755,11 +824,11 @@ mod tests {
                 )
                 .unwrap();
         }
-        let context = TypifierParameterContext::from_type_classes(
+        let inputs = EstimationInputs::from_type_classes(
             atom_types.iter().map(|(name, class, _)| (*name, *class)),
         )
         .with_forcefield_elements(&ff);
-        Parmchk2Estimator::with_context(&ff, context)
+        Parmchk2Estimator::with_inputs(&ff, inputs)
     }
 
     /// One bond row `CA-CT`; types `ta` (class `CW`) and `tb` (class `CT`), both

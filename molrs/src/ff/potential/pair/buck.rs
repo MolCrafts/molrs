@@ -1,25 +1,21 @@
-//! Buckingham pair potential: E = A * exp(-r/rho) - C / r^6
-//!
-//! The exp-6 form used for repulsion/dispersion (e.g. CL&Pol non-bonded cores).
-//! Parameters per pair type: `a` (energy), `rho` (length), `c` (energy*length^6).
-//! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
-//! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
+//! Buckingham pair potential (LAMMPS `pair_style buck`).
 
-use molrs::store::schema::block_names::PAIRS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::{Params, pair_key};
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::op::F;
 
 /// Where a pair's Buckingham `(A, ρ, C)` comes from.
 enum Source {
@@ -50,8 +46,17 @@ enum Source {
     },
 }
 
+/// Buckingham pair potential: E = A * exp(-r/rho) - C / r^6
+///
+/// The exp-6 form used for repulsion/dispersion (e.g. CL&Pol non-bonded cores).
+/// Parameters per pair type: `a` (energy), `rho` (length), `c` (energy*length^6).
+/// Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
+/// GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 pub struct PairBuck {
     source: Source,
+    /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite
+    /// for a style that states no cutoff.
+    cutoff2: F,
 }
 
 impl PairBuck {
@@ -62,6 +67,7 @@ impl PairBuck {
         assert_eq!(rho.len(), n);
         assert_eq!(c.len(), n);
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -93,6 +99,7 @@ impl PairBuck {
         );
         let n_owned = type_id.len();
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -102,6 +109,13 @@ impl PairBuck {
                 n_owned,
             },
         }
+    }
+
+    /// Price only pairs closer than `cutoff`: the style's, as LAMMPS
+    /// truncates, at both compile doors.
+    pub fn with_cutoff(mut self, cutoff: F) -> Self {
+        self.cutoff2 = cutoff * cutoff;
+        self
     }
 
     /// The pair term for one already-reduced separation.
@@ -178,6 +192,9 @@ impl PairBuck {
                 continue;
             }
             let (i, j, (a, rho, c), disp, r2) = pair(idx);
+            if r2 >= self.cutoff2 {
+                continue;
+            }
             let Some((e, f)) = self.pair_kernel(r2, disp, a, rho, c) else {
                 continue;
             };
@@ -305,11 +322,17 @@ impl PairDriven for PairBuck {
 }
 
 /// Construct a [`PairBuck`] from style params, type params, and Frame topology.
-pub fn pair_buck_ctor(
+///
+/// A pair's row is found from its two atoms' types — the self row, else the
+/// cross row (`buck` does not mix: neither is [`IrError::NoMixing`]) — as
+/// `pair_buck_typed_constructor` finds it and LAMMPS's `pair_coeff i j` states it.
+///
+/// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
+pub fn pair_buck_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = A·exp(-r/rho) - C/r⁶` is linear in **both** `A` and
@@ -328,10 +351,11 @@ pub fn pair_buck_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairBuck: pairs block missing \"atomj\" column".to_string())?;
-    let type_col = block
-        .get("type")
+    let atom_types = frame
+        .get(ATOMS)
+        .and_then(|b| b.get("type"))
         .and_then(|c| c.as_string())
-        .ok_or_else(|| "PairBuck: pairs block missing \"type\" column".to_string())?;
+        .ok_or_else(|| "PairBuck: atoms block missing \"type\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
 
     let mut atom_i = Vec::with_capacity(i_col.len());
@@ -341,20 +365,15 @@ pub fn pair_buck_ctor(
     let mut c_vec = Vec::with_capacity(i_col.len());
 
     for idx in 0..i_col.len() {
-        let label = &type_col[idx];
-        let params = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("PairBuck: unknown pair type '{}'", label))?;
-        let a = params
-            .get("a")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'a'", label))? as F;
-        let rho = params
-            .get("rho")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'rho'", label))?
-            as F;
-        let c = params
-            .get("c")
-            .ok_or_else(|| format!("PairBuck type '{}': missing 'c'", label))? as F;
+        let (ta, tb) = (
+            atom_types[i_col[idx] as usize].as_str(),
+            atom_types[j_col[idx] as usize].as_str(),
+        );
+        let params = param_reads::unmixed_row("buck", "a", &type_map, ta, tb)?;
+        let label = pair_key(ta, tb)?;
+        let a = param_reads::type_num("buck", &label, params, "a")?;
+        let rho = param_reads::type_num("buck", &label, params, "rho")?;
+        let c = param_reads::type_num("buck", &label, params, "c")?;
 
         let w = if is_14.is_some_and(|b| b[idx]) {
             scale_14
@@ -368,22 +387,25 @@ pub fn pair_buck_ctor(
         c_vec.push(c * w);
     }
 
-    Ok(Member::pair(PairBuck::new(
-        atom_i, atom_j, a_vec, rho_vec, c_vec,
-    )))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
+    // 1-4 ones included; ∞ when it states none).
+    let cutoff = param_reads::pair_cutoff("buck", style_params)?;
+    Ok(ForceTerm::pair(
+        PairBuck::new(atom_i, atom_j, a_vec, rho_vec, c_vec).with_cutoff(cutoff),
+    ))
 }
 
 /// Construct a neighbour-driven [`PairBuck`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_buck_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_buck_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_buck_typed_ctor(
-    _style_params: &Params,
+pub fn pair_buck_typed_constructor(
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -393,26 +415,20 @@ pub fn pair_buck_typed_ctor(
     for ti in 0..ntypes {
         for tj in 0..ntypes {
             // Keyed in either order alike; a self-pair by the atom type alone.
-            let key = pair_key(&labels[ti], &labels[tj])?;
-            let p = type_map
-                .get(key.as_str())
-                .ok_or_else(|| format!("PairBuck: unknown pair type '{key}'"))?;
+            let (ta, tb) = (labels[ti].as_str(), labels[tj].as_str());
+            let p = param_reads::unmixed_row("buck", "a", &type_map, ta, tb)?;
+            let key = pair_key(ta, tb)?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            a[t] = p
-                .get("a")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'a'"))?
-                as F;
-            rho[t] = p
-                .get("rho")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'rho'"))?
-                as F;
-            c[t] = p
-                .get("c")
-                .ok_or_else(|| format!("PairBuck type '{key}': missing 'c'"))?
-                as F;
+            a[t] = param_reads::type_num("buck", &key, p, "a")?;
+            rho[t] = param_reads::type_num("buck", &key, p, "rho")?;
+            c[t] = param_reads::type_num("buck", &key, p, "c")?;
         }
     }
-    Ok(Member::pair(PairBuck::typed(type_id, ntypes, a, rho, c)))
+    let kernel = PairBuck::typed(type_id, ntypes, a, rho, c);
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
+    // neighbour sum is not finite without one.
+    let cutoff = param_reads::neighbour_cutoff("buck", style_params)?;
+    Ok(ForceTerm::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]
@@ -428,10 +444,10 @@ mod tests {
     /// Halving the weight must halve the energy exactly, whatever `r` is.
     #[test]
     fn a_1_4_pair_is_scaled_in_both_buckingham_terms() {
-        use crate::ff::forcefield::Params;
-        use molrs::store::block::Block;
-        use molrs::store::frame::Frame;
-        use molrs::types::Idx;
+        use crate::ff::ir::Params;
+        use molrs::core::Block;
+        use molrs::core::Frame;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let build = |scale: f64| {
@@ -452,9 +468,6 @@ mod tests {
                 .insert("atomj", Array1::from(vec![1 as Idx]).into_dyn())
                 .unwrap();
             pairs
-                .insert("type", Array1::from(vec!["a-a".to_string()]).into_dyn())
-                .unwrap();
-            pairs
                 .insert("is_14", Array1::from(vec![true]).into_dyn())
                 .unwrap();
             frame.insert("pairs", pairs);
@@ -465,7 +478,7 @@ mod tests {
             tp.set("a", 12000.0);
             tp.set("rho", 0.31);
             tp.set("c", 280.0);
-            pair_buck_ctor(&sp, &[("a-a", &tp)], &frame).expect("buck kernel")
+            pair_buck_constructor(&sp, &[("a", &tp)], &frame).expect("buck kernel")
         };
 
         // Two separations: one where repulsion dominates, one where dispersion
@@ -503,7 +516,7 @@ mod tests {
     /// scratch; the atoms' types survive it. That is the whole difference.
     #[test]
     fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 

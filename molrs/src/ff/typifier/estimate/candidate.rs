@@ -16,7 +16,8 @@
 //! reads a neighbour angle's `theta0`, which is why angles must reach the
 //! estimator in molrs's radians — see [`empirical`](super::empirical)).
 
-use crate::ff::forcefield::{ForceField, Params, StyleDefs};
+use crate::ff::forcefield::{ForceField, StyleDefs};
+use crate::ff::ir::Params;
 
 /// One row of a bonded table, as the cascade sees it.
 #[derive(Debug, Clone)]
@@ -78,10 +79,10 @@ impl CandidateSet {
     /// Flatten every bonded style of a [`ForceField`] into candidates.
     ///
     /// **Style-agnostic**: the arity comes from the style's
-    /// [`StyleDefs`] variant, never from its *name*. An earlier version asked for
-    /// `("dihedral", "opls")` by name and so was blind to GAFF, whose dihedral
-    /// style is `periodic` — a force field could be fully populated and the
-    /// estimator would still see an empty table.
+    /// [`StyleDefs`] variant, never from its *name*. Asking for
+    /// `("dihedral", "opls")` by name would be blind to GAFF, whose dihedral
+    /// style is `periodic`: a fully populated force field would show the
+    /// estimator an empty table.
     pub fn from_forcefield(ff: &ForceField) -> Self {
         let mut out = Self::default();
         for style in ff.styles() {
@@ -108,7 +109,10 @@ impl CandidateSet {
                         t.params.clone(),
                     )
                 })),
-                StyleDefs::Atom(_) | StyleDefs::Pair(_) | StyleDefs::Cmap(_) => {}
+                StyleDefs::Atom(_)
+                | StyleDefs::Pair(_)
+                | StyleDefs::Cmap(_)
+                | StyleDefs::Relation { .. } => {}
             }
         }
         out
@@ -138,8 +142,8 @@ mod tests {
 
     #[test]
     fn extraction_reads_the_style_kind_not_its_name() {
-        // A GAFF-shaped force field: dihedral style `periodic`, not `opls`. The
-        // old by-name extractor saw nothing here.
+        // A GAFF-shaped force field: dihedral style `periodic`, not `opls`. A
+        // by-name extractor would see nothing here.
         let mut ff = ForceField::new("gaff-shaped");
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()

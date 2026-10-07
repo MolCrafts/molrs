@@ -9,9 +9,7 @@ The report types carry per-stage diagnostics, so a failed embedding says which
 stage gave up rather than returning coordinates nobody should trust.
 """
 
-from __future__ import annotations
-
-from ._lib import (
+from ._native import (
     Conformer,
     ConformerReport,
     ConformerStageReport,

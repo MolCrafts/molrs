@@ -4,38 +4,36 @@
 // would require chunks_exact + enumerate without gaining clarity.
 #![allow(clippy::needless_range_loop)]
 
-//! Frenkel–ten Wolde solid/liquid classification.
-//!
-//! Mirrors `freud.order.SolidLiquid`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/SolidLiquid.cc)).
-//!
-//! For each neighbor pair `(i, j)` we compute the normalised dot product
-//! of their Steinhardt qℓm vectors:
-//!
-//! ```text
-//!   d_ij = ( Σ_m q_ℓm(i) · conj q_ℓm(j) ) / ( |q_ℓm(i)| · |q_ℓm(j)| )
-//! ```
-//!
-//! A bond is **solid-like** when `Re(d_ij) > q_threshold` (typically `0.7`).
-//! A particle is **solid** when it has at least `n_threshold` solid-like
-//! bonds. The output is a per-particle solid-bond count plus the boolean
-//! solid mask.
-//!
-//! This phase reuses [`compute_qlm`] directly
-//! — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
+use crate::compute::ComputeResult;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 
-use crate::compute::result::ComputeResult;
-use molrs::math::complex::Complex;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
-
-use super::steinhardt::compute_qlm;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use super::steinhardt::steinhardt_qlm;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 
 /// Frenkel-ten Wolde solid/liquid classifier.
+///
+/// Mirrors `freud.order.SolidLiquid`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/SolidLiquid.cc)).
+///
+/// For each neighbor pair `(i, j)` we compute the normalised dot product
+/// of their Steinhardt qℓm vectors:
+///
+/// ```text
+///   d_ij = ( Σ_m q_ℓm(i) · conj q_ℓm(j) ) / ( |q_ℓm(i)| · |q_ℓm(j)| )
+/// ```
+///
+/// A bond is **solid-like** when `Re(d_ij) > q_threshold` (typically `0.7`).
+/// A particle is **solid** when it has at least `n_threshold` solid-like
+/// bonds. The output is a per-particle solid-bond count plus the boolean
+/// solid mask.
+///
+/// This phase reuses [`steinhardt_qlm`] directly
+/// — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
 #[derive(Debug, Clone, Copy)]
 pub struct SolidLiquid {
     l: u32,
@@ -83,7 +81,7 @@ impl SolidLiquid {
         let n = xs_p.slice().len();
         let m_count = (2 * self.l + 1) as usize;
 
-        let qlm = compute_qlm(frame, nlist, self.l)?;
+        let qlm = steinhardt_qlm(frame, nlist, self.l)?;
 
         // |qℓm(i)| for normalisation. Skip particles with no neighbors → norm = 0.
         let mut norms = vec![0.0_f64; n];
@@ -191,10 +189,10 @@ impl ComputeResult for SolidLiquidResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -305,7 +303,7 @@ mod tests {
     /// rather than to the mere presence of the centre-centre bond.
     #[test]
     fn identical_environments_score_one() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = paired_octahedra(20.0);
 
@@ -339,13 +337,13 @@ mod tests {
         });
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
-            QueryMode::SelfQuery { num_points: 14 },
+            NeighborColumns::FULL,
+            QueryMode::SelfQuery { n_points: 14 },
         );
 
         // Premise of the derivation above, checked rather than assumed: the two
         // centres really do end up with the same q₆ₘ vector.
-        let qlm = compute_qlm(&frame, &nl, 6).unwrap();
+        let qlm = steinhardt_qlm(&frame, &nl, 6).unwrap();
         let m = 13_usize; // 2·6 + 1
         for k in 0..m {
             let a = qlm[k];

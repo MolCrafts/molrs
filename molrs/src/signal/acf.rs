@@ -227,7 +227,7 @@ fn fill_padded(buf: &mut Vec<Complex64>, data: &[f64], n_pad: usize) {
     }
 }
 
-/// Failure modes for `molrs-signal` primitives.
+/// Failure modes for `molrs::signal` primitives.
 #[derive(Debug, PartialEq)]
 pub enum SignalError {
     /// Input array has length 0.

@@ -1,37 +1,38 @@
 //! Radial distribution function g(r) computation.
-//!
-//! Accumulates pair distances from neighbor lists (one per frame) into a
-//! histogram between `r_min` and `r_max`, then normalizes by the ideal-gas
-//! shell volume at the system number density during
-//! [`ComputeResult::finalize`](crate::compute::ComputeResult::finalize).
-//!
-//! Each frame contributes its own `SimBox` volume; non-periodic frames error
-//! out — the compute never fabricates a bounding box.
 
 mod accumulator;
 mod result;
 
-pub use accumulator::RDFAccumulator;
-pub use result::{RDFResult, RdfMode};
+pub use accumulator::RdfAccumulator;
+pub use result::{RdfMode, RdfResult};
 
-use molrs::spatial::neighbors::{Backend, LinkCell, NeighborList, Neighbors};
-use molrs::spatial::simbox::SimBox;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::{F, FNx3View};
+use molrs::core::FrameAccess;
+use molrs::core::SimBox;
+use molrs::core::neighbors::Backend;
+use molrs::core::{LinkCell, NeighborList, Neighbors};
+use molrs::op::{F, Fnx3View};
 use ndarray::Array1;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
 
 /// Radial distribution function g(r) calculator.
 ///
 /// Stateless parameter container: bin count, radial cutoffs, and precomputed
 /// bin edges/centers. Actual histograms are built inside each
 /// [`compute`](Compute::compute) call.
+///
+/// Accumulates pair distances from neighbor lists (one per frame) into a
+/// histogram between `r_min` and `r_max`, then normalizes by the ideal-gas
+/// shell volume at the system number density during
+/// [`ComputeResult::finalize`](crate::compute::ComputeResult::finalize).
+///
+/// Each frame contributes its own `SimBox` volume; non-periodic frames error
+/// out — the compute never fabricates a bounding box.
 #[derive(Debug, Clone)]
-pub struct RDF {
+pub struct Rdf {
     n_bins: usize,
     r_min: F,
     r_max: F,
@@ -43,7 +44,7 @@ pub struct RDF {
     dimensionality: u8,
 }
 
-impl RDF {
+impl Rdf {
     /// Create an RDF analysis binning pair distances in `[r_min, r_max]`
     /// (angstrom) into `n_bins` bins.
     ///
@@ -62,19 +63,19 @@ impl RDF {
     pub fn new(n_bins: usize, r_max: F, r_min: F) -> Result<Self, ComputeError> {
         if n_bins == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::n_bins",
+                field: "Rdf::n_bins",
                 value: n_bins.to_string(),
             });
         }
         if r_min.is_nan() || r_min < 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::r_min",
+                field: "Rdf::r_min",
                 value: r_min.to_string(),
             });
         }
         if r_max.is_nan() || r_max <= r_min {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::r_max",
+                field: "Rdf::r_max",
                 value: format!("r_max={r_max}, r_min={r_min}"),
             });
         }
@@ -100,9 +101,9 @@ impl RDF {
     ///
     /// For a 2-D system the `SimBox` should be set up so that `volume()`
     /// returns the in-plane area (e.g. `Lz = 1`). Matches the convention
-    /// of `freud.density.RDF` when `freud.box.Box.is2D` is true.
+    /// of `freud.density.Rdf` when `freud.box.Box.is2D` is true.
     pub fn with_dimensionality(mut self, dim: u8) -> Self {
-        assert!(dim == 2 || dim == 3, "RDF dimensionality must be 2 or 3");
+        assert!(dim == 2 || dim == 3, "Rdf dimensionality must be 2 or 3");
         self.dimensionality = dim;
         self
     }
@@ -144,9 +145,8 @@ impl RDF {
     ///
     /// A table without the `dist_sq` column carries no distances to bin, so it
     /// is rejected as [`ComputeError::BadShape`] — the same answer every other
-    /// distance-consuming kernel gives. It used to return quietly (guarded only
-    /// by a `debug_assert`), which meant a release build handed back an
-    /// all-zero g(r) for an indices-only list instead of saying no. Callers with
+    /// distance-consuming kernel gives, rather than an all-zero g(r) for an
+    /// indices-only list. Callers with
     /// no materialized distances want [`compute_self`](Self::compute_self) /
     /// [`compute_frame`](Self::compute_frame), which stream them.
     fn accumulate_into(&self, nlist: &Neighbors, n_r: &mut Array1<F>) -> Result<(), ComputeError> {
@@ -163,13 +163,13 @@ impl RDF {
     /// \(O(P)\) for materialized pairs.
     pub fn compute_self(
         &self,
-        points: FNx3View<'_>,
+        points: Fnx3View<'_>,
         bx: &SimBox,
-    ) -> Result<RDFResult, ComputeError> {
+    ) -> Result<RdfResult, ComputeError> {
         let vol = bx.volume();
         if !(vol.is_finite() && vol > 0.0) {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::volume",
+                field: "Rdf::volume",
                 value: vol.to_string(),
             });
         }
@@ -192,14 +192,14 @@ impl RDF {
     /// `ref_points` become the spatial index (B); `query_points` are A.
     pub fn compute_cross(
         &self,
-        ref_points: FNx3View<'_>,
-        query_points: FNx3View<'_>,
+        ref_points: Fnx3View<'_>,
+        query_points: Fnx3View<'_>,
         bx: &SimBox,
-    ) -> Result<RDFResult, ComputeError> {
+    ) -> Result<RdfResult, ComputeError> {
         let vol = bx.volume();
         if !(vol.is_finite() && vol > 0.0) {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::volume",
+                field: "Rdf::volume",
                 value: vol.to_string(),
             });
         }
@@ -234,7 +234,7 @@ impl RDF {
     pub fn compute_frame<FA: FrameAccess + Sync>(
         &self,
         frame: &FA,
-    ) -> Result<RDFResult, ComputeError> {
+    ) -> Result<RdfResult, ComputeError> {
         let bx = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
         let (xs, ys, zs) = get_positions_ref(frame)?;
         let xs = xs.slice();
@@ -243,7 +243,7 @@ impl RDF {
         let vol = bx.volume();
         if !(vol.is_finite() && vol > 0.0) {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::volume",
+                field: "Rdf::volume",
                 value: vol.to_string(),
             });
         }
@@ -267,8 +267,8 @@ impl RDF {
         n_query_points: usize,
         mode: RdfMode,
         volume: F,
-    ) -> Result<RDFResult, ComputeError> {
-        let mut result = RDFResult {
+    ) -> Result<RdfResult, ComputeError> {
+        let mut result = RdfResult {
             bin_edges: self.bin_edges.clone(),
             bin_centers: self.bin_centers.clone(),
             rdf: Array1::zeros(self.n_bins),
@@ -282,21 +282,21 @@ impl RDF {
             dimensionality: self.dimensionality,
             finalized: false,
         };
-        use crate::compute::result::ComputeResult;
+        use crate::compute::ComputeResult;
         result.finalize();
         Ok(result)
     }
 }
 
-impl Compute for RDF {
+impl Compute for Rdf {
     type Args<'a> = &'a [Neighbors];
-    type Output = RDFResult;
+    type Output = RdfResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         neighbors: &'a [Neighbors],
-    ) -> Result<RDFResult, ComputeError> {
+    ) -> Result<RdfResult, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -310,7 +310,7 @@ impl Compute for RDF {
 
         // The batch path is the streaming accumulator driven over the frame
         // slice — one source of truth for the accumulation + normalization.
-        let mut acc = RDFAccumulator::new(self.clone());
+        let mut acc = RdfAccumulator::new(self.clone());
         for (frame, nlist) in frames.iter().zip(neighbors.iter()) {
             acc.accumulate(*frame, nlist)?;
         }
@@ -322,12 +322,12 @@ impl Compute for RDF {
 
 #[cfg(test)]
 mod tests {
-    use super::super::util::get_positions_ref;
+    use super::super::positions::get_positions_ref;
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
     use rand::RngExt;
 
@@ -367,7 +367,7 @@ mod tests {
         let frame = random_frame(n, box_len, 42);
         let nlist = nlist_from_frame(&frame, r_max);
 
-        let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
+        let rdf = Rdf::new(n_bins, r_max, 0.0).unwrap();
         let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         for i in 5..n_bins {
@@ -389,7 +389,7 @@ mod tests {
         let r_max: F = 4.0;
         let n_bins = 20;
 
-        let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
+        let rdf = Rdf::new(n_bins, r_max, 0.0).unwrap();
 
         // Single-frame baseline.
         let frame0 = random_frame(n, box_len, 100);
@@ -443,12 +443,12 @@ mod tests {
             .map(|f| nlist_from_frame(f, r_max))
             .collect();
 
-        let rdf = RDF::new(n_bins, r_max, 0.0).unwrap();
+        let rdf = Rdf::new(n_bins, r_max, 0.0).unwrap();
 
         let frame_refs: Vec<&Frame> = frames_owned.iter().collect();
         let batch = rdf.compute(&frame_refs, &nlists).unwrap();
 
-        let mut acc = RDFAccumulator::new(rdf);
+        let mut acc = RdfAccumulator::new(rdf);
         for (f, nl) in frames_owned.iter().zip(nlists.iter()) {
             acc.accumulate(f, nl).unwrap();
         }
@@ -464,8 +464,8 @@ mod tests {
 
     #[test]
     fn accumulator_finalize_before_any_frame_is_error() {
-        let rdf = RDF::new(10, 4.0, 0.0).unwrap();
-        let acc = RDFAccumulator::new(rdf);
+        let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
+        let acc = RdfAccumulator::new(rdf);
         assert!(matches!(
             acc.finalize().unwrap_err(),
             ComputeError::EmptyInput
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn empty_frames_is_error() {
-        let rdf = RDF::new(10, 4.0, 0.0).unwrap();
+        let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         let frames: Vec<&Frame> = Vec::new();
         let nlists: Vec<Neighbors> = Vec::new();
         let err = rdf.compute(&frames, &nlists).unwrap_err();
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn mismatched_nlist_count_is_error() {
         let frame = random_frame(50, 10.0, 1);
-        let rdf = RDF::new(10, 4.0, 0.0).unwrap();
+        let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         let err = rdf
             .compute(&[&frame], &Vec::<Neighbors>::new())
             .unwrap_err();
@@ -496,11 +496,11 @@ mod tests {
         let mut frame = random_frame(50, 10.0, 1);
         frame.simbox = None;
         let nlist = {
-            use molrs::spatial::neighbors::NeighborQuery;
+            use molrs::core::NeighborQuery;
             let (xs, ys, zs) = get_positions_ref(&frame).unwrap();
-            NeighborQuery::free_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
+            NeighborQuery::unbounded_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
         };
-        let rdf = RDF::new(10, 4.0, 0.0).unwrap();
+        let rdf = Rdf::new(10, 4.0, 0.0).unwrap();
         let err = rdf.compute(&[&frame], &[nlist]).unwrap_err();
         assert!(matches!(err, ComputeError::MissingSimBox));
     }
@@ -514,7 +514,7 @@ mod tests {
         let r_min: F = 1.5;
         let r_max: F = 4.0;
         let n_bins = 25;
-        let rdf = RDF::new(n_bins, r_max, r_min).unwrap();
+        let rdf = Rdf::new(n_bins, r_max, r_min).unwrap();
         let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         assert!((result.bin_edges[0] - r_min).abs() < 1e-12);
@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn zero_distance_pairs_are_skipped() {
-        use molrs::store::block::Block;
+        use molrs::core::Block;
 
         let mut block = Block::new();
         block
@@ -549,7 +549,7 @@ mod tests {
 
         let nlist = nlist_from_frame(&frame, 2.0);
 
-        let rdf = RDF::new(10, 2.0, 0.0).unwrap();
+        let rdf = Rdf::new(10, 2.0, 0.0).unwrap();
         let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         for (i, &c) in result.n_r.iter().enumerate() {
@@ -587,7 +587,7 @@ mod tests {
     /// 8.526157665637252 — both asserts below fail.
     #[test]
     fn rdf_self_half_list_factor_two_vs_cross() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         /// g(r) in bin 1 for the two-particle fixture, factor 2 included.
         const G_BIN1: F = 17.052315331274503;
@@ -616,8 +616,8 @@ mod tests {
                 dist_sq: d_sq,
                 disp: [1.5, 0.0, 0.0],
             }],
-            NeighborsStorage::DIST_SQ,
-            QueryMode::SelfQuery { num_points: 2 },
+            NeighborColumns::DIST_SQ,
+            QueryMode::SelfQuery { n_points: 2 },
         );
         // The same two particles as a directed cross list of the set against
         // itself with the two zero-distance self-pairs removed: both orderings
@@ -637,14 +637,14 @@ mod tests {
                     disp: [-1.5, 0.0, 0.0],
                 },
             ],
-            NeighborsStorage::DIST_SQ,
+            NeighborColumns::DIST_SQ,
             QueryMode::CrossQuery {
-                num_query_points: 2,
-                num_points: 2,
+                n_query_points: 2,
+                n_points: 2,
             },
         );
 
-        let rdf = RDF::new(4, 4.0, 0.0).unwrap();
+        let rdf = Rdf::new(4, 4.0, 0.0).unwrap();
         let self_result = rdf.compute(&[&frame], &[self_list]).unwrap();
         let cross_result = rdf.compute(&[&frame], &[cross_list]).unwrap();
 
@@ -678,11 +678,11 @@ mod tests {
 
     #[test]
     fn finalize_is_idempotent() {
-        use crate::compute::result::ComputeResult;
+        use crate::compute::ComputeResult;
 
         let frame = random_frame(200, 10.0, 42);
         let nlist = nlist_from_frame(&frame, 4.0);
-        let rdf = RDF::new(20, 4.0, 0.0).unwrap();
+        let rdf = Rdf::new(20, 4.0, 0.0).unwrap();
         let mut result = rdf.compute(&[&frame], &[nlist]).unwrap();
         let first = result.rdf.clone();
         result.finalize();
@@ -692,16 +692,16 @@ mod tests {
 
     #[test]
     fn new_validates_inputs() {
-        assert!(RDF::new(0, 1.0, 0.0).is_err());
-        assert!(RDF::new(10, 1.0, -0.1).is_err());
-        assert!(RDF::new(10, 1.0, 1.0).is_err());
-        assert!(RDF::new(10, 0.5, 1.0).is_err());
-        assert!(RDF::new(10, 1.0, 0.0).is_ok());
+        assert!(Rdf::new(0, 1.0, 0.0).is_err());
+        assert!(Rdf::new(10, 1.0, -0.1).is_err());
+        assert!(Rdf::new(10, 1.0, 1.0).is_err());
+        assert!(Rdf::new(10, 0.5, 1.0).is_err());
+        assert!(Rdf::new(10, 1.0, 0.0).is_ok());
     }
 
     /// Sanity check that 2D normalization (`2 π r dr` shells) reproduces the
     /// expected `g(r) → 1` plateau for a random 2-D ideal gas. Mirrors
-    /// freud's `freud.density.RDF` behaviour when `box.is2D == True`.
+    /// freud's `freud.density.Rdf` behaviour when `box.is2D == True`.
     #[test]
     fn rdf_2d_orthorhombic_box_plateaus_to_one() {
         // Pack 600 points uniformly in a 10×10 plane (z fixed). Use Lz=1
@@ -738,7 +738,7 @@ mod tests {
         // single-cell column).
         let nlist = nlist_from_frame(&frame, r_max);
 
-        let rdf = RDF::new(n_bins, r_max, 0.0).unwrap().with_dimensionality(2);
+        let rdf = Rdf::new(n_bins, r_max, 0.0).unwrap().with_dimensionality(2);
         let result = rdf.compute(&[&frame], &[nlist]).unwrap();
 
         // Plateau check: bins outside the first-shell artifact should average

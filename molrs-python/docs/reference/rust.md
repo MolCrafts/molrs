@@ -17,7 +17,7 @@ inside it), `ff`, `conformer`, `compute`, `voronoi`, `signal`, `md` and
 The crate's default features are `rayon` only, so name what you use:
 
 ```toml
-molrs = { package = "molcrafts-molrs", version = "0.15", features = ["full", "filesystem"] }
+molrs = { package = "molcrafts-molrs", version = "0.16", features = ["full", "filesystem"] }
 ```
 
 The docs.rs build enables `full`, `filesystem` and `stream`, so every module

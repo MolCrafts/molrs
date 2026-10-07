@@ -16,43 +16,40 @@
 //!   `F = f64` and map to `Float64Array`.
 //! - **[`Box`]** (exported as `Box` in JS) -- simulation box defining
 //!   periodic boundary conditions and coordinate transformations.
-//! - **[`WasmArray`]** -- owned float array with ndarray-compatible shape
+//! - **[`NDArray`]** -- owned float array with ndarray-compatible shape
 //!   metadata for passing multi-dimensional data across the WASM boundary.
 //!
 //! # Modules
 //!
-//! | JS module  | Purpose |
-//! |------------|---------|
-//! | `core`     | Frame, Block, Box, Mesh, WasmArray |
-//! | `io`       | File readers/writers (XYZ, PDB, LAMMPS, SMILES, `*.mrec` records) |
-//! | `conformer`| 3D conformer generation from molecular graphs |
-//! | `ff`       | ForceField / LBFGS / typify (UFF, MMFF94, MMFF94s) |
-//! | `perceive` | Chemical perception builder (`Perceive.findHydrogens`, …) |
-//! | `compute`  | Analysis: RDF, MSD, Cluster, neighbor search |
+//! Each module binds one molrs owner; the JS namespace itself is flat.
+//!
+//! | Module      | molrs owner | Exports |
+//! |-------------|-------------|---------|
+//! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, TriMesh, NeighborList / NeighborQuery / Neighbors |
+//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `readSmilesStr` |
+//! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
+//! | `compute`   | `compute` | Analysis: `Rdf`, `Msd`, `Cluster`, …, the free functions molrs has (`staticDielectricConstant`, …) and the compute catalog |
+//! | `conformer` | `conformer` | 3D conformer generation (`Conformer`) |
+//! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s), the `ForceField` they output, `PotentialCompiler` and the `Potentials` it compiles |
+//! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |
+//! | `builder`   | `builder` | `CarbonTubeBuilder` |
 //!
 //! # Quick start (JavaScript)
 //!
 //! The npm package is a `bundler` build: importing it loads the module.
 //!
 //! ```js
-//! import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
+//! import { readSmilesStr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 //!
-//! const ir    = parseSMILES("CCO");
-//! const frame = ir.toFrame();
-//! const mol3d = generate3D(frame, "fast");
-//! const xyz   = writeFrame(mol3d, "xyz");
+//! const frame = readSmilesStr("CCO");
+//! const mol3d = new Conformer("fast").generate(frame);
+//! const xyz   = writeXyzStr(mol3d);
 //! console.log(xyz);
 //! ```
 
 use js_sys::WebAssembly::Memory;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = console)]
-    fn log(s: &str);
-}
 
 /// WASM module entry point. Installs the panic hook so that Rust panics
 /// are forwarded to the browser console as readable stack traces.
@@ -77,55 +74,40 @@ pub fn wasm_memory() -> Memory {
     wasm_bindgen::memory().unchecked_into()
 }
 
-/// Covalent radius (in angstrom) for an element symbol.
-///
-/// Case-insensitive lookup against the built-in periodic table. Returns
-/// `null` (`undefined` in JS) for an unrecognised symbol. This is the
-/// single source of truth for covalent radii — downstream code (e.g. bond
-/// perception) should call this rather than carrying its own table.
-///
-/// # Example (JavaScript)
-///
-/// ```js
-/// covalentRadius("C");  // 0.76
-/// covalentRadius("h");  // 0.31 (case-insensitive)
-/// covalentRadius("Xx"); // undefined
-/// ```
-#[wasm_bindgen(js_name = covalentRadius)]
-pub fn covalent_radius(symbol: &str) -> Option<f64> {
-    molrs::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
-}
-
-// Module declarations
+// Module declarations — one per molrs owner, mirroring the Rust crate.
+#[cfg(feature = "builder")]
+mod builder;
 #[cfg(feature = "compute")]
 mod compute;
 #[cfg(feature = "conformer")]
 mod conformer;
 mod core;
-/// Force-field composition (typify / ForceField / LBFGS) — requires `conformer` (→ `ff`).
+/// Force-field composition (typify / forcefield / PotentialCompiler / Potentials) — requires `conformer` (→ `ff`).
 #[cfg(feature = "conformer")]
 mod ff;
-mod generate;
 #[cfg(feature = "io")]
 mod io;
+/// Geometry optimization (`Lbfgs`) over force-field potentials.
+#[cfg(feature = "conformer")]
+mod optimize;
 /// Chemical perception (rings, aromaticity, hydrogens, …) — WASM face of
 /// `molrs::perceive`.
 mod perceive;
-mod schema;
-#[cfg(feature = "smiles")]
-mod smiles;
 
-// Re-exports following molrs-core layout.
+// The JS namespace is flat; so is the crate root.
+#[cfg(feature = "builder")]
+pub use builder::CarbonTubeBuilder;
 #[cfg(feature = "compute")]
 pub use compute::*;
 #[cfg(feature = "conformer")]
 pub use conformer::*;
-pub use core::{Block, Box, Frame, Mesh, WasmArray};
+pub use core::*;
 #[cfg(feature = "conformer")]
 pub use ff::*;
-pub use generate::CarbonTubeBuilder;
 #[cfg(feature = "io")]
 pub use io::*;
-pub use perceive::Perceive;
-#[cfg(feature = "smiles")]
-pub use smiles::*;
+#[cfg(feature = "conformer")]
+pub use optimize::*;
+pub use perceive::{
+    add_hydrogens, assign_aromaticity, assign_kekule_bond_orders, assign_rings, remove_hydrogens,
+};
