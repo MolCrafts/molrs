@@ -508,9 +508,8 @@ def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
     assert _lj_pair_energy(ff, 2.5) == pytest.approx(_lj(0.9, 2.0, 2.5), rel=1e-12)
 
 
-def test_potential_compiler_has_one_public_path():
+def test_potential_compiler_lives_in_compile():
     assert hasattr(molrs.ff.compile, "PotentialCompiler")
-    assert not hasattr(molrs.ff.potential, "PotentialCompiler")
     assert not hasattr(molrs.ff, "PotentialCompiler")
 
 

@@ -306,7 +306,7 @@ pub fn write_lammps_bond_react_system(
 mod tests {
     use super::*;
     use crate::io::lammps::bond_react::tests::{coupling, strings, template};
-    use molrs::ff::forcefield::Params;
+    use molrs::ff::ir::Params;
 
     /// Every label the system and `coupling` use; `hc-oh` left out when
     /// `complete` is false.

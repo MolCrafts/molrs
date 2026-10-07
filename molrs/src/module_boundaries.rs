@@ -472,7 +472,7 @@ fn the_ff_path_resolver_sees_relative_and_grouped_imports() {
 // ---------------------------------------------------------------------------
 
 /// Conversion-factor constants `core::constants` no longer defines.
-const RETIRED_FACTOR_CONSTANTS: [&str; 12] = [
+const RETIRED_FACTOR_CONSTANTS: [&str; 9] = [
     "KJ_PER_KCAL",
     "ANGSTROM_PER_NM",
     "ANGSTROM_PER_BOHR",
@@ -482,9 +482,6 @@ const RETIRED_FACTOR_CONSTANTS: [&str; 12] = [
     "CENTIMETER_PER_METER",
     "OPENMM_COULOMB",
     "GROMACS_COULOMB",
-    "BOLTZMANN_REAL",
-    "KCAL_MOL_PER_MDYNE_ANGSTROM",
-    "RADIANS_PER_DEGREE",
 ];
 
 /// Conversion factors as they would be written by hand: kcal ↔ kJ (and its

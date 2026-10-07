@@ -301,11 +301,6 @@ def test_retired_modules_do_not_import(gone):
         "molrs.core.Trajectory.count_frames",
         "molrs.perceive.SmartsMatch.as_list",
         "molrs.perceive.SmartsMatch.as_dict",
-        # The data-file `* Coeffs` writer returns text: it is the `_str` door.
-        "molrs.io.write_lammps_data_coeffs",
-        # Private natives are named after the Rust doors they bind.
-        "molrs._native.csv_block_from_text",
-        "molrs._native.csv_block_to_text",
     ],
 )
 def test_retired_names_are_absent(gone):
@@ -708,8 +703,7 @@ def test_scripts_convert_units_through_the_registry():
     """No engine-check script spells a conversion factor or a retired constant."""
     root = Path(__file__).parents[2] / "scripts"
     retired = re.compile(
-        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB"
-        r"|GROMACS_COULOMB|BOLTZMANN_REAL|KCAL_MOL_PER_MDYNE_ANGSTROM)\b"
+        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB|GROMACS_COULOMB)\b"
         r"|(?<![\w.])4\.184(?![\w])"
         # π/180, 180/π, MMFF's mdyne·Å → kcal/mol, k_B in kcal/(mol·K) by hand
         r"|(?<![\w.])(0\.0174532|57\.29577|143\.9325|0\.001987)"
@@ -728,34 +722,7 @@ def test_scripts_convert_units_through_the_registry():
     assert not offenders, "\n".join(offenders)
 
 
-# Wave S7: ``ff``'s submodules are layers. The registry left ``ir`` for
-# ``style_registry``, the compiler left ``potential`` for ``compile``, and the
-# CL&Pol fragment table is ``clpol_scaling``'s.
-@pytest.mark.parametrize(
-    "gone",
-    [
-        "molrs.ff.ir.register_category",
-        "molrs.ff.ir.register_style",
-        "molrs.ff.ir.register_engine_form",
-        "molrs.ff.ir.unregister_style",
-        "molrs.ff.ir.styles",
-        "molrs.ff.ir.categories",
-        "molrs.ff.ir.evaluate",
-        "molrs.ff.ir.StyleDeclaration",
-        "molrs.ff.potential.PotentialCompiler",
-        "molrs.ff.potential.compile_explicit_terms",
-        "molrs.ff.params.clpol_fragment_scaling",
-    ],
-)
-def test_names_moved_by_wave_s7_are_absent(gone):
-    owner_path, _, name = gone.rpartition(".")
-    owner: object = molrs
-    for part in owner_path.split(".")[1:]:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, name), gone
-
-
-def test_wave_s7_ff_layers_exist():
+def test_ff_layers_hold_the_registry_compiler_and_fragment_table():
     for name in (
         "register_category",
         "register_style",

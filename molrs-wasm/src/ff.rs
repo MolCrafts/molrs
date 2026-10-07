@@ -19,7 +19,7 @@ use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 use molrs::core::Atomistic;
-use molrs::ff::compile::PotentialCompiler;
+use molrs::ff::compile::PotentialCompiler as RsPotentialCompiler;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::Potentials as RsPotentials;
 use molrs::ff::typifier::Typing;
@@ -125,7 +125,7 @@ pub struct ForceField {
 // ── PotentialCompiler ───────────────────────────────────────────────────────
 
 /// Compiles a [`ForceField`] into evaluable [`Potentials`] — molrs
-/// `ff::potential::PotentialCompiler`. Holds a copy of the force field taken
+/// `ff::compile::PotentialCompiler`. Holds a copy of the force field taken
 /// at construction.
 #[wasm_bindgen(js_name = PotentialCompiler)]
 pub struct PotentialCompiler {
