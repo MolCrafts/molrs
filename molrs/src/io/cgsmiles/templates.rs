@@ -2,7 +2,7 @@
 //! `CGsmiles` fragment table.
 //!
 //! A template sits beside the expansion
-//! [`CGSmilesIR::to_atomistic`](crate::io::cgsmiles::CGSmilesIR::to_atomistic)
+//! [`CgSmilesIr::to_atomistic`](crate::io::cgsmiles::CgSmilesIr::to_atomistic)
 //! builds, and answers the other half of the question a `CGsmiles` string
 //! poses. Expansion says what the *whole molecule* is; a template says what
 //! **one named piece** is — the instance-free graph of `#PEO` with its
@@ -21,7 +21,7 @@
 //! it).
 //!
 //! **One walker, once per definition.** Every body is converted by
-//! [`SmilesIR::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIR::to_atomistic_with_descriptors), the
+//! [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors), the
 //! single walker over a fragment body, entered exactly once for each entry of
 //! the table. 01d's per-call `FragmentCache` amortizes cloning a body across
 //! *instances*; a template is definition-level and has no instances, so there
@@ -29,15 +29,15 @@
 //!
 //! **One piece without a table.** A unit written on its own — the body
 //! `[<]OCC[>]`, parsed by
-//! [`SmilesIR::from_fragment`](crate::io::smiles::SmilesIR::from_fragment) — is
-//! built by [`SmilesIR::to_template`], the same conversion a table entry goes
+//! [`SmilesIr::from_fragment`](crate::io::smiles::SmilesIr::from_fragment) — is
+//! built by [`SmilesIr::to_template`], the same conversion a table entry goes
 //! through; a caller no longer wraps the body in a one-bead `CGsmiles` string
 //! only to index the one template back out.
 
 use std::collections::BTreeMap;
 
-use crate::io::cgsmiles::{CGSmilesIR, FragmentBody};
-use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesIR, Span};
+use crate::io::cgsmiles::{CgSmilesIr, FragmentBody};
+use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesIr, Span};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
 use molrs::core::BondNumber;
@@ -47,7 +47,7 @@ use molrs::core::NodeId;
 use molrs::core::PortKind;
 use molrs::core::keys;
 
-impl CGSmilesIR {
+impl CgSmilesIr {
     /// Build one ported [`Atomistic`] template per definition of the last
     /// fragment table.
     ///
@@ -113,7 +113,7 @@ impl CGSmilesIR {
     /// # Port indices
     ///
     /// Ports are added in the descriptor order
-    /// [`SmilesIR::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIR::to_atomistic_with_descriptors)
+    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
     /// returns, which is its walk order — the same index
     /// [`PairEnd::Body::port`](crate::io::cgsmiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
@@ -149,11 +149,11 @@ impl CGSmilesIR {
     /// leave room for.
     ///
     /// ```
-    /// use molrs::io::cgsmiles::CGSmilesIR;
+    /// use molrs::io::cgsmiles::CgSmilesIr;
     /// use molrs::perceive::Perceive;
     /// use molrs::core::Atomistic;
     ///
-    /// let ir = CGSmilesIR::parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
+    /// let ir = CgSmilesIr::parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
     /// let mut templates = ir.templates()?;
     /// let peo = templates.remove("PEO").expect("the table defines #PEO");
     ///
@@ -212,18 +212,18 @@ impl CGSmilesIR {
     }
 }
 
-impl SmilesIR {
+impl SmilesIr {
     /// Build the ported [`Atomistic`] template of one fragment body.
     ///
-    /// The single-unit form of [`CGSmilesIR::templates`]: `self` is a body as
-    /// [`SmilesIR::from_fragment`](crate::io::smiles::SmilesIR::from_fragment)
+    /// The single-unit form of [`CgSmilesIr::templates`]: `self` is a body as
+    /// [`SmilesIr::from_fragment`](crate::io::smiles::SmilesIr::from_fragment)
     /// reads it (`[<]OCC[>]`), and the result is exactly the template a table
     /// entry with that body builds — heavy atoms, one capping-hydrogen handle
     /// and one port per bonding descriptor, no `frag_id`, no coordinates, no
-    /// valence-bearing property written. See [`CGSmilesIR::templates`] for
+    /// valence-bearing property written. See [`CgSmilesIr::templates`] for
     /// what a handle is and why nothing else is written.
     ///
-    /// An IR without descriptors (a plain [`SmilesIR::parse`] result) builds a
+    /// An IR without descriptors (a plain [`SmilesIr::parse`] result) builds a
     /// template with no ports.
     ///
     ///
@@ -238,9 +238,9 @@ impl SmilesIR {
     /// # Examples
     ///
     /// ```
-    /// use molrs::io::smiles::SmilesIR;
+    /// use molrs::io::smiles::SmilesIr;
     ///
-    /// let eo = SmilesIR::from_fragment("[<]OCC[>]")?.to_template()?;
+    /// let eo = SmilesIr::from_fragment("[<]OCC[>]")?.to_template()?;
     /// // Three heavy atoms plus one handle per descriptor.
     /// assert_eq!(eo.n_atoms(), 5);
     /// assert_eq!(eo.n_ports(), 2);
@@ -253,7 +253,7 @@ impl SmilesIR {
 
 /// The one template conversion: walk the body once, then cap every
 /// descriptor it wrote. `context` and `span` locate a build failure.
-fn build_template(ir: &SmilesIR, context: &str, span: Span) -> Result<Atomistic, SmilesError> {
+fn build_template(ir: &SmilesIr, context: &str, span: Span) -> Result<Atomistic, SmilesError> {
     let (atomistic, descriptors) = ir.to_atomistic_with_descriptors()?;
     let sites: Vec<OpenSite<'_>> = descriptors
         .iter()
@@ -341,7 +341,7 @@ fn cap_open_sites(
 /// exhaustive without a catch-all arm — a fifth operator would have to be
 /// handled here rather than silently falling through.
 /// [`DescriptorKind::Shared`] (`!`) cannot arrive through
-/// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse), which refuses the
+/// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse), which refuses the
 /// squash operator while reading; its arm is totality, not support.
 fn port_kind(kind: DescriptorKind) -> PortKind {
     match kind {
@@ -411,9 +411,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{port_kind, port_order};
-    use crate::io::cgsmiles::{CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody};
+    use crate::io::cgsmiles::{CgFragmentDef, CgGraph, CgNode, CgSmilesIr, FragmentBody};
     use crate::io::smiles::{
-        BondKind, BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIR, Span,
+        BondKind, BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIr, Span,
     };
     use molrs::core::Atomistic;
     use molrs::core::NodeId;
@@ -453,8 +453,8 @@ mod tests {
 
     /// The whole template table of a `CGsmiles` string that must convert.
     fn templates(text: &str) -> BTreeMap<String, Atomistic> {
-        CGSmilesIR::parse(text)
-            .unwrap_or_else(|e| panic!("CGSmilesIR::parse({text:?}) failed: {e}"))
+        CgSmilesIr::parse(text)
+            .unwrap_or_else(|e| panic!("CgSmilesIr::parse({text:?}) failed: {e}"))
             .templates()
             .unwrap_or_else(|e| panic!("templates({text:?}) failed: {e}"))
     }
@@ -540,8 +540,8 @@ mod tests {
 
     /// A coarse node named `name`: a template is built from a *definition*, so
     /// nothing else on a node is read.
-    fn node(name: &str) -> CGNode {
-        CGNode {
+    fn node(name: &str) -> CgNode {
+        CgNode {
             name: name.to_owned(),
             charge: None,
             annotations: Vec::new(),
@@ -552,8 +552,8 @@ mod tests {
     }
 
     /// One fragment definition named `name`, spanned at [`DEF_SPAN`].
-    fn def(name: &str, body: FragmentBody) -> CGFragmentDef {
-        CGFragmentDef {
+    fn def(name: &str, body: FragmentBody) -> CgFragmentDef {
+        CgFragmentDef {
             name: name.to_owned(),
             body,
             span: DEF_SPAN,
@@ -563,16 +563,16 @@ mod tests {
     /// A hand-built IR whose single (and therefore last) fragment table holds
     /// `defs`. `templates` reads `fragments.last()` and `span`, so the level
     /// and the pair list are present only to make the value well-formed.
-    fn ir_over(defs: &[CGFragmentDef]) -> CGSmilesIR {
-        CGSmilesIR {
-            levels: vec![CGGraph {
+    fn ir_over(defs: &[CgFragmentDef]) -> CgSmilesIr {
+        CgSmilesIr {
+            levels: vec![CgGraph {
                 nodes: vec![node(&defs[0].name)],
                 edges: Vec::new(),
             }],
             fragments: vec![
                 defs.iter()
                     .map(|d| (d.name.clone(), d.clone()))
-                    .collect::<BTreeMap<String, CGFragmentDef>>(),
+                    .collect::<BTreeMap<String, CgFragmentDef>>(),
             ],
             pairs: vec![Vec::new()],
             span: Span::new(0, 0),
@@ -642,7 +642,7 @@ mod tests {
     /// the key set is the table's own.
     #[test]
     fn returns_one_template_per_definition() {
-        let ir = CGSmilesIR::parse(F2).expect("F2 must parse");
+        let ir = CgSmilesIr::parse(F2).expect("F2 must parse");
         let defined: Vec<String> = ir
             .fragments
             .last()
@@ -660,13 +660,13 @@ mod tests {
         assert_eq!(built, defined);
     }
 
-    // -- SmilesIR::to_template: one body, no table -----------------------
+    // -- SmilesIr::to_template: one body, no table -----------------------
 
     /// `[<]OCC[>]` alone: three heavy atoms, two handles, one `<` and one `>`
     /// port — the same template the table entry `#EO=[<]OCC[>]` builds.
     #[test]
     fn to_template_builds_one_unit_from_a_body() {
-        let eo = SmilesIR::from_fragment("[<]OCC[>]")
+        let eo = SmilesIr::from_fragment("[<]OCC[>]")
             .expect("a fragment body must parse")
             .to_template()
             .expect("a fragment body must build its template");
@@ -684,7 +684,7 @@ mod tests {
     /// A body with no descriptor builds a template with no port.
     #[test]
     fn to_template_of_a_plain_body_has_no_ports() {
-        let mol = SmilesIR::from_fragment("CCO")
+        let mol = SmilesIr::from_fragment("CCO")
             .expect("a plain body is a fragment body")
             .to_template()
             .expect("a plain body builds");
@@ -1011,7 +1011,7 @@ mod tests {
     /// give, and an empty map would be indistinguishable from a dropped table.
     #[test]
     fn rejects_a_base_only_ir() {
-        let ir = CGSmilesIR::parse("{[#EO]|5}").expect("a base-only string must parse");
+        let ir = CgSmilesIr::parse("{[#EO]|5}").expect("a base-only string must parse");
         let err = ir
             .templates()
             .expect_err("a base-only string defines no fragment body");
@@ -1039,7 +1039,7 @@ mod tests {
     fn rejects_a_graph_body_in_the_last_table() {
         let ir = ir_over(&[def(
             "A",
-            FragmentBody::Graph(CGGraph {
+            FragmentBody::Graph(CgGraph {
                 nodes: vec![node("X")],
                 edges: Vec::new(),
             }),
@@ -1059,7 +1059,7 @@ mod tests {
     /// named here rather than stored as an indefinite port order.
     #[test]
     fn rejects_an_invalid_descriptor_order() {
-        let mut body = SmilesIR::from_fragment("[$]O").expect("the body must parse");
+        let mut body = SmilesIr::from_fragment("[$]O").expect("the body must parse");
         body.components[0].head.descriptors[0] = descriptor(Some(BondKind::Aromatic));
         let ir = ir_over(&[def("A", FragmentBody::Smiles(body))]);
         let err = ir

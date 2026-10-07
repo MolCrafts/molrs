@@ -21,7 +21,7 @@ Requires Python 3.12+.
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
-mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
+mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
 
 # 3D coordinates
 from molrs.conformer import Conformer

@@ -1,4 +1,4 @@
-//! SMILES (`molrs::io::smiles`): [`PySmilesIR`], the parsed text, and the
+//! SMILES (`molrs::io::smiles`): [`PySmilesIr`], the parsed text, and the
 //! `molrs.io.read_smiles_str` / `write_smiles_str` doors. SMARTS — parsing,
 //! matching, and a pattern written from a molecule — is `molrs.perceive`'s.
 
@@ -22,23 +22,23 @@ use pyo3::types::PyType;
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.smiles.SmilesIR("CCO")
+/// >>> ir = molrs.io.smiles.SmilesIr("CCO")
 /// >>> ir.n_components
 /// 1
 /// >>> mol = ir.to_atomistic()
 /// >>> mol.n_atoms
 /// 3
-#[pyclass(module = "molrs.io.smiles", name = "SmilesIR")]
-pub struct PySmilesIR {
-    inner: molrs::io::smiles::SmilesIR,
+#[pyclass(module = "molrs.io.smiles", name = "SmilesIr")]
+pub struct PySmilesIr {
+    inner: molrs::io::smiles::SmilesIr,
     input: String,
 }
 
-impl PySmilesIR {
-    /// Wrap an existing core [`SmilesIR`] as a Python `SmilesIR` object.
+impl PySmilesIr {
+    /// Wrap an existing core [`SmilesIr`] as a Python `SmilesIr` object.
     ///
     /// Exists because one binding hands out an IR it did not parse from a
-    /// bare SMILES string: `CGFragmentDef.body` (`io::cgsmiles`) returns the
+    /// bare SMILES string: `CgFragmentDef.body` (`io::cgsmiles`) returns the
     /// atomistic body a `CGsmiles` fragment table already holds, and the only
     /// alternative — writing that body back to text and re-parsing it — would
     /// make a second parse the price of reading a field.
@@ -48,14 +48,14 @@ impl PySmilesIR {
     /// nothing to the Python surface — the same shape as `PyLammpsLog::new`
     /// in `io::lammps_log`.
     ///
-    /// [`SmilesIR`]: molrs::io::smiles::SmilesIR
-    pub(crate) fn from_core(inner: molrs::io::smiles::SmilesIR, input: String) -> Self {
+    /// [`SmilesIr`]: molrs::io::smiles::SmilesIr
+    pub(crate) fn from_core(inner: molrs::io::smiles::SmilesIr, input: String) -> Self {
         Self { inner, input }
     }
 }
 
 #[pymethods]
-impl PySmilesIR {
+impl PySmilesIr {
     /// Parse `smiles` into its intermediate representation.
     ///
     /// Parameters
@@ -70,11 +70,11 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.io.smiles.SmilesIR("CCO").to_atomistic().n_atoms
+    /// >>> molrs.io.smiles.SmilesIr("CCO").to_atomistic().n_atoms
     /// 3
     #[new]
     fn new(smiles: &str) -> PyResult<Self> {
-        let inner = molrs::io::smiles::SmilesIR::parse(smiles).map_err(smiles_error_to_pyerr)?;
+        let inner = molrs::io::smiles::SmilesIr::parse(smiles).map_err(smiles_error_to_pyerr)?;
         Ok(Self {
             inner,
             input: smiles.to_owned(),
@@ -100,12 +100,12 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.io.smiles.SmilesIR.from_fragment("[<]OCC[>]").to_template().n_ports
+    /// >>> molrs.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template().n_ports
     /// 2
     #[classmethod]
     fn from_fragment(_cls: &Bound<'_, PyType>, body: &str) -> PyResult<Self> {
         let inner =
-            molrs::io::smiles::SmilesIR::from_fragment(body).map_err(smiles_error_to_pyerr)?;
+            molrs::io::smiles::SmilesIr::from_fragment(body).map_err(smiles_error_to_pyerr)?;
         Ok(Self {
             inner,
             input: body.to_owned(),
@@ -114,7 +114,7 @@ impl PySmilesIR {
 
     /// Build the ported :class:`~molrs.core.Atomistic` template of this body.
     ///
-    /// The one-unit form of :meth:`CGSmilesIR.templates`: the heavy atoms of
+    /// The one-unit form of :meth:`CgSmilesIr.templates`: the heavy atoms of
     /// the body, plus one capping hydrogen *handle* and one port per bonding
     /// descriptor (``<``, ``>``, ``$``, with its label and bond order). No
     /// coordinates, no ``frag_id``; an IR without descriptors gives a
@@ -131,7 +131,7 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> eo = molrs.io.smiles.SmilesIR.from_fragment("[<]OCC[>]").to_template()
+    /// >>> eo = molrs.io.smiles.SmilesIr.from_fragment("[<]OCC[>]").to_template()
     /// >>> eo.n_atoms, eo.n_ports
     /// (5, 2)
     fn to_template(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -174,11 +174,11 @@ impl PySmilesIR {
     ///     This is the plain conversion and it will not drop a descriptor
     ///     silently; build such a body's ported unit with
     ///     :meth:`to_template`, or expand a whole string through
-    ///     :meth:`CGSmilesIR.to_atomistic`.
+    ///     :meth:`CgSmilesIr.to_atomistic`.
     ///
     /// Examples
     /// --------
-    /// >>> mol = molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic()
+    /// >>> mol = molrs.io.smiles.SmilesIr("c1ccccc1").to_atomistic()
     /// >>> mol.n_atoms
     /// 6
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -199,14 +199,14 @@ impl PySmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> len(molrs.io.smiles.SmilesIR("CCO.O").components())
+    /// >>> len(molrs.io.smiles.SmilesIr("CCO.O").components())
     /// 2
     fn components(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAtomistic>>> {
         self.inner
             .components
             .iter()
             .map(|chain| {
-                let one = molrs::io::smiles::SmilesIR {
+                let one = molrs::io::smiles::SmilesIr {
                     components: vec![chain.clone()],
                     span: self.inner.span,
                 };
@@ -268,7 +268,7 @@ impl PySmilesIR {
             multi_component,
             organic_subset,
         )?;
-        let ir = molrs::io::smiles::SmilesIR::from_atomistic(mol.core(), &opts)
+        let ir = molrs::io::smiles::SmilesIr::from_atomistic(mol.core(), &opts)
             .map_err(smiles_error_to_pyerr)?;
         let input = molrs::io::write_smiles_str(mol.core(), &opts)
             .unwrap_or_else(|_| "<from_atomistic>".to_owned());
@@ -277,7 +277,7 @@ impl PySmilesIR {
 
     fn __repr__(&self) -> String {
         format!(
-            "SmilesIR('{}', components={})",
+            "SmilesIr('{}', components={})",
             self.input,
             self.inner.components.len()
         )
@@ -359,7 +359,7 @@ fn build_smiles_emit_options(
 ///     A :class:`ValueError`: if ``smiles`` is syntactically invalid, or names
 ///     more than one component. A ``'.'``-separated string is a *set* of
 ///     molecules, not a molecule; take them apart with
-///     ``molrs.io.smiles.SmilesIR(s).components()``.
+///     ``molrs.io.smiles.SmilesIr(s).components()``.
 ///
 /// Examples
 /// --------
@@ -374,7 +374,7 @@ pub fn read_smiles_str(py: Python<'_>, smiles: &str) -> PyResult<Py<PyAtomistic>
 /// Write a molecule as SMILES text — the inverse of :func:`read_smiles_str`.
 ///
 /// The representation choices are keyword-only flags, the same as
-/// :meth:`molrs.io.smiles.SmilesIR.from_atomistic`'s.
+/// :meth:`molrs.io.smiles.SmilesIr.from_atomistic`'s.
 ///
 /// Parameters
 /// ----------
@@ -444,7 +444,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "SmilesError",
         m.py().get_type::<crate::error::SmilesError>(),
     )?;
-    m.add_class::<PySmilesIR>()?;
+    m.add_class::<PySmilesIr>()?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_smiles_str, m)?)?;
     crate::add_function(m, "molrs.io", wrap_pyfunction!(write_smiles_str, m)?)?;
     Ok(())

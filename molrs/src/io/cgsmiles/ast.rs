@@ -13,14 +13,14 @@
 //! genuinely do share.
 //!
 //! Every type here is a value produced by
-//! [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse): the fields are public
+//! [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse): the fields are public
 //! to read, there is no public constructor, and there is no supported
 //! mutation — the same shape as
-//! [`SmilesIR`](crate::io::smiles::SmilesIR).
+//! [`SmilesIr`](crate::io::smiles::SmilesIr).
 
 use std::collections::BTreeMap;
 
-use crate::io::smiles::{BondKind, BondingDescriptor, SmilesIR, Span};
+use crate::io::smiles::{BondKind, BondingDescriptor, SmilesIr, Span};
 use crate::op::types::F;
 
 /// A parsed `CGsmiles` string: the blocks that were written, and the levels
@@ -49,35 +49,35 @@ use crate::op::types::F;
 /// `levels.len() == fragments.len()` — one fewer level than one might expect,
 /// because the **last** block is atomistic and builds no coarse level. That
 /// asymmetry is intentional: levels are graphs of beads, and atoms are not
-/// [`CGNode`]s. The last table's bodies stay
+/// [`CgNode`]s. The last table's bodies stay
 /// [`FragmentBody::Smiles`] values with their bonding
 /// descriptors intact.
 ///
 /// # A value the reader returns is finished
 ///
-/// Every `CGSmilesIR` returned by
-/// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse) is **fully
+/// Every `CgSmilesIr` returned by
+/// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse) is **fully
 /// instantiated, validated and resolved**: every name used at a level has a
 /// definition, every intermediate table has been expanded into the next level,
 /// every bonding descriptor a written edge needs has been paired and recorded
-/// in [`pairs`](CGSmilesIR::pairs), and every refusal this version makes
+/// in [`pairs`](CgSmilesIr::pairs), and every refusal this version makes
 /// (starting with the squash operator `[!]`) has already been raised. The
 /// reader hands out no half-resolved state. The fields are `pub`, so the type
 /// does not enforce this for a hand-built value — the reader is the only
 /// supported source.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CGSmilesIR {
+pub struct CgSmilesIr {
     /// Resolution levels, coarsest first. Level 0 is the base block that was
     /// written; every later level is the expansion of the table above it.
-    pub levels: Vec<CGGraph>,
+    pub levels: Vec<CgGraph>,
     /// Fragment tables, coarsest first, each keyed by the fragment name
     /// written after `#`. `fragments[k]` resolves the names of `levels[k]`.
     ///
     /// [`BTreeMap`] rather than a hash map so iteration — and therefore any
     /// diagnostic or example that walks a table — is in name order, the way
     /// the crate already keys name tables.
-    pub fragments: Vec<BTreeMap<String, CGFragmentDef>>,
-    /// Resolved descriptor pairs, parallel to [`levels`](CGSmilesIR::levels):
+    pub fragments: Vec<BTreeMap<String, CgFragmentDef>>,
+    /// Resolved descriptor pairs, parallel to [`levels`](CgSmilesIr::levels):
     /// `pairs[k]` holds the pairs that satisfy `levels[k].edges`, in
     /// resolution order — edge order first, then bond index within an edge of
     /// multiplicity greater than one.
@@ -114,15 +114,15 @@ pub enum PairEnd {
     /// descriptors its child nodes carry one level down.
     ///
     /// `node` indexes `levels[k + 1].nodes` — the child carrying the port —
-    /// and `port` indexes that child's [`descriptors`](CGNode::descriptors).
+    /// and `port` indexes that child's [`descriptors`](CgNode::descriptors).
     /// The bead the port belongs to is
-    /// [`levels[k + 1].nodes[node].parent`](CGNode::parent), which is also the
+    /// [`levels[k + 1].nodes[node].parent`](CgNode::parent), which is also the
     /// endpoint of the pair's edge, so a third field repeating it would be a
     /// second copy of a fact that already has an owner.
     Sub {
         /// Index into `levels[k + 1].nodes` of the child carrying the port.
         node: usize,
-        /// Index into that child's [`descriptors`](CGNode::descriptors).
+        /// Index into that child's [`descriptors`](CgNode::descriptors).
         port: usize,
     },
     /// An end at the **last** level, where the ports of a node are the
@@ -131,7 +131,7 @@ pub enum PairEnd {
     ///
     /// `instance` indexes `levels[k].nodes` and `port` indexes the descriptor
     /// map
-    /// [`SmilesIR::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIR::to_atomistic_with_descriptors)
+    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
     /// returns for that node's body, whose order is the walker's visit order.
     Body {
         /// Index into `levels[k].nodes` of the node whose body holds the port.
@@ -153,7 +153,7 @@ pub struct ResolvedPair {
     /// level is resolved, so this index is valid against the list a reader
     /// holds.
     pub edge: usize,
-    /// Which of that edge's [`CGBondOrder::multiplicity`] bonds this is,
+    /// Which of that edge's [`CgBondOrder::multiplicity`] bonds this is,
     /// 0-based: a coarse edge of order *n* stands for *n* distinct bonds, each
     /// consuming its own pair of ports.
     pub bond: usize,
@@ -167,7 +167,7 @@ pub struct ResolvedPair {
     /// otherwise.
     ///
     /// Named `kind`, not `order`, so it never reads as
-    /// [`CGEdge::order`] — which is a count of bonds, not a bond order.
+    /// [`CgEdge::order`] — which is a count of bonds, not a bond order.
     pub kind: BondKind,
 }
 
@@ -188,9 +188,9 @@ pub enum EdgeOrigin {
     ///
     /// Derived edges are appended **after** every written edge of the level, in
     /// pair order, so an index handed out before they arrive stays valid. Each
-    /// carries [`CGBondOrder::Single`] — one resolved pair is one bond, and a
+    /// carries [`CgBondOrder::Single`] — one resolved pair is one bond, and a
     /// coarse order is a count rather than a placeholder — and a copy of the
-    /// [`span`](CGEdge::span) of the coarse edge whose pair induced it, the
+    /// [`span`](CgEdge::span) of the coarse edge whose pair induced it, the
     /// only text that names that bond.
     ///
     /// Derived edges bypass the parser's simple-graph check on purpose: a
@@ -208,7 +208,7 @@ pub enum EdgeOrigin {
 
 /// One entry of a fragment block: `#PEO=[$]COC[$]`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CGFragmentDef {
+pub struct CgFragmentDef {
     /// The fragment name written after `#`, without the sigil.
     pub name: String,
     /// What the name stands for: a coarse graph of the next level's nodes, or
@@ -231,11 +231,11 @@ pub struct CGFragmentDef {
 pub enum FragmentBody {
     /// A coarse graph over the *next* level's `[#X]` nodes, as written in an
     /// intermediate block: `#B1=[>][#PEO][#PEO][<]`.
-    Graph(CGGraph),
+    Graph(CgGraph),
     /// An atomistic OpenSMILES body with bonding descriptors, as written in
     /// the last block: `#PEO=[>]COC[<]`. It is kept as the parser returned
     /// it — never expanded into atoms here.
-    Smiles(SmilesIR),
+    Smiles(SmilesIr),
 }
 
 /// One resolution level: coarse-grained nodes and the edges between them.
@@ -247,11 +247,11 @@ pub enum FragmentBody {
 /// library's adjacency order instead, so a ring-bearing string indexes edges
 /// differently there.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CGGraph {
+pub struct CgGraph {
     /// Nodes in parse order; a node is addressed by its index in this vector.
-    pub nodes: Vec<CGNode>,
+    pub nodes: Vec<CgNode>,
     /// Edges in parse order, each naming two indices into `nodes`.
-    pub edges: Vec<CGEdge>,
+    pub edges: Vec<CgEdge>,
 }
 
 /// One coarse-grained node: `[#PEO]`, `[#A;q=-0.5]`.
@@ -259,7 +259,7 @@ pub struct CGGraph {
 /// Two occurrences of `[#A]` are two distinct nodes that happen to share a
 /// name; the name is a *fragment* name to be resolved later, not an identity.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CGNode {
+pub struct CgNode {
     /// The fragment name written after `#`, without the sigil: `PEO`, or `*`
     /// for the wildcard node.
     pub name: String,
@@ -278,7 +278,7 @@ pub struct CGNode {
     ///
     /// `[#A;q=-0.5;kind=ether]` leaves `[("kind", "ether")]` here. The
     /// reserved keys never reach this list: `q` is bound to
-    /// [`charge`](CGNode::charge); `w` — the mapping weight, dimensionless —
+    /// [`charge`](CgNode::charge); `w` — the mapping weight, dimensionless —
     /// is accepted only at its default `1` and then dropped, any other value
     /// being refused; and `x`, the chirality key, is refused outright. A field
     /// written with no `=` names no key and takes the next positional slot
@@ -308,7 +308,7 @@ pub struct CGNode {
     pub parent: Option<usize>,
     /// Byte range of the node's own text within the parsed input.
     ///
-    /// Spans in a [`CGGraph`] are neither disjoint nor monotonic: the copies
+    /// Spans in a [`CgGraph`] are neither disjoint nor monotonic: the copies
     /// the `|n` repeat operator makes are re-read from the template's bytes,
     /// so every copy **shares** the template's span.
     pub span: Span,
@@ -316,21 +316,21 @@ pub struct CGNode {
 
 /// One coarse edge, joining `nodes[i]` and `nodes[j]`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CGEdge {
-    /// Index of the first endpoint in [`CGGraph::nodes`].
+pub struct CgEdge {
+    /// Index of the first endpoint in [`CgGraph::nodes`].
     pub i: usize,
-    /// Index of the second endpoint in [`CGGraph::nodes`].
+    /// Index of the second endpoint in [`CgGraph::nodes`].
     pub j: usize,
     /// Multiplicity of the edge, from the bond symbol that formed it, or
-    /// [`CGBondOrder::Single`] when the notation wrote no symbol.
-    pub order: CGBondOrder,
+    /// [`CgBondOrder::Single`] when the notation wrote no symbol.
+    pub order: CgBondOrder,
     /// Byte range of the text at which the edge was formed.
     ///
     /// Which text that is depends on how the edge came about: for a bond
     /// between two adjacent nodes it is the bracket of the *second* node, for
     /// a ring closure it is the closing marker, and for the bond that chains
     /// one `|n` copy to the previous one it is the `|` itself. Like
-    /// [`CGNode::span`], a replayed copy shares the template's span.
+    /// [`CgNode::span`], a replayed copy shares the template's span.
     ///
     /// A [`Derived`](EdgeOrigin::Derived) edge writes no text of its own, so
     /// it carries a **copy of the span of the coarse edge whose pair induced
@@ -353,11 +353,11 @@ pub struct CGEdge {
 ///
 /// Order 0 — `.`, the virtual edge the notation permits between virtual
 /// particles — is not representable here on purpose:
-/// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse) refuses `.` with
+/// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse) refuses `.` with
 /// [`SmilesErrorKind::CgInvalidBondOrder`](crate::io::smiles::SmilesErrorKind::CgInvalidBondOrder)
 /// rather than admit an edge that is not an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CGBondOrder {
+pub enum CgBondOrder {
     /// `-`, and the default when no symbol is written.
     Single,
     /// `=`.
@@ -368,15 +368,15 @@ pub enum CGBondOrder {
     Quadruple,
 }
 
-impl CGBondOrder {
+impl CgBondOrder {
     /// The multiplicity as a number, 1..=4: how many bonds this edge stands
     /// for when the level is expanded into atoms. A pure count, dimensionless.
     pub fn multiplicity(&self) -> u8 {
         match self {
-            CGBondOrder::Single => 1,
-            CGBondOrder::Double => 2,
-            CGBondOrder::Triple => 3,
-            CGBondOrder::Quadruple => 4,
+            CgBondOrder::Single => 1,
+            CgBondOrder::Double => 2,
+            CgBondOrder::Triple => 3,
+            CgBondOrder::Quadruple => 4,
         }
     }
 }
@@ -391,21 +391,21 @@ mod tests {
 
     #[test]
     fn test_single_bond_has_multiplicity_one() {
-        assert_eq!(CGBondOrder::Single.multiplicity(), 1);
+        assert_eq!(CgBondOrder::Single.multiplicity(), 1);
     }
 
     #[test]
     fn test_double_bond_has_multiplicity_two() {
-        assert_eq!(CGBondOrder::Double.multiplicity(), 2);
+        assert_eq!(CgBondOrder::Double.multiplicity(), 2);
     }
 
     #[test]
     fn test_triple_bond_has_multiplicity_three() {
-        assert_eq!(CGBondOrder::Triple.multiplicity(), 3);
+        assert_eq!(CgBondOrder::Triple.multiplicity(), 3);
     }
 
     #[test]
     fn test_quadruple_bond_has_multiplicity_four() {
-        assert_eq!(CGBondOrder::Quadruple.multiplicity(), 4);
+        assert_eq!(CgBondOrder::Quadruple.multiplicity(), 4);
     }
 }

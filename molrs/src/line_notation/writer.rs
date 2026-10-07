@@ -1,10 +1,10 @@
-//! Write [`SmilesIR`] back to SMILES, SMARTS or fragment-body strings.
+//! Write [`SmilesIr`] back to SMILES, SMARTS or fragment-body strings.
 //!
 //! One emitter serves all three dialects, branching on the crate-internal
 //! `Dialect`: each entry point refuses the constructs its own dialect cannot
 //! spell, instead of emitting text the matching parser would reject.
 //!
-//! Pure syntax: no chemical policy. Graph → IR lives in [`SmilesIR::from_atomistic`](crate::io::smiles::SmilesIR::from_atomistic).
+//! Pure syntax: no chemical policy. Graph → IR lives in [`SmilesIr::from_atomistic`](crate::io::smiles::SmilesIr::from_atomistic).
 
 use crate::line_notation::Dialect;
 use crate::line_notation::ast::*;
@@ -24,7 +24,7 @@ use crate::line_notation::error::{SmilesError, SmilesErrorKind};
 /// ([`AtomSpec::Query`]) or a SMARTS bond query (`!`, `&`, `,`), and
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
 /// descriptor — write that IR with [`write_fragment_smiles`] instead.
-pub fn write_smiles(ir: &SmilesIR) -> Result<String, SmilesError> {
+pub fn write_smiles(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::Smiles)
 }
 
@@ -40,7 +40,7 @@ pub fn write_smiles(ir: &SmilesIR) -> Result<String, SmilesError> {
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
 /// descriptor: descriptors are fragment notation, and SMARTS has no spelling
 /// for them either.
-pub fn write_smarts(ir: &SmilesIR) -> Result<String, SmilesError> {
+pub fn write_smarts(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::Smarts)
 }
 
@@ -76,14 +76,14 @@ pub fn write_smarts(ir: &SmilesIR) -> Result<String, SmilesError> {
 /// It never returns [`SmilesErrorKind::DescriptorInPlainSmiles`]: that is the
 /// plain writers' refusal of the input this one exists to accept.
 #[cfg(test)]
-pub(crate) fn write_fragment_smiles(ir: &SmilesIR) -> Result<String, SmilesError> {
+pub(crate) fn write_fragment_smiles(ir: &SmilesIr) -> Result<String, SmilesError> {
     write_ir(ir, Dialect::FragmentSmiles)
 }
 
-fn write_ir(ir: &SmilesIR, dialect: Dialect) -> Result<String, SmilesError> {
+fn write_ir(ir: &SmilesIr, dialect: Dialect) -> Result<String, SmilesError> {
     if ir.components.is_empty() {
         return Err(SmilesError::new(
-            SmilesErrorKind::Emit("empty SmilesIR".into()),
+            SmilesErrorKind::Emit("empty SmilesIr".into()),
             ir.span,
             "",
             dialect.notation(),
@@ -617,7 +617,7 @@ mod tests {
 
     // -- fragment dialect: bonding descriptors ------------------------------
 
-    fn fragment(input: &str) -> SmilesIR {
+    fn fragment(input: &str) -> SmilesIr {
         crate::line_notation::parser::parse_fragment_smiles(input)
             .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
     }

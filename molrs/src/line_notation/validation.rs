@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::line_notation::ast::{BondKind, BondingDescriptor, Chain, ChainElement, SmilesIR, Span};
+use crate::line_notation::ast::{BondKind, BondingDescriptor, Chain, ChainElement, SmilesIr, Span};
 use crate::line_notation::error::{Notation, SmilesError, SmilesErrorKind};
 
 /// Ensure every ring-closure digit is opened and closed exactly once.
@@ -30,7 +30,7 @@ use crate::line_notation::error::{Notation, SmilesError, SmilesErrorKind};
 /// unmatched digit. Which unmatched digit is reported, when several are, is
 /// unspecified. The error is stamped [`Notation::Smiles`]: ring closures are
 /// validated on the SMILES-family post-parse path only.
-pub(crate) fn validate_ring_closures(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
+pub(crate) fn validate_ring_closures(mol: &SmilesIr, input: &str) -> Result<(), SmilesError> {
     let mut open: HashMap<u16, Span> = HashMap::new();
 
     for component in &mol.components {

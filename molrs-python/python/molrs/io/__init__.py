@@ -15,7 +15,7 @@ in Rust and Python:
 No door picks a format for the caller: every door names its format.
 
 A class that belongs to one format lives in that format's submodule:
-:mod:`molrs.io.smiles` (:class:`~molrs.io.smiles.SmilesIR`,
+:mod:`molrs.io.smiles` (:class:`~molrs.io.smiles.SmilesIr`,
 :class:`~molrs.io.smiles.SmilesError`), :mod:`molrs.io.cgsmiles` (the CGsmiles
 records), :mod:`molrs.io.lammps` (the dump reader, the log records,
 :class:`~molrs.io.lammps.BondReactTemplate`), :mod:`molrs.io.mrec` (the
@@ -46,13 +46,13 @@ Force-field files map onto :class:`molrs.ff.forcefield.ForceField`, the data
 model :mod:`molrs.ff.forcefield` owns:
 
 * readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
-  :func:`read_lammps_cmap`, :func:`read_gromacs_top_forcefield`,
+  :func:`read_lammps_cmap_forcefield`, :func:`read_gromacs_top_forcefield`,
   :func:`read_gromacs_system`, :func:`read_amber_prmtop_forcefield`,
   :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`,
   :func:`read_molrs_xml_forcefield`
 * writers — :func:`write_lammps_forcefield`,
   :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
-  :func:`write_lammps_cmap`, :func:`write_gromacs_top_forcefield`,
+  :func:`write_lammps_cmap_forcefield`, :func:`write_gromacs_top_forcefield`,
   :func:`write_gromacs_system`, :func:`write_amber_frcmod`,
   :func:`write_openmm_xml_forcefield`, :func:`write_molrs_xml_forcefield`
 
@@ -71,7 +71,7 @@ frame in the wire encodings a :class:`molrs.stream.Publisher` streams.
 
 :func:`read_smiles_str` reads one molecule from SMILES text — connectivity
 only, no implicit hydrogens added, no coordinates; a ``'.'``-separated set is
-refused (take it apart with ``SmilesIR(s).components()``) — and
+refused (take it apart with ``SmilesIr(s).components()``) — and
 :func:`write_smiles_str` writes one. :func:`read_cgsmiles_str` reads the
 molecule a CGsmiles string states.
 """
@@ -92,7 +92,7 @@ from .._lib import (
     read_gromacs_system,
     read_gromacs_top_forcefield,
     read_json_frame_str,
-    read_lammps_cmap,
+    read_lammps_cmap_forcefield,
     read_lammps_data,
     read_lammps_data_coeffs,
     read_lammps_forcefield,
@@ -134,7 +134,7 @@ from .._lib import (
     write_json_frame_str,
     write_lammps_bond_react_map,
     write_lammps_bond_react_system,
-    write_lammps_cmap,
+    write_lammps_cmap_forcefield,
     write_lammps_data,
     write_lammps_data_coeffs,
     write_lammps_dump_local,
@@ -202,7 +202,7 @@ __all__ = [
     "read_gromacs_system",
     "read_gromacs_top_forcefield",
     "read_json_frame_str",
-    "read_lammps_cmap",
+    "read_lammps_cmap_forcefield",
     "read_lammps_data",
     "read_lammps_data_coeffs",
     "read_lammps_forcefield",
@@ -248,7 +248,7 @@ __all__ = [
     "write_json_frame_str",
     "write_lammps_bond_react_map",
     "write_lammps_bond_react_system",
-    "write_lammps_cmap",
+    "write_lammps_cmap_forcefield",
     "write_lammps_data",
     "write_lammps_data_coeffs",
     "write_lammps_dump_local",

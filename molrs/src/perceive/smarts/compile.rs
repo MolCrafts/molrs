@@ -1,7 +1,7 @@
 //! SMARTS syntax → matcher query graph.
 //!
 //! The SMARTS text is parsed by the crate's one line-notation grammar; this
-//! module compiles its [`SmilesIR`] into the [`QueryGraph`] the matcher walks:
+//! module compiles its [`SmilesIr`] into the [`QueryGraph`] the matcher walks:
 //! element symbols resolve to atomic numbers, `$(...)` subpatterns compile to
 //! their own graphs, ring closures become bonds and an unwritten bond becomes
 //! "single or aromatic".
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::core::MolRsError;
 use crate::line_notation::ast::{
     AtomNode, AtomPrimitive, AtomQuery, AtomSpec, BondKind, BondQuery, BracketSymbol, Chain,
-    ChainElement, SmilesIR,
+    ChainElement, SmilesIr,
 };
 use crate::line_notation::parser::parse_smarts;
 
@@ -136,7 +136,7 @@ impl Compiler<'_> {
         MolRsError::parse(format!("{msg} in SMARTS '{}'", self.src))
     }
 
-    fn graph(&self, ir: &SmilesIR) -> Result<QueryGraph, MolRsError> {
+    fn graph(&self, ir: &SmilesIr) -> Result<QueryGraph, MolRsError> {
         let [component] = ir.components.as_slice() else {
             return Err(self
                 .err("a '.'-separated pattern is not one connected query; match each component"));

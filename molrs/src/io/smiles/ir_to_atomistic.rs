@@ -1,19 +1,19 @@
-//! Convert [`SmilesIR`] into [`Atomistic`] molecular graphs.
+//! Convert [`SmilesIr`] into [`Atomistic`] molecular graphs.
 //!
 //! This is the second stage of the pipeline:
 //!
 //! ```text
-//! SMILES string → SmilesIR::parse() → SmilesIR → SmilesIR::to_atomistic() → Atomistic
+//! SMILES string → SmilesIr::parse() → SmilesIr → SmilesIr::to_atomistic() → Atomistic
 //! ```
 //!
 //! The conversion walks the IR tree, creates atoms with element symbols, creates
 //! bonds from the chain structure and ring closures, and sets properties
 //! (mass, charge, isotope, chirality, hydrogen count).
 //!
-//! [`SmilesIR::to_atomistic_with_descriptors`] is the fragment-dialect entry
+//! [`SmilesIr::to_atomistic_with_descriptors`] is the fragment-dialect entry
 //! point and shares that one walk: it additionally hands back the bonding
 //! descriptors the notation anchored on each atom, which
-//! [`SmilesIR::to_atomistic`] refuses rather than drops.
+//! [`SmilesIr::to_atomistic`] refuses rather than drops.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +27,7 @@ use molrs::core::NodeId;
 use molrs::core::PropValue;
 use molrs::core::keys;
 
-impl SmilesIR {
+impl SmilesIr {
     /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
     ///
     /// This resolves ring closures into bonds, sets atom properties (charge,
@@ -68,9 +68,9 @@ impl SmilesIR {
     /// # Examples
     ///
     /// ```
-    /// use molrs::io::smiles::SmilesIR;
+    /// use molrs::io::smiles::SmilesIr;
     ///
-    /// let ir = SmilesIR::parse("C(=O)O").unwrap();
+    /// let ir = SmilesIr::parse("C(=O)O").unwrap();
     /// let mol = ir.to_atomistic().unwrap();
     /// assert_eq!(mol.n_atoms(), 3);
     /// assert_eq!(mol.n_bonds(), 2);
@@ -92,7 +92,7 @@ impl SmilesIR {
     ///
     /// The input is a SMILES fragment body with `CGsmiles` / `BigSMILES` bonding
     /// descriptors, as produced by
-    /// [`SmilesIR::from_fragment`]; this is the fragment-dialect sibling of
+    /// [`SmilesIr::from_fragment`]; this is the fragment-dialect sibling of
     /// [`to_atomistic`](Self::to_atomistic), which refuses
     /// descriptor-bearing input rather than drop it. The graph is built by the same
     /// walk, so descriptor-free input gives the same atoms, bonds and properties
@@ -143,8 +143,8 @@ impl SmilesIR {
     }
 }
 
-/// Read one molecule from SMILES text: [`SmilesIR::parse`] then
-/// [`SmilesIR::to_atomistic`], refusing a string that names more than one.
+/// Read one molecule from SMILES text: [`SmilesIr::parse`] then
+/// [`SmilesIr::to_atomistic`], refusing a string that names more than one.
 ///
 /// Connectivity only: hydrogens implicit in the SMILES are **not** added and
 /// no coordinates are generated — filling open valences is a perception step
@@ -152,7 +152,7 @@ impl SmilesIR {
 ///
 /// # Errors
 ///
-/// Every [`SmilesIR::parse`] and [`SmilesIR::to_atomistic`] error, and
+/// Every [`SmilesIr::parse`] and [`SmilesIr::to_atomistic`] error, and
 /// [`SmilesErrorKind::MultipleComponents`] when the string holds more than one
 /// `.`-separated component: such a string is a *set* of molecules, not a
 /// molecule — read each from the parsed IR's `components`.
@@ -167,7 +167,7 @@ impl SmilesIR {
 /// assert!(read_smiles_str("CCO.O").is_err());
 /// ```
 pub fn read_smiles_str(smiles: &str) -> Result<Atomistic, SmilesError> {
-    let ir = SmilesIR::parse(smiles)?;
+    let ir = SmilesIr::parse(smiles)?;
     if ir.components.len() != 1 {
         return Err(SmilesError::new(
             SmilesErrorKind::MultipleComponents(ir.components.len()),
@@ -217,7 +217,7 @@ struct Builder<'a> {
     /// building because a symbol-less bond between two of them is aromatic.
     aromatic_atoms: HashSet<NodeId>,
     /// Reference to the original IR for error messages.
-    ir: &'a SmilesIR,
+    ir: &'a SmilesIr,
     /// Which entry point this walk serves: `true` on the fragment path, which
     /// records every descriptor against its atom; `false` on the plain path,
     /// where a node carrying one is an error rather than a silent loss.
@@ -230,7 +230,7 @@ struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn new(ir: &'a SmilesIR, collect_descriptors: bool) -> Self {
+    fn new(ir: &'a SmilesIr, collect_descriptors: bool) -> Self {
         Self {
             mol: Atomistic::new(),
             open_rings: HashMap::new(),
@@ -567,10 +567,10 @@ impl<'a> Builder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::smiles::SmilesIR;
+    use crate::io::smiles::SmilesIr;
 
     fn smiles_to_mol(input: &str) -> Atomistic {
-        let ir = SmilesIR::parse(input).unwrap();
+        let ir = SmilesIr::parse(input).unwrap();
         ir.to_atomistic()
             .unwrap_or_else(|e| panic!("to_atomistic({input:?}) failed: {e}"))
     }
@@ -906,7 +906,7 @@ mod tests {
     ///
     /// The parser refuses an unmatched ring closure itself, so this unit can
     /// only be reached with an IR built directly.
-    fn unmatched_ring_ir() -> SmilesIR {
+    fn unmatched_ring_ir() -> SmilesIr {
         fn carbon(start: usize) -> AtomNode {
             AtomNode {
                 spec: AtomSpec::Organic {
@@ -918,7 +918,7 @@ mod tests {
             }
         }
 
-        SmilesIR {
+        SmilesIr {
             components: vec![Chain {
                 head: carbon(0),
                 tail: vec![
@@ -962,7 +962,7 @@ mod tests {
     // -- fragment dialect: bonding descriptors ------------------------------
 
     fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(NodeId, BondingDescriptor)>) {
-        let ir = SmilesIR::from_fragment(input).unwrap();
+        let ir = SmilesIr::from_fragment(input).unwrap();
         ir.to_atomistic_with_descriptors()
             .unwrap_or_else(|e| panic!("fragment_to_atomistic({input:?}) failed: {e}"))
     }
@@ -995,7 +995,7 @@ mod tests {
     fn test_to_atomistic_rejects_a_descriptor_bearing_ir() {
         // The plain entry point routes the caller instead of silently dropping
         // the descriptors the fragment dialect parsed.
-        let ir = SmilesIR::from_fragment("[$]COC[$]").unwrap();
+        let ir = SmilesIr::from_fragment("[$]COC[$]").unwrap();
         let err = ir.to_atomistic().unwrap_err();
         assert!(matches!(
             err.kind,
@@ -1091,7 +1091,7 @@ mod tests {
     fn test_fragment_to_atomistic_matches_to_atomistic_without_descriptors() {
         // One walker behind two entry points: descriptor-free input must give
         // the same graph through either, and an empty map.
-        let plain = (SmilesIR::parse("CC(=O)O").unwrap())
+        let plain = (SmilesIr::parse("CC(=O)O").unwrap())
             .to_atomistic()
             .unwrap();
         let (fragment, ports) = fragment_to_mol("CC(=O)O");

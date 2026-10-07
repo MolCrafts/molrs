@@ -91,8 +91,8 @@ const UNKEKULIZABLE: &str = "c1cccc1";
 // ---------------------------------------------------------------------------
 
 fn parse(smiles: &str) -> Atomistic {
-    use crate::io::smiles::SmilesIR;
-    let ir = SmilesIR::parse(smiles).unwrap_or_else(|e| panic!("{smiles}: parse failed: {e}"));
+    use crate::io::smiles::SmilesIr;
+    let ir = SmilesIr::parse(smiles).unwrap_or_else(|e| panic!("{smiles}: parse failed: {e}"));
     ir.to_atomistic()
         .unwrap_or_else(|e| panic!("{smiles}: to_atomistic failed: {e}"))
 }

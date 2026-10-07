@@ -77,7 +77,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<graph_views::PyDihedral>()?;
     m.add_class::<graph_views::PyImproper>()?;
     m.add_class::<graph_views::PyPort>()?;
-    m.add_class::<graph_views::PyCGBond>()?;
+    m.add_class::<graph_views::PyCgBond>()?;
     m.add_class::<graph_views::PyRefs>()?;
     m.add_class::<graph_views::PyRelationBuckets>()?;
 

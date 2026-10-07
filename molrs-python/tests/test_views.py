@@ -20,7 +20,7 @@ VIEW_CLASSES = (
     "Dihedral",
     "Improper",
     "Port",
-    "CGBond",
+    "CgBond",
     "Refs",
 )
 
@@ -79,7 +79,7 @@ class TestOneClass:
             __import__("molrs.views")
 
     def test_graph_out_paths_return_the_one_class(self) -> None:
-        from_smiles = molrs.io.smiles.SmilesIR("CO").to_atomistic()
+        from_smiles = molrs.io.smiles.SmilesIr("CO").to_atomistic()
         for graph in (
             from_smiles,
             from_smiles.copy(),
@@ -104,7 +104,7 @@ class TestProps:
         assert graph.props == {"label": "x"}
 
     def test_perception_output_keeps_props(self) -> None:
-        graph = molrs.io.smiles.SmilesIR("CO").to_atomistic()
+        graph = molrs.io.smiles.SmilesIr("CO").to_atomistic()
         graph.props["label"] = "methanol"
         perceived = molrs.perceive.Perceive().find_rings(graph)
         assert perceived.props == {"label": "methanol"}
@@ -248,7 +248,7 @@ class TestFactories:
         b = cg.def_bead(bead_type="P1", x=1.0, y=0.0, z=0.0)
         bond = cg.def_cgbond(a, b, order=1.0)
         assert type(a) is molrs.core.Bead
-        assert type(bond) is molrs.core.CGBond
+        assert type(bond) is molrs.core.CgBond
         assert cg.beads[1] is b
         assert cg.cgbonds[0] is bond
         assert bond.endpoints == (a, b)

@@ -22,10 +22,10 @@ application uses, replace `full` with a narrower list.
 
 ```rust
 use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::io::smiles::SmilesIR;
+use molrs::io::smiles::SmilesIr;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = SmilesIR::parse("c1ccccc1")?;
+    let ir = SmilesIr::parse("c1ccccc1")?;
     let mol = ir.to_atomistic()?;
 
     let (mol3d, report) = Conformer::new(ConformerOptions::default()).generate(&mol)?;
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-The two-step parse is intentional. `SmilesIR::parse` validates the text and
+The two-step parse is intentional. `SmilesIr::parse` validates the text and
 produces an intermediate representation. `to_atomistic` turns that intermediate
 form into the molecular graph consumed by embedding and force-field code
 (`molrs::io::read_smiles_str` does both for one molecule).

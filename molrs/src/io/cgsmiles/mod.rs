@@ -4,7 +4,7 @@
 //! The door is a function of [`crate::io`]:
 //! [`crate::io::read_cgsmiles_str`] reads the molecule a
 //! string states (its lowest level expanded into atoms). This module holds the
-//! notation's classes: [`CGSmilesIR`] ([`CGSmilesIR::parse`]) and the records
+//! notation's classes: [`CgSmilesIr`] ([`CgSmilesIr::parse`]) and the records
 //! it hands out.
 //!
 //! `CGsmiles` writes a molecule at a *coarse-grained* resolution: a block
@@ -14,20 +14,20 @@
 //! that a later block resolves. A whole string is a `.`-separated sequence of
 //! blocks: block 0 is the coarsest graph, and every block after it is a
 //! *fragment table* naming the bodies of the nodes written one level up. This
-//! module reads all of them into a [`CGSmilesIR`], and expands each
+//! module reads all of them into a [`CgSmilesIr`], and expands each
 //! intermediate table into the level it denotes.
 //!
 //! **Reading builds no atoms.** What the reader produces is the coarse levels,
 //! their fragment tables and the descriptor pairing over them — no `Frame`, no
 //! `MolGraph`. Turning the lowest level into real atoms and bonds is a second
-//! step the caller asks for by name, [`CGSmilesIR::to_atomistic`]. Beside it
-//! stands [`CGSmilesIR::templates`], which builds the *pieces* rather than
+//! step the caller asks for by name, [`CgSmilesIr::to_atomistic`]. Beside it
+//! stands [`CgSmilesIr::templates`], which builds the *pieces* rather than
 //! the whole: one instance-free
 //! ported [`Atomistic`](crate::core::Atomistic) **template** per definition of the
 //! last fragment table, each open valence made explicit as a capping hydrogen
 //! carrying a port. Expansion is the molecule the string states; a template is
 //! what a builder places, many times, without re-reading the string. The third
-//! conversion, [`CGSmilesIR::to_coarsegrain`], needs no fragment table at all:
+//! conversion, [`CgSmilesIr::to_coarsegrain`], needs no fragment table at all:
 //! it reads the coarsest level, `levels[0]`, as a
 //! [`CoarseGrain`](crate::core::CoarseGrain) bead graph — one
 //! bead per node, one CG bond per edge, no coordinates.
@@ -95,9 +95,9 @@
 //!
 //! **Levels and tables do not line up one-to-one, on purpose.** Each
 //! intermediate table is expanded into the next level — one disjoint copy of a
-//! body per node that names it, with [`CGNode::parent`] pointing back — while
+//! body per node that names it, with [`CgNode::parent`] pointing back — while
 //! the last table builds no level at all, because a level is a graph of beads
-//! and atoms are not [`CGNode`]s. A base-only string therefore has no table
+//! and atoms are not [`CgNode`]s. A base-only string therefore has no table
 //! and one level; otherwise `levels.len() == fragments.len()`.
 //!
 //! # Refusals of valid notation (choices of this first implementation)
@@ -110,7 +110,7 @@
 //! * **Bond order 0**, written `.` (`{[#A].[#B]}`): a virtual edge between
 //!   virtual particles. Refused with [`SmilesErrorKind::CgInvalidBondOrder`]
 //!   until a later `cgsmiles-*` link models virtual particles, which needs a
-//!   level-side representation rather than a fifth [`CGBondOrder`] variant.
+//!   level-side representation rather than a fifth [`CgBondOrder`] variant.
 //! * **A non-default mapping weight `w`**, keyword (`[#A;w=2]`) or positional
 //!   (`[#A;0;0.5]`): refused with
 //!   [`SmilesErrorKind::CgUnsupportedAnnotation`] until a later `cgsmiles-*`
@@ -140,7 +140,7 @@
 //! * **Descriptor pairing is finished before the IR is handed out.**
 //!   Instantiation copies a body's own edges and nothing else; the step that
 //!   pairs the bonding descriptors *between* two copies runs straight after
-//!   it, and records every match in [`CGSmilesIR::pairs`]. **Why pairing is
+//!   it, and records every match in [`CgSmilesIr::pairs`]. **Why pairing is
 //!   parse-stage while SMILES ring closure is build-stage:** a ring closure is
 //!   intra-body and only means anything once atoms exist, so it belongs to the
 //!   builder, whereas descriptor pairs are needed at coarse levels that never
@@ -154,7 +154,7 @@
 //!   (1,2) there. A ring-bearing string can therefore consume different ports
 //!   and, once expanded, number its atoms differently. What is contracted is
 //!   the **connectivity**: the expansion
-//!   ([`CGSmilesIR::to_atomistic`]) is isomorphic to the reference's and to
+//!   ([`CgSmilesIr::to_atomistic`]) is isomorphic to the reference's and to
 //!   what the molpy builder builds from the same string as an unlabelled
 //!   graph; atom indices are not part of that contract, and neither are bond
 //!   classes. The reference sets order 1.5 whenever both endpoint atoms are
@@ -202,9 +202,9 @@
 //! bodies stay atomistic.
 //!
 //! ```
-//! use molrs::io::cgsmiles::{CGSmilesIR, FragmentBody};
+//! use molrs::io::cgsmiles::{CgSmilesIr, FragmentBody};
 //!
-//! let ir = CGSmilesIR::parse(
+//! let ir = CgSmilesIr::parse(
 //!     "{[#B1][#B2][#B1]}.\
 //!      {#B1=[>][#PEO][#PEO][<],#B2=[>][#PE][#PE][<]}.\
 //!      {#PEO=[>]COC[<],#PE=[>]CC[<]}",
@@ -260,11 +260,11 @@ use parser::CgParser;
 use resolve::resolve;
 
 pub use ast::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+    CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody,
     PairEnd, ResolvedPair,
 };
 
-impl CGSmilesIR {
+impl CgSmilesIr {
     /// Parse a `CGsmiles` string — every resolution block it writes — into its
     /// intermediate representation.
     ///
@@ -284,10 +284,10 @@ impl CGSmilesIR {
     /// **fragment table** — `{#PEO=[>]COC[<],#PE=[>]CC[<]}` — naming the bodies of
     /// the nodes written one level up. Each intermediate table is expanded here
     /// into the level it denotes: one disjoint copy of a body per node that names
-    /// it, each copy's [`parent`](CGNode::parent) pointing back at that node. The
+    /// it, each copy's [`parent`](CgNode::parent) pointing back at that node. The
     /// bonding descriptors the copies carry are then paired — every written edge
     /// matched to a concrete pair of free compatible ports, recorded in
-    /// [`CGSmilesIR::pairs`], and each pair of an intermediate level appended to
+    /// [`CgSmilesIr::pairs`], and each pair of an intermediate level appended to
     /// the level below as a [`Derived`](EdgeOrigin::Derived) edge.
     ///
     /// The **last** block is atomistic by position — the notation marks it
@@ -299,7 +299,7 @@ impl CGSmilesIR {
     /// [`CgLastBlockNotAtomistic`]. Nothing here builds a molecular graph or a
     /// frame.
     ///
-    /// Units: a node's [`charge`](CGNode::charge) is a **partial charge in
+    /// Units: a node's [`charge`](CgNode::charge) is a **partial charge in
     /// elementary charge units `e`** — the fractional force-field charge carried
     /// by a bead, not the integer formal charge of an atom. A bond order is a
     /// dimensionless multiplicity, 1..=4.
@@ -315,7 +315,7 @@ impl CGSmilesIR {
     /// operator `[!]` (`{[#A][!]}`), the one descriptor that shares a single atom
     /// between two beads instead of marking a site for a later join. Everything
     /// else the annotation table does not reserve is kept verbatim in
-    /// [`CGNode::annotations`].
+    /// [`CgNode::annotations`].
     ///
     /// # Invariants and caveats
     ///
@@ -336,7 +336,7 @@ impl CGSmilesIR {
     /// occurrence at a time — whereas a ring marker is a one-shot identity and
     /// cannot be replayed at all ([`CgRepeatOnRingMarker`]).
     ///
-    /// The constructor of the IR, as [`SmilesIR::parse`](crate::io::smiles::SmilesIR::parse)
+    /// The constructor of the IR, as [`SmilesIr::parse`](crate::io::smiles::SmilesIr::parse)
     /// is SMILES's: parsing is stateless, and the parser that does the work is a
     /// private type with exactly one user-visible step.
     ///
@@ -370,7 +370,7 @@ impl CGSmilesIR {
     /// OpenSMILES), [`CgUnmatchableEdge`] (a written bond whose two fragments
     /// offer no free pair of compatible bonding descriptors,
     /// `{[#A][#B]}.{#A=[$a]C,#B=[$b]C}`), [`CgNotExpandable`] (raised by
-    /// [`CGSmilesIR::to_atomistic`], not by this function: a string with no
+    /// [`CgSmilesIr::to_atomistic`], not by this function: a string with no
     /// atomistic body to expand) and [`CgBuild`] (an internal invariant of the
     /// reader, unreachable from user input).
     ///
@@ -382,7 +382,7 @@ impl CGSmilesIR {
     /// [`RingBondConflict`].
     ///
     /// A body of the last block is parsed by
-    /// [`SmilesIR::from_fragment`](crate::io::smiles::SmilesIR::from_fragment), and
+    /// [`SmilesIr::from_fragment`](crate::io::smiles::SmilesIr::from_fragment), and
     /// its diagnostic is **re-based** before it leaves this function: the span is
     /// shifted by the body's offset, the input is the whole `CGsmiles` string and
     /// the notation is `CGsmiles`, so the caret lands on the offending token of
@@ -442,29 +442,29 @@ impl CGSmilesIR {
     /// # Examples
     ///
     /// ```
-    /// use molrs::io::cgsmiles::CGSmilesIR;
+    /// use molrs::io::cgsmiles::CgSmilesIr;
     ///
-    /// let ir = CGSmilesIR::parse("{[#PEO][#PEO][#PEO]}").unwrap();
+    /// let ir = CgSmilesIr::parse("{[#PEO][#PEO][#PEO]}").unwrap();
     /// assert_eq!(ir.levels.len(), 1);
     /// assert_eq!(ir.levels[0].nodes.len(), 3);
     /// assert_eq!(ir.levels[0].nodes[0].name, "PEO");
     /// assert_eq!(ir.levels[0].edges.len(), 2);
     /// assert_eq!(ir.levels[0].edges[0].order.multiplicity(), 1);
     /// ```
-    pub fn parse(text: &str) -> Result<CGSmilesIR, SmilesError> {
+    pub fn parse(text: &str) -> Result<CgSmilesIr, SmilesError> {
         let mut ir = CgParser::new(text).parse()?;
         resolve(&mut ir, text)?;
         Ok(ir)
     }
 }
 
-/// Read the molecule a `CGsmiles` string states: [`CGSmilesIR::parse`] then
-/// [`CGSmilesIR::to_atomistic`] — topology only, every bead of the lowest
+/// Read the molecule a `CGsmiles` string states: [`CgSmilesIr::parse`] then
+/// [`CgSmilesIr::to_atomistic`] — topology only, every bead of the lowest
 /// level replaced by its fragment body, each resolved descriptor pair one bond.
 ///
 /// # Errors
 ///
-/// Every [`CGSmilesIR::parse`] and [`CGSmilesIR::to_atomistic`] error.
+/// Every [`CgSmilesIr::parse`] and [`CgSmilesIr::to_atomistic`] error.
 pub fn read_cgsmiles_str(text: &str) -> Result<crate::core::Atomistic, SmilesError> {
-    CGSmilesIR::parse(text)?.to_atomistic()
+    CgSmilesIr::parse(text)?.to_atomistic()
 }

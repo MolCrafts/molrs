@@ -9,7 +9,7 @@
 //! | [`streaming`] | `LammpsDumpStream`, `XyzStream`, `PdbStream`, `LammpsDataStream`, `SdfStream`, `DcdStream`, `XtcStream`, `TrrStream` | The one reader of XYZ/ExtXYZ, PDB, LAMMPS data/dump, SDF, DCD, XTC, TRR: chunk-fed `FrameIndexBuilder` + per-range parse |
 //! | [`writer`] | `writeXyzStr`, `writePdbStr`, …, `writeDcdBytes`, …, `writeMsgpackFrameBytes`, `writeJsonFrameStr` | One writer per format — no export picks a format from a string |
 //! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
-//! | `smiles` | `readSmilesStr`, `SmilesIR.parse` | SMILES strings (`smiles` feature) |
+//! | `smiles` | `readSmilesStr`, `SmilesIr.parse` | SMILES strings (`smiles` feature) |
 //! | [`mrec`] | `MrecReader`, `readMrecFrame`, `mrecSections` | `*.mrec` scientific records (Zarr V3) |
 //! | [`mesh`] | `readStlBytes(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!

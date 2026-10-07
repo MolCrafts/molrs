@@ -1,21 +1,21 @@
 //! The coarsest `CGsmiles` level read as a bead graph: one [`CoarseGrain`]
 //! bead per node of `levels[0]`, one CG bond per edge.
 //!
-//! This is the third conversion of a [`CGSmilesIR`], beside
-//! [`to_atomistic`](CGSmilesIR::to_atomistic) (the whole molecule) and
-//! [`templates`](CGSmilesIR::templates) (one template per atomistic
+//! This is the third conversion of a [`CgSmilesIr`], beside
+//! [`to_atomistic`](CgSmilesIr::to_atomistic) (the whole molecule) and
+//! [`templates`](CgSmilesIr::templates) (one template per atomistic
 //! definition). Both of those need a fragment table; this one needs only the
 //! base block, so a base-only string such as `{[#1][#1][#1][#4]}` is its main
 //! input. Its main consumer is a bead-group pattern written as notation
 //! instead of built bead by bead.
 
-use crate::io::cgsmiles::CGSmilesIR;
+use crate::io::cgsmiles::CgSmilesIr;
 use crate::io::cgsmiles::templates::cg_build;
 use crate::io::smiles::SmilesError;
 use molrs::core::CoarseGrain;
 use molrs::core::NodeId;
 
-impl CGSmilesIR {
+impl CgSmilesIr {
     /// Read the coarsest level, `levels[0]`, as a [`CoarseGrain`].
     ///
     /// One bead per node, added in node order, so bead row *k* is node *k*;
@@ -36,18 +36,18 @@ impl CGSmilesIR {
     ///
     /// # What is dropped
     ///
-    /// * [`CGEdge::order`](crate::io::cgsmiles::CGEdge::order): a multiplicity
+    /// * [`CgEdge::order`](crate::io::cgsmiles::CgEdge::order): a multiplicity
     ///   says how many atomistic bonds the edge becomes on expansion; between
     ///   beads an edge of any multiplicity is one connection, and a CG bond
     ///   has no order column. Every bond's property bag is empty.
-    /// * [`CGEdge::span`](crate::io::cgsmiles::CGEdge::span) and
-    ///   [`CGEdge::origin`](crate::io::cgsmiles::CGEdge::origin).
-    /// * [`CGNode::charge`](crate::io::cgsmiles::CGNode::charge) (a partial
+    /// * [`CgEdge::span`](crate::io::cgsmiles::CgEdge::span) and
+    ///   [`CgEdge::origin`](crate::io::cgsmiles::CgEdge::origin).
+    /// * [`CgNode::charge`](crate::io::cgsmiles::CgNode::charge) (a partial
     ///   charge in `e`),
-    ///   [`CGNode::annotations`](crate::io::cgsmiles::CGNode::annotations),
-    ///   [`CGNode::descriptors`](crate::io::cgsmiles::CGNode::descriptors),
-    ///   [`CGNode::parent`](crate::io::cgsmiles::CGNode::parent) and
-    ///   [`CGNode::span`](crate::io::cgsmiles::CGNode::span). Carrying any of
+    ///   [`CgNode::annotations`](crate::io::cgsmiles::CgNode::annotations),
+    ///   [`CgNode::descriptors`](crate::io::cgsmiles::CgNode::descriptors),
+    ///   [`CgNode::parent`](crate::io::cgsmiles::CgNode::parent) and
+    ///   [`CgNode::span`](crate::io::cgsmiles::CgNode::span). Carrying any of
     ///   them needs a column decision for CG beads that has not been made.
     ///
     /// # Errors
@@ -57,17 +57,17 @@ impl CGSmilesIR {
     /// `levels` is empty, an edge endpoint is out of range (naming the edge
     /// index and the bad endpoint), or adding a CG bond fails (wrapping the
     /// underlying error). None is reachable from the output of
-    /// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse); only a
+    /// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse); only a
     /// hand-built or hand-edited IR gets there. The graph is built locally,
     /// so an error leaves nothing half-built behind.
     ///
     /// # Examples
     ///
     /// ```
-    /// use molrs::io::cgsmiles::CGSmilesIR;
+    /// use molrs::io::cgsmiles::CgSmilesIr;
     ///
     /// // Four beads of types 1, 1, 1, 4 in a chain.
-    /// let ir = CGSmilesIR::parse("{[#1][#1][#1][#4]}")?;
+    /// let ir = CgSmilesIr::parse("{[#1][#1][#1][#4]}")?;
     /// let cg = ir.to_coarsegrain()?;
     ///
     /// assert_eq!(cg.n_beads(), 4);
@@ -120,7 +120,7 @@ impl CGSmilesIR {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::cgsmiles::CGSmilesIR;
+    use crate::io::cgsmiles::CgSmilesIr;
     use crate::io::smiles::SmilesErrorKind;
     use molrs::core::CoarseGrain;
     use molrs::core::NodeId;
@@ -135,8 +135,8 @@ mod tests {
     // -- helpers ------------------------------------------------------------
 
     /// The IR of a `CGsmiles` string that must parse.
-    fn parsed(text: &str) -> CGSmilesIR {
-        CGSmilesIR::parse(text).unwrap_or_else(|e| panic!("{text:?} must parse: {e}"))
+    fn parsed(text: &str) -> CgSmilesIr {
+        CgSmilesIr::parse(text).unwrap_or_else(|e| panic!("{text:?} must parse: {e}"))
     }
 
     /// The bead graph of a `CGsmiles` string that must parse and convert.
@@ -179,7 +179,7 @@ mod tests {
     }
 
     /// The payload of a `CgBuild` refusal; any other outcome fails the test.
-    fn cg_build_reason(ir: &CGSmilesIR) -> String {
+    fn cg_build_reason(ir: &CgSmilesIr) -> String {
         match ir.to_coarsegrain() {
             Err(e) => match e.kind {
                 SmilesErrorKind::CgBuild(reason) => reason,

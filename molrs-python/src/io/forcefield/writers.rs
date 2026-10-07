@@ -126,7 +126,7 @@ pub fn write_openmm_xml_forcefield_py(
 ///     ``"metal"``, or ``"lj"``.
 /// cmap_file : str, optional
 ///     The ``fix cmap`` file the include names on its ``fix cmap all cmap
-///     <file>`` line (where :func:`write_lammps_cmap` saved it). Required
+///     <file>`` line (where :func:`write_lammps_cmap_forcefield` saved it). Required
 ///     exactly when ``frame`` has a ``cmaps`` block; that fix must reach
 ///     LAMMPS before ``read_data <data> fix cmap crossterm CMAP``.
 ///
@@ -306,7 +306,7 @@ pub fn write_lammps_data_coeffs_py(
 /// each label's ``cmap charmm`` grid is written in CHARMM's layout (a
 /// ``# UNITS:`` line, ``# <φ>`` rows of five ``precision``-decimal values),
 /// energies converted to ``units``. A CHARMM file read with
-/// :func:`read_lammps_cmap` is written back line for line.
+/// :func:`read_lammps_cmap_forcefield` is written back line for line.
 ///
 /// Raises
 /// ------
@@ -315,11 +315,11 @@ pub fn write_lammps_data_coeffs_py(
 ///     more than six maps, or a style other than ``charmm``.
 #[pyfunction]
 #[pyo3(
-    name = "write_lammps_cmap",
+    name = "write_lammps_cmap_forcefield",
     signature = (path, forcefield, frame, *, precision = 6, units = "real")
 )]
 
-pub fn write_lammps_cmap_py(
+pub fn write_lammps_cmap_forcefield_py(
     path: PathBuf,
     forcefield: &PyForceField,
     frame: &PyFrame,
@@ -449,6 +449,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "molrs.io",
         wrap_pyfunction!(write_lammps_data_coeffs_py, m)?,
     )?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(write_lammps_cmap_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(write_lammps_cmap_forcefield_py, m)?,
+    )?;
     Ok(())
 }

@@ -374,12 +374,13 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   is `"uint"`.
 - **New.** `assign_cmaps(frame, ff)` builds the `cmaps` block from a frame's
   dihedrals and the field's cmap rows (forward matching only);
-  `read_lammps_cmap_str` / `LammpsCmapFile` / `LammpsForcefieldReader::read_cmap_str`
-  read a `fix cmap` file into rows named `"1"` … `"K"`;
+  `read_lammps_cmap_str` parses a `fix cmap` file into a `LammpsCmapFile`
+  (its `UNITS:` tag and raw maps) and `LammpsForcefieldReader::read_cmap_str`
+  reads it into a force field, rows named `"1"` … `"K"`;
   `LammpsForcefieldWriter::write_cmap_str` and `write_lammps_cmap_str` write one (CHARMM's
   own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
   kernel. Python: `molrs.ff.typifier.assign_cmaps`,
-  `molrs.io.read_lammps_cmap` / `write_lammps_cmap`.
+  `molrs.io.read_lammps_cmap_forcefield` / `write_lammps_cmap_forcefield`.
 
 ### Array parameters
 
@@ -1142,7 +1143,7 @@ column.
 | `io::streaming::{FrameIndexEntry, FrameIndexBuilder}` | `io::frame_index::{FrameOffset, FrameIndexBuilder}` |
 | `io::reader::validated`, `io::writer::check_before_write` | `io::reader::check_read_frame`, `io::writer::check_write_frame` |
 | `io::writer::ToFrame`, `FrameWriter::write_from` | removed (`FrameWriter::write`; an `Atomistic` is `to_frame()` first) |
-| `io::smiles::{SmilesIR, AtomNode, …, SmilesError, Notation}`; `io::smiles::{CGSmilesIR, CGGraph, CGNode, CGEdge, CGBondOrder, EdgeOrigin, CGFragmentDef, FragmentBody, PairEnd, ResolvedPair}` | `io::smiles::…` (the IR, its AST nodes, `SmilesError`, `SmilesReader`, the emit options); `io::cgsmiles::…` |
+| `io::smiles::{SmilesIR, AtomNode, …, SmilesError, Notation}`; `io::smiles::{CGSmilesIR, CGGraph, CGNode, CGEdge, CGBondOrder, EdgeOrigin, CGFragmentDef, FragmentBody, PairEnd, ResolvedPair}` | `io::smiles::{SmilesIr, AtomNode, …, SmilesError, Notation}` (the IR, its AST nodes, `SmilesError`, `SmilesReader`, the emit options); `io::cgsmiles::{CgSmilesIr, CgGraph, CgNode, CgEdge, CgBondOrder, EdgeOrigin, CgFragmentDef, FragmentBody, PairEnd, ResolvedPair}` |
 | `io::smiles::frame_reader::{SmilesReader, parse_atomistic}` | `io::smiles::SmilesReader` (`parse_atomistic` private) |
 | `io::mrec::{schema, column_dtype}` | `io::mrec::{validation, dtype_from_schema_tag}` |
 | `io::zarr` (crate-private) | `io::mrec::zarr_storage` (crate-private) |
@@ -1166,6 +1167,7 @@ column.
 | `forcefield::writers::xml::write_forcefield_xml[_str]` / Python `write_forcefield_xml` | `write_openmm_xml_forcefield[_str]` |
 | `forcefield::xml::{read_opls_typing_xml_str, read_mmff_params_xml_str}` | `read_openmm_xml_opls_typing_str`, `read_mmff_xml_params_str` |
 | `forcefield::readers::lammps::read_lammps_cmap_str`, `forcefield::writers::lammps::lammps_cmap_str` | `read_lammps_cmap_str`, `write_lammps_cmap_str` |
+| Python `read_lammps_cmap(path)`, `write_lammps_cmap(path, forcefield, frame)` (a `ForceField`, unlike Rust's `read_lammps_cmap_str`, which returns the file's raw `LammpsCmapFile`) | `read_lammps_cmap_forcefield`, `write_lammps_cmap_forcefield` (`LammpsForcefieldReader::read_cmap_str` / `LammpsForcefieldWriter::write_cmap_str`); `read_lammps_cmap_str` / `write_lammps_cmap_str` stay the raw `fix cmap` grids |
 | `forcefield::readers::clpol::{read_alpha_ff, parse_alpha_ff}` | `read_clpol_alpha`, `read_clpol_alpha_str` |
 | `data::lammps_data::parse_frame_bytes`, `trajectory::lammps_dump::{read_lammps_dump, write_lammps_dump, open_lammps_dump, parse_frame_bytes}` | `read_lammps_data_bytes`, `read_lammps_trajectory`, `write_lammps_trajectory`, `LammpsDumpReader::open`, `read_lammps_dump_bytes` |
 | `data::lammps_molecule::{read_lammps_molecule (by extension), write_lammps_molecule(…, format)}` / Python `write_lammps_molecule(path, frame, format=)` | `read_lammps_molecule` / `write_lammps_molecule` (native text), `read_lammps_molecule_json` / `write_lammps_molecule_json` |
@@ -1178,9 +1180,9 @@ column.
 | `mrec::{read_record_store, write_record_store, read_frame_section_store, section_names_store}` | `read_mrec_storage`, `write_mrec_storage`, `read_mrec_frame_storage`, `mrec::section_names_storage` |
 | `mrec::{pack, open_packed, open_trajectory_sequence}`, `MrecReader::open(store)` / Python `molrs.io.mrec.pack`, `molrs.io.mrec.schema` | `mrec::{pack_mrec_zip, open_mrec_zip}`, `MrecReader::open(path)`, `MrecReader::from_storage(store)` / `molrs.io.mrec.pack_mrec_zip`, `molrs.io.mrec.validation` |
 | `MrecWriter::{create(store, …), create_at(path, …), open(store), open_at(path)}` | `MrecWriter::{create_in_storage(store, …), create(path, …), from_storage(store), open(path)}` |
-| `smiles::{parse_smiles, parse_fragment_smiles, to_atomistic, fragment_to_atomistic, from_atomistic, validate_smiles, read_smiles}` / Python `read_smiles` | `SmilesIR::{parse, from_fragment}`, `ir.to_atomistic()`, `ir.to_atomistic_with_descriptors()`, `SmilesIR::from_atomistic`, `ir.validate(text)`, `read_smiles_str` / Python `read_smiles_str` |
+| `smiles::{parse_smiles, parse_fragment_smiles, to_atomistic, fragment_to_atomistic, from_atomistic, validate_smiles, read_smiles}` / Python `read_smiles` | `SmilesIr::{parse, from_fragment}`, `ir.to_atomistic()`, `ir.to_atomistic_with_descriptors()`, `SmilesIr::from_atomistic`, `ir.validate(text)`, `read_smiles_str` / Python `read_smiles_str` |
 | `smiles::{write_atomistic_smiles, write_smiles, write_fragment_smiles}` / Python `SmilesIR.write_smiles()` | `write_smiles_str(mol, &options)` / `molrs.io.write_smiles_str(mol, **flags)` (an IR's own text writers are crate-private) |
-| `smiles::parse_cgsmiles` | `CGSmilesIR::parse`; new `read_cgsmiles_str` (the molecule, its lowest level expanded) |
+| `smiles::parse_cgsmiles` | `CgSmilesIr::parse`; new `read_cgsmiles_str` (the molecule, its lowest level expanded) |
 | `smiles::{parse_smarts, write_smarts, write_local_smarts, local_smarts_ir, LocalSmartsOptions, NeighborStyle}` / Python `molrs.io.write_smarts(mol, center, …)`, `SmilesIR.write_smarts()` | `perceive::smarts::{SmartsPattern::from_environment(mol, center, &EnvironmentOptions), NeighborStyle}` and `SmartsPattern`'s `Display` / `molrs.perceive.SmartsPattern.from_environment(mol, center, …)` and `str(pattern)` |
 
 **Python modules**
@@ -1190,14 +1192,14 @@ column.
 | `molrs.io.trajectory.TrajectoryReader` (a generic concatenator over native `LAMMPSTrajReader`, `DCDTrajReader`, `XYZTrajReader`, `TRRTrajReader`, `XTCTrajReader`) | the format's own lazy reader, what `read_<fmt>_trajectory` returns: `molrs.io.pdb.PdbReader`, `molrs.io.xyz.XyzReader`, `molrs.io.gro.GroReader`, `molrs.io.lammps.LammpsDumpReader`, `molrs.io.dcd.DcdReader`, `molrs.io.trr.TrrReader`, `molrs.io.xtc.XtcReader` (one path or a list of paths; the same surface). `read_pdb_trajectory` and `read_gro_trajectory` return their reader too, not a `list` (`.read_all()`). |
 | `molrs.io.log.LammpsLog`, … | `molrs.io.lammps.LammpsLog`, … |
 | `molrs.io.lammps_bond_react.BondReactTemplate` | `molrs.io.lammps.BondReactTemplate` |
-| `molrs.io.smiles.{CGSmilesIR, CGGraph, CGNode, CGEdge, CGFragmentDef, ResolvedPair, PairEnd}` | `molrs.io.cgsmiles.…` (`BondingDescriptor` stays `molrs.io.smiles`'s) |
+| `molrs.io.smiles.{SmilesIR, CGSmilesIR, CGGraph, CGNode, CGEdge, CGFragmentDef, ResolvedPair, PairEnd}`, `molrs.core.CGBond` | `molrs.io.smiles.SmilesIr`, `molrs.io.cgsmiles.{CgSmilesIr, CgGraph, CgNode, CgEdge, CgFragmentDef, ResolvedPair, PairEnd}`, `molrs.core.CgBond` (`BondingDescriptor` stays `molrs.io.smiles`'s) |
 | `SmartsPattern` `repr` `SmartsPattern(num_query_atoms=N)` | `SmartsPattern('<smarts>')`; `str(pattern)` is the SMARTS text |
 
 **WASM, C and C++**
 
 | Earlier 0.16 builds | 0.16 |
 |---|---|
-| JS `parseSMILES(s)` | `SmilesIR.parse(s)` (the IR, `toFrame()`), `readSmilesStr(s)` (one molecule's `Frame`) |
+| JS `parseSMILES(s)` | `SmilesIr.parse(s)` (the IR, `toFrame()`), `readSmilesStr(s)` (one molecule's `Frame`) |
 | JS `readSTL` | `readStlBytes` |
 | JS `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CHGCARReader`, `AcReader` | `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `VaspChgcarReader`, `AmberAcReader` (`CubeReader`, `AmberInpcrdReader` unchanged) |
 | JS `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream`, `FrameIndexEntry` | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream`, `FrameOffset` |
@@ -1205,6 +1207,15 @@ column.
 | JS `writeFrameBytes(frame, fmt)`, `readFrameBytes(data, fmt)` | `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`, `writeMsgpackFrameBytes` / `readMsgpackFrameBytes`, `writeJsonFrameStr` / `readJsonFrameStr` |
 | JS `MrecReader.fromStore` | `MrecReader.fromStorage` |
 | C `molrs_frame_from_smiles`, C++ `xyz_read_first_frame`, `read_first_frame`, `write_frame_xyz_typed` | unchanged names, over `molrs::io::read_smiles_str`, `read_xyz`, `read_mrec_frame` and `XyzWriter` (the C++ XYZ writer now checks the Frame schema first) |
+
+**Acronyms are cased as words** here too, as in `ff` (`PdbReader`, `Mmff`):
+the SMILES / CGsmiles IR and record types are `SmilesIr`, `CgSmilesIr`,
+`CgGraph`, `CgNode`, `CgEdge`, `CgFragmentDef`, `CgBondOrder` (Rust), the
+CoarseGrain bond view is `molrs.core.CgBond`, and the JS class is `SmilesIr`;
+MMFF's van der Waals rows are `ff::params::mmff::{MmffVdw, MmffVdwStyle}`.
+`DType` and the WASM `NDArray` keep numpy's spelling (`numpy.dtypes.*DType`,
+`numpy.typing.NDArray`). The analysis names (`RDF`, `MSD`, `PMFTXY`, …) are
+not covered by this change.
 
 #### Engine constants are unit facts (`core::constants`)
 
@@ -1494,7 +1505,7 @@ it any more.
   returns), `molrs.io.mrec` (`MrecReader` / `MrecWriter` — the lazy store
   cursor and its writer, named as Rust's `molrs::io::mrec::{MrecReader,
   MrecWriter}` — `SequenceSchema`, `ForceFieldSection`, `section_names`,
-  `pack_mrec_zip`, `validation`), `molrs.io.smiles` (`SmilesIR`,
+  `pack_mrec_zip`, `validation`), `molrs.io.smiles` (`SmilesIr`,
   `SmilesError`, `BondingDescriptor`), `molrs.io.cgsmiles` (the CGsmiles
   records) and `molrs.io.lammps` (the `Lammps*` log records,
   `BondReactTemplate`). The top of `molrs.io` holds functions only.
@@ -1536,7 +1547,7 @@ it any more.
 | `molrs.BlockDtypeError` | `molrs.core.BlockDtypeError` |
 | `molrs.Bond` | `molrs.core.Bond` |
 | `molrs.Box` | `molrs.core.Box` |
-| `molrs.CGBond` | `molrs.core.CGBond` |
+| `molrs.CGBond` | `molrs.core.CgBond` |
 | `molrs.CoarseGrain` | `molrs.core.CoarseGrain` |
 | `molrs.Cuboid` | `molrs.core.Cuboid` |
 | `molrs.Cylinder` | `molrs.core.Cylinder` |
@@ -1643,7 +1654,7 @@ it any more.
 | `molrs.ff.read_forcefield_xml` | `molrs.io.read_openmm_xml_forcefield` (an OpenMM file) or `molrs.io.read_molrs_xml_forcefield` (molrs's own layout) |
 | `molrs.ff.read_gromacs_system` | `molrs.io.read_gromacs_system` |
 | `molrs.ff.read_gromacs_top_ff` | `molrs.io.read_gromacs_top_forcefield` |
-| `molrs.ff.read_lammps_cmap` | `molrs.io.read_lammps_cmap` |
+| `molrs.ff.read_lammps_cmap` | `molrs.io.read_lammps_cmap_forcefield` |
 | `molrs.ff.read_lammps_data_coeffs` | `molrs.io.read_lammps_data_coeffs` |
 | `molrs.ff.read_lammps_forcefield` | `molrs.io.read_lammps_forcefield` |
 | `molrs.ff.read_opls_xml` | `molrs.io.read_openmm_xml_forcefield` |
@@ -1651,7 +1662,7 @@ it any more.
 | `molrs.ff.write_forcefield_xml` | `molrs.io.write_openmm_xml_forcefield` |
 | `molrs.ff.write_gromacs_system` | `molrs.io.write_gromacs_system` |
 | `molrs.ff.write_gromacs_top_ff` | `molrs.io.write_gromacs_top_forcefield` |
-| `molrs.ff.write_lammps_cmap` | `molrs.io.write_lammps_cmap` |
+| `molrs.ff.write_lammps_cmap` | `molrs.io.write_lammps_cmap_forcefield` |
 | `molrs.ff.write_lammps_data_coeffs` | `molrs.io.write_lammps_data_coeffs` |
 | `molrs.ff.write_lammps_forcefield` | `molrs.io.write_lammps_forcefield` |
 | `molrs.ff.write_lammps_forcefield_str` | `molrs.io.write_lammps_forcefield_str` |
@@ -1713,12 +1724,12 @@ it any more.
 | `molrs.io.mrec.TrajectoryReader` | `molrs.io.mrec.MrecReader` |
 | `molrs.io.mrec.TrajectoryWriter` | `molrs.io.mrec.MrecWriter` |
 | `molrs.io.TrajectoryReader` | the format's own reader, `molrs.io.<fmt>.<Fmt>Reader` (`molrs.io.dcd.DcdReader`, …) |
-| `molrs.io.SmilesIR`, `molrs.SmilesIR` | `molrs.io.smiles.SmilesIR` |
+| `molrs.io.SmilesIR`, `molrs.SmilesIR` | `molrs.io.smiles.SmilesIr` |
 | `molrs.io.SmilesError` | `molrs.io.smiles.SmilesError` |
-| `molrs.io.CGSmilesIR`, `CGGraph`, `CGNode`, `CGEdge`, `CGFragmentDef`, `ResolvedPair`, `PairEnd` | `molrs.io.cgsmiles.…` (the same names) |
+| `molrs.io.CGSmilesIR`, `CGGraph`, `CGNode`, `CGEdge`, `CGFragmentDef`, `ResolvedPair`, `PairEnd` | `molrs.io.cgsmiles.{CgSmilesIr, CgGraph, CgNode, CgEdge, CgFragmentDef, ResolvedPair, PairEnd}` |
 | `molrs.io.BondingDescriptor` | `molrs.io.smiles.BondingDescriptor` |
 | `molrs.io.LammpsLog`, `LammpsLogHeader`, `LammpsRun`, `LammpsThermo`, `LammpsWarning`, `LammpsPerformance`, `LammpsTimingBreakdown`, `LammpsTimingRow`, `LammpsCpuUse`, `LammpsLoadBalance`, `LammpsLoopTime`, `LammpsMemoryUsage`, `LammpsNeighborStatistics` | `molrs.io.lammps.…` (the same names) |
-| — | `molrs.io.read_smiles_str(smiles)`: one molecule, connectivity only (a `'.'`-separated set is refused, naming `SmilesIR(s).components()`) |
+| — | `molrs.io.read_smiles_str(smiles)`: one molecule, connectivity only (a `'.'`-separated set is refused, naming `SmilesIr(s).components()`) |
 
 **Analysis: `molrs.compute` is flat, as the Rust facade is**
 

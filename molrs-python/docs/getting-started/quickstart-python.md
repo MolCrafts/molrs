@@ -11,13 +11,13 @@ between the graph representation (`Atomistic`) and the table representation
 
 ## 1. Parse a Molecule
 
-`molrs.io.smiles.SmilesIR` returns an intermediate representation. Convert it to
+`molrs.io.smiles.SmilesIr` returns an intermediate representation. Convert it to
 `Atomistic` when you want a graph with atoms and bonds.
 
 ```python
 import molrs
 
-ir = molrs.io.smiles.SmilesIR("CCO")  # ethanol
+ir = molrs.io.smiles.SmilesIr("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)

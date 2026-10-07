@@ -17,7 +17,7 @@ use molrs::ff::forcefield::ForceField;
 use molrs_ffi::RegionRef;
 use slotmap::SlotMap;
 
-use crate::handle::{BoxKey, FFKey, RegionKey};
+use crate::handle::{BoxKey, ForceFieldKey, RegionKey};
 
 /// Central store owning all C-API state.
 ///
@@ -39,8 +39,8 @@ pub(crate) struct CStore {
     /// Standalone SimBox instances, keyed by [`BoxKey`].
     pub simboxes: SlotMap<BoxKey, SimBox>,
 
-    /// Standalone ForceField instances, keyed by [`FFKey`].
-    pub forcefields: SlotMap<FFKey, ForceField>,
+    /// Standalone ForceField instances, keyed by [`ForceFieldKey`].
+    pub forcefields: SlotMap<ForceFieldKey, ForceField>,
 
     /// Shared regions, keyed by [`RegionKey`]. The value is the same
     /// `molrs_ffi::RegionRef` the Python and WASM binders hold, so the trait

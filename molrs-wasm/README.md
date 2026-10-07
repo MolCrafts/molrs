@@ -76,8 +76,8 @@ const withH = p.findHydrogens(frame);
 
 ### I/O
 
-- `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIR.parse(smiles)` →
-  `SmilesIR` → `.toFrame()` (any SMILES, a `.`-separated set included)
+- `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
+  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included)
 - `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
   `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →

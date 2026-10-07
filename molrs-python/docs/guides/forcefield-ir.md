@@ -441,9 +441,9 @@ value cell — the same numbers but for float ties on a cell edge).
   are both rows of `dihedrals` (either stored direction) and whose atom types
   equal a cmap row's `itom … mtom` **forward** — never reversed, since
   reading the five atoms backwards swaps φ and ψ.
-- A LAMMPS `fix cmap` file reads (`read_lammps_cmap`,
+- A LAMMPS `fix cmap` file reads (`read_lammps_cmap_forcefield`,
   `LammpsForcefieldReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
-  is crossterm type `t` — and writes (`write_lammps_cmap`,
+  is crossterm type `t` — and writes (`write_lammps_cmap_forcefield`,
   `LammpsForcefieldWriter::write_cmap_str`) the `cmaps` labels' grids in label id
   order, in CHARMM's layout: CHARMM's own file comes back line for line.
 - The data file's `N crossterms` header line and `CMAP` section

@@ -48,16 +48,16 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::io::cgsmiles::instantiate::instantiate;
 use crate::io::cgsmiles::validate::validate_ir;
 use crate::io::cgsmiles::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+    CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody,
 };
-use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIR, Span};
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIr, Span};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::line_notation::scanner::Scanner;
 use crate::line_notation::validation::validate_descriptor;
 use crate::op::types::F;
 
 /// One fragment table: the names one block defines, in name order.
-type FragmentTable = BTreeMap<String, CGFragmentDef>;
+type FragmentTable = BTreeMap<String, CgFragmentDef>;
 
 /// The only mapping weight the parser accepts: `w = 1`, the notation's own
 /// default (R2.14). `w` is the dimensionless mapping weight the notation
@@ -95,7 +95,7 @@ struct OpenRing {
     /// The order is a property of the bond, not of the end it was written at
     /// (OpenSMILES § 3.4 writes `C1CCCCC=1`), so a symbol at *either* end sets
     /// it and two differing explicit symbols are a conflict.
-    order: Option<CGBondOrder>,
+    order: Option<CgBondOrder>,
     /// Byte range of the opening marker, for the unmatched-closure error.
     span: Span,
 }
@@ -124,15 +124,15 @@ struct RepeatUnit {
 ///
 /// Private by design: it has exactly one user-visible step, so the public
 /// surface is the free function
-/// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse) that runs it, in the
+/// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse) that runs it, in the
 /// shape `parse_smiles` and `parse_smarts` already use.
 pub(super) struct CgParser<'a> {
     /// Cursor over the whole input, and the source of every diagnostic.
     scanner: Scanner<'a>,
     /// Nodes of the level being built, in parse order.
-    nodes: Vec<CGNode>,
+    nodes: Vec<CgNode>,
     /// Edges of the level being built, in parse order.
-    edges: Vec<CGEdge>,
+    edges: Vec<CgEdge>,
     /// Ring markers opened and not yet closed, by marker number.
     open_rings: HashMap<u16, OpenRing>,
     /// Anchor node of each open branch, innermost last.
@@ -140,7 +140,7 @@ pub(super) struct CgParser<'a> {
     /// The node the next chain element bonds to.
     current: Option<usize>,
     /// A bond symbol that has been read and not yet spent, with its offset.
-    pending: Option<(CGBondOrder, usize)>,
+    pending: Option<(CgBondOrder, usize)>,
     /// The stretch of input a `|n` written here would repeat — `None` before
     /// the first node of the block, and again after a `|n` consumes it.
     unit: Option<RepeatUnit>,
@@ -173,7 +173,7 @@ impl<'a> CgParser<'a> {
     /// instantiation, then validation.
     ///
     /// The three steps are one call because no caller may hold the state
-    /// between them — an un-instantiated [`CGSmilesIR`] is not a value this
+    /// between them — an un-instantiated [`CgSmilesIr`] is not a value this
     /// module hands out. A graph is read by a **fresh** parser seeked to the
     /// block or body it covers, so every diagnostic keeps a span into the
     /// whole input while the per-graph state (rings, branches, the repeat
@@ -198,7 +198,7 @@ impl<'a> CgParser<'a> {
     /// written inside a bracket atom of an atomistic body.
     /// [`SmilesErrorKind::InvalidDescriptorOrder`] cannot occur: a coarse bond
     /// order only ever maps to one of the four orders it allows.
-    pub(super) fn parse(self) -> Result<CGSmilesIR, SmilesError> {
+    pub(super) fn parse(self) -> Result<CgSmilesIr, SmilesError> {
         let input = self.scanner.input();
         if input.is_empty() {
             return Err(self.scanner.error(SmilesErrorKind::EmptyInput));
@@ -215,7 +215,7 @@ impl<'a> CgParser<'a> {
         // pairing descriptors is `resolve`'s step, run by `parse_cgsmiles`
         // once the levels exist.
         let pairs = vec![Vec::new(); levels.len()];
-        let ir = CGSmilesIR {
+        let ir = CgSmilesIr {
             levels,
             fragments,
             pairs,
@@ -234,10 +234,10 @@ impl<'a> CgParser<'a> {
     /// [`SmilesErrorKind::CgUndefinedFragment`] and `instantiate`'s
     /// [`SmilesErrorKind::CgBuild`] stays unreachable from user input.
     fn build_levels(
-        base: CGGraph,
+        base: CgGraph,
         fragments: &[FragmentTable],
         input: &str,
-    ) -> Result<Vec<CGGraph>, SmilesError> {
+    ) -> Result<Vec<CgGraph>, SmilesError> {
         let mut levels = vec![base];
         for (index, table) in fragments.iter().enumerate() {
             Self::check_coverage(&levels[index], table, input)?;
@@ -260,7 +260,7 @@ impl<'a> CgParser<'a> {
     /// implemented — order 0 is [`SmilesErrorKind::CgInvalidBondOrder`] here,
     /// so the exempt case cannot be reached.
     fn check_coverage(
-        level: &CGGraph,
+        level: &CgGraph,
         table: &FragmentTable,
         input: &str,
     ) -> Result<(), SmilesError> {
@@ -280,7 +280,7 @@ impl<'a> CgParser<'a> {
     /// dispatch, so the filter drops nothing in practice — it is what stops an
     /// atomistic body from reaching expansion *by type* instead of by a
     /// runtime check.
-    fn graph_defs(table: &FragmentTable) -> BTreeMap<&str, &CGGraph> {
+    fn graph_defs(table: &FragmentTable) -> BTreeMap<&str, &CgGraph> {
         table
             .iter()
             .filter_map(|(name, def)| match &def.body {
@@ -406,7 +406,7 @@ impl<'a> CgParser<'a> {
     ///
     /// The split is on the **first** `=` (R3.0): a body may carry further
     /// ones, which is how `#A=C=C` names a double bond.
-    fn parse_entry(&self, entry: Span, atomistic: bool) -> Result<CGFragmentDef, SmilesError> {
+    fn parse_entry(&self, entry: Span, atomistic: bool) -> Result<CgFragmentDef, SmilesError> {
         let input = self.scanner.input();
         let text = &input[entry.start..entry.end];
         let malformed = || {
@@ -428,7 +428,7 @@ impl<'a> CgParser<'a> {
             let kind = SmilesErrorKind::CgEmptyFragmentBody;
             return Err(self.scanner.error_at(kind, entry));
         }
-        Ok(CGFragmentDef {
+        Ok(CgFragmentDef {
             name: name.to_owned(),
             body: self.parse_body_of(body, atomistic)?,
             span: entry,
@@ -447,7 +447,7 @@ impl<'a> CgParser<'a> {
             let graph = CgParser::new(input).parse_body(body)?;
             return Ok(FragmentBody::Graph(graph));
         }
-        match SmilesIR::from_fragment(&input[body.start..body.end]) {
+        match SmilesIr::from_fragment(&input[body.start..body.end]) {
             Ok(ir) => Ok(FragmentBody::Smiles(ir)),
             Err(err) => Err(Self::rebase(err, body.start, input)),
         }
@@ -493,7 +493,7 @@ impl<'a> CgParser<'a> {
     /// [`CgParser::parse_body`] bounds it at the body's end: a token left open
     /// inside the block must be refused where it was written, not chased into
     /// whatever follows.
-    fn parse_block(mut self, block: Span) -> Result<CGGraph, SmilesError> {
+    fn parse_block(mut self, block: Span) -> Result<CgGraph, SmilesError> {
         self.scanner.seek(block.start);
         self.scanner.set_limit(block.end - 1);
         self.scanner.expect('{')?;
@@ -522,7 +522,7 @@ impl<'a> CgParser<'a> {
     /// `body.end` as well, so a token left open at the body's last byte — the
     /// `[` of `{[#A]}.{#A=[#B;k=1}.{#B=[$]C}` — is reported inside this body
     /// instead of scanning on into the block that follows it.
-    fn parse_body(mut self, body: Span) -> Result<CGGraph, SmilesError> {
+    fn parse_body(mut self, body: Span) -> Result<CgGraph, SmilesError> {
         self.scanner.seek(body.start);
         self.scanner.set_limit(body.end);
         while self.scanner.pos() < body.end {
@@ -556,8 +556,8 @@ impl<'a> CgParser<'a> {
     }
 
     /// Hand over the nodes and edges read so far.
-    fn take_graph(&mut self) -> CGGraph {
-        CGGraph {
+    fn take_graph(&mut self) -> CgGraph {
+        CgGraph {
             nodes: std::mem::take(&mut self.nodes),
             edges: std::mem::take(&mut self.edges),
         }
@@ -630,12 +630,12 @@ impl<'a> CgParser<'a> {
 
     /// The multiplicity a bond symbol writes, or `None` for a character that
     /// is not one. `.` (order 0) is deliberately not among them.
-    fn bond_order(ch: char) -> Option<CGBondOrder> {
+    fn bond_order(ch: char) -> Option<CgBondOrder> {
         match ch {
-            '-' => Some(CGBondOrder::Single),
-            '=' => Some(CGBondOrder::Double),
-            '#' => Some(CGBondOrder::Triple),
-            '$' => Some(CGBondOrder::Quadruple),
+            '-' => Some(CgBondOrder::Single),
+            '=' => Some(CgBondOrder::Double),
+            '#' => Some(CgBondOrder::Triple),
+            '$' => Some(CgBondOrder::Quadruple),
             _ => None,
         }
     }
@@ -643,20 +643,20 @@ impl<'a> CgParser<'a> {
     /// The atomistic bond kind a coarse multiplicity annotates a bonding
     /// descriptor with: a descriptor's order is stored as a `BondKind`,
     /// because the bond its pairing creates is an ordinary atomistic bond.
-    fn bond_kind(order: CGBondOrder) -> BondKind {
+    fn bond_kind(order: CgBondOrder) -> BondKind {
         match order {
-            CGBondOrder::Single => BondKind::Single,
-            CGBondOrder::Double => BondKind::Double,
-            CGBondOrder::Triple => BondKind::Triple,
-            CGBondOrder::Quadruple => BondKind::Quadruple,
+            CgBondOrder::Single => BondKind::Single,
+            CgBondOrder::Double => BondKind::Double,
+            CgBondOrder::Triple => BondKind::Triple,
+            CgBondOrder::Quadruple => BondKind::Quadruple,
         }
     }
 
     /// Spend the pending bond symbol, defaulting to a single bond.
-    fn take_pending(&mut self) -> CGBondOrder {
+    fn take_pending(&mut self) -> CgBondOrder {
         self.pending
             .take()
-            .map_or(CGBondOrder::Single, |(order, _)| order)
+            .map_or(CgBondOrder::Single, |(order, _)| order)
     }
 
     /// Extend the repeatable unit up to the cursor.
@@ -741,7 +741,7 @@ impl<'a> CgParser<'a> {
         let span = self.scanner.span_from(start);
         let bound = self.bind_annotations(&name, &fields, span)?;
         self.push_node(
-            CGNode {
+            CgNode {
                 name,
                 charge: bound.charge,
                 annotations: bound.rest,
@@ -890,7 +890,7 @@ impl<'a> CgParser<'a> {
     /// Descriptors written before any node of the graph have been waiting for
     /// this one (01a's R4.2 leading rule) and are moved onto it first, so they
     /// keep their written order ahead of anything written after the node.
-    fn push_node(&mut self, mut node: CGNode, start: usize) -> Result<(), SmilesError> {
+    fn push_node(&mut self, mut node: CgNode, start: usize) -> Result<(), SmilesError> {
         let span = node.span;
         node.descriptors
             .extend(self.leading.drain(..).map(|(descriptor, _)| descriptor));
@@ -899,7 +899,7 @@ impl<'a> CgParser<'a> {
             Some(previous) => {
                 let order = self.take_pending();
                 self.nodes.push(node);
-                self.edges.push(CGEdge {
+                self.edges.push(CgEdge {
                     i: previous,
                     j: index,
                     order,
@@ -1079,9 +1079,9 @@ impl<'a> CgParser<'a> {
             }
             (Some(opening), _) => opening,
             (None, Some((closing, _))) => closing,
-            (None, None) => CGBondOrder::Single,
+            (None, None) => CgBondOrder::Single,
         };
-        self.edges.push(CGEdge {
+        self.edges.push(CgEdge {
             i: open.node,
             j: node,
             order,
@@ -1185,7 +1185,7 @@ impl<'a> CgParser<'a> {
         &mut self,
         unit: &RepeatUnit,
         previous: usize,
-        order: CGBondOrder,
+        order: CgBondOrder,
         at: usize,
     ) -> Result<usize, SmilesError> {
         self.scanner.seek(unit.start);
@@ -1194,7 +1194,7 @@ impl<'a> CgParser<'a> {
         while self.scanner.pos() < unit.end {
             self.step()?;
         }
-        self.edges.push(CGEdge {
+        self.edges.push(CgEdge {
             i: previous,
             j: anchor,
             order,
@@ -1207,38 +1207,38 @@ impl<'a> CgParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::cgsmiles::{CGBondOrder, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody};
-    use crate::io::smiles::{DescriptorKind, Notation, SmilesError, SmilesErrorKind, SmilesIR};
+    use crate::io::cgsmiles::{CgBondOrder, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody};
+    use crate::io::smiles::{DescriptorKind, Notation, SmilesError, SmilesErrorKind, SmilesIr};
     use crate::line_notation::fixtures::{atom_nodes, descriptors};
 
     // -- helpers ------------------------------------------------------------
 
     /// The single resolution level of a `CGsmiles` string that must parse.
-    fn level0(text: &str) -> CGGraph {
-        let ir = CGSmilesIR::parse(text)
-            .unwrap_or_else(|e| panic!("CGSmilesIR::parse({text:?}) failed: {e}"));
+    fn level0(text: &str) -> CgGraph {
+        let ir = CgSmilesIr::parse(text)
+            .unwrap_or_else(|e| panic!("CgSmilesIr::parse({text:?}) failed: {e}"));
         ir.levels
             .into_iter()
             .next()
-            .unwrap_or_else(|| panic!("CGSmilesIR::parse({text:?}) produced no level"))
+            .unwrap_or_else(|| panic!("CgSmilesIr::parse({text:?}) produced no level"))
     }
 
     /// `(i, j, order)` of every edge, in parse order.
-    fn edges(graph: &CGGraph) -> Vec<(usize, usize, CGBondOrder)> {
+    fn edges(graph: &CgGraph) -> Vec<(usize, usize, CgBondOrder)> {
         graph.edges.iter().map(|e| (e.i, e.j, e.order)).collect()
     }
 
     /// `(i, j)` of every edge, in parse order — for fixtures whose expectation
     /// is the connectivity alone.
-    fn pairs(graph: &CGGraph) -> Vec<(usize, usize)> {
+    fn pairs(graph: &CgGraph) -> Vec<(usize, usize)> {
         graph.edges.iter().map(|e| (e.i, e.j)).collect()
     }
 
     /// The error kind `text` must be refused with.
     fn kind_of(text: &str) -> SmilesErrorKind {
-        CGSmilesIR::parse(text)
+        CgSmilesIr::parse(text)
             .err()
-            .unwrap_or_else(|| panic!("CGSmilesIR::parse({text:?}) was accepted"))
+            .unwrap_or_else(|| panic!("CgSmilesIr::parse({text:?}) was accepted"))
             .kind
     }
 
@@ -1259,7 +1259,7 @@ mod tests {
         let graph = level0("{[#PEO][#PEO][#PEO]}");
         assert_eq!(
             edges(&graph),
-            vec![(0, 1, CGBondOrder::Single), (1, 2, CGBondOrder::Single),]
+            vec![(0, 1, CgBondOrder::Single), (1, 2, CgBondOrder::Single),]
         );
     }
 
@@ -1269,9 +1269,9 @@ mod tests {
         assert_eq!(
             edges(&graph),
             vec![
-                (0, 1, CGBondOrder::Double),
-                (1, 2, CGBondOrder::Triple),
-                (2, 3, CGBondOrder::Quadruple),
+                (0, 1, CgBondOrder::Double),
+                (1, 2, CgBondOrder::Triple),
+                (2, 3, CgBondOrder::Quadruple),
             ]
         );
     }
@@ -1310,7 +1310,7 @@ mod tests {
     fn test_ring_bond_order_comes_from_the_opening_marker() {
         let graph = level0("{[#A]=1[#B][#C]1}");
         let ring = graph.edges.last().expect("ring closure edge is missing");
-        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CGBondOrder::Double));
+        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CgBondOrder::Double));
     }
 
     /// A symbol written before the *closing* marker only sets the closure's
@@ -1320,7 +1320,7 @@ mod tests {
     fn test_ring_bond_order_may_be_written_on_the_closing_marker() {
         let graph = level0("{[#A]1[#B][#C]=1}");
         let ring = graph.edges.last().expect("ring closure edge is missing");
-        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CGBondOrder::Double));
+        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CgBondOrder::Double));
     }
 
     /// The same symbol at both ends agrees with itself and is not a conflict.
@@ -1328,7 +1328,7 @@ mod tests {
     fn test_ring_bond_order_written_at_both_ends_agrees() {
         let graph = level0("{[#A]=1[#B][#C]=1}");
         let ring = graph.edges.last().expect("ring closure edge is missing");
-        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CGBondOrder::Double));
+        assert_eq!((ring.i, ring.j, ring.order), (0, 2, CgBondOrder::Double));
     }
 
     // -- F1.7, F1.11, F1.12: annotations ------------------------------------
@@ -1436,9 +1436,9 @@ mod tests {
         assert_eq!(
             edges(&graph),
             vec![
-                (0, 1, CGBondOrder::Single),
-                (1, 2, CGBondOrder::Single),
-                (2, 3, CGBondOrder::Single),
+                (0, 1, CgBondOrder::Single),
+                (1, 2, CgBondOrder::Single),
+                (2, 3, CgBondOrder::Single),
             ]
         );
     }
@@ -1508,7 +1508,7 @@ mod tests {
         let graph = level0("{[#A]=|3}");
         assert_eq!(
             edges(&graph),
-            vec![(0, 1, CGBondOrder::Double), (1, 2, CGBondOrder::Double),]
+            vec![(0, 1, CgBondOrder::Double), (1, 2, CgBondOrder::Double),]
         );
     }
 
@@ -1526,11 +1526,11 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                (0, 1, CGBondOrder::Single),
-                (0, 2, CGBondOrder::Double),
-                (2, 3, CGBondOrder::Single),
-                (2, 4, CGBondOrder::Double),
-                (4, 5, CGBondOrder::Single),
+                (0, 1, CgBondOrder::Single),
+                (0, 2, CgBondOrder::Double),
+                (2, 3, CgBondOrder::Single),
+                (2, 4, CgBondOrder::Double),
+                (4, 5, CgBondOrder::Single),
             ]
         );
     }
@@ -1543,7 +1543,7 @@ mod tests {
     #[test]
     fn test_error_inside_a_repeated_unit_carries_the_full_input() {
         let text = "{[#A]([#B;w=2])|2}";
-        let err = CGSmilesIR::parse(text).expect_err("a non-default weight must be refused");
+        let err = CgSmilesIr::parse(text).expect_err("a non-default weight must be refused");
         assert_eq!(err.input, text);
         assert!(
             err.span.start < text.len(),
@@ -1876,7 +1876,7 @@ mod tests {
             "{[#A]|0}",
             "{[#PEO][#PEO]}[#X]",
         ] {
-            let err = CGSmilesIR::parse(text).expect_err("input must be refused");
+            let err = CgSmilesIr::parse(text).expect_err("input must be refused");
             assert_eq!(err.notation, Notation::CGsmiles, "input was {text}");
         }
     }
@@ -1902,20 +1902,20 @@ mod tests {
     // -- helpers ------------------------------------------------------------
 
     /// The whole IR of a `CGsmiles` string that must parse.
-    fn ir_of(text: &str) -> CGSmilesIR {
-        CGSmilesIR::parse(text)
-            .unwrap_or_else(|e| panic!("CGSmilesIR::parse({text:?}) failed: {e}"))
+    fn ir_of(text: &str) -> CgSmilesIr {
+        CgSmilesIr::parse(text)
+            .unwrap_or_else(|e| panic!("CgSmilesIr::parse({text:?}) failed: {e}"))
     }
 
     /// The whole error a `CGsmiles` string must be refused with.
     fn err_of(text: &str) -> SmilesError {
-        CGSmilesIR::parse(text)
+        CgSmilesIr::parse(text)
             .err()
-            .unwrap_or_else(|| panic!("CGSmilesIR::parse({text:?}) was accepted"))
+            .unwrap_or_else(|| panic!("CgSmilesIr::parse({text:?}) was accepted"))
     }
 
     /// The coarse-graph body stored for `name` in fragment table `table`.
-    fn graph_body<'a>(ir: &'a CGSmilesIR, table: usize, name: &str) -> &'a CGGraph {
+    fn graph_body<'a>(ir: &'a CgSmilesIr, table: usize, name: &str) -> &'a CgGraph {
         match &ir.fragments[table][name].body {
             FragmentBody::Graph(graph) => graph,
             FragmentBody::Smiles(_) => panic!("fragment {name:?} holds an atomistic body"),
@@ -1923,7 +1923,7 @@ mod tests {
     }
 
     /// The atomistic body stored for `name` in fragment table `table`.
-    fn smiles_body<'a>(ir: &'a CGSmilesIR, table: usize, name: &str) -> &'a SmilesIR {
+    fn smiles_body<'a>(ir: &'a CgSmilesIr, table: usize, name: &str) -> &'a SmilesIr {
         match &ir.fragments[table][name].body {
             FragmentBody::Smiles(body) => body,
             FragmentBody::Graph(_) => panic!("fragment {name:?} holds a coarse-graph body"),
@@ -1931,27 +1931,27 @@ mod tests {
     }
 
     /// The descriptor kinds one coarse node carries, in written order.
-    fn node_kinds(node: &CGNode) -> Vec<DescriptorKind> {
+    fn node_kinds(node: &CgNode) -> Vec<DescriptorKind> {
         node.descriptors.iter().map(|d| d.kind).collect()
     }
 
     /// The descriptor kinds every node of a level carries, in index order.
-    fn level_kinds(graph: &CGGraph) -> Vec<Vec<DescriptorKind>> {
+    fn level_kinds(graph: &CgGraph) -> Vec<Vec<DescriptorKind>> {
         graph.nodes.iter().map(node_kinds).collect()
     }
 
     /// The descriptor kinds an atomistic body carries, in atom-visit order.
-    fn body_kinds(body: &SmilesIR) -> Vec<DescriptorKind> {
+    fn body_kinds(body: &SmilesIr) -> Vec<DescriptorKind> {
         descriptors(body).iter().map(|d| d.kind).collect()
     }
 
     /// Node names of a level, in index order.
-    fn names(graph: &CGGraph) -> Vec<&str> {
+    fn names(graph: &CgGraph) -> Vec<&str> {
         graph.nodes.iter().map(|n| n.name.as_str()).collect()
     }
 
     /// `parent` of every node of a level, in index order.
-    fn parents(graph: &CGGraph) -> Vec<Option<usize>> {
+    fn parents(graph: &CgGraph) -> Vec<Option<usize>> {
         graph.nodes.iter().map(|n| n.parent).collect()
     }
 
@@ -2091,7 +2091,7 @@ mod tests {
     #[test]
     fn test_f8_level_one_has_three_single_written_intra_fragment_edges() {
         let ir = ir_of(F8);
-        let written: Vec<(usize, usize, CGBondOrder)> = ir.levels[1]
+        let written: Vec<(usize, usize, CgBondOrder)> = ir.levels[1]
             .edges
             .iter()
             .filter(|e| e.origin == EdgeOrigin::Written)
@@ -2100,9 +2100,9 @@ mod tests {
         assert_eq!(
             written,
             vec![
-                (0, 1, CGBondOrder::Single),
-                (2, 3, CGBondOrder::Single),
-                (4, 5, CGBondOrder::Single),
+                (0, 1, CgBondOrder::Single),
+                (2, 3, CgBondOrder::Single),
+                (4, 5, CgBondOrder::Single),
             ]
         );
     }

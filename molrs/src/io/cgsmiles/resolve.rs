@@ -49,10 +49,10 @@ use std::collections::btree_map::Entry;
 
 use crate::io::cgsmiles::parser::CgParser;
 use crate::io::cgsmiles::{
-    CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGSmilesIR, EdgeOrigin, FragmentBody, PairEnd,
+    CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgSmilesIr, EdgeOrigin, FragmentBody, PairEnd,
     ResolvedPair,
 };
-use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIR};
+use crate::io::smiles::{BondKind, BondingDescriptor, DescriptorKind, SmilesIr};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
@@ -62,7 +62,7 @@ use molrs::core::PropValue;
 ///
 /// `input` is the whole `CGsmiles` string, read only so that a refusal carries
 /// the text, a span into it and [`Notation::CGsmiles`]. `ir` is mutated in two
-/// places and no others: [`pairs`](CGSmilesIR::pairs) gains one list per
+/// places and no others: [`pairs`](CgSmilesIr::pairs) gains one list per
 /// level, and a level gains the [`Derived`](EdgeOrigin::Derived) edges the
 /// level above induced in it.
 ///
@@ -74,7 +74,7 @@ use molrs::core::PropValue;
 /// list empty, rather than refused.
 ///
 /// A private pipeline step, sibling of `instantiate` and `validate_ir`: an
-/// unresolved [`CGSmilesIR`] is not a value this module hands out.
+/// unresolved [`CgSmilesIr`] is not a value this module hands out.
 ///
 /// # Errors
 ///
@@ -99,10 +99,10 @@ use molrs::core::PropValue;
 ///
 /// # Panics
 ///
-/// If [`pairs`](CGSmilesIR::pairs) is shorter than
-/// [`levels`](CGSmilesIR::levels). The parser builds the two together — one
+/// If [`pairs`](CgSmilesIr::pairs) is shorter than
+/// [`levels`](CgSmilesIr::levels). The parser builds the two together — one
 /// empty list per level — and this step is reached through no other path.
-pub(super) fn resolve(ir: &mut CGSmilesIR, input: &str) -> Result<(), SmilesError> {
+pub(super) fn resolve(ir: &mut CgSmilesIr, input: &str) -> Result<(), SmilesError> {
     // A base-only string writes edges between beads that offer no ports at
     // all. There is nothing to pair, and nothing to refuse.
     if ir.fragments.is_empty() {
@@ -136,7 +136,7 @@ pub(super) fn resolve(ir: &mut CGSmilesIR, input: &str) -> Result<(), SmilesErro
 /// [`SmilesErrorKind::CgUnmatchableEdge`] at the first edge whose next bond
 /// finds no free compatible pair.
 fn resolve_level(
-    graph: &CGGraph,
+    graph: &CgGraph,
     ports: &mut PortTable,
     level: usize,
     input: &str,
@@ -170,7 +170,7 @@ fn resolve_level(
 /// The edges the pairs of an intermediate level induce in the level below.
 ///
 /// One edge per pair, between the two child nodes the pair joined,
-/// [`CGBondOrder::Single`] because one pair is one bond, and spanned at the
+/// [`CgBondOrder::Single`] because one pair is one bond, and spanned at the
 /// coarse edge that induced it — the only text that names that bond.
 ///
 /// # Errors
@@ -181,10 +181,10 @@ fn resolve_level(
 /// input.
 fn derived_edges(
     pairs: &[ResolvedPair],
-    graph: &CGGraph,
+    graph: &CgGraph,
     level: usize,
     input: &str,
-) -> Result<Vec<CGEdge>, SmilesError> {
+) -> Result<Vec<CgEdge>, SmilesError> {
     let mut edges = Vec::with_capacity(pairs.len());
     for (pair, resolved) in pairs.iter().enumerate() {
         let span = graph.edges[resolved.edge].span;
@@ -195,10 +195,10 @@ fn derived_edges(
             let kind = SmilesErrorKind::CgBuild(reason);
             return Err(SmilesError::new(kind, span, input, Notation::CGsmiles));
         };
-        edges.push(CGEdge {
+        edges.push(CgEdge {
             i: *i,
             j: *j,
-            order: CGBondOrder::Single,
+            order: CgBondOrder::Single,
             span,
             origin: EdgeOrigin::Derived { level, pair },
         });
@@ -237,8 +237,8 @@ fn derived_edges(
 /// through [`CgParser::rebase`] onto the body's offset in `input`, the same
 /// treatment the parser gives a body that does not even parse.
 fn last_level_ports(
-    graph: &CGGraph,
-    defs: &BTreeMap<String, CGFragmentDef>,
+    graph: &CgGraph,
+    defs: &BTreeMap<String, CgFragmentDef>,
     cache: &mut FragmentCache,
     input: &str,
 ) -> Result<PortTable, SmilesError> {
@@ -336,11 +336,11 @@ impl PortTable {
     /// carry one level down, grouped by the parent that instantiated them.
     ///
     /// `graph` is the level being resolved and `children` the level below it,
-    /// whose nodes each name their [`parent`](crate::io::cgsmiles::CGNode::parent).
+    /// whose nodes each name their [`parent`](crate::io::cgsmiles::CgNode::parent).
     /// A child naming no parent, or a parent index no node of `graph` has,
     /// offers this level nothing and is skipped: instantiation sets a parent on
     /// every copy it makes, so neither case arises from a parsed value.
-    fn of_children(graph: &CGGraph, children: &CGGraph) -> Self {
+    fn of_children(graph: &CgGraph, children: &CgGraph) -> Self {
         let mut instances: Vec<Vec<Vec<Port>>> = graph.nodes.iter().map(|_| Vec::new()).collect();
         for (node, child) in children.nodes.iter().enumerate() {
             let Some(parent) = child.parent.filter(|p| *p < instances.len()) else {
@@ -464,7 +464,7 @@ pub(super) type ConvertedBody = (Atomistic, Vec<(NodeId, BondingDescriptor)>);
 ///
 /// A per-call local, built and dropped inside one call of [`resolve`] or of
 /// the lowest-level expansion behind
-/// [`CGSmilesIR::to_atomistic`](crate::io::cgsmiles::CGSmilesIR::to_atomistic):
+/// [`CgSmilesIr::to_atomistic`](crate::io::cgsmiles::CgSmilesIr::to_atomistic):
 /// never a field of the IR (which would make a value of parse results own a
 /// second representation of its own bodies), never a `static`, a
 /// `thread_local` or a cross-call memo. Within one call a definition is
@@ -511,7 +511,7 @@ impl FragmentCache {
     pub(super) fn get_or_build(
         &mut self,
         name: &str,
-        body: &SmilesIR,
+        body: &SmilesIr,
     ) -> Result<&ConvertedBody, SmilesError> {
         match self.entries.entry(name.to_owned()) {
             Entry::Occupied(entry) => Ok(entry.into_mut()),
@@ -530,9 +530,9 @@ mod tests {
 
     use crate::io::cgsmiles::fixtures::{body, pair};
     use crate::io::cgsmiles::parser::CgParser;
-    use crate::io::cgsmiles::{CGBondOrder, CGSmilesIR, EdgeOrigin, PairEnd, ResolvedPair};
+    use crate::io::cgsmiles::{CgBondOrder, CgSmilesIr, EdgeOrigin, PairEnd, ResolvedPair};
     use crate::io::smiles::{
-        BondKind, DescriptorKind, Notation, SmilesError, SmilesErrorKind, SmilesIR, Span,
+        BondKind, DescriptorKind, Notation, SmilesError, SmilesErrorKind, SmilesIr, Span,
     };
 
     // Every expectation below is hand-derived from § Domain basis of
@@ -548,22 +548,22 @@ mod tests {
     // -- helpers ------------------------------------------------------------
 
     /// The resolved IR of a `CGsmiles` string that must parse and resolve.
-    fn resolved(text: &str) -> CGSmilesIR {
-        CGSmilesIR::parse(text)
-            .unwrap_or_else(|e| panic!("CGSmilesIR::parse({text:?}) failed: {e}"))
+    fn resolved(text: &str) -> CgSmilesIr {
+        CgSmilesIr::parse(text)
+            .unwrap_or_else(|e| panic!("CgSmilesIr::parse({text:?}) failed: {e}"))
     }
 
     /// The error a `CGsmiles` string must be refused with.
     fn err_of(text: &str) -> SmilesError {
-        CGSmilesIR::parse(text)
+        CgSmilesIr::parse(text)
             .err()
-            .unwrap_or_else(|| panic!("CGSmilesIR::parse({text:?}) was accepted"))
+            .unwrap_or_else(|| panic!("CgSmilesIr::parse({text:?}) was accepted"))
     }
 
     /// The IR as the syntax / instantiation / validation stages leave it,
     /// before `resolve` runs: `CgParser::parse` is those three stages and
     /// nothing else.
-    fn unresolved(text: &str) -> CGSmilesIR {
+    fn unresolved(text: &str) -> CgSmilesIr {
         CgParser::new(text)
             .parse()
             .unwrap_or_else(|e| panic!("CgParser::parse({text:?}) failed: {e}"))
@@ -862,11 +862,11 @@ mod tests {
     #[test]
     fn test_f8_derived_edges_are_single_bonds() {
         let ir = resolved(F8);
-        let orders: Vec<CGBondOrder> = ir.levels[1].edges[3..]
+        let orders: Vec<CgBondOrder> = ir.levels[1].edges[3..]
             .iter()
             .map(|edge| edge.order)
             .collect();
-        assert_eq!(orders, vec![CGBondOrder::Single, CGBondOrder::Single]);
+        assert_eq!(orders, vec![CgBondOrder::Single, CgBondOrder::Single]);
     }
 
     /// The only text naming a derived edge is the coarse bond that induced it,
@@ -1017,7 +1017,7 @@ mod tests {
     /// hangs off.
     #[test]
     fn test_fragment_to_atomistic_map_is_in_walker_order() {
-        let ir = SmilesIR::from_fragment("C([$]O)[>]").expect("fragment body must parse");
+        let ir = SmilesIr::from_fragment("C([$]O)[>]").expect("fragment body must parse");
         let (mol, ports) = ir
             .to_atomistic_with_descriptors()
             .expect("fragment body must convert");
@@ -1036,7 +1036,7 @@ mod tests {
     /// conversion: the cache is keyed by definition name.
     #[test]
     fn test_fragment_cache_builds_one_entry_for_three_lookups() {
-        let body = SmilesIR::from_fragment("[>]COC[<]").expect("fragment body must parse");
+        let body = SmilesIr::from_fragment("[>]COC[<]").expect("fragment body must parse");
         let mut cache = FragmentCache::default();
         for _ in 0..3 {
             cache
@@ -1050,7 +1050,7 @@ mod tests {
     /// three heavy atoms with a port on each terminal carbon.
     #[test]
     fn test_fragment_cache_returns_the_body_and_its_ports() {
-        let body = SmilesIR::from_fragment("[>]COC[<]").expect("fragment body must parse");
+        let body = SmilesIr::from_fragment("[>]COC[<]").expect("fragment body must parse");
         let mut cache = FragmentCache::default();
         let (mol, ports) = cache
             .get_or_build("PEO", &body)

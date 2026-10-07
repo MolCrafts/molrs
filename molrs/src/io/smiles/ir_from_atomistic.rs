@@ -1,4 +1,4 @@
-//! Build a concrete [`SmilesIR`] from an [`Atomistic`] graph.
+//! Build a concrete [`SmilesIr`] from an [`Atomistic`] graph.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -11,13 +11,13 @@ use molrs::core::NodeId;
 use molrs::core::PropValue;
 use molrs::core::{BondNumber, BondOrder};
 
-impl SmilesIR {
+impl SmilesIr {
     /// The concrete SMILES IR of a molecular graph, written as `opts` says
     /// (canonical order, root, aromatic and hydrogen policy, components).
     pub fn from_atomistic(
         mol: &Atomistic,
         opts: &SmilesEmitOptions,
-    ) -> Result<SmilesIR, SmilesError> {
+    ) -> Result<SmilesIr, SmilesError> {
         ir_from_atomistic(mol, opts)
     }
 }
@@ -35,7 +35,7 @@ pub fn write_smiles_str(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<Str
     crate::line_notation::writer::write_smiles(&ir)
 }
 
-fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIR, SmilesError> {
+fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIr, SmilesError> {
     if mol.n_atoms() == 0 {
         return Err(emit_err("empty molecule"));
     }
@@ -96,7 +96,7 @@ fn ir_from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<Smiles
         chains.push(chain);
     }
 
-    Ok(SmilesIR {
+    Ok(SmilesIr {
         components: chains,
         span: Span::new(0, 0),
     })
@@ -509,10 +509,10 @@ mod tests {
 
     #[test]
     fn ethanol_round_trip_stable() {
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let opts = SmilesEmitOptions::default();
         let s1 = write_smiles_str(&mol, &opts).unwrap();
-        let mol2 = (SmilesIR::parse(&s1).unwrap()).to_atomistic().unwrap();
+        let mol2 = (SmilesIr::parse(&s1).unwrap()).to_atomistic().unwrap();
         let s2 = write_smiles_str(&mol2, &opts).unwrap();
         assert_eq!(s1, s2);
     }
@@ -521,10 +521,10 @@ mod tests {
     fn acetic_and_benzene() {
         let opts = SmilesEmitOptions::default();
         for src in ["CC(=O)O", "c1ccccc1"] {
-            let mol = (SmilesIR::parse(src).unwrap()).to_atomistic().unwrap();
+            let mol = (SmilesIr::parse(src).unwrap()).to_atomistic().unwrap();
             let s = write_smiles_str(&mol, &opts).unwrap();
-            assert!(SmilesIR::parse(&s).is_ok(), "src={src} wrote={s}");
-            let mol2 = (SmilesIR::parse(&s).unwrap()).to_atomistic().unwrap();
+            assert!(SmilesIr::parse(&s).is_ok(), "src={src} wrote={s}");
+            let mol2 = (SmilesIr::parse(&s).unwrap()).to_atomistic().unwrap();
             let s2 = write_smiles_str(&mol2, &opts).unwrap();
             assert_eq!(s, s2);
         }
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn multi_component_error_and_join() {
-        let mol = (SmilesIR::parse("CCO.O").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO.O").unwrap()).to_atomistic().unwrap();
         let err_opts = SmilesEmitOptions::default();
         assert!(write_smiles_str(&mol, &err_opts).is_err());
 
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn hydrogens_flag_changes_output() {
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let a = SmilesEmitOptions {
             hydrogens: HydrogenEmit::OrganicSubset,
             ..Default::default()
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn no_stereo_when_flag_false() {
         // Bracket stereo marker if present on graph; default flag must not invent @.
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let opts = SmilesEmitOptions::default(); // include_stereo = false
         let s = write_smiles_str(&mol, &opts).unwrap();
         assert!(!s.contains('@'), "got {s}");
@@ -578,8 +578,8 @@ mod tests {
     fn emitted_nodes_carry_no_descriptors() {
         // An `Atomistic` never stored bonding descriptors, so the IR built from
         // one has none to emit — the graph → IR direction stays plain SMILES.
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
-        let ir = SmilesIR::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let ir = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
         for node in atom_nodes(&ir) {
             assert!(node.descriptors.is_empty(), "node {:?}", node.spec);
         }
@@ -588,8 +588,8 @@ mod tests {
     #[test]
     fn ethanol_writes_the_unchanged_smiles_string() {
         // The descriptor field must not perturb what the plain writer emits.
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
-        let ir = SmilesIR::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let ir = SmilesIr::from_atomistic(&mol, &SmilesEmitOptions::default()).unwrap();
         assert_eq!(
             crate::line_notation::writer::write_smiles(&ir).unwrap(),
             "CCO"

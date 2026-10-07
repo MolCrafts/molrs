@@ -294,8 +294,8 @@ pub fn read_lammps_data_coeffs_py(frame: &PyFrame, units: Option<&str>) -> PyRes
 /// seventh map, or a line running past a map's end raises ``ValueError``
 /// (LAMMPS would drop the values).
 #[pyfunction]
-#[pyo3(name = "read_lammps_cmap")]
-pub fn read_lammps_cmap_py(path: PathBuf) -> PyResult<PyForceField> {
+#[pyo3(name = "read_lammps_cmap_forcefield")]
+pub fn read_lammps_cmap_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
     let text = std::fs::read_to_string(&path)
         .map_err(|e| pyo3::exceptions::PyOSError::new_err(format!("{}: {e}", path.display())))?;
     let forcefield = molrs::io::lammps::LammpsForcefieldReader::new()
@@ -342,6 +342,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "molrs.io",
         wrap_pyfunction!(read_lammps_data_coeffs_py, m)?,
     )?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_cmap_py, m)?)?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(read_lammps_cmap_forcefield_py, m)?,
+    )?;
     Ok(())
 }

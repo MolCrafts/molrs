@@ -31,8 +31,8 @@ and the docs build.
 | `molrs.io` | `molrs::io` | every file reader and writer, as a function `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory): structure, trajectory and force-field files, `*.mrec` records (`read_mrec_frame` / `write_mrec_frame` and partners), wire-encoded frames, SMILES and CGsmiles text, the LAMMPS log, CSV blocks |
 | `molrs.io.pdb`, `.xyz`, `.gro`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, dcd, trr, xtc}` | each format's lazy reader: `PdbReader`, `XyzReader`, `GroReader`, `DcdReader`, `TrrReader`, `XtcReader` |
 | `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader`, `BondReactTemplate`, the `Lammps*` log records |
-| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIR`, `SmilesError`, `BondingDescriptor` |
-| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CGSmilesIR` and the CGsmiles records |
+| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `SmilesError`, `BondingDescriptor` |
+| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `WeightedTerms`, `compile_explicit_terms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
@@ -330,13 +330,13 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_smiles_str
 
-::: molrs.io.smiles.SmilesIR
+::: molrs.io.smiles.SmilesIr
 
 ::: molrs.io.smiles.SmilesError
 
 ::: molrs.io.read_cgsmiles_str
 
-::: molrs.io.cgsmiles.CGSmilesIR
+::: molrs.io.cgsmiles.CgSmilesIr
 
 ### Wire-encoded frames and CSV blocks
 

@@ -168,7 +168,7 @@ def _number_lines(text: str) -> list[str]:
 
 
 def _alanine_ff() -> molrs.ff.forcefield.ForceField:
-    (row,) = molrs.io.read_lammps_cmap(ALANINE).get_types("cmap")
+    (row,) = molrs.io.read_lammps_cmap_forcefield(ALANINE).get_types("cmap")
     ff = molrs.ff.forcefield.ForceField("charmm", units="real")
     atoms = ff.def_style("atom", "full")
     by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
@@ -195,7 +195,7 @@ def _backbone() -> molrs.core.Frame:
 
 
 def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
-    ff = molrs.io.read_lammps_cmap(ALANINE)
+    ff = molrs.io.read_lammps_cmap_forcefield(ALANINE)
     assert ff.units == "real"
     (row,) = ff.get_types("cmap")
     assert row.name == "1"
@@ -221,7 +221,7 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
     del frame["dihedrals"]
 
     cmap = tmp_path / "charmm.cmap"
-    molrs.io.write_lammps_cmap(cmap, ff, frame)
+    molrs.io.write_lammps_cmap_forcefield(cmap, ff, frame)
     assert _number_lines(cmap.read_text()) == _number_lines(ALANINE.read_text())
 
     include = molrs.io.write_lammps_forcefield_str(

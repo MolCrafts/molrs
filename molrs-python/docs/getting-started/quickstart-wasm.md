@@ -12,7 +12,7 @@ npm install @molcrafts/molrs
 ```
 
 ```ts
-import { SmilesIR, generate3D, writeXyzStr } from "@molcrafts/molrs";
+import { SmilesIr, generate3D, writeXyzStr } from "@molcrafts/molrs";
 ```
 
 Configure your bundler to load `.wasm` modules. A custom build with
@@ -22,7 +22,7 @@ that must be awaited before any other call.
 ## 2. Parse, Embed, and Export
 
 ```ts
-const ir = SmilesIR.parse("CCO");
+const ir = SmilesIr.parse("CCO");
 const frame2d = ir.toFrame();
 const frame3d = generate3D(frame2d, "fast", 42);
 
@@ -30,7 +30,7 @@ console.log(writeXyzStr(frame3d));
 ```
 
 The API shape mirrors Python, with JavaScript naming conventions:
-`SmilesIR::parse` becomes `SmilesIR.parse`, `to_frame` becomes `toFrame`, and
+`SmilesIr::parse` becomes `SmilesIr.parse`, `to_frame` becomes `toFrame`, and
 `write_xyz_str` becomes `writeXyzStr` — every door names its format, as in Rust
 and Python. The
 TypeScript declarations in the package (`molrs.d.ts`) are the source of truth

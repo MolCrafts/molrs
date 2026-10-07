@@ -1,6 +1,6 @@
 //! Intermediate representation (IR) types for SMILES and SMARTS notation.
 //!
-//! [`SmilesIR`] is a pure syntax tree that captures the notation faithfully
+//! [`SmilesIr`] is a pure syntax tree that captures the notation faithfully
 //! without committing to atomistic or coarse-grained semantics.
 //! SMARTS is modelled as a superset: [`AtomSpec::Query`] and [`BondQuery`]
 //! extend the SMILES-only variants without breaking existing consumers. The
@@ -44,11 +44,11 @@ impl Span {
 /// committing to atomistic or coarse-grained semantics. Convert to
 /// [`Atomistic`](crate::core::Atomistic) for domain use; a
 /// coarse-grained bead graph comes from `CGsmiles` instead, via
-/// [`CGSmilesIR::to_coarsegrain`](crate::io::cgsmiles::CGSmilesIR::to_coarsegrain).
+/// [`CgSmilesIr::to_coarsegrain`](crate::io::cgsmiles::CgSmilesIr::to_coarsegrain).
 ///
 /// Multiple disconnected components are separated by `.` in the input.
 #[derive(Debug, Clone, PartialEq)]
-pub struct SmilesIR {
+pub struct SmilesIr {
     /// Connected components (separated by `.` in the input).
     pub components: Vec<Chain>,
     /// Span covering the entire input.
@@ -130,7 +130,7 @@ pub enum AtomSpec {
         /// of elementary charges assigned by the valence bookkeeping of the
         /// notation. It is **not** a partial charge — the fractional
         /// force-field charge of a coarse-grained bead is
-        /// [`CGNode::charge`](crate::io::cgsmiles::CGNode::charge), an `f64` in
+        /// [`CgNode::charge`](crate::io::cgsmiles::CgNode::charge), an `f64` in
         /// elementary charge units `e`.
         charge: Option<i8>,
         atom_class: Option<u16>,
@@ -453,7 +453,7 @@ pub enum AtomPrimitive {
     /// Chirality specification.
     Chirality(Chirality),
     /// `$(...)` — recursive SMARTS (environment match).
-    Recursive(Box<SmilesIR>),
+    Recursive(Box<SmilesIr>),
     /// `%LABEL` — a molrs extension, not standard SMARTS: the atom carries
     /// exactly this label in a caller-supplied label map (the iterative
     /// typifiers' "already assigned type", e.g. `%opls_154`). The label starts

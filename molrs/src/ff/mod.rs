@@ -30,8 +30,6 @@ mod engine_codec_check;
 #[cfg(test)]
 pub(crate) mod equivalence_check;
 pub mod forcefield;
-#[cfg(test)]
-mod io_boundary;
 pub mod ir;
 #[cfg(test)]
 mod ir_invariance;

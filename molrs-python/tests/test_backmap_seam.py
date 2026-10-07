@@ -42,7 +42,7 @@ import numpy as np
 from molrs.core import CoarseGrain
 from molrs.builder import Assembler, AxisOrienter, SitePlacer
 from molrs.ff.typifier import ElementTypifier
-from molrs.io.cgsmiles import CGSmilesIR
+from molrs.io.cgsmiles import CgSmilesIr
 from molrs.builder import Coarsener
 from molrs.perceive import SubgraphMatcher
 
@@ -120,7 +120,7 @@ def test_operator_backmap_script_crosses_every_seam() -> None:
     groups: list[list[int]] = []
     names: list[str] = []
     for pattern, name in rules.items():
-        found = SubgraphMatcher(CGSmilesIR(pattern).to_coarsegrain()).find(cg)
+        found = SubgraphMatcher(CgSmilesIr(pattern).to_coarsegrain()).find(cg)
         groups += found
         names += [name] * len(found)
     assert len(groups) == 3

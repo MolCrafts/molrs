@@ -22,7 +22,7 @@ perception's too.
 
 :class:`SubgraphMatcher` is the coarse-grained counterpart: it snapshots a bead
 pattern (a :class:`~molrs.core.CoarseGrain`, e.g. from
-``CGSmilesIR(...).to_coarsegrain()``) and lists every occurrence of it in a
+``CgSmilesIr(...).to_coarsegrain()``) and lists every occurrence of it in a
 target ``CoarseGrain`` as bead-handle groups. It does not partition
 overlapping groups. Mapping matched groups onto the sites of a new
 ``CoarseGrain`` is construction, not perception: that is

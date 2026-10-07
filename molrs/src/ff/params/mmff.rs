@@ -155,7 +155,7 @@ pub struct MmffTor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MmffVdW {
+pub struct MmffVdw {
     pub atom_type: u8,
     pub alpha_i: f64,
     pub n_i: f64,
@@ -50547,8 +50547,8 @@ pub static MMFF_TOR_S: &[MmffTor] = &[
     },
 ];
 
-pub static MMFF_VDW: &[MmffVdW] = &[
-    MmffVdW {
+pub static MMFF_VDW: &[MmffVdw] = &[
+    MmffVdw {
         atom_type: 1,
         alpha_i: 1.05,
         n_i: 2.49,
@@ -50557,7 +50557,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9377389919289634,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 2,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -50566,7 +50566,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 3,
         alpha_i: 1.1,
         n_i: 2.49,
@@ -50575,7 +50575,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9838022505384916,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 4,
         alpha_i: 1.3,
         n_i: 2.49,
@@ -50584,7 +50584,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.153702992528795,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 5,
         alpha_i: 0.25,
         n_i: 0.8,
@@ -50593,7 +50593,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.9698484809835,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 6,
         alpha_i: 0.7,
         n_i: 3.15,
@@ -50602,7 +50602,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.5581488427996217,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 7,
         alpha_i: 0.65,
         n_i: 3.15,
@@ -50611,7 +50611,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.4928339564460904,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 8,
         alpha_i: 1.15,
         n_i: 2.82,
@@ -50620,7 +50620,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.0283209169689105,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 9,
         alpha_i: 0.9,
         n_i: 2.82,
@@ -50629,7 +50629,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.7888745735944043,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 10,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50638,7 +50638,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 11,
         alpha_i: 0.35,
         n_i: 3.48,
@@ -50647,7 +50647,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.9920346068493546,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 12,
         alpha_i: 2.3,
         n_i: 5.1,
@@ -50656,7 +50656,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.088556867514839,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 13,
         alpha_i: 3.4,
         n_i: 6.0,
@@ -50665,7 +50665,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.33172035920737,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 14,
         alpha_i: 5.5,
         n_i: 6.95,
@@ -50674,7 +50674,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.716734042957531,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 15,
         alpha_i: 3.0,
         n_i: 4.8,
@@ -50683,7 +50683,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.369365723002274,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 16,
         alpha_i: 3.9,
         n_i: 4.8,
@@ -50692,7 +50692,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.665564904649689,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 17,
         alpha_i: 2.7,
         n_i: 4.8,
@@ -50701,7 +50701,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.255778583706491,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 18,
         alpha_i: 2.1,
         n_i: 4.8,
@@ -50710,7 +50710,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9966204604290168,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 19,
         alpha_i: 4.5,
         n_i: 4.2,
@@ -50719,7 +50719,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.835498046204941,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 20,
         alpha_i: 1.05,
         n_i: 2.49,
@@ -50728,7 +50728,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9377389919289634,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 21,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50737,7 +50737,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 22,
         alpha_i: 1.1,
         n_i: 2.49,
@@ -50746,7 +50746,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9838022505384916,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 23,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50755,7 +50755,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 24,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50764,7 +50764,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 25,
         alpha_i: 1.6,
         n_i: 4.5,
@@ -50773,7 +50773,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.7339463992639175,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 26,
         alpha_i: 3.6,
         n_i: 4.5,
@@ -50782,7 +50782,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.573131702549574,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 27,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50791,7 +50791,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 28,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50800,7 +50800,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 29,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50809,7 +50809,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 30,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -50818,7 +50818,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 31,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50827,7 +50827,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 32,
         alpha_i: 0.75,
         n_i: 3.15,
@@ -50836,7 +50836,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.6200529019071674,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 33,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50845,7 +50845,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 34,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50854,7 +50854,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 35,
         alpha_i: 1.5,
         n_i: 3.15,
@@ -50863,7 +50863,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.3049926676342505,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 36,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50872,7 +50872,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 37,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -50881,7 +50881,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 38,
         alpha_i: 0.85,
         n_i: 2.82,
@@ -50890,7 +50890,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.735118052782291,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 39,
         alpha_i: 1.1,
         n_i: 2.82,
@@ -50899,7 +50899,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9838022505384916,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 40,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50908,7 +50908,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 41,
         alpha_i: 1.1,
         n_i: 2.49,
@@ -50917,7 +50917,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.9838022505384916,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 42,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50926,7 +50926,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 43,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50935,7 +50935,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 44,
         alpha_i: 3.0,
         n_i: 4.8,
@@ -50944,7 +50944,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.369365723002274,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 45,
         alpha_i: 1.15,
         n_i: 2.82,
@@ -50953,7 +50953,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.0283209169689105,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 46,
         alpha_i: 1.3,
         n_i: 2.82,
@@ -50962,7 +50962,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.153702992528795,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 47,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -50971,7 +50971,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 48,
         alpha_i: 1.2,
         n_i: 2.82,
@@ -50980,7 +50980,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.071410692235291,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 49,
         alpha_i: 1.0,
         n_i: 3.15,
@@ -50989,7 +50989,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 50,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -50998,7 +50998,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 51,
         alpha_i: 0.4,
         n_i: 3.15,
@@ -51007,7 +51007,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.093603134903827,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 52,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -51016,7 +51016,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 53,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -51025,7 +51025,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 54,
         alpha_i: 1.3,
         n_i: 2.82,
@@ -51034,7 +51034,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.153702992528795,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 55,
         alpha_i: 0.8,
         n_i: 2.82,
@@ -51043,7 +51043,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.678934859022354,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 56,
         alpha_i: 0.8,
         n_i: 2.82,
@@ -51052,7 +51052,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.678934859022354,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 57,
         alpha_i: 1.0,
         n_i: 2.49,
@@ -51061,7 +51061,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 58,
         alpha_i: 0.8,
         n_i: 2.82,
@@ -51070,7 +51070,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.678934859022354,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 59,
         alpha_i: 0.65,
         n_i: 3.15,
@@ -51079,7 +51079,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.4928339564460904,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 60,
         alpha_i: 1.8,
         n_i: 2.49,
@@ -51088,7 +51088,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.505756600771367,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 61,
         alpha_i: 0.8,
         n_i: 2.82,
@@ -51097,7 +51097,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.678934859022354,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 62,
         alpha_i: 1.3,
         n_i: 2.82,
@@ -51106,7 +51106,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.153702992528795,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 63,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -51115,7 +51115,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 64,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -51124,7 +51124,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 65,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -51133,7 +51133,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 66,
         alpha_i: 0.75,
         n_i: 2.82,
@@ -51142,7 +51142,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.6200529019071674,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 67,
         alpha_i: 0.95,
         n_i: 2.82,
@@ -51151,7 +51151,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.8404357396665776,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 68,
         alpha_i: 0.9,
         n_i: 2.82,
@@ -51160,7 +51160,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.7888745735944043,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 69,
         alpha_i: 0.95,
         n_i: 2.82,
@@ -51169,7 +51169,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.8404357396665776,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 70,
         alpha_i: 0.87,
         n_i: 3.15,
@@ -51178,7 +51178,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.7568980897709388,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 71,
         alpha_i: 0.15,
         n_i: 0.8,
@@ -51187,7 +51187,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.613798504611609,
         da: 68,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 72,
         alpha_i: 4.0,
         n_i: 4.8,
@@ -51196,7 +51196,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.695189027078675,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 73,
         alpha_i: 3.0,
         n_i: 4.8,
@@ -51205,7 +51205,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.369365723002274,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 74,
         alpha_i: 3.0,
         n_i: 4.8,
@@ -51214,7 +51214,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.369365723002274,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 75,
         alpha_i: 4.0,
         n_i: 4.5,
@@ -51223,7 +51223,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.695189027078675,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 76,
         alpha_i: 1.2,
         n_i: 2.82,
@@ -51232,7 +51232,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.071410692235291,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 77,
         alpha_i: 1.5,
         n_i: 5.1,
@@ -51241,7 +51241,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.674183973405067,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 78,
         alpha_i: 1.35,
         n_i: 2.49,
@@ -51250,7 +51250,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.193078986609192,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 79,
         alpha_i: 1.0,
         n_i: 2.82,
@@ -51259,7 +51259,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 80,
         alpha_i: 1.0,
         n_i: 2.49,
@@ -51268,7 +51268,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.89,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 81,
         alpha_i: 0.8,
         n_i: 2.82,
@@ -51277,7 +51277,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.678934859022354,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 82,
         alpha_i: 0.95,
         n_i: 2.82,
@@ -51286,7 +51286,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.8404357396665776,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 87,
         alpha_i: 0.45,
         n_i: 6.0,
@@ -51295,7 +51295,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.27614503525088,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 88,
         alpha_i: 0.55,
         n_i: 6.0,
@@ -51304,7 +51304,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.444694119853468,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 89,
         alpha_i: 1.4,
         n_i: 3.48,
@@ -51313,7 +51313,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.231375920096008,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 90,
         alpha_i: 4.5,
         n_i: 5.1,
@@ -51322,7 +51322,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.835498046204941,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 91,
         alpha_i: 6.0,
         n_i: 6.0,
@@ -51331,7 +51331,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.992619810433786,
         da: 65,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 92,
         alpha_i: 0.15,
         n_i: 2.0,
@@ -51340,7 +51340,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 2.4893319091539134,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 93,
         alpha_i: 0.4,
         n_i: 3.5,
@@ -51349,7 +51349,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.1810829150682025,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 94,
         alpha_i: 1.0,
         n_i: 5.0,
@@ -51358,7 +51358,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 4.0,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 95,
         alpha_i: 0.43,
         n_i: 6.0,
@@ -51367,7 +51367,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.2391205039150983,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 96,
         alpha_i: 0.9,
         n_i: 5.0,
@@ -51376,7 +51376,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.896014985701187,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 97,
         alpha_i: 0.35,
         n_i: 6.0,
@@ -51385,7 +51385,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.076642269253835,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 98,
         alpha_i: 0.4,
         n_i: 6.0,
@@ -51394,7 +51394,7 @@ pub static MMFF_VDW: &[MmffVdW] = &[
         r_star: 3.1810829150682025,
         da: 45,
     },
-    MmffVdW {
+    MmffVdw {
         atom_type: 99,
         alpha_i: 0.35,
         n_i: 3.5,
@@ -51534,7 +51534,7 @@ pub fn mmff_tor_s(torsion_type: u8, i: u8, j: u8, k: u8, l: u8) -> Option<&'stat
 }
 
 /// Look up van der Waals params by atom type.
-pub fn mmff_vdw(atom_type: u8) -> Option<&'static MmffVdW> {
+pub fn mmff_vdw(atom_type: u8) -> Option<&'static MmffVdw> {
     MMFF_VDW
         .binary_search_by(|e| e.atom_type.cmp(&atom_type))
         .ok()
@@ -51616,7 +51616,7 @@ pub static MMFF_STYLES: &[MmffStyle] = &[
 /// R\* suppression and ε scaling. The per-type columns (`alpha`, `n_eff`, `a_i`,
 /// `g_i`, `da`) are [`MMFF_VDW`].
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MmffVdWStyle {
+pub struct MmffVdwStyle {
     /// `B` — the combining-rule exponent numerator.
     pub b: f64,
     /// `Beta` — the combining-rule exponent.
@@ -51628,7 +51628,7 @@ pub struct MmffVdWStyle {
 }
 
 /// MMFF's vdW combining-rule constants (`<VdWParams B=… Beta=… DARAD=… DAEPS=…>`).
-pub static MMFF_VDW_STYLE: MmffVdWStyle = MmffVdWStyle {
+pub static MMFF_VDW_STYLE: MmffVdwStyle = MmffVdwStyle {
     b: 0.2,
     beta: 12.0,
     darad: 0.8,
@@ -51712,7 +51712,7 @@ pub(crate) fn encode_da(raw: &str) -> f64 {
 }
 
 /// [`encode_da`] for this table's `da` column, which holds the letter's ASCII
-/// byte ([`MmffVdW::da`], as RDKit stores it).
+/// byte ([`MmffVdw::da`], as RDKit stores it).
 pub(crate) fn encode_da_byte(code: u8) -> f64 {
     match code {
         b'D' => DA_DONOR,

@@ -132,11 +132,11 @@ pub enum SmilesErrorKind {
     /// `CGsmiles` reader.
     Build(String),
     /// A bonding descriptor (`[$]`, `[<]`, `[>]`, `[!]`) met a stage that
-    /// speaks plain SMILES, which has no such notation: `SmilesIR::parse` on a
-    /// descriptor bracket, `SmilesIR::validate` on a node carrying one, or
+    /// speaks plain SMILES, which has no such notation: `SmilesIr::parse` on a
+    /// descriptor bracket, `SmilesIr::validate` on a node carrying one, or
     /// `write_smiles` / `write_smarts` asked to emit one. This is a routing
     /// error, and the rendered message says where to go instead — it names
-    /// `SmilesIR::from_fragment`, the entry point of the dialect that does
+    /// `SmilesIr::from_fragment`, the entry point of the dialect that does
     /// accept descriptors.
     ///
     /// SMARTS *parsing* never raises it: there `[$(C)]` is recursive SMARTS
@@ -144,10 +144,10 @@ pub enum SmilesErrorKind {
     /// parser and is left to it.
     DescriptorInPlainSmiles,
     /// An IR carrying bonding descriptors was handed to
-    /// `SmilesIR::to_atomistic`, the plain IR → graph conversion, which has
+    /// `SmilesIr::to_atomistic`, the plain IR → graph conversion, which has
     /// nowhere to put them and would silently drop them. The rendered message
-    /// names `SmilesIR::to_atomistic_with_descriptors`, the conversion that
-    /// returns them alongside the graph, and `SmilesIR::to_template`.
+    /// names `SmilesIr::to_atomistic_with_descriptors`, the conversion that
+    /// returns them alongside the graph, and `SmilesIr::to_template`.
     DescriptorsUnconvertible,
     /// A bond symbol was written *inside* a descriptor bracket — the
     /// `BigSMILES` spelling `[<=1]`, or `[$-]`. `CGsmiles` writes the order
@@ -171,7 +171,7 @@ pub enum SmilesErrorKind {
     /// [`read_smiles_str`](crate::io::read_smiles_str) reads one molecule, and
     /// the string names more: `.` separates components, so `CCO.O` is a *set*
     /// of two molecules. The payload is the component count. The message says
-    /// how to take them apart (`SmilesIR(s).components()`).
+    /// how to take them apart (`SmilesIr(s).components()`).
     MultipleComponents(usize),
     /// A `CGsmiles` atom-level annotation — a weight `[C;0.5]`, a chirality
     /// `[C;1;S]`, or wildcard overloading `[*;s=C,0]` — was written. The
@@ -179,7 +179,7 @@ pub enum SmilesErrorKind {
     /// feature rather than claiming a missing `]`. The payload is the
     /// annotation text between `;` and the closing `]`, or the end of input if
     /// the bracket is never closed. Raised in the fragment dialect
-    /// only; `SmilesIR::parse("[C;0.5]")` still reports
+    /// only; `SmilesIr::parse("[C;0.5]")` still reports
     /// [`SmilesErrorKind::UnclosedBracket`].
     AtomAnnotationUnsupported(String),
 
@@ -375,12 +375,12 @@ impl SmilesErrorKind {
             SmilesErrorKind::Build(s) => format!("graph construction failed: {s}"),
             SmilesErrorKind::DescriptorInPlainSmiles => {
                 "bonding descriptor is not plain SMILES notation \
-                 — parse a fragment body with SmilesIR::from_fragment"
+                 — parse a fragment body with SmilesIr::from_fragment"
                     .to_owned()
             }
             SmilesErrorKind::DescriptorsUnconvertible => "this atom carries bonding descriptors \
-                 — convert a fragment body with SmilesIR::to_atomistic_with_descriptors \
-                 or SmilesIR::to_template"
+                 — convert a fragment body with SmilesIr::to_atomistic_with_descriptors \
+                 or SmilesIr::to_template"
                 .to_owned(),
             SmilesErrorKind::BondInsideDescriptor => {
                 "bond symbol inside a bonding descriptor bracket \
@@ -396,7 +396,7 @@ impl SmilesErrorKind {
             SmilesErrorKind::MultipleComponents(n) => format!(
                 "read_smiles reads one molecule and this string names {n} \
                  '.'-separated components; take them apart with \
-                 SmilesIR(s).components()"
+                 SmilesIr(s).components()"
             ),
             SmilesErrorKind::DanglingDescriptor => {
                 "bonding descriptor has no atom to bind to".to_owned()
@@ -631,7 +631,7 @@ mod tests {
     fn test_display_descriptor_in_plain_smiles_names_fragment_parser() {
         let msg = message(SmilesErrorKind::DescriptorInPlainSmiles);
         assert!(
-            msg.contains("SmilesIR::from_fragment"),
+            msg.contains("SmilesIr::from_fragment"),
             "message was {msg:?}"
         );
     }
@@ -640,7 +640,7 @@ mod tests {
     fn test_display_descriptors_unconvertible_names_fragment_converter() {
         let msg = message(SmilesErrorKind::DescriptorsUnconvertible);
         assert!(
-            msg.contains("SmilesIR::to_atomistic_with_descriptors"),
+            msg.contains("SmilesIr::to_atomistic_with_descriptors"),
             "message was {msg:?}"
         );
     }
@@ -713,7 +713,7 @@ mod tests {
     /// The full text of a kind shared with the atomistic notations, stamped
     /// `CGsmiles` and spanned at byte 14 of `{[#PEO][#PEO]}[#X]` — the `[` that
     /// follows the only block. The value is built by hand to exercise
-    /// `Display`'s notation prefix on a non-`Cg*` kind; `CGSmilesIR::parse` itself
+    /// `Display`'s notation prefix on a non-`Cg*` kind; `CgSmilesIr::parse` itself
     /// reports [`SmilesErrorKind::CgExpectedBlock`] for that string.
     fn cgsmiles_trailing_rendered() -> String {
         SmilesError::new(

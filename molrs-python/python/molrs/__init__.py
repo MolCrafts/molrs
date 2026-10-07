@@ -31,7 +31,7 @@ so the Python path and the Rust path are the same words
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
 * :mod:`molrs.stream` — live Frame streaming (the transport).
 
-Each name has exactly one spelling — ``molrs.io.smiles.SmilesIR`` and nothing
+Each name has exactly one spelling — ``molrs.io.smiles.SmilesIr`` and nothing
 else — so there is one thing to learn, document, and grep for.
 """
 

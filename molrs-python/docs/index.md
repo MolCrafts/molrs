@@ -21,7 +21,7 @@ doc comments.
     ```python
     import molrs
 
-    ir = molrs.io.smiles.SmilesIR("CCO")
+    ir = molrs.io.smiles.SmilesIr("CCO")
     mol = ir.to_atomistic()
 
     mol3d, _report = molrs.conformer.Conformer(speed="fast", seed=42).generate(mol)
@@ -62,9 +62,9 @@ doc comments.
     module, and the generated classes and functions are regular exports.
 
     ```ts
-    import { SmilesIR, generate3D, writeXyzStr } from "@molcrafts/molrs";
+    import { SmilesIr, generate3D, writeXyzStr } from "@molcrafts/molrs";
 
-    const ir = SmilesIR.parse("CCO");
+    const ir = SmilesIr.parse("CCO");
     const frame2d = ir.toFrame();
     const frame3d = generate3D(frame2d, "fast", 42);
 

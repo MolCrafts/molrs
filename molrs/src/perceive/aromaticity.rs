@@ -854,8 +854,8 @@ mod tests {
     /// them, and still write `is_aromatic = 0` on every atom.
     #[cfg(feature = "smiles")]
     fn assert_ring_free_stays_non_aromatic(smiles: &str) {
-        use crate::io::smiles::SmilesIR;
-        let mut mol = (SmilesIR::parse(smiles).expect("parse"))
+        use crate::io::smiles::SmilesIr;
+        let mut mol = (SmilesIr::parse(smiles).expect("parse"))
             .to_atomistic()
             .expect("to_atomistic");
         let before = bond_classes(&mol);

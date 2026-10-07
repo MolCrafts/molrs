@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use crate::io::cgsmiles::resolve::FragmentCache;
 use crate::io::cgsmiles::templates::cg_build;
 use crate::io::cgsmiles::{
-    CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEnd, ResolvedPair,
+    CgFragmentDef, CgGraph, CgSmilesIr, FragmentBody, PairEnd, ResolvedPair,
 };
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
@@ -32,17 +32,17 @@ use molrs::op::rigid::Rigid;
 use molrs::op::types::I;
 
 /// The lowest level of an IR, with the fragment table that defines its
-/// nodes and its resolved pairs, as [`CGSmilesIR::lowest_level`] reads them.
+/// nodes and its resolved pairs, as [`CgSmilesIr::lowest_level`] reads them.
 struct LowestLevel<'ir> {
     /// The fragment definitions the level's node names refer to.
-    defs: &'ir BTreeMap<String, CGFragmentDef>,
+    defs: &'ir BTreeMap<String, CgFragmentDef>,
     /// The lowest level — the IR's last.
-    level: &'ir CGGraph,
+    level: &'ir CgGraph,
     /// That level's resolved pairs.
     pairs: &'ir [ResolvedPair],
 }
 
-impl CGSmilesIR {
+impl CgSmilesIr {
     /// Expand the lowest coarse-grained level into one [`Atomistic`] graph.
     ///
     /// Every node of that level becomes a disjoint copy of its fragment body,
@@ -89,8 +89,8 @@ impl CGSmilesIR {
     ///
     /// A method, not a free function: the data it reads is this value's, and
     /// the free name
-    /// [`SmilesIR::to_atomistic`](crate::io::smiles::SmilesIR::to_atomistic) already belongs to
-    /// the SMILES pipeline, where it converts a [`SmilesIR`](crate::io::smiles::SmilesIR).
+    /// [`SmilesIr::to_atomistic`](crate::io::smiles::SmilesIr::to_atomistic) already belongs to
+    /// the SMILES pipeline, where it converts a [`SmilesIr`](crate::io::smiles::SmilesIr).
     /// A second free function of the same name in the same public module would
     /// be told apart only by its argument type.
     ///
@@ -111,7 +111,7 @@ impl CGSmilesIR {
     /// inside it, say — propagates with the converter's **own** kind, stamped
     /// [`Notation::CGsmiles`](crate::io::smiles::Notation::CGsmiles) and with
     /// no input text: a value returned by
-    /// [`CGSmilesIR::parse`](crate::io::cgsmiles::CGSmilesIR::parse) has bodies that
+    /// [`CgSmilesIr::parse`](crate::io::cgsmiles::CgSmilesIr::parse) has bodies that
     /// already converted once, so only a hand-built IR reaches this.
     ///
     /// # Examples
@@ -120,9 +120,9 @@ impl CGSmilesIR {
     /// atoms and ten bonds.
     ///
     /// ```
-    /// use molrs::io::cgsmiles::CGSmilesIR;
+    /// use molrs::io::cgsmiles::CgSmilesIr;
     ///
-    /// let ir = CGSmilesIR::parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}").unwrap();
+    /// let ir = CgSmilesIr::parse("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}").unwrap();
     /// let mol = ir.to_atomistic().unwrap();
     ///
     /// assert_eq!(mol.n_atoms(), 11);
@@ -222,7 +222,7 @@ impl CGSmilesIR {
     /// Turn every resolved pair of the lowest level into one classed bond.
     ///
     /// `instances` is the port map of each node of that level, as
-    /// [`expand_lowest_level`](CGSmilesIR::expand_lowest_level) built it, and `pairs`
+    /// [`expand_lowest_level`](CgSmilesIr::expand_lowest_level) built it, and `pairs`
     /// that level's resolved pairs — passed in rather than read off `self`, so
     /// this step cannot mistake another level's list for its own.
     ///
@@ -323,9 +323,9 @@ mod tests {
 
     use crate::io::cgsmiles::fixtures::{body, pair};
     use crate::io::cgsmiles::{
-        CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
+        CgBondOrder, CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody,
     };
-    use crate::io::smiles::{BondKind, SmilesErrorKind, SmilesIR, Span};
+    use crate::io::smiles::{BondKind, SmilesErrorKind, SmilesIr, Span};
     use molrs::core::Atomistic;
     use molrs::core::NodeId;
     use molrs::core::PropValue;
@@ -344,8 +344,8 @@ mod tests {
 
     /// The atomistic expansion of a `CGsmiles` string that must parse.
     fn expanded(text: &str) -> Atomistic {
-        CGSmilesIR::parse(text)
-            .unwrap_or_else(|e| panic!("CGSmilesIR::parse({text:?}) failed: {e}"))
+        CgSmilesIr::parse(text)
+            .unwrap_or_else(|e| panic!("CgSmilesIr::parse({text:?}) failed: {e}"))
             .to_atomistic()
             .unwrap_or_else(|e| panic!("to_atomistic({text:?}) failed: {e}"))
     }
@@ -398,8 +398,8 @@ mod tests {
 
     /// A coarse node named `name`, with nothing else on it: expansion reads a
     /// node's name and its index, never its descriptors.
-    fn node(name: &str) -> CGNode {
-        CGNode {
+    fn node(name: &str) -> CgNode {
+        CgNode {
             name: name.to_owned(),
             charge: None,
             annotations: Vec::new(),
@@ -410,26 +410,26 @@ mod tests {
     }
 
     /// A written single edge between `i` and `j`.
-    fn edge(i: usize, j: usize) -> CGEdge {
-        CGEdge {
+    fn edge(i: usize, j: usize) -> CgEdge {
+        CgEdge {
             i,
             j,
-            order: CGBondOrder::Single,
+            order: CgBondOrder::Single,
             span: Span::new(0, 0),
             origin: EdgeOrigin::Written,
         }
     }
 
     /// One fragment table of atomistic bodies, `name` → parsed body.
-    fn table(entries: &[(&str, &str)]) -> BTreeMap<String, CGFragmentDef> {
+    fn table(entries: &[(&str, &str)]) -> BTreeMap<String, CgFragmentDef> {
         entries
             .iter()
             .map(|(name, text)| {
-                let body = SmilesIR::from_fragment(text)
+                let body = SmilesIr::from_fragment(text)
                     .unwrap_or_else(|e| panic!("body {text:?} must parse: {e}"));
                 (
                     (*name).to_owned(),
-                    CGFragmentDef {
+                    CgFragmentDef {
                         name: (*name).to_owned(),
                         body: FragmentBody::Smiles(body),
                         span: Span::new(0, 0),
@@ -445,9 +445,9 @@ mod tests {
     /// (0,1), (2,3), (0,2) and the three pairs resolution derives from them —
     /// BB's `$` to each phenyl's `$`, and BB0's `>` to BB2's `<`. Built by
     /// hand so expansion is exercised as its own unit.
-    fn f5_ir() -> CGSmilesIR {
-        CGSmilesIR {
-            levels: vec![CGGraph {
+    fn f5_ir() -> CgSmilesIr {
+        CgSmilesIr {
+            levels: vec![CgGraph {
                 nodes: vec![node("BB"), node("PH"), node("BB"), node("PH")],
                 edges: vec![edge(0, 1), edge(2, 3), edge(0, 2)],
             }],
@@ -484,9 +484,9 @@ mod tests {
     /// F7, dichlorotoluene over three beads, as a resolved IR: the labels
     /// `$a`, `$b` and the unlabelled `$` leave the three edges no freedom, and
     /// every port atom is written aromatic, so every pair is aromatic.
-    fn f7_ir() -> CGSmilesIR {
-        CGSmilesIR {
-            levels: vec![CGGraph {
+    fn f7_ir() -> CgSmilesIr {
+        CgSmilesIr {
+            levels: vec![CgGraph {
                 nodes: vec![node("SC4"), node("SX3"), node("SX3A")],
                 edges: vec![edge(0, 1), edge(1, 2), edge(0, 2)],
             }],
@@ -692,16 +692,16 @@ mod tests {
     /// and the refusal names the fragment it stopped at.
     #[test]
     fn test_graph_body_at_the_lowest_level_is_not_expandable() {
-        let ir = CGSmilesIR {
-            levels: vec![CGGraph {
+        let ir = CgSmilesIr {
+            levels: vec![CgGraph {
                 nodes: vec![node("A")],
                 edges: Vec::new(),
             }],
             fragments: vec![BTreeMap::from([(
                 "A".to_owned(),
-                CGFragmentDef {
+                CgFragmentDef {
                     name: "A".to_owned(),
-                    body: FragmentBody::Graph(CGGraph {
+                    body: FragmentBody::Graph(CgGraph {
                         nodes: vec![node("X")],
                         edges: Vec::new(),
                     }),
@@ -746,7 +746,7 @@ mod tests {
     /// fragment to name and says so in the phrase `templates` reuses.
     #[test]
     fn test_base_only_ir_is_not_expandable() {
-        let ir = CGSmilesIR::parse("{[#PEO][#PEO][#PEO]}").expect("base-only string must parse");
+        let ir = CgSmilesIr::parse("{[#PEO][#PEO][#PEO]}").expect("base-only string must parse");
         let err = ir
             .to_atomistic()
             .expect_err("a base-only string has no body to expand");

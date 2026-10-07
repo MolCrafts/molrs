@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::io::cgsmiles::{CGEdge, CGGraph, EdgeOrigin};
+use crate::io::cgsmiles::{CgEdge, CgGraph, EdgeOrigin};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
 /// Build the level `parent` denotes, one disjoint copy of a fragment graph per
@@ -39,10 +39,10 @@ use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 /// [`SmilesErrorKind::CgUndefinedFragment`], which would tell the user their
 /// string is wrong when it is not.
 pub(super) fn instantiate(
-    parent: &CGGraph,
-    defs: &BTreeMap<&str, &CGGraph>,
+    parent: &CgGraph,
+    defs: &BTreeMap<&str, &CgGraph>,
     input: &str,
-) -> Result<CGGraph, SmilesError> {
+) -> Result<CgGraph, SmilesError> {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     for (index, source) in parent.nodes.iter().enumerate() {
@@ -63,7 +63,7 @@ pub(super) fn instantiate(
             nodes.push(copy);
         }
         for edge in &body.edges {
-            edges.push(CGEdge {
+            edges.push(CgEdge {
                 i: edge.i + offset,
                 j: edge.j + offset,
                 order: edge.order,
@@ -74,7 +74,7 @@ pub(super) fn instantiate(
             });
         }
     }
-    Ok(CGGraph { nodes, edges })
+    Ok(CgGraph { nodes, edges })
 }
 
 #[cfg(test)]
@@ -83,7 +83,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::io::cgsmiles::{CGBondOrder, CGEdge, CGGraph, CGNode, EdgeOrigin};
+    use crate::io::cgsmiles::{CgBondOrder, CgEdge, CgGraph, CgNode, EdgeOrigin};
     use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesErrorKind, Span};
 
     // Every expectation here is hand-derived from R4.10 ("every node of the
@@ -110,8 +110,8 @@ mod tests {
     }
 
     /// A coarse node named `name`, carrying `kinds` and no parent.
-    fn node(name: &str, kinds: &[DescriptorKind]) -> CGNode {
-        CGNode {
+    fn node(name: &str, kinds: &[DescriptorKind]) -> CgNode {
+        CgNode {
             name: name.to_owned(),
             charge: None,
             annotations: Vec::new(),
@@ -122,27 +122,27 @@ mod tests {
     }
 
     /// A single edge between `i` and `j`.
-    fn edge(i: usize, j: usize) -> CGEdge {
-        CGEdge {
+    fn edge(i: usize, j: usize) -> CgEdge {
+        CgEdge {
             i,
             j,
-            order: CGBondOrder::Single,
+            order: CgBondOrder::Single,
             span: Span::new(0, 0),
             origin: EdgeOrigin::Written,
         }
     }
 
     /// F8's base graph, `{[#B1][#B2][#B1]}`.
-    fn f8_parent() -> CGGraph {
-        CGGraph {
+    fn f8_parent() -> CgGraph {
+        CgGraph {
             nodes: vec![node("B1", &[]), node("B2", &[]), node("B1", &[])],
             edges: vec![edge(0, 1), edge(1, 2)],
         }
     }
 
     /// A two-node body `[>][#NAME][#NAME][<]`, the shape of F8's `#B1`.
-    fn two_node_body(name: &str) -> CGGraph {
-        CGGraph {
+    fn two_node_body(name: &str) -> CgGraph {
+        CgGraph {
             nodes: vec![
                 node(name, &[DescriptorKind::Right]),
                 node(name, &[DescriptorKind::Left]),
@@ -152,22 +152,22 @@ mod tests {
     }
 
     /// Node names in index order.
-    fn names(graph: &CGGraph) -> Vec<&str> {
+    fn names(graph: &CgGraph) -> Vec<&str> {
         graph.nodes.iter().map(|n| n.name.as_str()).collect()
     }
 
     /// `parent` of every node, in index order.
-    fn parents(graph: &CGGraph) -> Vec<Option<usize>> {
+    fn parents(graph: &CgGraph) -> Vec<Option<usize>> {
         graph.nodes.iter().map(|n| n.parent).collect()
     }
 
     /// `(i, j, order)` of every edge, in order.
-    fn edges(graph: &CGGraph) -> Vec<(usize, usize, CGBondOrder)> {
+    fn edges(graph: &CgGraph) -> Vec<(usize, usize, CgBondOrder)> {
         graph.edges.iter().map(|e| (e.i, e.j, e.order)).collect()
     }
 
     /// The descriptor kinds each node carries, in index order.
-    fn kinds(graph: &CGGraph) -> Vec<Vec<DescriptorKind>> {
+    fn kinds(graph: &CgGraph) -> Vec<Vec<DescriptorKind>> {
         graph
             .nodes
             .iter()
@@ -207,9 +207,9 @@ mod tests {
         assert_eq!(
             edges(&level),
             vec![
-                (0, 1, CGBondOrder::Single),
-                (2, 3, CGBondOrder::Single),
-                (4, 5, CGBondOrder::Single),
+                (0, 1, CgBondOrder::Single),
+                (2, 3, CgBondOrder::Single),
+                (4, 5, CgBondOrder::Single),
             ]
         );
     }
@@ -256,7 +256,7 @@ mod tests {
     fn test_instantiate_gives_two_uses_of_one_body_different_parents() {
         let body = two_node_body("PEO");
         let defs = BTreeMap::from([("B1", &body)]);
-        let parent = CGGraph {
+        let parent = CgGraph {
             nodes: vec![node("B1", &[]), node("B1", &[])],
             edges: vec![edge(0, 1)],
         };

@@ -12,7 +12,7 @@ use molrs::core::Element;
 use molrs::core::NodeId;
 use molrs::core::PropValue;
 
-/// Build a query [`SmilesIR`] for `center` with the given options.
+/// Build a query [`SmilesIr`] for `center` with the given options.
 ///
 /// Bound on pattern bond depth: with default flags and [`NeighborStyle::Chain`],
 /// `SmartsPattern::max_bond_depth() <= reach` (k = 0). Recursive style may add
@@ -21,7 +21,7 @@ pub(crate) fn environment_ir(
     mol: &Atomistic,
     center: NodeId,
     opts: &EnvironmentOptions,
-) -> Result<SmilesIR, SmilesError> {
+) -> Result<SmilesIr, SmilesError> {
     if opts.reach < 1 {
         return Err(emit_err("reach must be >= 1"));
     }
@@ -58,7 +58,7 @@ pub(crate) fn environment_ir(
         NeighborStyle::Recursive => build_recursive_env(mol, center, &depth, opts, &rings)?,
     };
 
-    Ok(SmilesIR {
+    Ok(SmilesIr {
         components: vec![chain],
         span: Span::new(0, 0),
     })
@@ -371,7 +371,7 @@ fn build_recursive_env(
                 tail: vec![],
             }
         };
-        let rec_ir = SmilesIR {
+        let rec_ir = SmilesIr {
             components: vec![sub_chain],
             span: Span::new(0, 0),
         };
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn local_smarts_matches_center() {
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let opts = EnvironmentOptions::default();
         for center in heavy_atoms(&mol) {
             for reach in [1u32, 2] {
@@ -482,7 +482,7 @@ mod tests {
 
     #[test]
     fn flags_change_string() {
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let center = heavy_atoms(&mol)[0];
         let a = EnvironmentOptions {
             atomic_number: true,
@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn max_bond_depth_bounded_by_reach() {
-        let mol = (SmilesIR::parse("CCCC").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCCC").unwrap()).to_atomistic().unwrap();
         let center = heavy_atoms(&mol)[0];
         for reach in [1u32, 2, 3] {
             let o = EnvironmentOptions {
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn recursive_style_parses() {
-        let mol = (SmilesIR::parse("CCO").unwrap()).to_atomistic().unwrap();
+        let mol = (SmilesIr::parse("CCO").unwrap()).to_atomistic().unwrap();
         let center = heavy_atoms(&mol)[1]; // middle C
         let o = EnvironmentOptions {
             neighbor_style: NeighborStyle::Recursive,

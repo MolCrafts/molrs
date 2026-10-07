@@ -4,7 +4,7 @@
 
 use molrs::core::NodeId;
 
-/// Options for [`SmilesIR::from_atomistic`](crate::io::smiles::SmilesIR::from_atomistic)
+/// Options for [`SmilesIr::from_atomistic`](crate::io::smiles::SmilesIr::from_atomistic)
 /// and [`write_smiles_str`](crate::io::write_smiles_str).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesEmitOptions {

@@ -228,6 +228,14 @@ Every file-format factory has one shape: a function at the top of
   center, …)` (Rust `SmartsPattern::from_environment`) and `str(pattern)`
   replace `write_smarts` / `write_local_smarts`; SMILES and SMARTS share one
   crate-private grammar, so `io` and `perceive` depend on neither.
+- **Line-notation IRs cased as words.** `SmilesIr`, `CgSmilesIr`, `CgGraph`,
+  `CgNode`, `CgEdge`, `CgFragmentDef`, `CgBondOrder` and `molrs.core.CgBond`
+  (were `SmilesIR`, `CGSmilesIR`, `CG*`).
+- **`fix cmap` doors say what they return.** Python
+  `read_lammps_cmap_forcefield` / `write_lammps_cmap_forcefield` (were
+  `read_lammps_cmap` / `write_lammps_cmap`) read and write a `ForceField`;
+  Rust `read_lammps_cmap_str` / `write_lammps_cmap_str` stay the raw grids
+  (`LammpsCmapFile`).
 - The [migration guide](migration.md#wave-s2-io-per-format) lists every old →
   new name.
 

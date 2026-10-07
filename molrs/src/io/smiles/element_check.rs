@@ -13,7 +13,7 @@ use crate::line_notation::ast::*;
 use crate::line_notation::is_element_symbol;
 use crate::line_notation::validation::validate_ring_closures;
 
-impl SmilesIR {
+impl SmilesIr {
     /// Check this IR as plain SMILES: ring closures pair up, every symbol is
     /// an element, no node carries a bonding descriptor. `input` is the text
     /// the IR came from; it is quoted in an error.
@@ -40,11 +40,11 @@ impl SmilesIR {
 
 /// Validate that all element symbols refer to real elements.
 ///
-/// [`SmilesIR::parse`] refuses an unknown
+/// [`SmilesIr::parse`] refuses an unknown
 /// symbol itself, by this same lookup, so on a parsed IR this pass has
 /// nothing left to find; it stands for the IRs nobody parsed — built by hand
 /// or edited after parsing.
-fn validate_elements(mol: &SmilesIR, input: &str) -> Result<(), SmilesError> {
+fn validate_elements(mol: &SmilesIr, input: &str) -> Result<(), SmilesError> {
     for component in &mol.components {
         validate_chain_elements(component, input)?;
     }
@@ -70,7 +70,7 @@ fn validate_chain_elements(chain: &Chain, input: &str) -> Result<(), SmilesError
 fn validate_atom_element(atom: &AtomNode, input: &str) -> Result<(), SmilesError> {
     // Plain SMILES has no bonding-descriptor notation, so a node carrying one
     // reached this validator through the fragment dialect (or a hand-built
-    // IR). Refusing here keeps `SmilesIR::validate` symmetric with
+    // IR). Refusing here keeps `SmilesIr::validate` symmetric with
     // `to_atomistic`: neither plain-path stage ever drops a descriptor.
     if !atom.descriptors.is_empty() {
         return Err(SmilesError::new(
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn test_valid_smiles() {
-        let mol = SmilesIR::parse("C1CCCCC1").unwrap();
+        let mol = SmilesIr::parse("C1CCCCC1").unwrap();
         assert!(mol.validate("C1CCCCC1").is_ok());
     }
 
@@ -131,7 +131,7 @@ mod tests {
     ///
     /// The parser refuses an unmatched ring closure itself, so this unit can
     /// only be reached with an IR built directly.
-    fn unmatched_ring_ir() -> SmilesIR {
+    fn unmatched_ring_ir() -> SmilesIr {
         fn carbon(start: usize) -> AtomNode {
             AtomNode {
                 spec: AtomSpec::Organic {
@@ -143,7 +143,7 @@ mod tests {
             }
         }
 
-        SmilesIR {
+        SmilesIr {
             components: vec![Chain {
                 head: carbon(0),
                 tail: vec![
@@ -183,8 +183,8 @@ mod tests {
     /// `parse_smiles` refuses this string itself, so this unit is reached
     /// only with an IR built directly (as a hand-built IR or a future
     /// notation could still carry one).
-    fn unknown_element_ir() -> SmilesIR {
-        SmilesIR {
+    fn unknown_element_ir() -> SmilesIr {
+        SmilesIr {
             components: vec![Chain {
                 head: AtomNode {
                     spec: AtomSpec::Bracket {
@@ -222,31 +222,31 @@ mod tests {
 
     #[test]
     fn test_valid_elements() {
-        let mol = SmilesIR::parse("[Fe+2]").unwrap();
+        let mol = SmilesIr::parse("[Fe+2]").unwrap();
         assert!(mol.validate("[Fe+2]").is_ok());
     }
 
     #[test]
     fn test_valid_aromatic_element() {
-        let mol = SmilesIR::parse("c1ccccc1").unwrap();
+        let mol = SmilesIr::parse("c1ccccc1").unwrap();
         assert!(mol.validate("c1ccccc1").is_ok());
     }
 
     #[test]
     fn test_multiple_ring_closures() {
-        let mol = SmilesIR::parse("c1ccc2ccccc2c1").unwrap();
+        let mol = SmilesIr::parse("c1ccc2ccccc2c1").unwrap();
         assert!(mol.validate("c1ccc2ccccc2c1").is_ok());
     }
 
     #[test]
     fn test_disconnected_valid() {
-        let mol = SmilesIR::parse("[Na+].[Cl-]").unwrap();
+        let mol = SmilesIr::parse("[Na+].[Cl-]").unwrap();
         assert!(mol.validate("[Na+].[Cl-]").is_ok());
     }
 
     #[test]
     fn test_descriptor_bearing_ir_is_rejected_by_the_plain_validator() {
-        let mut mol = SmilesIR::parse("CCO").unwrap();
+        let mut mol = SmilesIr::parse("CCO").unwrap();
         mol.components[0].head.descriptors.push(BondingDescriptor {
             kind: DescriptorKind::Symmetric,
             label: String::new(),

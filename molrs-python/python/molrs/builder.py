@@ -10,7 +10,7 @@ AxisOrienter()).assemble(sites)`` places one template copy per site of a
 (``assemble(sites, molrs.core.Atomistic)``; a bare
 :class:`molrs.core.MolGraph` by default);
 ``Assembler(library, GrowthPlacer()).assemble(sites)`` grows a site graph
-without positions (e.g. ``CGSmilesIR(...).to_coarsegrain()``).
+without positions (e.g. ``CgSmilesIr(...).to_coarsegrain()``).
 
 Coarse-graining: :class:`Coarsener` maps disjoint node groups of a held
 ``CoarseGrain`` or ``Atomistic`` onto the sites of a new ``CoarseGrain``, each

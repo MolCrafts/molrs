@@ -11,7 +11,7 @@ use std::io::{BufRead, Result};
 use crate::core::Atomistic;
 use crate::core::Frame;
 use crate::io::reader::{FrameReader, FromFrame, Reader};
-use crate::io::smiles::SmilesIR;
+use crate::io::smiles::SmilesIr;
 
 /// Parse one SMILES string into an [`Atomistic`].
 ///
@@ -19,7 +19,7 @@ use crate::io::smiles::SmilesIR;
 /// the parsing lives, so `read` and `read_as` share one implementation rather
 /// than each having their own.
 fn parse_atomistic(smiles: &str) -> Result<Atomistic> {
-    let ir = SmilesIR::parse(smiles)
+    let ir = SmilesIr::parse(smiles)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     ir.to_atomistic()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
@@ -148,7 +148,7 @@ mod tests {
         let err = reader("[>]COC[<]\n").read().unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         assert!(
-            err.to_string().contains("SmilesIR::from_fragment"),
+            err.to_string().contains("SmilesIr::from_fragment"),
             "got {err}"
         );
     }

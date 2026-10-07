@@ -15,12 +15,12 @@ def test_reads_one_molecule_without_adding_hydrogens() -> None:
 
 
 def test_matches_the_ir_conversion() -> None:
-    expected = molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic()
+    expected = molrs.io.smiles.SmilesIr("c1ccccc1").to_atomistic()
     assert molrs.io.read_smiles_str("c1ccccc1").n_atoms == expected.n_atoms
 
 
 def test_a_set_of_molecules_is_refused_naming_components() -> None:
-    with pytest.raises(ValueError, match=r"SmilesIR\(s\)\.components\(\)") as excinfo:
+    with pytest.raises(ValueError, match=r"SmilesIr\(s\)\.components\(\)") as excinfo:
         molrs.io.read_smiles_str("CCO.O")
     assert isinstance(excinfo.value, molrs.io.smiles.SmilesError)
     assert excinfo.value.kind == "MultipleComponents"

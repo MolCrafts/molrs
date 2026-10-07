@@ -206,13 +206,13 @@ def test_retired_modules_do_not_import(gone):
         "molrs.ff.forcefield.write_openmm_xml_forcefield",
         # A class of one format is that format's submodule's.
         "molrs.io.TrajectoryReader",
-        "molrs.io.SmilesIR",
+        "molrs.io.SmilesIr",
         "molrs.io.SmilesError",
-        "molrs.io.CGSmilesIR",
-        "molrs.io.CGGraph",
-        "molrs.io.CGNode",
-        "molrs.io.CGEdge",
-        "molrs.io.CGFragmentDef",
+        "molrs.io.CgSmilesIr",
+        "molrs.io.CgGraph",
+        "molrs.io.CgNode",
+        "molrs.io.CgEdge",
+        "molrs.io.CgFragmentDef",
         "molrs.io.ResolvedPair",
         "molrs.io.PairEnd",
         "molrs.io.BondingDescriptor",
@@ -255,8 +255,8 @@ def test_retired_modules_do_not_import(gone):
         # ... in-memory doors are read_<fmt>_str / _bytes ...
         "molrs.io.read_smiles",
         "molrs.io.write_smarts",
-        "molrs.io.smiles.SmilesIR.write_smiles",
-        "molrs.io.smiles.SmilesIR.write_smarts",
+        "molrs.io.smiles.SmilesIr.write_smiles",
+        "molrs.io.smiles.SmilesIr.write_smarts",
         "molrs.io.read_block_csv",
         "molrs.io.write_block_csv",
         # ... family formats carry the family's name ...
@@ -275,9 +275,20 @@ def test_retired_modules_do_not_import(gone):
         "molrs.io.read_forcefield_xml",
         "molrs.io.write_forcefield_xml",
         "molrs.io.read_opls_xml",
+        # ... and a door that returns a ForceField says so.
+        "molrs.io.read_lammps_cmap",
+        "molrs.io.write_lammps_cmap",
         # ... and a class lives in its own format's module.
         "molrs.io.smiles.CGSmilesIR",
         "molrs.io.smiles.CGGraph",
+        # Acronyms are cased as words: the line-notation IRs and records.
+        "molrs.io.smiles.SmilesIR",
+        "molrs.io.cgsmiles.CGSmilesIR",
+        "molrs.io.cgsmiles.CGGraph",
+        "molrs.io.cgsmiles.CGNode",
+        "molrs.io.cgsmiles.CGEdge",
+        "molrs.io.cgsmiles.CGFragmentDef",
+        "molrs.core.CGBond",
         # Second doors on a class.
         "molrs.core.Trajectory.from_frames",
         "molrs.core.Trajectory.count_frames",
@@ -444,8 +455,8 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.mrec.pack_mrec_zip",
         "molrs.io.mrec.MrecReader",
         "molrs.io.mrec.MrecWriter",
-        "molrs.io.smiles.SmilesIR",
-        "molrs.io.cgsmiles.CGSmilesIR",
+        "molrs.io.smiles.SmilesIr",
+        "molrs.io.cgsmiles.CgSmilesIr",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
         "molrs.io.mrec.MOLREC_VERSION",
@@ -555,6 +566,28 @@ def test_a_reader_or_writer_is_named_after_its_module_with_word_cased_acronyms()
         word = "".join(part.capitalize() for part in module.split("_"))
         if not value.__name__.startswith(word) or re.search(r"[A-Z]{2}", value.__name__):
             wrong.append(path)
+    assert not wrong
+
+
+
+# The analysis subsystems (compute, md, optimize, conformer, signal, builder,
+# stream, perceive outside SMARTS) are recased on their own; numpy's own
+# spellings (``DType``) stay as numpy writes them.
+_CASING_SCOPE = ("molrs.core", "molrs.io", "molrs.ff")
+_CASING_KEPT = {"DType"}
+
+
+def test_class_names_case_acronyms_as_words():
+    """``PdbReader``, ``SmilesIr``, ``CgGraph``, ``Mmff94Typifier``: an
+    acronym is cased as a word, never ``PDB``, ``IR`` or ``CG``."""
+    wrong = sorted(
+        path
+        for path, value in _objects().items()
+        if inspect.isclass(value)
+        and path.startswith(_CASING_SCOPE)
+        and value.__name__ not in _CASING_KEPT
+        and re.search(r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$", value.__name__)
+    )
     assert not wrong
 
 

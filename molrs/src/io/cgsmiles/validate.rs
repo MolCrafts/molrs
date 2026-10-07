@@ -11,13 +11,13 @@
 //!
 //! A [`BondingDescriptor`](crate::io::smiles::BondingDescriptor) carries no
 //! span of its own, so a refusal is spanned at the node that carries it: a
-//! [`CGNode::span`](crate::io::cgsmiles::CGNode::span) for a coarse node, and
-//! the definition's [`CGFragmentDef::span`] for an atomistic body, whose own
+//! [`CgNode::span`](crate::io::cgsmiles::CgNode::span) for a coarse node, and
+//! the definition's [`CgFragmentDef::span`] for an atomistic body, whose own
 //! atom spans index the body rather than the whole string.
 
-use crate::io::cgsmiles::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody};
+use crate::io::cgsmiles::{CgFragmentDef, CgGraph, CgSmilesIr, FragmentBody};
 use crate::io::smiles::{
-    AtomNode, BondingDescriptor, Chain, ChainElement, DescriptorKind, SmilesIR, Span,
+    AtomNode, BondingDescriptor, Chain, ChainElement, DescriptorKind, SmilesIr, Span,
 };
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 
@@ -32,7 +32,7 @@ use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 ///
 /// [`SmilesErrorKind::CgSquashUnsupported`], spanned at the node carrying the
 /// `[!]`.
-pub(crate) fn validate_ir(ir: &CGSmilesIR, input: &str) -> Result<(), SmilesError> {
+pub(crate) fn validate_ir(ir: &CgSmilesIr, input: &str) -> Result<(), SmilesError> {
     for level in &ir.levels {
         check_graph(level, input)?;
     }
@@ -45,7 +45,7 @@ pub(crate) fn validate_ir(ir: &CGSmilesIR, input: &str) -> Result<(), SmilesErro
 }
 
 /// Refuse a squash descriptor on any node of one coarse graph.
-fn check_graph(graph: &CGGraph, input: &str) -> Result<(), SmilesError> {
+fn check_graph(graph: &CgGraph, input: &str) -> Result<(), SmilesError> {
     for node in &graph.nodes {
         if node.descriptors.iter().any(is_squash) {
             return Err(squash_error(node.span, input));
@@ -55,7 +55,7 @@ fn check_graph(graph: &CGGraph, input: &str) -> Result<(), SmilesError> {
 }
 
 /// Refuse a squash descriptor in one fragment body, whichever shape it has.
-fn check_body(def: &CGFragmentDef, input: &str) -> Result<(), SmilesError> {
+fn check_body(def: &CgFragmentDef, input: &str) -> Result<(), SmilesError> {
     match &def.body {
         FragmentBody::Graph(graph) => check_graph(graph, input),
         FragmentBody::Smiles(body) if smiles_squashes(body) => Err(squash_error(def.span, input)),
@@ -83,7 +83,7 @@ fn is_squash(descriptor: &BondingDescriptor) -> bool {
 ///
 /// A production walker rather than the `cfg(test)` traversal in
 /// `line_notation::fixtures`: this one runs in a shipped build.
-fn smiles_squashes(body: &SmilesIR) -> bool {
+fn smiles_squashes(body: &SmilesIr) -> bool {
     body.components.iter().any(chain_squashes)
 }
 
@@ -109,9 +109,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use crate::io::cgsmiles::{CGFragmentDef, CGGraph, CGNode, CGSmilesIR, FragmentBody};
+    use crate::io::cgsmiles::{CgFragmentDef, CgGraph, CgNode, CgSmilesIr, FragmentBody};
     use crate::io::smiles::{
-        BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIR, Span,
+        BondingDescriptor, DescriptorKind, Notation, SmilesErrorKind, SmilesIr, Span,
     };
 
     // R5.2: `[!]` is the only syntax placing one atom in two beads, and R5.5
@@ -136,8 +136,8 @@ mod tests {
     }
 
     /// A coarse node named `name`, carrying `kinds`, spanning `span`.
-    fn node(name: &str, kinds: &[DescriptorKind], span: Span) -> CGNode {
-        CGNode {
+    fn node(name: &str, kinds: &[DescriptorKind], span: Span) -> CgNode {
+        CgNode {
             name: name.to_owned(),
             charge: None,
             annotations: Vec::new(),
@@ -148,18 +148,18 @@ mod tests {
     }
 
     /// A one-node graph.
-    fn one_node(name: &str, kinds: &[DescriptorKind], span: Span) -> CGGraph {
-        CGGraph {
+    fn one_node(name: &str, kinds: &[DescriptorKind], span: Span) -> CgGraph {
+        CgGraph {
             nodes: vec![node(name, kinds, span)],
             edges: Vec::new(),
         }
     }
 
     /// One fragment table, `name` → `body`.
-    fn table(name: &str, body: FragmentBody, span: Span) -> BTreeMap<String, CGFragmentDef> {
+    fn table(name: &str, body: FragmentBody, span: Span) -> BTreeMap<String, CgFragmentDef> {
         BTreeMap::from([(
             name.to_owned(),
-            CGFragmentDef {
+            CgFragmentDef {
                 name: name.to_owned(),
                 body,
                 span,
@@ -176,7 +176,7 @@ mod tests {
         let text = "{[#A]}.{#A=[!][#X]}.{#X=[$]C[$]}";
         let body = one_node("X", &[DescriptorKind::Shared], Span::new(11, 18));
         // One table, its level not yet built: all this walker reads.
-        let ir = CGSmilesIR {
+        let ir = CgSmilesIr {
             levels: vec![one_node("A", &[], Span::new(1, 5))],
             fragments: vec![table("A", FragmentBody::Graph(body), Span::new(8, 18))],
             pairs: vec![Vec::new()],
@@ -201,8 +201,8 @@ mod tests {
     #[test]
     fn test_validate_ir_refuses_a_shared_descriptor_in_a_smiles_body() {
         let text = "{[#A]}.{#A=[!]CC[!]}";
-        let body = SmilesIR::from_fragment("[!]CC[!]").expect("the fragment body must parse");
-        let ir = CGSmilesIR {
+        let body = SmilesIr::from_fragment("[!]CC[!]").expect("the fragment body must parse");
+        let ir = CgSmilesIr {
             levels: vec![one_node("A", &[], Span::new(1, 5))],
             fragments: vec![table("A", FragmentBody::Smiles(body), Span::new(8, 19))],
             pairs: vec![Vec::new()],
@@ -221,12 +221,12 @@ mod tests {
     // -- a `Shared` descriptor on a base-graph node -------------------------
 
     /// `{[#A][!]}`: the same rule covers level 0. Built by hand rather than
-    /// through `CGSmilesIR::parse`, which must itself refuse this string once the
+    /// through `CgSmilesIr::parse`, which must itself refuse this string once the
     /// walk is wired in.
     #[test]
     fn test_validate_ir_refuses_a_shared_descriptor_in_the_base_graph() {
         let text = "{[#A][!]}";
-        let ir = CGSmilesIR {
+        let ir = CgSmilesIr {
             levels: vec![one_node("A", &[DescriptorKind::Shared], Span::new(1, 5))],
             fragments: Vec::new(),
             pairs: vec![Vec::new()],
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn test_validate_ir_accepts_a_symmetric_descriptor() {
         let text = "{[#A][$]}";
-        let ir = CGSmilesIR {
+        let ir = CgSmilesIr {
             levels: vec![one_node("A", &[DescriptorKind::Symmetric], Span::new(1, 5))],
             fragments: Vec::new(),
             pairs: vec![Vec::new()],

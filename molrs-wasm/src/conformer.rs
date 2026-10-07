@@ -62,7 +62,7 @@ use crate::core::frame::Frame;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ir = SmilesIR.parse("c1ccccc1"); // benzene
+/// const ir = SmilesIr.parse("c1ccccc1"); // benzene
 /// const frame2d = ir.toFrame();
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///

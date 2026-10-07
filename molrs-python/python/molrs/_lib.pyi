@@ -1546,9 +1546,9 @@ class CoarseGrain(MolGraph):
     @property
     def beads(self) -> Refs[Bead]: ...
     @property
-    def cgbonds(self) -> Refs[CGBond]: ...
+    def cgbonds(self) -> Refs[CgBond]: ...
     def def_bead(self, mapping: Any = None, /, **attrs: Any) -> Bead: ...
-    def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond: ...
+    def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CgBond: ...
     def add_bead(
         self,
         bead_type: str,
@@ -1744,7 +1744,7 @@ class Bond(RelationRef):
 class Angle(RelationRef): ...
 class Dihedral(RelationRef): ...
 class Improper(Dihedral): ...
-class CGBond(RelationRef): ...
+class CgBond(RelationRef): ...
 
 class Port(RelationRef):
     @property
@@ -2291,28 +2291,28 @@ class schema:
 # SMILES
 # ---------------------------------------------------------------------------
 
-class SmilesIR:
+class SmilesIr:
     """Intermediate representation of a parsed SMILES string (or SMILES
     fragment body).
 
     ``to_atomistic()`` is the plain conversion: it refuses SMARTS query atoms
     and, since it will not drop them silently, any node carrying a bonding
-    descriptor — which is what a ``CGFragmentDef.body`` from the last CGsmiles
+    descriptor — which is what a ``CgFragmentDef.body`` from the last CGsmiles
     block holds. Build such a body's ported unit with ``to_template()``
-    (parse it with ``SmilesIR.from_fragment``), or expand a whole string
-    through ``CGSmilesIR.to_atomistic``.
+    (parse it with ``SmilesIr.from_fragment``), or expand a whole string
+    through ``CgSmilesIr.to_atomistic``.
     """
 
     def __init__(self, smiles: str) -> None: ...
     @classmethod
-    def from_fragment(cls, body: str) -> SmilesIR:
+    def from_fragment(cls, body: str) -> SmilesIr:
         """Parse a CGsmiles fragment body (SMILES plus bonding descriptors,
         e.g. ``"[<]OCC[>]"``); the plain constructor refuses descriptors."""
     def to_template(self) -> Atomistic:
         """The ported unit of this body: heavy atoms plus one hydrogen handle
         and one port per bonding descriptor; no coordinates, no ``frag_id``.
-        ``SmilesIR.from_fragment("[<]OCC[>]").to_template()`` equals
-        ``CGSmilesIR("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
+        ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` equals
+        ``CgSmilesIr("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
     @property
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic: ...
@@ -2333,14 +2333,14 @@ class SmilesIR:
             "error_if_multiple", "join_dot", "first_only"
         ] = "error_if_multiple",
         organic_subset: bool = True,
-    ) -> SmilesIR: ...
+    ) -> SmilesIr: ...
 
 # ---------------------------------------------------------------------------
 # CGsmiles — one front door plus the read-only records it hands out
 #
-# `CGSmilesIR` parses; every other class here is a read-only view over one
+# `CgSmilesIr` parses; every other class here is a read-only view over one
 # record of the value it returns and has no constructor of its own. There is
-# no `CGSmilesReader`: "Reader" here means a lazy, path-backed trajectory
+# no `CgSmilesReader`: "Reader" here means a lazy, path-backed trajectory
 # cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
 # module docstring.
 #
@@ -2380,7 +2380,7 @@ class BondingDescriptor:
     @property
     def order(self) -> BondKindName | None: ...
 
-class CGNode:
+class CgNode:
     """One coarse-grained node: ``[#PEO]``, ``[#A;q=-0.5]``.
 
     ``charge`` is a *partial* charge in elementary-charge units ``e`` (the
@@ -2399,7 +2399,7 @@ class CGNode:
     @property
     def parent(self) -> int | None: ...
 
-class CGEdge:
+class CgEdge:
     """One coarse edge, joining ``nodes[i]`` and ``nodes[j]`` of its level.
 
     ``multiplicity`` is how many bonds the edge stands for (1–4, from ``-``
@@ -2417,7 +2417,7 @@ class CGEdge:
     @property
     def derived_from(self) -> tuple[int, int] | None: ...
 
-class CGGraph:
+class CgGraph:
     """One resolution level: coarse-grained nodes and the edges between them.
 
     Both lists are in parse order — nodes as their brackets were read, edges
@@ -2426,17 +2426,17 @@ class CGGraph:
     """
 
     @property
-    def nodes(self) -> list[CGNode]: ...
+    def nodes(self) -> list[CgNode]: ...
     @property
-    def edges(self) -> list[CGEdge]: ...
+    def edges(self) -> list[CgEdge]: ...
 
-class CGFragmentDef:
+class CgFragmentDef:
     """One entry of a fragment block: ``#PEO=[$]COC[$]``.
 
-    ``body`` is a ``CGGraph`` in an intermediate block and a ``SmilesIR`` in
+    ``body`` is a ``CgGraph`` in an intermediate block and a ``SmilesIr`` in
     the last one — the Python type is the tag, so dispatch with ``isinstance``.
-    A ``SmilesIR`` body keeps its bonding descriptors, so its own
-    ``to_atomistic()`` refuses it; expand through ``CGSmilesIR.to_atomistic``.
+    A ``SmilesIr`` body keeps its bonding descriptors, so its own
+    ``to_atomistic()`` refuses it; expand through ``CgSmilesIr.to_atomistic``.
     Its ``repr`` echoes the fragment-table entry as written —
     ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES, because
     the entry's span is the text the IR records.
@@ -2445,7 +2445,7 @@ class CGFragmentDef:
     @property
     def name(self) -> str: ...
     @property
-    def body(self) -> CGGraph | SmilesIR: ...
+    def body(self) -> CgGraph | SmilesIr: ...
 
 class PairEnd:
     """One end of a :class:`ResolvedPair`: the port, and who offered it.
@@ -2483,7 +2483,7 @@ class ResolvedPair:
     @property
     def kind(self) -> BondKindName: ...
 
-class CGSmilesIR:
+class CgSmilesIr:
     """Intermediate representation of a parsed CGsmiles string.
 
     Constructing it parses, validates, expands and resolves the whole string;
@@ -2495,16 +2495,16 @@ class CGSmilesIR:
 
     def __init__(self, text: str) -> None: ...
     @property
-    def levels(self) -> list[CGGraph]: ...
+    def levels(self) -> list[CgGraph]: ...
     @property
-    def fragments(self) -> list[dict[str, CGFragmentDef]]: ...
+    def fragments(self) -> list[dict[str, CgFragmentDef]]: ...
     @property
     def pairs(self) -> list[list[ResolvedPair]]: ...
     def to_atomistic(self) -> Atomistic: ...
     def templates(self) -> dict[str, Atomistic]:
         """One ported :class:`Atomistic` template per definition of the last
         fragment table, keyed by name. One body alone:
-        ``SmilesIR.from_fragment(body).to_template()``."""
+        ``SmilesIr.from_fragment(body).to_template()``."""
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
@@ -3901,8 +3901,8 @@ def write_lammps_data_coeffs(
     units: str = "real",
 ) -> str: ...
 def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
-def read_lammps_cmap(path: PathInput) -> ForceField: ...
-def write_lammps_cmap(
+def read_lammps_cmap_forcefield(path: PathInput) -> ForceField: ...
+def write_lammps_cmap_forcefield(
     path: PathInput,
     forcefield: ForceField,
     frame: Frame,
@@ -5371,7 +5371,7 @@ class RingInfo:
 
     Examples
     --------
-    >>> rings = molrs.perceive.RingInfo(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.RingInfo(molrs.io.smiles.SmilesIr("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()
@@ -5554,7 +5554,7 @@ def write_amber_prep(path: PathInput, residue: dict[str, Any]) -> None:
 def read_smiles_str(smiles: str) -> Atomistic:
     """One molecule from a SMILES string: connectivity only, no implicit H, no
     coordinates. A ``'.'``-separated set raises ``SmilesError`` (a
-    ``ValueError``) naming ``SmilesIR(s).components()``."""
+    ``ValueError``) naming ``SmilesIr(s).components()``."""
 
 def write_smiles_str(
     mol: Atomistic,

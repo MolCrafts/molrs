@@ -547,10 +547,10 @@ const ACETANILIDE_XYZ: [[f64; 3]; 19] = [
 ];
 
 fn acetanilide() -> molrs::core::Atomistic {
-    use crate::io::smiles::SmilesIR;
+    use crate::io::smiles::SmilesIr;
     use crate::perceive::hydrogens::add_hydrogens;
     let mut mol = add_hydrogens(
-        &(SmilesIR::parse("CC(=O)Nc1ccccc1").unwrap())
+        &(SmilesIr::parse("CC(=O)Nc1ccccc1").unwrap())
             .to_atomistic()
             .unwrap(),
     )

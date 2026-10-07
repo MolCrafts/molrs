@@ -2,9 +2,9 @@
 //!
 //! [`readSmilesStr`](read_smiles_str) reads one molecule from a SMILES
 //! string into a [`Frame`] (`molrs::io::read_smiles_str`);
-//! [`SmilesIR.parse`](SmilesIR::parse) parses any SMILES string — a
+//! [`SmilesIr.parse`](SmilesIr::parse) parses any SMILES string — a
 //! `.`-separated set included — into its intermediate representation
-//! (`molrs::io::smiles::SmilesIR::parse`), which `toFrame()` converts.
+//! (`molrs::io::smiles::SmilesIr::parse`), which `toFrame()` converts.
 //!
 //! # Typical workflow (JavaScript)
 //!
@@ -29,26 +29,26 @@ use wasm_bindgen::prelude::*;
 /// SMILES string can encode multiple disconnected molecules separated
 /// by `.` (e.g., `"[Na+].[Cl-]"`).
 ///
-/// Call [`toFrame()`](SmilesIR::to_frame) to convert to a [`Frame`]
+/// Call [`toFrame()`](SmilesIr::to_frame) to convert to a [`Frame`]
 /// with `"atoms"` and `"bonds"` blocks.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ir = SmilesIR.parse("CCO");
+/// const ir = SmilesIr.parse("CCO");
 /// console.log(ir.nComponents); // 1
 ///
 /// const frame = ir.toFrame();
 /// const atoms = frame.get("atoms");
 /// console.log(atoms.copy("element")); // ["C", "C", "O", "H", ...], an owned copy
 /// ```
-#[wasm_bindgen(js_name = SmilesIR)]
-pub struct SmilesIR {
-    inner: molrs::io::smiles::SmilesIR,
+#[wasm_bindgen(js_name = SmilesIr)]
+pub struct SmilesIr {
+    inner: molrs::io::smiles::SmilesIr,
 }
 
-#[wasm_bindgen(js_class = SmilesIR)]
-impl SmilesIR {
+#[wasm_bindgen(js_class = SmilesIr)]
+impl SmilesIr {
     /// Parse a SMILES string — a `.`-separated set of molecules included —
     /// into its intermediate representation.
     ///
@@ -57,10 +57,10 @@ impl SmilesIR {
     /// Throws a `JsValue` string if the SMILES string is malformed
     /// (e.g., unmatched ring closure digits, invalid atom symbols).
     #[wasm_bindgen(js_name = parse)]
-    pub fn parse(smiles: &str) -> Result<SmilesIR, JsValue> {
-        let inner = molrs::io::smiles::SmilesIR::parse(smiles)
+    pub fn parse(smiles: &str) -> Result<SmilesIr, JsValue> {
+        let inner = molrs::io::smiles::SmilesIr::parse(smiles)
             .map_err(|e| JsValue::from_str(&format!("SMILES parse error: {e}")))?;
-        Ok(SmilesIR { inner })
+        Ok(SmilesIr { inner })
     }
 
     /// Return the number of disconnected components in the SMILES.
@@ -71,7 +71,7 @@ impl SmilesIR {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const ir = SmilesIR.parse("[Na+].[Cl-]");
+    /// const ir = SmilesIr.parse("[Na+].[Cl-]");
     /// console.log(ir.nComponents); // 2
     /// ```
     #[wasm_bindgen(getter, js_name = nComponents)]
@@ -126,7 +126,7 @@ impl SmilesIR {
 /// Read one molecule from a SMILES string into a [`Frame`] with `"atoms"`
 /// and `"bonds"` blocks — connectivity only, no implicit hydrogens added, no
 /// coordinates. A `.`-separated set is refused: parse it with
-/// `SmilesIR.parse` and convert its components.
+/// `SmilesIr.parse` and convert its components.
 ///
 /// # Errors
 ///

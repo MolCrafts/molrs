@@ -62,10 +62,10 @@ const ORGANIC_SUBSET: &[&str] = &[
 ///
 /// Everything the string itself decides is decided here, by the stage that
 /// read it, rather than surviving into an IR that only callers running
-/// [`SmilesIR::validate`](crate::io::smiles::SmilesIR::validate) would reject: a
+/// [`SmilesIr::validate`](crate::io::smiles::SmilesIr::validate) would reject: a
 /// ring-closure digit opened and never closed (`C1CC`), and a bracket symbol
-/// that names no element (`[Xx]`) — the same lookup `SmilesIR::validate` uses,
-/// so the two agree on every symbol. `SmilesIR::validate` keeps both checks for
+/// that names no element (`[Xx]`) — the same lookup `SmilesIr::validate` uses,
+/// so the two agree on every symbol. `SmilesIr::validate` keeps both checks for
 /// the IRs nobody parsed, built by hand or edited afterwards.
 ///
 /// # Errors
@@ -82,7 +82,7 @@ const ORGANIC_SUBSET: &[&str] = &[
 /// span covering the bracket atom), and
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a bonding descriptor,
 /// whose message points at [`parse_fragment_smiles`].
-pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
+pub fn parse_smiles(input: &str) -> Result<SmilesIr, SmilesError> {
     parse_paired(input, Dialect::Smiles)
 }
 
@@ -93,7 +93,7 @@ pub fn parse_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
 /// rule at the same stage. SMARTS is not routed here — a recursive `$(...)`
 /// sub-pattern is parsed as a molecule of its own and may legitimately leave a
 /// marker for the enclosing pattern to close.
-fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIR, SmilesError> {
+fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIr, SmilesError> {
     let mol = Parser::new(input, dialect).parse_molecule()?;
     validate_ring_closures(&mol, input)?;
     Ok(mol)
@@ -118,7 +118,7 @@ fn parse_paired(input: &str, dialect: Dialect) -> Result<SmilesIR, SmilesError> 
 /// [`SmilesErrorKind::UnclosedRecursive`] for a `$(` with no `)`, and
 /// [`SmilesErrorKind::RecursionLimit`] when `$(...)` nests deeper than the
 /// parser's limit.
-pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
+pub fn parse_smarts(input: &str) -> Result<SmilesIr, SmilesError> {
     Parser::new(input, Dialect::Smarts).parse_molecule()
 }
 
@@ -180,7 +180,7 @@ pub fn parse_smarts(input: &str) -> Result<SmilesIR, SmilesError> {
 /// for a marker opened and never closed and
 /// [`SmilesErrorKind::InvalidElement`] for a bracket symbol that names no
 /// element.
-pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIR, SmilesError> {
+pub fn parse_fragment_smiles(input: &str) -> Result<SmilesIr, SmilesError> {
     parse_paired(input, Dialect::FragmentSmiles)
 }
 
@@ -413,7 +413,7 @@ impl<'a> Parser<'a> {
 
     // -- molecule -----------------------------------------------------------
 
-    fn parse_molecule(&mut self) -> Result<SmilesIR, SmilesError> {
+    fn parse_molecule(&mut self) -> Result<SmilesIr, SmilesError> {
         let start = self.scanner.pos();
 
         if self.scanner.is_done() {
@@ -431,7 +431,7 @@ impl<'a> Parser<'a> {
             return Err(self.error(SmilesErrorKind::TrailingCharacters));
         }
 
-        Ok(SmilesIR {
+        Ok(SmilesIr {
             components,
             span: self.scanner.span_from(start),
         })
@@ -1682,15 +1682,15 @@ mod tests {
 
     // -- helpers ------------------------------------------------------------
 
-    fn smiles(input: &str) -> SmilesIR {
+    fn smiles(input: &str) -> SmilesIr {
         parse_smiles(input).unwrap_or_else(|e| panic!("parse_smiles({input:?}) failed: {e}"))
     }
 
-    fn smarts(input: &str) -> SmilesIR {
+    fn smarts(input: &str) -> SmilesIr {
         parse_smarts(input).unwrap_or_else(|e| panic!("parse_smarts({input:?}) failed: {e}"))
     }
 
-    fn atom_count(mol: &SmilesIR) -> usize {
+    fn atom_count(mol: &SmilesIr) -> usize {
         mol.components.iter().map(chain_atom_count).sum()
     }
 
@@ -2003,10 +2003,10 @@ mod tests {
     /// A bracket symbol that is not an element is a fact about the string,
     /// not about the graph built from it: the parser reads it, so the parser
     /// refuses it. Before this, `[Xx]` parsed into an IR and only a caller
-    /// that also ran `SmilesIR::validate` ever learnt that `Xx` is not an
+    /// that also ran `SmilesIr::validate` ever learnt that `Xx` is not an
     /// element — `to_atomistic` happily built an atom with that element.
     ///
-    /// Kind and payload are the ones `SmilesIR::validate` already uses for the
+    /// Kind and payload are the ones `SmilesIr::validate` already uses for the
     /// same rule (`smiles/validate.rs::validate_symbol`): the symbol exactly
     /// as it was written.
     #[test]
@@ -2095,7 +2095,7 @@ mod tests {
     }
 
     /// The primitive a one-primitive SMARTS bracket parsed to.
-    fn sole_primitive(mol: &SmilesIR) -> &AtomPrimitive {
+    fn sole_primitive(mol: &SmilesIr) -> &AtomPrimitive {
         match &mol.components[0].head.spec {
             AtomSpec::Query(AtomQuery::Primitive(p)) => p,
             other => panic!("expected a single query primitive, got {other:?}"),
@@ -2312,7 +2312,7 @@ mod tests {
 
     // -- fragment dialect: helpers ------------------------------------------
 
-    fn fragment(input: &str) -> SmilesIR {
+    fn fragment(input: &str) -> SmilesIr {
         parse_fragment_smiles(input)
             .unwrap_or_else(|e| panic!("parse_fragment_smiles({input:?}) failed: {e}"))
     }
