@@ -11,14 +11,17 @@ from os import PathLike
 from pathlib import Path
 from typing import Any
 
-from .._native import csv_block_from_text as _from_text
-from .._native import csv_block_to_text as _to_text
+from .._native import read_csv_block_str as _native_read_csv_block_str
+from .._native import write_csv_block_str as _native_write_csv_block_str
 
 PathInput = str | PathLike[str]
 
 
 def _delimiter(delimiter: str) -> str:
-    return delimiter if len(delimiter) == 1 else ","
+    """``delimiter``, which must be one character; ``ValueError`` otherwise."""
+    if len(delimiter) != 1:
+        raise ValueError(f"a CSV delimiter is one character, got {delimiter!r}")
+    return delimiter
 
 
 def read_csv_block_str(
@@ -34,7 +37,8 @@ def read_csv_block_str(
     given the text is treated as headerless and those names are used;
     otherwise the first non-empty line names the columns. With
     ``skip_empty_fields`` an empty field (a doubled delimiter) is dropped
-    rather than read as a value.
+    rather than read as a value. A ``delimiter`` that is not one character
+    raises ``ValueError``.
     """
     d = _delimiter(delimiter)
     if skip_empty_fields:
@@ -42,7 +46,7 @@ def read_csv_block_str(
             d.join(part for part in line.split(d) if part != "")
             for line in text.splitlines()
         )
-    return _from_text(text, d, header)
+    return _native_read_csv_block_str(text, d, header)
 
 
 def read_csv_block(
@@ -64,7 +68,7 @@ def read_csv_block(
 def write_csv_block_str(block: Any, *, delimiter: str = ",", header: bool = True) -> str:
     """Write a :class:`~molrs.core.Block` as CSV text — the inverse of
     :func:`read_csv_block_str`."""
-    return _to_text(block, _delimiter(delimiter), header)
+    return _native_write_csv_block_str(block, _delimiter(delimiter), header)
 
 
 def write_csv_block(

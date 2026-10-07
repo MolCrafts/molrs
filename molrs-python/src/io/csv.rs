@@ -1,7 +1,8 @@
 //! The native half of `molrs.io.read_csv_block[_str]` /
 //! `write_csv_block[_str]` (`molrs::io`): a `Block` to and from CSV text. The
 //! public doors are Python (`molrs/io/_csv_block.py`), which add the file,
-//! encoding and empty-field handling around these two private functions.
+//! encoding and empty-field handling around these two private natives, named
+//! after the Rust doors they bind.
 
 use crate::core::block::PyBlock;
 use pyo3::prelude::*;
@@ -19,8 +20,8 @@ use pyo3::prelude::*;
 /// the text is treated as headerless and those names are used; otherwise the
 /// first non-empty line provides the column names.
 #[pyfunction]
-#[pyo3(signature = (text, delimiter = ',', header = None))]
-pub fn csv_block_from_text(
+#[pyo3(name = "read_csv_block_str", signature = (text, delimiter = ',', header = None))]
+pub fn read_csv_block_str_py(
     text: &str,
     delimiter: char,
     header: Option<Vec<String>>,
@@ -31,10 +32,10 @@ pub fn csv_block_from_text(
 }
 
 /// Serialize a :class:`Block` to CSV text. The inverse of
-/// :func:`csv_block_from_text`.
+/// :func:`read_csv_block_str`.
 #[pyfunction]
-#[pyo3(signature = (block, delimiter = ',', header = true))]
-pub fn csv_block_to_text(block: &PyBlock, delimiter: char, header: bool) -> PyResult<String> {
+#[pyo3(name = "write_csv_block_str", signature = (block, delimiter = ',', header = true))]
+pub fn write_csv_block_str_py(block: &PyBlock, delimiter: char, header: bool) -> PyResult<String> {
     PyBlock::with_block(block, |b| {
         molrs::io::write_csv_block_str(b, delimiter, header)
     })
@@ -42,7 +43,7 @@ pub fn csv_block_to_text(block: &PyBlock, delimiter: char, header: bool) -> PyRe
 
 /// Register this module's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(csv_block_from_text, m)?)?;
-    m.add_function(wrap_pyfunction!(csv_block_to_text, m)?)?;
+    m.add_function(wrap_pyfunction!(read_csv_block_str_py, m)?)?;
+    m.add_function(wrap_pyfunction!(write_csv_block_str_py, m)?)?;
     Ok(())
 }

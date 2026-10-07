@@ -46,12 +46,13 @@ Force-field files map onto :class:`molrs.ff.forcefield.ForceField`, the data
 model :mod:`molrs.ff.forcefield` owns:
 
 * readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
+  :func:`read_lammps_data_coeffs_str`,
   :func:`read_lammps_cmap_forcefield`, :func:`read_gromacs_top_forcefield`,
   :func:`read_gromacs_top_system`, :func:`read_amber_prmtop_forcefield`,
   :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`,
   :func:`read_molrs_xml_forcefield`
 * writers — :func:`write_lammps_forcefield`,
-  :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
+  :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs_str`,
   :func:`write_lammps_cmap_forcefield`, :func:`write_gromacs_top_forcefield`,
   :func:`write_gromacs_top_system`, :func:`write_amber_frcmod`,
   :func:`write_openmm_xml_forcefield`, :func:`write_molrs_xml_forcefield`
@@ -95,6 +96,7 @@ from .._native import (
     read_lammps_cmap_forcefield,
     read_lammps_data,
     read_lammps_data_coeffs,
+    read_lammps_data_coeffs_str,
     read_lammps_forcefield,
     read_lammps_log,
     read_lammps_log_str,
@@ -136,7 +138,7 @@ from .._native import (
     write_lammps_bond_react_system,
     write_lammps_cmap_forcefield,
     write_lammps_data,
-    write_lammps_data_coeffs,
+    write_lammps_data_coeffs_str,
     write_lammps_dump_local,
     write_lammps_forcefield,
     write_lammps_forcefield_str,
@@ -205,6 +207,7 @@ __all__ = [
     "read_lammps_cmap_forcefield",
     "read_lammps_data",
     "read_lammps_data_coeffs",
+    "read_lammps_data_coeffs_str",
     "read_lammps_forcefield",
     "read_lammps_log",
     "read_lammps_log_str",
@@ -250,7 +253,7 @@ __all__ = [
     "write_lammps_bond_react_system",
     "write_lammps_cmap_forcefield",
     "write_lammps_data",
-    "write_lammps_data_coeffs",
+    "write_lammps_data_coeffs_str",
     "write_lammps_dump_local",
     "write_lammps_forcefield",
     "write_lammps_forcefield_str",

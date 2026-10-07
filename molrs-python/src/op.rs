@@ -1,5 +1,5 @@
-//! `molrs.op` — the pure numeric base (`molrs::op`): weighted superposition
-//! and centroids over `float64` numpy arrays.
+//! `molrs.op` — the pure numeric base (`molrs::op`): weighted superposition,
+//! centroids and NeRF placement over `float64` numpy arrays.
 //!
 //! Registered as a submodule of `_native`, like `md`. Points cross as `(k, 3)`
 //! arrays and rotations as `(3, 3)` row-major matrices. A
@@ -271,11 +271,51 @@ fn py_centroid<'py>(
     Ok(op::centroid(&points, &weights).map(|c| vector_to_py(py, &c)))
 }
 
+/// The point ``d`` at distance ``bond`` from ``c`` that makes the angle
+/// ``angle`` at ``c`` with ``b`` (∠b–c–d) and the dihedral ``torsion`` about
+/// ``b → c`` with ``a`` (a–b–c–d): the natural-extension reference frame
+/// (NeRF; Parsons et al., *J. Comput. Chem.* **26** (2005) 1063).
+///
+/// The inverse of the bond angle and the IUPAC dihedral: for the returned
+/// ``d`` they are ``angle`` and ``torsion`` to rounding. Collinear
+/// ``a, b, c`` leave the dihedral plane undefined; every off-axis component
+/// then vanishes.
+///
+/// Parameters
+/// ----------
+/// a, b, c : array_like, shape (3,), float64
+///     The three placed points, in any one length unit.
+/// bond : float
+///     Distance ``|d − c|``, in the points' length unit.
+/// angle, torsion : float
+///     In radians (``molrs.core.UnitRegistry().factor("deg", "rad")`` takes
+///     degrees there).
+///
+/// Returns
+/// -------
+/// ndarray, shape (3,), float64
+#[pyfunction(name = "place_from_internal_coords")]
+fn py_place_from_internal_coords<'py>(
+    py: Python<'py>,
+    a: [f64; 3],
+    b: [f64; 3],
+    c: [f64; 3],
+    bond: f64,
+    angle: f64,
+    torsion: f64,
+) -> Bound<'py, PyArray1<f64>> {
+    vector_to_py(
+        py,
+        &op::place_from_internal_coords(a, b, c, bond, angle, torsion),
+    )
+}
+
 /// Populate the `molrs.op` submodule.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySuperposition>()?;
     m.add("DEFAULT_GAP_TOL", DEFAULT_GAP_TOL)?;
     m.add_function(wrap_pyfunction!(py_superpose, m)?)?;
     m.add_function(wrap_pyfunction!(py_centroid, m)?)?;
+    m.add_function(wrap_pyfunction!(py_place_from_internal_coords, m)?)?;
     Ok(())
 }

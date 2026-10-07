@@ -2229,6 +2229,7 @@ pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> s
 /// `label_masses` holds for its label (instead of the placeholder `1`). The
 /// `fix bond/react` file set needs it: a type only a template uses is
 /// declared in the data file, and LAMMPS reads its mass from there.
+#[cfg(feature = "ff")]
 pub(crate) fn write_lammps_data_with_masses<P: AsRef<Path>>(
     path: P,
     frame: &impl FrameAccess,

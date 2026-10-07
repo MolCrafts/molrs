@@ -26,7 +26,7 @@ and the docs build.
 | `molrs.core.keys` | `molrs::core::keys` | the canonical column, frame-meta and graph keys |
 | `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
 | `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
-| `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Superposition`, `DEFAULT_GAP_TOL` |
+| `molrs.op` | `molrs::op` | `superpose`, `centroid`, `place_from_internal_coords`, `Superposition`, `DEFAULT_GAP_TOL` |
 | `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingInfo`, the `perceive_*` / `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
 | `molrs.io` | `molrs::io` | every file reader and writer, as a function `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory): structure, trajectory and force-field files, `*.mrec` records (`read_mrec_frame` / `write_mrec_frame` and partners), wire-encoded frames, SMILES and CGsmiles text, the LAMMPS log, CSV blocks |
 | `molrs.io.pdb`, `.xyz`, `.gro`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, dcd, trr, xtc}` | each format's lazy reader: `PdbReader`, `XyzReader`, `GroReader`, `DcdReader`, `TrrReader`, `XtcReader` |
@@ -324,6 +324,12 @@ The [Record files guide](../guides/records.md) shows these in use.
 ::: molrs.io.read_lammps_forcefield
 
 ::: molrs.io.write_lammps_forcefield
+
+::: molrs.io.read_lammps_data_coeffs
+
+::: molrs.io.read_lammps_data_coeffs_str
+
+::: molrs.io.write_lammps_data_coeffs_str
 
 ::: molrs.io.read_gromacs_top_forcefield
 

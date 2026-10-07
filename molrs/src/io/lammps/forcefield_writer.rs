@@ -1318,12 +1318,14 @@ pub fn write_lammps_forcefield_str(
 
 /// The `* Coeffs` sections of a LAMMPS data file for `ff` and the typed
 /// `frame` ([`LammpsForcefieldWriter::write_data_coeffs_str`]); the inverse
-/// of [`read_lammps_data_coeffs`](crate::io::read_lammps_data_coeffs).
+/// of [`read_lammps_data_coeffs_str`](crate::io::read_lammps_data_coeffs_str)
+/// once spliced into a data file. A fragment of a data file, it has no path
+/// door.
 ///
 /// # Errors
 ///
 /// As [`write_lammps_forcefield_str`], and a used explicit cross pair.
-pub fn write_lammps_data_coeffs(
+pub fn write_lammps_data_coeffs_str(
     ff: &ForceField,
     frame: &molrs::core::Frame,
     options: LammpsForcefieldWriteOptions,
