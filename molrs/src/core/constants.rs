@@ -108,6 +108,7 @@ pub const GROMACS_ONE_4PI_EPS0: F = 138.935_457_644_381_96;
 /// [`OPENMM_ONE_4PI_EPS0`] converted from kJ·nm, 332.06371329919216. What
 /// an OpenMM force field read into molrs states on its Coulomb styles, so it
 /// prices its electrostatics as OpenMM does.
+#[cfg(feature = "ff")]
 pub(crate) fn openmm_coulomb_real() -> F {
     OPENMM_ONE_4PI_EPS0 * crate::core::unit_factors::KJ_NM_TO_KCAL_ANGSTROM.get()
 }
@@ -116,6 +117,7 @@ pub(crate) fn openmm_coulomb_real() -> F {
 /// [`GROMACS_ONE_4PI_EPS0`] converted from kJ·nm, 332.06371329919205 (one ulp
 /// below [`openmm_coulomb_real`]). What a GROMACS topology read into molrs
 /// states on its Coulomb styles.
+#[cfg(feature = "ff")]
 pub(crate) fn gromacs_coulomb_real() -> F {
     GROMACS_ONE_4PI_EPS0 * crate::core::unit_factors::KJ_NM_TO_KCAL_ANGSTROM.get()
 }
@@ -146,6 +148,7 @@ pub const PARMCHK2_PI: F = 3.1415926;
 /// An angle in degrees in radians as `parmchk2` converts it,
 /// `degrees · PARMCHK2_PI / 180` (in that order), so a GAFF angle estimate is
 /// parmchk2's to the last digit.
+#[cfg(feature = "ff")]
 pub(crate) fn parmchk2_radians(degrees: F) -> F {
     degrees * PARMCHK2_PI / 180.0
 }

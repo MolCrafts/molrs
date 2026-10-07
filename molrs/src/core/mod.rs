@@ -154,6 +154,7 @@ pub use math::{
     Complex, Virial, legendre_plm, wigner_3j, wigner_d_element, wigner_d_matrix, wigner_small_d,
     ylm_all, ylm_complex, ylm_normalization, ylm_real,
 };
+#[cfg(feature = "compute")]
 pub(crate) use math::{FOUR_PI, FOUR_THIRDS_PI};
 pub use units::{
     Dimension, PresetDim, Quantity, Unit, UnitDef, UnitFactor, UnitPreset, UnitPresetRegistry,

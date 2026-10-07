@@ -17,6 +17,7 @@ use crate::op::F;
 pub(crate) const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 
 /// 4π/3: the volume of the unit sphere.
+#[cfg(feature = "compute")]
 pub(crate) const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
 
 pub use complex::Complex;
