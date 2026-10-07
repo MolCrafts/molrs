@@ -145,7 +145,7 @@ impl MolFacts {
         true
     }
 
-    /// TypeAssignment every pattern of `patterns` against a distinct neighbour of
+    /// Match every pattern of `patterns` against a distinct neighbour of
     /// `parent`, then hand the labels to `rest` — the remainder of the whole
     /// match. `true` once `rest` accepts some assignment.
     fn match_pattern_list(
@@ -238,7 +238,7 @@ impl MolFacts {
         self.match_pattern_list(aid, Some(prev), pattern.children, labels, rest)
     }
 
-    /// TypeAssignment a pattern atom whose name the generator already resolved.
+    /// Match a pattern atom whose name the generator already resolved.
     ///
     /// `EW` / `WILDATOM` / element resolution happened at table-generation time,
     /// so there is no name table to consult here — and no per-table special case

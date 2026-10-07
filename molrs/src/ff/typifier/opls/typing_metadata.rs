@@ -3,7 +3,7 @@
 //!
 //! This is the typing-metadata half of an OPLS-AA force field, kept separate
 //! from the potential parameters (mirroring
-//! [`MMFFParams`](crate::ff::typifier::mmff::MMFFParams) versus the
+//! [`MmffAtomProperties`](crate::ff::typifier::mmff::MmffAtomProperties) versus the
 //! [`ForceField`](crate::ff::forcefield::ForceField)). The shipped table is
 //! joined from the molrs-owned rules of
 //! [`crate::ff::params::oplsaa_typing`]; for a caller's own OPLS / CL&P XML, the

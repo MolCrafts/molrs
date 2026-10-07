@@ -80,7 +80,7 @@ pub(crate) struct AngleParams {
 
 /// MMFF resolved stretch-bend force constants (`kba_ijk`, `kba_kji`).
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct StbnParams {
+pub(crate) struct StretchBendParams {
     pub kba_ijk: f64,
     pub kba_kji: f64,
 }
@@ -319,7 +319,7 @@ fn angle_lookup(angle_type: u8, i: u8, j: u8, k: u8) -> Option<AngleParams> {
 /// the level that hit, then sorted ascending; the centre stays in second place)
 /// together with its `koop`. The key is what the typifier stamps on the improper
 /// as its `type` label, so the label names the row the number actually came from.
-fn oop_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<(String, f64)> {
+fn out_of_plane_lookup(variant: MmffVariant, i: u8, j: u8, k: u8, l: u8) -> Option<(String, f64)> {
     for iter in 0..4 {
         let mut ikl = [eq_level(i, iter), eq_level(k, iter), eq_level(l, iter)];
         ikl.sort_unstable();
@@ -551,7 +551,7 @@ pub(crate) fn stretch_bend_params(
     i: usize,
     j: usize,
     k: usize,
-) -> Option<(StbnParams, f64, f64, f64)> {
+) -> Option<(StretchBendParams, f64, f64, f64)> {
     let prop_j = mmff_prop(types[j])?;
     if prop_j.linh != 0 {
         return None;
@@ -571,15 +571,15 @@ pub(crate) fn stretch_bend_params(
     );
 
     // explicit STBN lookup with the same swap convention as RDKit.
-    let (swap, stbn) = stbn_lookup(sbt, bt1, bt2, ti, types[j], tk);
+    let (swap, stbn) = stretch_bend_lookup(sbt, bt1, bt2, ti, types[j], tk);
     let params = if let Some(s) = stbn {
         if swap {
-            StbnParams {
+            StretchBendParams {
                 kba_ijk: s.1,
                 kba_kji: s.0,
             }
         } else {
-            StbnParams {
+            StretchBendParams {
                 kba_ijk: s.0,
                 kba_kji: s.1,
             }
@@ -589,12 +589,12 @@ pub(crate) fn stretch_bend_params(
         let (swap_d, d) = dfsb_lookup(topo.atno[i], topo.atno[j], topo.atno[k]);
         let d = d?;
         if swap_d {
-            StbnParams {
+            StretchBendParams {
                 kba_ijk: d.1,
                 kba_kji: d.0,
             }
         } else {
-            StbnParams {
+            StretchBendParams {
                 kba_ijk: d.0,
                 kba_kji: d.1,
             }
@@ -607,7 +607,14 @@ pub(crate) fn stretch_bend_params(
 }
 
 /// RDKit `MMFFStbnCollection::getMMFFStbnParams`. Returns `(swap, (ijk,kji))`.
-fn stbn_lookup(sbt: u8, bt1: u8, bt2: u8, i: u8, j: u8, k: u8) -> (bool, Option<(f64, f64)>) {
+fn stretch_bend_lookup(
+    sbt: u8,
+    bt1: u8,
+    bt2: u8,
+    i: u8,
+    j: u8,
+    k: u8,
+) -> (bool, Option<(f64, f64)>) {
     let (mut ci, mut ck) = (i, k);
     let swap = if i > k {
         std::mem::swap(&mut ci, &mut ck);
@@ -641,7 +648,7 @@ fn dfsb_lookup(an_i: u8, an_j: u8, an_k: u8) -> (bool, Option<(f64, f64)>) {
 /// `j` is the trigonal centre. Returns `(canonical key, koop)` — `None` when MMFF
 /// defines no out-of-plane term for the centre, which is how the typifier knows
 /// to skip it.
-pub(crate) fn oop_params(
+pub(crate) fn out_of_plane_params(
     variant: MmffVariant,
     types: &[u8],
     i: usize,
@@ -649,7 +656,7 @@ pub(crate) fn oop_params(
     k: usize,
     l: usize,
 ) -> Option<(String, f64)> {
-    oop_lookup(variant, types[i], types[j], types[k], types[l])
+    out_of_plane_lookup(variant, types[i], types[j], types[k], types[l])
 }
 
 // --- torsion (explicit + empirical) --------------------------------------

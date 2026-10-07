@@ -19,7 +19,7 @@
 //!   built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
 //!   ([`conformance`], [`IrError`]) and seals the built-ins;
-//! * [`expr`] compiles a style's Lepton `expression` into its kernel, with
+//! * [`expression`] compiles a style's Lepton `expression` into its kernel, with
 //!   exact derivatives — installed in every registry
 //!   [`Registry::builtin`] makes;
 //! * a style's **engine forms** ([`Engine`], [`EngineCodec`]): its [`LammpsForm`] (positional,

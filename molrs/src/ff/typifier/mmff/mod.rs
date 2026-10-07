@@ -117,7 +117,7 @@ macro_rules! mmff_front_door {
         }
 
         impl Typifier for $name {
-            #[doc = concat!("TypeAssignment an all-atom graph against `", $set, "`.")]
+            #[doc = concat!("Type an all-atom graph against `", $set, "`.")]
             ///
             /// Atoms get their MMFF numeric `type` and partial `charge`; bonds,
             /// angles, dihedrals and impropers get their type labels **and** the

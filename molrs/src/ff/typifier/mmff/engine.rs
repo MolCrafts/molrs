@@ -34,7 +34,7 @@
 //! convenience that did typify → `to_frame` → `intramolecular_pairs` →
 //! `PotentialCompiler::compile` behind one method name, which made MMFF the only
 //! typifier in the crate that could also compile; it is gone. A typifier's
-//! contract is `match`.
+//! contract is `assign`.
 
 use std::sync::Arc;
 

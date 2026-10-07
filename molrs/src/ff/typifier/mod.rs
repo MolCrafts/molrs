@@ -48,15 +48,13 @@ use estimate::candidate::is_wildcard;
 
 /// A graph typifier: what matching a molecule against a force field produces.
 ///
-/// An implementor provides `assign` and
-/// [`library`](Self::library) and nothing else; it cannot type a molecule by
-/// itself. [`Typing`] owns the implementor and the output force field and is
-/// the only caller of `assign`.
-///
-/// The raw identifier `assign` gives the Rust and the Python hook one name,
-/// `match`.
+/// An implementor provides [`assign`](Self::assign) and
+/// [`source_forcefield`](Self::source_forcefield) and nothing else; it cannot
+/// type a molecule by itself. [`Typing`] owns the implementor and the output
+/// force field and is the only caller of `assign`. The Python hook has the
+/// same name.
 pub trait Typifier {
-    /// TypeAssignment `graph` and return what it assigns.
+    /// Type `graph` and return what it assigns.
     ///
     /// `graph` is the base's private working copy of the input: an
     /// implementation may write intermediate results onto it (generated
@@ -1525,8 +1523,8 @@ mod tests {
         );
     }
 
-    /// `match` receives the private working copy, and that copy is what
-    /// `typify` returns: an intermediate result written by `match` is on the
+    /// `assign` receives the private working copy, and that copy is what
+    /// `typify` returns: an intermediate result written by `assign` is on the
     /// returned graph and not on the input.
     #[test]
     fn typify_hands_match_the_working_copy_it_returns() {

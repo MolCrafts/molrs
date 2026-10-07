@@ -552,7 +552,7 @@ impl Registry {
 
     /// Every built-in category and style, sealed.
     ///
-    /// The kernels are [`BuiltinKernels::builtin`]'s constructors, each with
+    /// The kernels are the built-in constructors (`BuiltinKernels`), each with
     /// its spec from [`builtin_styles`]; a spec without a constructor is
     /// priced by its expression or prices nothing (`dihedral rb`, `drude
     /// harmonic`, `atom full`, …). A test holds the two tables to one set of

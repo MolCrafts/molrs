@@ -456,8 +456,8 @@ fn charmm_switch() -> String {
         .to_owned()
 }
 
-/// The spec of every style molrs registers: each kernel of
-/// [`BuiltinKernels::builtin`], `dihedral rb` (expression only), and the
+/// The spec of every style molrs registers: each built-in kernel (the
+/// crate-private table `ff::potential::BuiltinKernels`), `dihedral rb` (expression only), and the
 /// styles of the categories that price no energy.
 ///
 /// Names, order and dimensions are the force-field IR's
@@ -467,8 +467,6 @@ fn charmm_switch() -> String {
 /// `dihedral periodic` and `nharmonic`, are left to the expression engine).
 /// The per-instance styles (MMFF, UFF, the per-atom-charge Coulomb styles)
 /// list the Frame columns their kernels read.
-///
-/// [`BuiltinKernels::builtin`]: crate::ff::potential::BuiltinKernels::builtin
 pub fn builtin_styles() -> Vec<StyleSpec> {
     use crate::ff::ir::engine_codec::lammps::{self as lc, custom};
     use ParamSource::PerInstance;

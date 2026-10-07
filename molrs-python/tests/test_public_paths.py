@@ -256,6 +256,48 @@ def test_retired_names_are_absent(gone):
     assert not hasattr(owner, name), gone
 
 
+@pytest.mark.parametrize(
+    "gone",
+    [
+        # Kernels are <Category><Style>; the explicit-term door names its job.
+        "molrs.ff.potential.LJCut",
+        "molrs.ff.potential.kernel",
+        "molrs.ff.potential.TypedPotentials",
+        "molrs.ff.potential.PairLjCut.eval",
+        "molrs.ff.potential.PairLjCut.eval_table",
+        "molrs.ff.potential.PairLjCut.eval_pairs",
+        "molrs.ff.potential.PairLjCut.pair_eval",
+        # The IR's Python names are the Rust ones; refusals end in Error.
+        "molrs.ff.ir.Param",
+        "molrs.ff.ir.StyleInfo",
+        "molrs.ff.ir.CategoryInfo",
+        "molrs.ff.ir.unregister",
+        "molrs.ff.ir.Arity",
+        "molrs.ff.ir.Dim",
+        "molrs.ff.ir.Sealed",
+        # One accessor per question on the force-field model.
+        "molrs.ff.forcefield.Type",
+        "molrs.ff.forcefield.Style.types",
+        # Typifiers: acronyms cased as words, assign -> TypeAssignment.
+        "molrs.ff.typifier.Match",
+        "molrs.ff.typifier.OPLSAATypifier",
+        "molrs.ff.typifier.MMFF94Typifier",
+        "molrs.ff.typifier.MMFF94STypifier",
+        "molrs.ff.typifier.Typifier.match",
+        "molrs.ff.typifier.Typifier.library",
+        # CL&Pol scaling is its own module; its table is a params table.
+        "molrs.ff.scale_lj",
+        "molrs.ff.clpol_scaling.fragment_scaling_data",
+    ],
+)
+def test_force_field_names_retired_by_wave_s3_are_absent(gone):
+    owner_path, _, name = gone.rpartition(".")
+    owner: object = molrs
+    for part in owner_path.split(".")[1:]:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, name), gone
+
+
 # --- One shape per file-format factory --------------------------------------
 #
 # A factory that reads or writes a file format is either a function at the

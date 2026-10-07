@@ -23,7 +23,7 @@
 //! by [`torsion`] (whose estimate tleap prefers, then the wildcard row
 //! `X-j-k-X`), impropers by [`improper`]. A wildcard row that covers a term is
 //! a parameter, anything reached by analogy or formula is an estimate and says
-//! so (see `Typifier::r#match` on [`GaffTypifier`]). A term parmchk2 cannot
+//! so (see `Typifier::assign` on [`GaffTypifier`]). A term parmchk2 cannot
 //! estimate either (it writes a zero marked `ATTN, need revision`) is missing,
 //! and every missing term is reported at once.
 //!
@@ -341,7 +341,7 @@ impl std::fmt::Display for MissingTerm {
 }
 
 /// Why a molecule could not be matched against a GAFF table. Reaches callers
-/// as its `Display` text, through [`Typifier::r#match`].
+/// as its `Display` text, through [`Typifier::assign`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GaffError {
     /// An atom carries no [`keys::TYPE`] label: the molecule was never typed.
@@ -455,7 +455,7 @@ impl GaffTypifier {
         Self { set }
     }
 
-    /// The body of [`Typifier::r#match`], with the typed error.
+    /// The body of [`Typifier::assign`], with the typed error.
     fn match_terms(&self, graph: &mut Atomistic) -> Result<TypeAssignment, GaffError> {
         let index = TableIndex::new(self.set.table());
         let type_of = index.intern_atoms(graph)?;
@@ -652,7 +652,7 @@ impl GaffTypifier {
 }
 
 impl Typifier for GaffTypifier {
-    /// TypeAssignment the bonded terms of a molecule whose atoms carry GAFF types.
+    /// Match the bonded terms of a molecule whose atoms carry GAFF types.
     ///
     /// Angles and dihedrals are regenerated from the bond graph onto `graph`;
     /// impropers are rebuilt as parmchk2 + tleap build them (see the `improper` stage of this typifier),

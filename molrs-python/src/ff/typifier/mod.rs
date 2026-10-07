@@ -183,7 +183,7 @@ impl PyTypifier {
         Ok(())
     }
 
-    /// TypeAssignment ``graph`` and return what it assigns, as a :class:`TypeAssignment`.
+    /// Type ``graph`` and return what it assigns, as a :class:`TypeAssignment`.
     ///
     /// The one hook a subclass implements. ``assign`` may write intermediate
     /// results (generated topology, perceived bond types) onto the graph it is

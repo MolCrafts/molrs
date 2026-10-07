@@ -43,7 +43,7 @@ mod validator;
 mod violation;
 
 pub use block::{BlockSpec, EndpointSpec, EndpointTarget, RowKind};
-pub use column::{ColShape, ColumnDim, ColumnSpec};
+pub use column::{ColShape, ColumnDimension, ColumnSpec};
 pub use document::{
     BlockDoc, ColumnDoc, KeysDocument, NamedGroup, NamedValue, SchemaDocument, document,
 };
@@ -56,7 +56,7 @@ use crate::core::DType;
 use crate::core::PresetDim;
 
 use ColShape::Scalar;
-use ColumnDim::{Dimensionless, NotAQuantity, Of, Product};
+use ColumnDimension::{Dimensionless, NotAQuantity, Of, Product};
 use PresetDim::{Charge, Force, Length, Mass, Velocity};
 // Identifiers are unsigned and physical quantities are float. `Int` is here for
 // the one kind of value that is neither: a periodic image flag, which counts
@@ -708,7 +708,7 @@ mod tests {
         assert_eq!(spec.const_name, "EXCLUDE_14");
         assert_eq!(spec.dtype, DType::Bool);
         assert_eq!(spec.shape, ColShape::Scalar);
-        assert!(matches!(spec.dimension, ColumnDim::NotAQuantity));
+        assert!(matches!(spec.dimension, ColumnDimension::NotAQuantity));
         for name in ["dihedrals", "impropers"] {
             let b = block(name).expect("block must be in the vocabulary");
             assert!(

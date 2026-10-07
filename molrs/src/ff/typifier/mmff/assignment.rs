@@ -427,7 +427,7 @@ fn annotate_dihedrals(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
 /// contributes three Wilson permutations that share one `koop`. The centre is
 /// placed **first** (`atomi`), the improper order of every molrs out-of-plane
 /// style (LAMMPS's `fourier` / `umbrella`), which the `mmff_oop` kernel reads.
-/// The `type` label is the canonical OOP key that [`eparams::oop_params`]
+/// The `type` label is the canonical OOP key that [`eparams::out_of_plane_params`]
 /// matched on (peripherals equivalence-degraded and sorted, centre second, as
 /// MMFF writes it), so the label names the row the `koop` came from; the type's
 /// endpoints are its four fields with the centre moved first. Centres for which
@@ -457,7 +457,8 @@ fn annotate_impropers(graph: &mut Atomistic, ctx: &MmffContext) -> Result<Annota
         // atoms — resolved for the caller's variant; the kernel reads the column and
         // evaluates `E_oop = 0.5 · 143.9325 · koop · χ²` with χ in radians. This is
         // the one number MMFF94s changes on a delocalised trivalent nitrogen.
-        let Some((label, koop)) = eparams::oop_params(ctx.variant, &ctx.types, a, center, b, c)
+        let Some((label, koop)) =
+            eparams::out_of_plane_params(ctx.variant, &ctx.types, a, center, b, c)
         else {
             continue;
         };

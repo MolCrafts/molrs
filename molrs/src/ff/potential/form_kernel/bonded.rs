@@ -21,7 +21,7 @@ use molrs::op::types::F;
 ///
 /// Per evaluation it computes every term's coordinate, makes **one** call to
 /// the form, and projects each `dE/dq` onto the term's atoms with the chain
-/// rule of [`geometry`](crate::ff::potential::flat_coords): along the bond for
+/// rule over the flat coordinate array: along the bond for
 /// `r`, `accumulate_angle_forces` for `theta`, `accumulate_dihedral_forces`
 /// for `phi`.
 pub struct ScalarBonded {
