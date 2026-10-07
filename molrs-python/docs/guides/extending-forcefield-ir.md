@@ -251,7 +251,10 @@ a Lepton subset:
   `phi` and `chi`, compound categories points only, pair `r`, `q1`, `q2`, a
   bare parameter (the pair value) and `x1` / `x2` (the self rows); every
   numeric parameter by name, **as stored** — an angle value in degrees,
-  which the expression converts (`theta0*0.017453292519943295`).
+  which the expression converts: `theta0*(pi/180)`, with `pi` defined as the
+  last sub-definition, `; pi=3.141592653589793` (Lepton has no named
+  constants; parenthesised, `(pi/180)` is `f64::to_radians`'s factor to the
+  bit, where `theta0*pi/180` rounds differently).
 - The expression is the unweighted energy of one term, inside the cutoff
   (the form pair kernel truncates at `r < cutoff`; a shift or switch to
   zero there is the expression's own, as `lj/cut`'s `shift` and the CHARMM

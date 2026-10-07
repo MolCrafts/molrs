@@ -36,9 +36,11 @@
 use std::collections::{BTreeSet, HashMap};
 
 use molrs::core::NodeId;
+use molrs::core::constants::parmchk2_radians;
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::{EmpiricalTable, ParmTable, ParmchkTable, ParmchkWeights};
+use crate::ff::typifier::estimate::empirical::angle_k;
 use crate::ff::typifier::{EstimateMethod, Provenance};
 
 /// A bond or angle parmchk2 estimated: its parameters (`k`, `r0` / `theta0`),
@@ -74,11 +76,6 @@ struct Corr {
     columns: [f64; 8],
     kind: u8,
 }
-
-/// The π `empangle` converts θ₀ to radians with — written to eight figures in
-/// parmchk2, and kept so: the estimate is parmchk2's, digit for digit.
-#[allow(clippy::approx_constant)]
-const PARMCHK2_PI: f64 = 3.1415926;
 
 const BL: usize = 0;
 const BLF: usize = 1;
@@ -413,14 +410,14 @@ impl Search<'_> {
             z.and_then(|z| self.empirical.angle(z))
                 .map_or(0.0, |row| if centre { row.c } else { row.z_factor })
         };
-        let d = (b1 - b2).powi(2) / (b1 + b2).powi(2);
-        let k = 143.9
-            * factor(z[0], false)
-            * factor(z[1], true)
-            * factor(z[2], false)
-            * (-2.0 * d).exp()
-            / (b1 + b2)
-            / (theta0 * PARMCHK2_PI / 180.0).sqrt();
+        let k = angle_k(
+            factor(z[0], false),
+            factor(z[1], true),
+            factor(z[2], false),
+            b1,
+            b2,
+            parmchk2_radians(theta0),
+        );
         Some((k, theta0))
     }
 

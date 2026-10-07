@@ -6,18 +6,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use ndarray::{Array1, ArrayD};
 
 use super::{Directives, Kind, Row, Table, convert};
-use crate::core::UnitFactor;
+use crate::core::unit_factors::{KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::potential::MAX_ATOMS_FOR_A_FULL_PAIR_LIST;
 use molrs::core::Frame;
 use molrs::core::TypeName;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::{Block, BlockDtype};
 use molrs::op::{F, Idx};
-
-/// kcal → kJ (kcal/mol → kJ/mol).
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.

@@ -37,7 +37,8 @@ The same style priced by numpy instead (one call per style per evaluation;
 Calling conventions (every tier): ``q`` is the category's coordinate — ``r``
 (length), ``theta`` in [0, π] or ``phi`` in (−π, π] (radians); parameters
 arrive **as stored** (angle values in degrees, the expression converts with
-``0.017453292519943295``); a kernel returns the **unweighted** energy per term
+``(pi/180)`` and defines ``pi=3.141592653589793`` last, Lepton having no named
+constants); a kernel returns the **unweighted** energy per term
 and its derivative (or ``∂E/∂x`` for a compound kernel, not the force). The
 pair weight, the cutoff and the chain rule onto Cartesian forces are the
 form kernels'.

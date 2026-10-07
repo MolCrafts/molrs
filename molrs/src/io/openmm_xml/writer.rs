@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 mod custom;
 
-use crate::core::UnitFactor;
+use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
@@ -16,13 +16,6 @@ use crate::ff::ir::torsion::{
 use crate::ff::ir::{Registry, RegistryRef};
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
-
-/// kcal → kJ (kcal/mol → kJ/mol).
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
-/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
-static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///

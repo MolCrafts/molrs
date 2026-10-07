@@ -7,7 +7,6 @@
 //! rebound index tables, and — for the pair — over a neighbour table with
 //! per-pair weights, a cutoff and the virial.
 
-use std::f64::consts::PI;
 use std::sync::Arc;
 
 use ndarray::Array1;
@@ -24,8 +23,6 @@ use crate::ff::potential::{ForceTerm, Potential, PotentialCompiler, Potentials};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::{F, Idx};
-
-const DEG: F = PI / 180.0;
 
 // ---------------------------------------------------------------------------
 // The forms
@@ -65,7 +62,7 @@ impl ScalarForm for Periodic2 {
                     col(format!("periodicity{m}"))[t],
                     col(format!("phase{m}"))[t],
                 );
-                let arg = n * phi[t] - g * DEG;
+                let arg = n * phi[t] - g.to_radians();
                 e[t] += k * (1.0 + arg.cos());
                 de[t] -= k * n * arg.sin();
             }
@@ -124,7 +121,7 @@ impl CompoundForm for CharmmAngle {
             let pts = &x[t * 3..t * 3 + 3];
             let flat: Vec<F> = pts.iter().flatten().copied().collect();
             let theta = compute_angle(&flat, 0, 1, 2);
-            let dth = theta - theta0[t] * DEG;
+            let dth = theta - theta0[t].to_radians();
             let mut forces = vec![0.0; 9];
             accumulate_angle_forces(&flat, 0, 1, 2, 2.0 * k[t] * dth, &mut forces);
             let d: Vec<F> = (0..3).map(|c| pts[2][c] - pts[0][c]).collect();
@@ -355,7 +352,8 @@ fn scalar_bonded_equals_angle_harmonic() {
         StyleSpec::new("angle", "harmonic/form").params(vec![p("k", "E/A^2"), p("theta0", "A")]);
     let form = Harmonic {
         q0: "theta0",
-        unit: DEG,
+        // one degree in radians
+        unit: 1.0_f64.to_radians(),
     };
     let reg = registry_with(spec, Kernel::Scalar(Arc::new(form)));
     let (builtin, generic) = twin(

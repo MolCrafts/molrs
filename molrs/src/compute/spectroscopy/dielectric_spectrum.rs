@@ -27,10 +27,8 @@ const DIELECTRIC_PAD_FACTOR: usize = 4;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────────
 
-use molrs::core::constants::BOLTZMANN_REAL as K_B;
 use molrs::core::constants::COULOMB_REAL as KAPPA;
-
-use crate::compute::dielectric::FOUR_PI_OVER_3;
+use molrs::core::{FOUR_PI, FOUR_THIRDS_PI, UnitPreset};
 
 /// Result of a dielectric ε(ω) spectrum transform.
 ///
@@ -313,7 +311,8 @@ impl Fit for EinsteinHelfandSpectrum {
         let (frequencies, dre, dim) = taper_derivative_spectrum(acf, self.dt);
 
         // ε*(ω) − ε_∞ = −A·Ĉ′(ω), with ε* = ε′ − i·ε″ (positive-loss convention).
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -410,8 +409,9 @@ impl Fit for GreenKuboSpectrum {
         // With J(t) = Ṁ(t)/V: ⟨Ṁ·Ṁ⟩ = V²·⟨J·J⟩, so the textbook
         // 1/(3·V·k_B·T) prefactor for Ṁ becomes V/(3·k_B·T) for J.
         // 1/ε₀ = 4π·KAPPA in MD real units.
-        let sigma_prefactor = self.volume / (3.0 * K_B * self.temperature);
-        let eps0_factor = 4.0 * std::f64::consts::PI * KAPPA;
+        let sigma_prefactor =
+            self.volume / (3.0 * UnitPreset::real().boltzmann() * self.temperature);
+        let eps0_factor = FOUR_PI * KAPPA;
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -490,7 +490,8 @@ impl Fit for DipoleRateCrossSpectrum {
         validate_thermo(self.dt, self.volume, self.temperature)?;
 
         let (frequencies, re, im) = windowed_acf_spectrum(cross, self.dt, &self.window_type)?;
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -578,7 +579,8 @@ impl Fit for DipoleAutocorrelationSpectrum {
         };
 
         let (frequencies, re, im) = windowed_acf_spectrum(&series, self.dt, &self.window_type)?;
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -800,8 +802,8 @@ impl Check for ConductivitySumRule {
             let dw = omega[i] - omega[i - 1];
             integral += 0.5 * (sigma[i] + sigma[i - 1]) * dw;
         }
-        let expected =
-            std::f64::consts::PI * 0.5 * current_sq_mean / (3.0 * volume * K_B * temperature);
+        let expected = std::f64::consts::PI * 0.5 * current_sq_mean
+            / (3.0 * volume * UnitPreset::real().boltzmann() * temperature);
         let denom = expected.abs().max(1e-30);
         let relative_error = (integral - expected) / denom;
         Ok(SumRuleCheck {
@@ -1016,7 +1018,8 @@ mod tests {
         let (frequencies, dre, dim) =
             piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR);
 
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+        let prefactor =
+            FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -1071,8 +1074,8 @@ mod tests {
         let (frequencies, spec_re, spec_im) =
             piecewise_linear_onesided_ft(&windowed_1d, dt, DIELECTRIC_PAD_FACTOR);
 
-        let sigma_prefactor = volume / (3.0 * K_B * temperature);
-        let eps0_factor = 4.0 * std::f64::consts::PI * KAPPA;
+        let sigma_prefactor = volume / (3.0 * UnitPreset::real().boltzmann() * temperature);
+        let eps0_factor = FOUR_PI * KAPPA;
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -1347,7 +1350,8 @@ mod tests {
         let expected = 8.0;
         // expected = π/2 · ⟨J²⟩ / (3 V k_B T)  ⇒  ⟨J²⟩ = expected·3 V k_B T / (π/2)
         let current_sq_mean =
-            expected * 3.0 * volume * K_B * temperature / (std::f64::consts::PI * 0.5);
+            expected * 3.0 * volume * UnitPreset::real().boltzmann() * temperature
+                / (std::f64::consts::PI * 0.5);
         let out = ConductivitySumRule {
             current_sq_mean,
             volume,

@@ -120,10 +120,9 @@ mod tests {
     /// (removed) Einstein–Helfand conductivity free fn so the tests fold in the exact
     /// same constant the legacy free function used.
     fn einstein_helfand_prefactor() -> f64 {
-        use molrs::core::UnitFactor;
         use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
-        let angstrom_m = UnitFactor::new("angstrom", "m").get();
-        let femtosecond_s = UnitFactor::new("fs", "s").get();
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
         (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s) / (6.0 * angstrom_m.powi(3) * K_B_SI)
     }
 
@@ -265,10 +264,9 @@ mod tests {
         // σ over many realisations. Seed is fixed → deterministic across CI.
         use crate::compute::Fit;
         use crate::compute::LinearFit;
-        use molrs::core::UnitFactor;
         use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
-        let angstrom_m = UnitFactor::new("angstrom", "m").get();
-        let femtosecond_s = UnitFactor::new("fs", "s").get();
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
 
         let n_realisations = 48usize;
         let n_ions = 50usize;

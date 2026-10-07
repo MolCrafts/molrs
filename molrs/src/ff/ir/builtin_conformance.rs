@@ -46,8 +46,6 @@ use molrs::op::{F, Idx};
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;
 
-use super::spec::RADIANS_PER_DEGREE;
-
 /// Four atoms of type `A`, a non-planar chain (`super::tests::chain`'s,
 /// moved by up to ±0.2 Å per coordinate), with charges; one term of
 /// `category` over the first `arity` atoms typed `t`, and the `pairs` list
@@ -402,10 +400,11 @@ fn every_appendix_a_expression_agrees_with_its_kernel() {
                         row.push((format!("periodicity{t}"), (1 + (config + t) % 6) as F));
                         row.push((format!("phase{t}"), rng.uniform(-180.0, 180.0)));
                         terms.push(format!(
-                            "k{t}*(1+cos(periodicity{t}*phi-phase{t}*{RADIANS_PER_DEGREE}))"
+                            "k{t}*(1+cos(periodicity{t}*phi-phase{t}*(pi/180)))"
                         ));
                     }
-                    (c.name, twin(&mut r, spec, terms.join("+"), m))
+                    let expression = format!("{}; pi=3.141592653589793", terms.join("+"));
+                    (c.name, twin(&mut r, spec, expression, m))
                 }
                 // Σᵢ aᵢ cos^(i−1) φ, N = 2 … 5.
                 ("dihedral", "nharmonic") => {

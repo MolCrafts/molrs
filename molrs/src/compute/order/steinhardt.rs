@@ -4,6 +4,7 @@ use crate::compute::ComputeResult;
 use std::cmp::Ordering;
 
 use molrs::core::Complex;
+use molrs::core::FOUR_PI;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::core::wigner_3j;
@@ -14,8 +15,6 @@ use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
-
-const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 
 /// Steinhardt order-parameter calculator.
 ///

@@ -97,24 +97,25 @@ fn check_scalar(
 const BOND_HARMONIC: &str = "k*(r-r0)^2";
 const BOND_MORSE: &str = "d0*(1-exp(-alpha*(r-r0)))^2";
 const BOND_CLASS2: &str = "k2*d^2+k3*d^3+k4*d^4; d=r-r0";
-const ANGLE_HARMONIC: &str = "k*(theta-theta0*0.017453292519943295)^2";
-const ANGLE_CHARMM: &str = "k*(theta-theta0*0.017453292519943295)^2+k_ub*(distance(p1,p3)-r_ub)^2";
-const ANGLE_CLASS2: &str = "k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*0.017453292519943295";
-const DIHEDRAL_PERIODIC: &str = "k*(1+cos(periodicity*phi-phase*0.017453292519943295))";
-const DIHEDRAL_PERIODIC_2: &str = "k1*(1+cos(periodicity1*phi-phase1*0.017453292519943295)) + \
-                                   k2*(1+cos(periodicity2*phi-phase2*0.017453292519943295))";
+const ANGLE_HARMONIC: &str = "k*(theta-theta0*(pi/180))^2; pi=3.141592653589793";
+const ANGLE_CHARMM: &str =
+    "k*(theta-theta0*(pi/180))^2+k_ub*(distance(p1,p3)-r_ub)^2; pi=3.141592653589793";
+const ANGLE_CLASS2: &str = "k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*(pi/180); pi=3.141592653589793";
+const DIHEDRAL_PERIODIC: &str = "k*(1+cos(periodicity*phi-phase*(pi/180))); pi=3.141592653589793";
+const DIHEDRAL_PERIODIC_2: &str = "k1*(1+cos(periodicity1*phi-phase1*(pi/180))) + \
+                                   k2*(1+cos(periodicity2*phi-phase2*(pi/180))); pi=3.141592653589793";
 const DIHEDRAL_OPLS: &str =
     "0.5*(k1*(1+cos(phi))+k2*(1-cos(2*phi))+k3*(1+cos(3*phi))+k4*(1-cos(4*phi)))";
 const DIHEDRAL_HARMONIC: &str = "k*(1+sign*cos(periodicity*phi))";
 const DIHEDRAL_MULTI_HARMONIC: &str = "a1+a2*c+a3*c^2+a4*c^3+a5*c^4; c=cos(phi)";
 const DIHEDRAL_NHARMONIC_7: &str = "a1+a2*c+a3*c^2+a4*c^3+a5*c^4+a6*c^5+a7*c^6; c=cos(phi)";
-const DIHEDRAL_CLASS2: &str = "k1*(1-cos(phi-phi1*0.017453292519943295))+\
-                               k2*(1-cos(2*phi-phi2*0.017453292519943295))+\
-                               k3*(1-cos(3*phi-phi3*0.017453292519943295))";
+const DIHEDRAL_CLASS2: &str = "k1*(1-cos(phi-phi1*(pi/180)))+\
+                               k2*(1-cos(2*phi-phi2*(pi/180)))+\
+                               k3*(1-cos(3*phi-phi3*(pi/180))); pi=3.141592653589793";
 const DIHEDRAL_RB: &str = "c0+c1*c+c2*c^2+c3*c^3+c4*c^4+c5*c^5; c=-cos(phi)";
-const IMPROPER_HARMONIC: &str = "k*(chi-chi0*0.017453292519943295)^2";
+const IMPROPER_HARMONIC: &str = "k*(chi-chi0*(pi/180))^2; pi=3.141592653589793";
 const IMPROPER_CVFF: &str = "k*(1+sign*cos(periodicity*phi))";
-const IMPROPER_PERIODIC: &str = "k*(1+cos(periodicity*phi-phase*0.017453292519943295))";
+const IMPROPER_PERIODIC: &str = "k*(1+cos(periodicity*phi-phase*(pi/180))); pi=3.141592653589793";
 const PAIR_LJ_CUT: &str = "C*epsilon*((sigma/r)^n-(sigma/r)^m-select(shift,(sigma/cutoff)^n-(sigma/cutoff)^m,0)); C=n/(n-m)*(n/m)^(m/(n-m))";
 const PAIR_LJ_12_6: &str = "4*epsilon*((sigma/r)^12-(sigma/r)^6)";
 const PAIR_LJ_CHARMM: &str = "4*epsilon*((sigma/r)^12-(sigma/r)^6)*S; S=select(step(inner-r),1,(cutoff^2-r^2)^2*(cutoff^2+2*r^2-3*inner^2)/(cutoff^2-inner^2)^3)";
@@ -185,9 +186,18 @@ fn angles_take_theta0_in_degrees() {
             k2 * d * d + k3 * d.powi(3) + k4 * d.powi(4)
         },
     );
-    // The constant is exactly f64::to_radians's factor.
-    assert_eq!(DEG, std::f64::consts::PI / 180.0);
-    assert_eq!(theta0 * DEG, theta0.to_radians());
+    // `x*(pi/180)` with `pi` the shortest decimal of π is `x.to_radians()`
+    // to the bit (the factor `f64::to_radians` multiplies by).
+    let c = compile(
+        "theta-theta0*(pi/180); pi=3.141592653589793",
+        &Binding::new(Geometry::Angle, &["theta0"], &[]),
+    )
+    .unwrap();
+    let values = table(&[("theta0", theta0)]);
+    let cols = columns(&c, &values);
+    let (mut e, mut d) = ([0.0], [0.0]);
+    c.eval_scalar(&[1.9], &cols, &mut e, &mut d);
+    assert_eq!(e[0], 1.9 - theta0.to_radians());
 }
 
 #[test]
@@ -1375,7 +1385,7 @@ fn printer_round_trips() {
         PAIR_MORSE,
         FENE,
         "-x^2 - -y*-z + (-x)^2 + x^-2 + x^(-y)^z + (x^y)^z + x-(y-z) + x/(y*z) + x/y*z",
-        "2^3^2 + 1e-7 + 1.5E+20 + .25 + 3. + 0.017453292519943295",
+        "2^3^2 + 1e-7 + 1.5E+20 + .25 + 3. + 3.141592653589793",
         "select(step(r-rc), 0, min(a, max(b, c))); rc=2^(1/6)*s; a=abs(r-1)",
         "k*(angle(p1,p2,p3)-t0)^2 + dihedral(p1, p2, p3, p4)",
         "  k * ( r - r0 ) ^ 2  ",

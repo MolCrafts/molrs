@@ -102,7 +102,7 @@ impl VanHove {
     }
 
     fn shell_volume(&self, r_inner: F, r_outer: F) -> F {
-        (4.0 / 3.0) * std::f64::consts::PI * (r_outer.powi(3) - r_inner.powi(3))
+        crate::core::FOUR_THIRDS_PI * (r_outer.powi(3) - r_inner.powi(3))
     }
 }
 

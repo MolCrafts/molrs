@@ -35,7 +35,7 @@
 //! ([`Binding`]) and the sub-definitions. A geometric variable is shorthand
 //! for its compound function, and the compound functions are available in
 //! every category with points (D5): `angle charmm` written out is
-//! `k*(theta-theta0*0.017453292519943295)^2+k_ub*(distance(p1,p3)-r_ub)^2`.
+//! `k*(theta-theta0*(pi/180))^2+k_ub*(distance(p1,p3)-r_ub)^2; pi=3.141592653589793`.
 //!
 //! For a pair (D6), a bare parameter name binds the pair value (the cross
 //! row, else the mixing rule), `x1`/`x2` the self rows of the first/second
@@ -58,10 +58,14 @@
 //!
 //! Coordinates are radians, as Lepton's trigonometry is; an angle-valued
 //! parameter (`theta0`, `phase`, `chi0`, …) is bound **as stored in the IR,
-//! in degrees**, and the expression converts it explicitly with [`DEG`]
-//! (`0.017453292519943295`, the double nearest π/180 — the factor of
-//! `f64::to_radians`): `angle harmonic` is
-//! `k*(theta-theta0*0.017453292519943295)^2`, never `k*(theta-theta0)^2`.
+//! in degrees**, and the expression converts it explicitly with `(pi/180)`.
+//! The grammar has no named constants (Lepton has none), so `pi` is the
+//! expression's last sub-definition, `pi=3.141592653589793`, as Lepton users
+//! write it: `angle harmonic` is
+//! `k*(theta-theta0*(pi/180))^2; pi=3.141592653589793`, never
+//! `k*(theta-theta0)^2`. Parenthesised, `(pi/180)` is the double nearest
+//! π/180, the factor of `f64::to_radians`, so `theta0*(pi/180)` is
+//! `theta0.to_radians()` to the bit (`theta0*pi/180` rounds differently).
 //! No parameter is converted behind the expression's back, so the
 //! expression a reader keeps is the whole truth.
 //!
@@ -90,13 +94,6 @@ pub use ast::{BinOp, Definition, Expr, Func, Parsed};
 pub use compile::{Binding, Compiled, Geometry, Input, compile, compile_parsed, is_identifier};
 pub use error::ExpressionError;
 pub use parse::parse;
-
-use molrs::op::F;
-
-/// Degrees → radians in an expression: the double nearest π/180, the factor
-/// [`f64::to_radians`] multiplies by. An expression converts an angle-valued
-/// parameter with it: `theta0*0.017453292519943295`.
-pub const DEG: F = 0.017453292519943295;
 
 /// Compile a style's `expression` for a category molrec's variable table
 /// names (`bond`, `drude`, `angle`, `dihedral`, `improper`, `pair`,

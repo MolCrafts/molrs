@@ -2,10 +2,9 @@
 
 use libm::lgamma;
 
+use super::FOUR_PI;
 use crate::core::Complex;
 use crate::op::F;
-
-const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 
 /// Associated Legendre polynomial `P_ℓ^m(x)` for `|x| ≤ 1`, `0 ≤ m ≤ ℓ`.
 ///

@@ -98,7 +98,7 @@ mod tests {
             v[[t, 0]] = (2.0
                 * std::f64::consts::PI
                 * freq_thz
-                * crate::core::UnitFactor::new("THz", "1/fs").get()
+                * crate::core::unit_factors::THZ_TO_PER_FS.get()
                 * tf)
                 .sin();
         }

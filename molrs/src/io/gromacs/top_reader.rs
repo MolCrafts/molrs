@@ -220,16 +220,7 @@ use crate::io::reader::ForceFieldReader;
 use molrs::core::Frame;
 use molrs::core::TypeName;
 
-use crate::core::UnitFactor;
-
-/// kcal → kJ (kcal/mol → kJ/mol).
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
-/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
-static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
-/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
-static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
+use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -1463,10 +1454,7 @@ fn define_lj(
             "pair",
             coul_name,
             Params::from_pairs(&[
-                (
-                    "coulomb",
-                    crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
-                ),
+                ("coulomb", crate::core::constants::gromacs_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )
@@ -1867,15 +1855,11 @@ mod tests {
         let p = style(&ff, "pair", "coul/cut").params();
         assert_eq!(
             p.get("coulomb"),
-            Some(crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+            Some(crate::core::constants::gromacs_coulomb_real())
         );
         // GROMACS's ONE_4PI_EPS0 is LAMMPS real's to 9.9e-9.
         assert!(
-            (crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
-                / COULOMB_REAL
-                - 1.0
-                - 9.9e-9)
-                .abs()
+            (crate::core::constants::gromacs_coulomb_real() / COULOMB_REAL - 1.0 - 9.9e-9).abs()
                 < 1e-10
         );
         assert_eq!(p.get("dielectric"), Some(VACUUM_DIELECTRIC));

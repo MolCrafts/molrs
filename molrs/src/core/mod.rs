@@ -27,15 +27,16 @@
 //! # Units: one definition each
 //!
 //! Every unit conversion in molrs goes through the unit registry: a
-//! `static` [`UnitFactor`] written as its two units
-//! (`UnitFactor::new("kcal", "kJ")`, resolved once), [`UnitRegistry::factor`]
-//! or [`Quantity::to`]. No module writes a factor by hand (`* 4.184`,
+//! [`UnitFactor`] written as its two units, each defined once in
+//! [`unit_factors`] (`unit_factors::KCAL_TO_KJ`, resolved once),
+//! [`UnitRegistry::factor`] or [`Quantity::to`]. No module writes a factor by hand (`* 4.184`,
 //! `/ 10.0` for nm), and [`constants`] holds physical constants and the
 //! constants engines define as data, never a conversion factor; the units
 //! are built from those constants (`bohr` from [`constants::BOHR_RADIUS`],
 //! `eV` from [`constants::ELEMENTARY_CHARGE`]). `module_boundaries` fails on
 //! a conversion-factor constant or literal outside the units module.
-//! Degrees ↔ radians is arithmetic (`to_radians` / `to_degrees`), not a unit.
+//! Degrees ↔ radians is `to_radians` / `to_degrees` (the registry's `deg`
+//! is the same π/180).
 //!
 //! Whole-graph transforms are [`MolGraph`] methods ([`MolGraph::translate`],
 //! [`MolGraph::rotate`], [`MolGraph::scale`], [`MolGraph::center`]); ring
@@ -59,6 +60,7 @@
 pub mod constants;
 pub mod keys;
 pub mod schema;
+pub mod unit_factors;
 
 // Columnar data.
 mod block;
@@ -152,6 +154,7 @@ pub use math::{
     Complex, Virial, legendre_plm, wigner_3j, wigner_d_element, wigner_d_matrix, wigner_small_d,
     ylm_all, ylm_complex, ylm_normalization, ylm_real,
 };
+pub(crate) use math::{FOUR_PI, FOUR_THIRDS_PI};
 pub use units::{
     Dimension, PresetDim, Quantity, Unit, UnitDef, UnitFactor, UnitPreset, UnitPresetRegistry,
     UnitRegistry, UnitsError, lookup_unit_preset, register_unit_preset, replace_unit_preset,

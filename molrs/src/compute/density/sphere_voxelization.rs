@@ -210,7 +210,7 @@ mod tests {
         let voxel_vol = (10.0_f64 / 50.0).powi(3);
         let filled: u64 = r.voxels.iter().map(|&v| v as u64).sum();
         let measured_vol = filled as F * voxel_vol;
-        let analytic = (4.0 / 3.0) * std::f64::consts::PI * 1.5_f64.powi(3);
+        let analytic = crate::core::FOUR_THIRDS_PI * 1.5_f64.powi(3);
         // Voxelisation error: a couple of percent at 50³ grid.
         assert!(
             ((measured_vol - analytic) / analytic).abs() < 0.05,

@@ -1,7 +1,7 @@
 //! LAMMPS unit-style conversion for force-field I/O.
 
 use crate::ff::ir::UnitScale;
-use molrs::core::{Quantity, UnitRegistry, UnitsError};
+use molrs::core::{PresetDim, Quantity, UnitPreset, UnitRegistry, UnitsError};
 use molrs::op::F;
 
 /// Map a LAMMPS `units` keyword onto a core preset name (`"lj"` / `"real"` / `"metal"`).
@@ -81,40 +81,34 @@ impl LammpsUnitConverter {
         &self.reg
     }
 
-    // ── unit expression names for each style ─────────────────────────────
-
-    fn energy_unit(style: &str) -> &'static str {
-        match style {
-            "lj" => "lj_epsilon",
-            "real" => "kilocalorie_per_mole",
-            "metal" => "eV",
-            other => panic!("unknown LAMMPS style {other}"),
-        }
+    /// The unit of `dimension` in LAMMPS unit style `style`, read from its
+    /// [`UnitPreset`]; an error for a style that is no preset.
+    fn unit_of(style: &str, dimension: PresetDim) -> Result<String, String> {
+        let preset = UnitPreset::builtin(style)
+            .ok_or_else(|| format!("unknown LAMMPS units style `{style}`"))?;
+        preset
+            .unit(dimension.name())
+            .map(str::to_owned)
+            .ok_or_else(|| format!("unit preset `{style}` gives no {} unit", dimension.name()))
     }
 
-    fn length_unit(style: &str) -> &'static str {
-        match style {
-            "lj" => "lj_sigma",
-            "real" | "metal" => "angstrom",
-            other => panic!("unknown LAMMPS style {other}"),
-        }
-    }
-
-    /// Convert a raw file value of the given dimension from `from` style to `to`
+    /// Convert a raw file value of `dimension` from `from` style to `to`
     /// style **through lj** (`from → lj → to`).
     fn convert_through_lj(
         &self,
         value: F,
         from: &str,
         to: &str,
-        unit_for: impl Fn(&str) -> String,
+        dimension: PresetDim,
     ) -> Result<F, String> {
         if from == to {
             return Ok(value);
         }
-        let from_u = self.reg.parse(&unit_for(from)).map_err(|e| e.to_string())?;
-        let lj_u = self.reg.parse(&unit_for("lj")).map_err(|e| e.to_string())?;
-        let to_u = self.reg.parse(&unit_for(to)).map_err(|e| e.to_string())?;
+        let parse = |style: &str| {
+            let unit = Self::unit_of(style, dimension)?;
+            self.reg.parse(&unit).map_err(|e| e.to_string())
+        };
+        let (from_u, lj_u, to_u) = (parse(from)?, parse("lj")?, parse(to)?);
 
         let q = Quantity::new(value, from_u);
         let in_lj = q.to(&lj_u).map_err(|e| e.to_string())?;
@@ -124,12 +118,12 @@ impl LammpsUnitConverter {
 
     /// Energy (ε, dihedral K, …): `from → lj → to`.
     pub fn energy(&self, value: F, from: &str, to: &str) -> Result<F, String> {
-        self.convert_through_lj(value, from, to, |s| Self::energy_unit(s).to_string())
+        self.convert_through_lj(value, from, to, PresetDim::Energy)
     }
 
     /// Length (σ, r0): `from → lj → to`.
     pub fn length(&self, value: F, from: &str, to: &str) -> Result<F, String> {
-        self.convert_through_lj(value, from, to, |s| Self::length_unit(s).to_string())
+        self.convert_through_lj(value, from, to, PresetDim::Length)
     }
 
     /// The per-dimension conversion of every parameter from `from` to `to`
@@ -139,31 +133,13 @@ impl LammpsUnitConverter {
         if from == to {
             return Ok(UnitScale::IDENTITY);
         }
-        let one = |unit: fn(&str) -> &'static str| {
-            self.convert_through_lj(1.0, from, to, |s| unit(s).to_string())
-        };
+        let one = |dimension| self.convert_through_lj(1.0, from, to, dimension);
         Ok(UnitScale::new(
-            one(Self::energy_unit)?,
-            one(Self::length_unit)?,
-            one(Self::charge_unit)?,
-            one(Self::mass_unit)?,
+            one(PresetDim::Energy)?,
+            one(PresetDim::Length)?,
+            one(PresetDim::Charge)?,
+            one(PresetDim::Mass)?,
         ))
-    }
-
-    fn charge_unit(style: &str) -> &'static str {
-        match style {
-            "lj" => "lj_charge",
-            "real" | "metal" => "elementary_charge",
-            other => panic!("unknown LAMMPS style {other}"),
-        }
-    }
-
-    fn mass_unit(style: &str) -> &'static str {
-        match style {
-            "lj" => "lj_mass",
-            "real" | "metal" => "gram_per_mole",
-            other => panic!("unknown LAMMPS style {other}"),
-        }
     }
 }
 
@@ -218,6 +194,14 @@ mod tests {
         let sys = LammpsUnitConverter::canonical().unwrap();
         assert_eq!(sys.energy(0.5, "lj", "lj").unwrap(), 0.5);
         assert!(sys.scale("real", "real").unwrap().is_identity());
+    }
+
+    #[test]
+    fn an_unknown_style_is_an_error_not_a_panic() {
+        let sys = LammpsUnitConverter::canonical().unwrap();
+        let err = sys.energy(1.0, "real", "furlong").unwrap_err();
+        assert!(err.contains("furlong"), "{err}");
+        assert!(sys.scale("nope", "real").is_err());
     }
 
     #[test]

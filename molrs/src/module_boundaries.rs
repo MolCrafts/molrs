@@ -153,15 +153,28 @@ fn op_names_no_other_module() {
 // Units: one definition per unit.
 //
 // Every unit conversion goes through `core::units` (`UnitFactor`,
-// `UnitRegistry::factor`, `Quantity::to`), and `core::constants` holds
-// physical and engine constants, never a conversion factor. These checks
-// fail on a conversion-factor constant (defined or named) outside the units
-// module, and on a known conversion factor written as a literal in non-test
-// code.
+// `UnitRegistry::factor`, `Quantity::to`), each `UnitFactor` is defined once
+// in `core::unit_factors`, and `core::constants` holds physical and engine
+// constants, never a conversion factor. These checks fail on a
+// conversion-factor constant (defined or named) outside the units module, a
+// `UnitFactor` defined anywhere but `core::unit_factors`, and a conversion
+// factor written by hand in non-test code — of molrs and of every binder
+// crate beside it (molrs-python, molrs-wasm, molrs-capi, molrs-ffi,
+// molrs-cxxapi, molrs-ext-example).
+//
+// Exemptions, each on purpose:
+// * the units module itself (`core/units/`, `core/unit_factors.rs`) and
+//   `core/constants.rs`, which define the units and hold the engines' data
+//   (`PARMCHK2_PI`'s `/ 180`, `MMFF_MDYNE_A_TO_KCAL_MOL`'s `143.9325`);
+// * `ff/params/`, whose tables transcribe engine data files verbatim;
+// * test code (a `#[cfg(test)]` module file or a file's trailing
+//   `#[cfg(test)]` block): a test may write an engine's number by hand
+//   (`4.184`, `332.06371`, `1.987…e-3`) as an independent oracle the
+//   registry's value is checked against.
 // ---------------------------------------------------------------------------
 
 /// Conversion-factor constants `core::constants` no longer defines.
-const RETIRED_FACTOR_CONSTANTS: [&str; 9] = [
+const RETIRED_FACTOR_CONSTANTS: [&str; 12] = [
     "KJ_PER_KCAL",
     "ANGSTROM_PER_NM",
     "ANGSTROM_PER_BOHR",
@@ -171,6 +184,9 @@ const RETIRED_FACTOR_CONSTANTS: [&str; 9] = [
     "CENTIMETER_PER_METER",
     "OPENMM_COULOMB",
     "GROMACS_COULOMB",
+    "BOLTZMANN_REAL",
+    "KCAL_MOL_PER_MDYNE_ANGSTROM",
+    "RADIANS_PER_DEGREE",
 ];
 
 /// Conversion factors as they would be written by hand: kcal ↔ kJ (and its
@@ -179,23 +195,50 @@ const FACTOR_LITERALS: [&str; 9] = [
     "4.184", "418.4", "0.52917", "1.88972", "627.50", "27.211", "23.060", "96.485", "0.043364",
 ];
 
-/// The `.rs` files of the crate, with their path relative to `src`.
+/// The leading digits of a hand-written factor, matched whatever digits
+/// follow: π/180 and 180/π (degrees ↔ radians is `to_radians` /
+/// `to_degrees`, or the registry's `deg`), MMFF's mdyne·Å → kcal/mol
+/// (`MMFF_MDYNE_A_TO_KCAL_MOL`), and k_B in kcal·mol⁻¹·K⁻¹
+/// (`UnitPreset::real().boltzmann()`).
+const FACTOR_PREFIXES: [&str; 4] = ["0.0174532", "57.29577", "143.9325", "0.001987"];
+
+/// The `.rs` files of molrs (`src`) and of every binder crate present beside
+/// it, each with its path relative to its crate's `src` (a binder's prefixed
+/// by its crate name).
 fn crate_sources() -> Vec<(PathBuf, String)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files = Vec::new();
-    sources(&root, &mut files);
-    files
-        .into_iter()
-        .map(|f| {
-            let rel = f.strip_prefix(&root).unwrap().display().to_string();
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut roots = vec![(manifest.join("src"), String::new())];
+    for binder in [
+        "molrs-python",
+        "molrs-wasm",
+        "molrs-capi",
+        "molrs-ffi",
+        "molrs-cxxapi",
+        "molrs-ext-example",
+    ] {
+        let src = manifest.join("..").join(binder).join("src");
+        if src.is_dir() {
+            roots.push((src, format!("{binder}/")));
+        }
+    }
+    let mut out = Vec::new();
+    for (root, prefix) in roots {
+        let mut files = Vec::new();
+        sources(&root, &mut files);
+        out.extend(files.into_iter().map(|f| {
+            let rel = format!("{prefix}{}", f.strip_prefix(&root).unwrap().display());
             (f, rel)
-        })
-        .collect()
+        }));
+    }
+    out
 }
 
 /// Whether `rel` is the units module, which defines the units, or this file.
 fn defines_units(rel: &str) -> bool {
-    rel.starts_with("core/units/") || rel == "core/constants.rs" || rel == "module_boundaries.rs"
+    rel.starts_with("core/units/")
+        || rel == "core/unit_factors.rs"
+        || rel == "core/constants.rs"
+        || rel == "module_boundaries.rs"
 }
 
 /// Whether the word `name` occurs in `code` (not as part of a longer name).
@@ -208,6 +251,56 @@ fn names(code: &str, name: &str) -> bool {
             .next()
             .is_none_or(|c| !word(c));
         before && after
+    })
+}
+
+/// Whether `code` writes a numeric literal starting with `prefix`.
+fn starts_a_literal(code: &str, prefix: &str) -> bool {
+    code.match_indices(prefix).any(|(i, _)| {
+        code[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'))
+    })
+}
+
+/// Whether `code` writes k_B in kcal·mol⁻¹·K⁻¹ by hand as `1.987…e-3`.
+fn writes_boltzmann_in_kcal(code: &str) -> bool {
+    code.match_indices("1.987").any(|(i, _)| {
+        let before = code[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
+        let literal: String = code[i..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | '_' | 'e' | 'E' | '-'))
+            .collect();
+        before && (literal.ends_with("e-3") || literal.ends_with("E-3"))
+    })
+}
+
+/// Whether `code` divides or multiplies by 180 by hand (`/ 180.0`, `* 180.`,
+/// `180.0 / PI`): a degree ↔ radian conversion. An expression's `(pi/180)`
+/// (the IR's expression language, which converts a degree-valued parameter
+/// itself) is not Rust arithmetic.
+fn scales_by_180(code: &str) -> bool {
+    let number = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.';
+    code.match_indices("180").any(|(i, _)| {
+        let head = &code[..i];
+        if head.chars().next_back().is_some_and(number) {
+            return false; // part of a longer number or name
+        }
+        if head.ends_with("(pi/") {
+            return false; // an expression's own degree conversion, `(pi/180)`
+        }
+        // The literal's end: `180`, `180.`, `180.0`, `180.0_f64`, `180f64`.
+        let tail = &code[i + 3..];
+        if tail.starts_with(|c: char| c.is_ascii_digit()) {
+            return false;
+        }
+        let tail = tail.trim_start_matches(number).trim_start();
+        let head = head.trim_end();
+        head.ends_with(['/', '*']) || tail.starts_with(['/', '*'])
     })
 }
 
@@ -288,7 +381,12 @@ fn no_non_test_code_writes_a_conversion_factor_literal() {
             if code.starts_with("//") {
                 continue;
             }
-            if FACTOR_LITERALS.iter().any(|lit| names(code, lit)) {
+            let code = code.split(" //").next().unwrap_or(code);
+            if FACTOR_LITERALS.iter().any(|lit| names(code, lit))
+                || FACTOR_PREFIXES.iter().any(|p| starts_a_literal(code, p))
+                || writes_boltzmann_in_kcal(code)
+                || scales_by_180(code)
+            {
                 found.push(format!("{rel}:{}: {code}", n + 1));
             }
         }
@@ -298,4 +396,67 @@ fn no_non_test_code_writes_a_conversion_factor_literal() {
         "a hand-written unit conversion; use core::units::UnitFactor:\n{}",
         found.join("\n")
     );
+}
+
+#[test]
+fn a_unit_factor_is_defined_once_in_core_unit_factors() {
+    let mut found = Vec::new();
+    for (file, rel) in crate_sources() {
+        if defines_units(&rel) {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).unwrap();
+        for (n, line) in text.lines().enumerate() {
+            let code = line.trim();
+            if code.starts_with("//") {
+                continue;
+            }
+            if code.contains("UnitFactor::new(") || code.contains(": UnitFactor =") {
+                found.push(format!("{rel}:{}: {code}", n + 1));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "a unit factor is defined once, in core::unit_factors:\n{}",
+        found.join("\n")
+    );
+}
+
+#[test]
+fn the_hand_written_factor_matchers_match() {
+    for code in [
+        "x * 0.017453292519943295",
+        "let k = 143.9325 * ka;",
+        "let kb = 1.987_204_258_640_83e-3;",
+        "let kb = 0.0019872067;",
+        "(theta0 * PI / 180.0).sqrt()",
+        "theta / 180.0_f64",
+        "x * 180.0 / PI",
+        "x*180/PI",
+        "deg * 57.29577951308232",
+    ] {
+        assert!(
+            FACTOR_PREFIXES.iter().any(|p| starts_a_literal(code, p))
+                || writes_boltzmann_in_kcal(code)
+                || scales_by_180(code),
+            "{code}"
+        );
+    }
+    for code in [
+        "let alpha = 1.987;",
+        "phase in 0..=180",
+        "\"180°\"",
+        "n180 / 2.0",
+        "x * 1180.0",
+        "assert_eq!(n, 180);",
+        "\"k*(theta-theta0*(pi/180))^2; pi=3.141592653589793\"",
+    ] {
+        assert!(
+            !(FACTOR_PREFIXES.iter().any(|p| starts_a_literal(code, p))
+                || writes_boltzmann_in_kcal(code)
+                || scales_by_180(code)),
+            "{code}"
+        );
+    }
 }

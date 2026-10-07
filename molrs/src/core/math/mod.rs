@@ -10,6 +10,14 @@ mod virial;
 mod wigner3j;
 mod wigner_d;
 
+use crate::op::F;
+
+/// 4π: the solid angle of the sphere.
+pub(crate) const FOUR_PI: F = 4.0 * std::f64::consts::PI;
+
+/// 4π/3: the volume of the unit sphere.
+pub(crate) const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
+
 pub use complex::Complex;
 pub use spherical_harmonics::{legendre_plm, ylm_all, ylm_complex, ylm_normalization, ylm_real};
 pub use virial::Virial;

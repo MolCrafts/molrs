@@ -1,5 +1,5 @@
 //! GROMACS XTC binary trajectory reader and writer.
-use crate::core::UnitFactor;
+use crate::core::unit_factors::NM_TO_ANGSTROM;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -15,9 +15,6 @@ use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
-
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 /// Classic XTC magic number.
 const XTC_MAGIC: i32 = 1995;

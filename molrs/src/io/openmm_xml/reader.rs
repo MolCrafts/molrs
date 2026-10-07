@@ -5,24 +5,14 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use ndarray::ArrayD;
 use roxmltree::Node;
 
-use crate::core::UnitFactor;
 use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::torsion::rb_polynomial;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
-
-/// kcal → kJ (kcal/mol → kJ/mol).
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
-/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a bond or Urey–Bradley force constant;
-/// read files divide by it).
-static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
-/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
-static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// The energy expressions of a `<CustomTorsionForce>` read as `improper
 /// harmonic`, whitespace removed: OpenMM's CHARMM ports, and molrs's writer
@@ -381,10 +371,7 @@ fn build_nonbonded(
             "pair",
             name,
             Params::from_pairs(&[
-                (
-                    "coulomb",
-                    crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
-                ),
+                ("coulomb", crate::core::constants::openmm_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )
@@ -1351,14 +1338,9 @@ mod tests {
         let coul = ff.get_style("pair", "coul/cut").unwrap();
         assert_eq!(
             coul.params().get("coulomb"),
-            Some(crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+            Some(crate::core::constants::openmm_coulomb_real())
         );
-        assert!(
-            (crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get()
-                - 332.06371329919216)
-                .abs()
-                < 1e-12
-        );
+        assert!((crate::core::constants::openmm_coulomb_real() - 332.06371329919216).abs() < 1e-12);
 
         // The 1-4 scales live on the ForceField's special_bonds (1-2/1-3
         // excluded) — the single source the pair kernels consume.
@@ -1715,7 +1697,7 @@ mod tests {
         let coul = ff.get_style("pair", "coul/charmm").expect("coul/charmm");
         assert_eq!(
             coul.params().get("coulomb"),
-            Some(crate::core::constants::OPENMM_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get())
+            Some(crate::core::constants::openmm_coulomb_real())
         );
         assert_eq!(ff.special_bonds().lj, [0.0, 0.0, 1.0]);
         assert_eq!(ff.special_bonds().coul, [0.0, 0.0, 1.0]);

@@ -27,7 +27,9 @@ use crate::op::F;
 /// Avogadro constant `N_A` (exact, SI-2019), in mol⁻¹.
 pub const AVOGADRO: F = 6.022_140_76e23;
 
-/// Boltzmann constant `k_B` (exact, SI-2019), in J/K.
+/// Boltzmann constant `k_B` (exact, SI-2019), in J/K. In a unit system's
+/// own units it is [`UnitPreset::boltzmann`](crate::core::UnitPreset::boltzmann)
+/// (`real`: `k_B` in kcal·mol⁻¹·K⁻¹, the molar gas constant over 4184).
 pub const BOLTZMANN: F = 1.380_649e-23;
 
 /// Molar gas constant `R = N_A · k_B` (exact, SI-2019), in J/(mol·K).
@@ -102,8 +104,21 @@ pub const OPENMM_ONE_4PI_EPS0: F = 138.935_457_644_381_98;
 /// [`OPENMM_ONE_4PI_EPS0`].
 pub const GROMACS_ONE_4PI_EPS0: F = 138.935_457_644_381_96;
 
-/// Boltzmann constant in MD "real" units, kcal·mol⁻¹·K⁻¹.
-pub const BOLTZMANN_REAL: F = 1.987_204_258_640_83e-3;
+/// OpenMM's Coulomb constant in `real` units (kcal·Å·mol⁻¹·e⁻²):
+/// [`OPENMM_ONE_4PI_EPS0`] converted from kJ·nm, 332.06371329919216. What
+/// an OpenMM force field read into molrs states on its Coulomb styles, so it
+/// prices its electrostatics as OpenMM does.
+pub(crate) fn openmm_coulomb_real() -> F {
+    OPENMM_ONE_4PI_EPS0 * crate::core::unit_factors::KJ_NM_TO_KCAL_ANGSTROM.get()
+}
+
+/// GROMACS's Coulomb constant in `real` units (kcal·Å·mol⁻¹·e⁻²):
+/// [`GROMACS_ONE_4PI_EPS0`] converted from kJ·nm, 332.06371329919205 (one ulp
+/// below [`openmm_coulomb_real`]). What a GROMACS topology read into molrs
+/// states on its Coulomb styles.
+pub(crate) fn gromacs_coulomb_real() -> F {
+    GROMACS_ONE_4PI_EPS0 * crate::core::unit_factors::KJ_NM_TO_KCAL_ANGSTROM.get()
+}
 
 /// Speed of light in vacuum `c` (exact, SI-2019), in m/s.
 pub const SPEED_OF_LIGHT: F = 299_792_458.0;
@@ -113,9 +128,27 @@ pub const SPEED_OF_LIGHT: F = 299_792_458.0;
 /// wavenumber `ν̃` (cm⁻¹).
 pub const SECOND_RADIATION_CONSTANT: F = 1.438_776_877;
 
-/// kcal·mol⁻¹ per mdyne·Å (RDKit `MDYNE_A_TO_KCAL_MOL`, `Params.h`): MMFF's
-/// force-constant unit conversion, to RDKit's digits.
-pub const KCAL_MOL_PER_MDYNE_ANGSTROM: F = 143.9325;
+/// MMFF94's mdyne·Å → kcal·mol⁻¹ factor, `143.9325`: the prefactor of
+/// Halgren's bond, angle, stretch-bend and out-of-plane terms (Halgren 1996,
+/// J. Comput. Chem. 17, 490), and RDKit's `MDYNE_A_TO_KCAL_MOL`
+/// (`ForceField/MMFF/Params.h`). It is engine data, not a unit conversion:
+/// the exact factor (1 mdyne·Å = 10⁻¹⁸ J, × N_A / 4184 J) is 143.93263…,
+/// and MMFF's energies are defined with the rounded literal.
+pub const MMFF_MDYNE_A_TO_KCAL_MOL: F = 143.9325;
+
+/// π as AmberTools `parmchk2` writes it, `3.1415926` (eight figures): its
+/// empirical angle force constant (`empangle`) converts θ₀ to radians as
+/// `θ₀ · PARMCHK2_PI / 180`, and molrs's GAFF estimate does the same, digit
+/// for digit.
+#[allow(clippy::approx_constant)]
+pub const PARMCHK2_PI: F = 3.1415926;
+
+/// An angle in degrees in radians as `parmchk2` converts it,
+/// `degrees · PARMCHK2_PI / 180` (in that order), so a GAFF angle estimate is
+/// parmchk2's to the last digit.
+pub(crate) fn parmchk2_radians(degrees: F) -> F {
+    degrees * PARMCHK2_PI / 180.0
+}
 
 /// Relative permittivity of vacuum, `ε_r = 1` — the medium OPLS, GAFF/AMBER
 /// and MMFF were each parameterised in. A force field still has to choose
@@ -176,10 +209,10 @@ pub const ALL: &[(&str, F)] = &[
     ("CHARMM_COULOMB", CHARMM_COULOMB),
     ("OPENMM_ONE_4PI_EPS0", OPENMM_ONE_4PI_EPS0),
     ("GROMACS_ONE_4PI_EPS0", GROMACS_ONE_4PI_EPS0),
-    ("BOLTZMANN_REAL", BOLTZMANN_REAL),
     ("SPEED_OF_LIGHT", SPEED_OF_LIGHT),
     ("SECOND_RADIATION_CONSTANT", SECOND_RADIATION_CONSTANT),
-    ("KCAL_MOL_PER_MDYNE_ANGSTROM", KCAL_MOL_PER_MDYNE_ANGSTROM),
+    ("MMFF_MDYNE_A_TO_KCAL_MOL", MMFF_MDYNE_A_TO_KCAL_MOL),
+    ("PARMCHK2_PI", PARMCHK2_PI),
     ("VACUUM_DIELECTRIC", VACUUM_DIELECTRIC),
     ("UFF_COULOMB", UFF_COULOMB),
     ("MMFF_COULOMB", MMFF_COULOMB),

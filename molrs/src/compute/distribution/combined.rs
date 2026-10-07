@@ -10,7 +10,7 @@ use crate::compute::ComputeResult;
 
 use super::observable::{AtomGroups, Observable};
 use super::{AngleObservable, DihedralObservable, DistanceObservable, DistributionResult};
-use crate::core::constants::BOLTZMANN_REAL;
+use crate::core::UnitPreset;
 
 /// One axis of a [`CombinedDistribution`]: bin count + range + optional
 /// solid-angle weighting (mirrors link-01's sin θ ADF correction).
@@ -564,7 +564,7 @@ impl CombinedDistributionResult {
     /// barrier) rather than `+∞`, so the surface is finite everywhere. Returns
     /// the flat row-major array aligned with [`density`](Self::density).
     pub fn free_energy(&self, temperature: F) -> Array1<F> {
-        let kt = BOLTZMANN_REAL * temperature;
+        let kt = UnitPreset::real().boltzmann() * temperature;
         let mut g = Array1::<F>::zeros(self.density.len());
         let mut g_max = F::NEG_INFINITY;
         for (i, &p) in self.density.iter().enumerate() {
