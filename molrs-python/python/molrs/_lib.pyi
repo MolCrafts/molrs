@@ -5267,6 +5267,15 @@ def read_ac(path: PathInput):
 def read_amber_prmtop_ff(path: PathInput) -> ForceField:
     """Read AMBER prmtop force-field parameter tables into a :class:`ForceField`."""
 
+def read_amber_prmtop_system(path: PathInput) -> tuple[ForceField, Frame]:
+    """Read a whole AMBER prmtop into a :class:`ForceField` and a typed :class:`Frame`.
+
+    The structure of :func:`molrs.io.read_amber_prmtop` plus a ``pairs`` block
+    of the 1-4 pairs sander weighs otherwise than ``special_bonds`` (per-pair
+    ``coul_scale`` / ``lj_scale``, null where they agree); no ``pairs`` block
+    when every 1-4 pair agrees.
+    """
+
 def read_gromacs_top_ff(
     path: PathInput,
     include: bool = False,

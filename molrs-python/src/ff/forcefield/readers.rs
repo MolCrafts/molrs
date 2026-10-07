@@ -116,6 +116,34 @@ pub fn read_amber_prmtop_ff_py(path: PathBuf) -> PyResult<PyForceField> {
     Ok(PyForceField { inner: forcefield })
 }
 
+/// Read a whole AMBER prmtop (or ParmEd chamber) topology into a
+/// :class:`ForceField` and a typed :class:`Frame`.
+///
+/// The force field as :func:`read_amber_prmtop_ff` reads it, and the
+/// structure as :func:`molrs.io.read_amber_prmtop` reads it, plus a ``pairs``
+/// block holding the 1-4 pairs sander weighs otherwise than the field's
+/// ``special_bonds`` (a torsion type whose ``SCEE`` / ``SCNB`` differ from
+/// the divisor most 1-4 rows carry, as GLYCAM's beside ff14SB's; a pair two
+/// rows list), each with its own ``coul_scale`` (Σ 1/SCEE) / ``lj_scale``
+/// (Σ 1/SCNB) where it differs, null where it agrees. No ``pairs`` block when
+/// every 1-4 pair agrees. It is not a pair list: build the full one with
+/// :func:`molrs.ff.potential.intramolecular_pairs`, which keeps these cells.
+/// Coordinates come from the restart (:func:`molrs.io.read_amber_inpcrd`).
+///
+/// Returns ``(forcefield, frame)``. What either reader refuses, and a 1-4
+/// row on a bonded pair or an angle's ends, raises ``ValueError``.
+#[pyfunction]
+#[pyo3(name = "read_amber_prmtop_system")]
+pub fn read_amber_prmtop_system_py(path: PathBuf) -> PyResult<(PyForceField, PyFrame)> {
+    let (forcefield, frame) = molrs::ff::forcefield::readers::prmtop::AmberPrmtopFfReader::new()
+        .read_system(path_str(&path)?)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok((
+        PyForceField { inner: forcefield },
+        PyFrame::from_core_frame(frame)?,
+    ))
+}
+
 /// Read the force-field directives of a GROMACS topology into a
 /// :class:`ForceField`.
 ///
@@ -282,6 +310,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m,
         "molrs.ff.forcefield",
         wrap_pyfunction!(read_amber_prmtop_ff_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.forcefield",
+        wrap_pyfunction!(read_amber_prmtop_system_py, m)?,
     )?;
     crate::add_function(
         m,

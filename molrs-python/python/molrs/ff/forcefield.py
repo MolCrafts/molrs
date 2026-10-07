@@ -9,6 +9,7 @@ are :mod:`molrs.io`'s):
 * readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
   :func:`read_lammps_cmap`, :func:`read_gromacs_top_ff`,
   :func:`read_gromacs_system`, :func:`read_amber_prmtop_ff`,
+  :func:`read_amber_prmtop_system`,
   :func:`read_forcefield_xml`, :func:`read_opls_xml`
 * writers — :func:`write_lammps_forcefield`,
   :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
@@ -38,6 +39,7 @@ from .._lib import (
     Style,
     Type,
     read_amber_prmtop_ff,
+    read_amber_prmtop_system,
     read_forcefield_xml,
     read_gromacs_system,
     read_gromacs_top_ff,
@@ -76,6 +78,7 @@ __all__ = [
     "Style",
     "Type",
     "read_amber_prmtop_ff",
+    "read_amber_prmtop_system",
     "read_forcefield_xml",
     "read_gromacs_system",
     "read_gromacs_top_ff",

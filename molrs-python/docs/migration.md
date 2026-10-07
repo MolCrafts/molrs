@@ -743,8 +743,10 @@ field they return change where they did. AMBER stays read-only. See
 - **CMAP reads** (ff19SB's `CMAP_*` too); 0.15 refused `CMAP_COUNT > 0`.
 - **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
   1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
-  the one value), and the frame `AmberPrmtopFfReader::read_system` returns
-  gains a `pairs` block — only when some pair is weighted otherwise —
+  the one value), and the frame `AmberPrmtopFfReader::read_system` / Python
+  `molrs.ff.forcefield.read_amber_prmtop_system` returns (with the force
+  field, as `read_gromacs_system` does) gains a `pairs` block — only when
+  some pair is weighted otherwise —
   listing those 1-4 pairs with `coul_scale` / `lj_scale` cells (the
   structure reader alone, `read_amber_prmtop`, has none). It is not a pair list: `intramolecular_pairs` builds the
   full list and keeps the cells (it used to drop a frame's `pairs`). An
@@ -1065,8 +1067,9 @@ reader assumes them. `io::data::prmtop` (the structure reader) holds no 1-4
 weight at all: the per-pair `"pairs"` block (`coul_scale` / `lj_scale` from
 `SCEE` / `SCNB`) is force-field meaning and comes from
 `ff::forcefield::readers::prmtop::AmberPrmtopFfReader::{read_system,
-read_system_str}`, which return `(ForceField, Frame)` like
-`GromacsTopFfReader::read_system`; `io::data::prmtop::read_amber_prmtop` now
+read_system_str}` (Python `molrs.ff.forcefield.read_amber_prmtop_system`),
+which return `(ForceField, Frame)` like `GromacsTopFfReader::read_system`
+(Python `read_gromacs_system`); `io::data::prmtop::read_amber_prmtop` now
 never has a `"pairs"` block, and the refusal of a 1-4 row on a bonded /
 angle-end pair moved with it. A file without `SCEE_SCALE_FACTOR` /
 `SCNB_SCALE_FACTOR` (pre-Amber-11) still gets no `"pairs"` block;
