@@ -1,5 +1,6 @@
 //! Distance / angle / dihedral and combined distributions — WASM face of
-//! the `molrs::compute` distribution family.
+//! the `molrs::compute` distribution family (`DistributionFunction`,
+//! `CombinedDistribution`).
 
 use super::js_value;
 use crate::core::frame::Frame;
@@ -10,7 +11,7 @@ use wasm_bindgen::prelude::*;
 
 fn distribution_compute<O: molrs::compute::Observable + Sync>(
     frame: &Frame,
-    calc: molrs::compute::DistributionFunction<O>,
+    calc: &molrs::compute::DistributionFunction<O>,
     groups: molrs::compute::AtomGroups,
 ) -> Result<JsValue, JsValue> {
     #[derive(Serialize)]
@@ -46,80 +47,88 @@ fn distribution_compute<O: molrs::compute::Observable + Sync>(
     })
 }
 
-#[wasm_bindgen(js_name = DistanceDistribution)]
-pub struct DistanceDistribution {
+fn distribution_function<O: molrs::compute::Observable>(
+    observable: O,
     n_bins: usize,
-    min: F,
-    max: F,
+    bounds: Option<(F, F)>,
+) -> Result<molrs::compute::DistributionFunction<O>, JsValue> {
+    match bounds {
+        Some((min, max)) => molrs::compute::DistributionFunction::new(observable, n_bins, min, max),
+        None => molrs::compute::DistributionFunction::over_natural_range(observable, n_bins),
+    }
+    .map_err(|e| JsValue::from_str(&format!("DistributionFunction: {e}")))
 }
 
-#[wasm_bindgen(js_class = DistanceDistribution)]
-impl DistanceDistribution {
+/// The core calculator, one per observable type.
+enum DistributionKernel {
+    Distance(molrs::compute::DistributionFunction<molrs::compute::DistanceObservable>),
+    Angle(molrs::compute::DistributionFunction<molrs::compute::AngleObservable>),
+    Dihedral(molrs::compute::DistributionFunction<molrs::compute::DihedralObservable>),
+}
+
+/// One-dimensional distribution function of an internal coordinate — molrs
+/// `compute::DistributionFunction<O>`, as Python's
+/// `molrs.compute.DistributionFunction`.
+///
+/// `observable` is `"distance"` (atom pairs; `min` / `max` required, in the
+/// coordinates' length unit), `"angle"` (triplets; radians, natural range
+/// `[0, π]`) or `"dihedral"` (quadruplets; radians, natural range `(-π, π]`,
+/// kept signed). Passing exactly one bound throws.
+///
+/// ```js
+/// const adf = new DistributionFunction("angle", 90);
+/// const r = adf.compute(frame, new Uint32Array([0, 1, 2, 1, 2, 3]));
+/// ```
+#[wasm_bindgen]
+pub struct DistributionFunction {
+    kernel: DistributionKernel,
+    arity: usize,
+}
+
+#[wasm_bindgen]
+impl DistributionFunction {
     #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize, min: F, max: F) -> Self {
-        Self { n_bins, min, max }
+    pub fn new(
+        observable: &str,
+        n_bins: usize,
+        min: Option<F>,
+        max: Option<F>,
+    ) -> Result<DistributionFunction, JsValue> {
+        use molrs::compute::InternalCoordinate as Ic;
+        let (observable, arity) = Ic::from_kind(observable)
+            .map_err(|e| JsValue::from_str(&format!("DistributionFunction: {e}")))?;
+        let bounds = match (min, max) {
+            (Some(min), Some(max)) => Some((min, max)),
+            (None, None) => None,
+            _ => {
+                return Err(JsValue::from_str(
+                    "DistributionFunction: pass both min and max, or neither",
+                ));
+            }
+        };
+        let kernel = match observable {
+            Ic::Distance(o) => {
+                DistributionKernel::Distance(distribution_function(o, n_bins, bounds)?)
+            }
+            Ic::Angle(o) => DistributionKernel::Angle(distribution_function(o, n_bins, bounds)?),
+            Ic::Dihedral(o) => {
+                DistributionKernel::Dihedral(distribution_function(o, n_bins, bounds)?)
+            }
+        };
+        Ok(DistributionFunction { kernel, arity })
     }
 
-    pub fn compute(&self, frame: &Frame, pairs: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::AtomGroups::new(2, pairs.iter().map(|&v| v as u64).collect())
-            .map_err(|e| JsValue::from_str(&format!("DistanceDistribution groups: {e}")))?;
-        let calc = molrs::compute::DistributionFunction::new(
-            molrs::compute::DistanceObservable,
-            self.n_bins,
-            self.min,
-            self.max,
-        )
-        .map_err(|e| JsValue::from_str(&format!("DistanceDistribution: {e}")))?;
-        distribution_compute(frame, calc, groups)
-    }
-}
-
-#[wasm_bindgen(js_name = AngleDistribution)]
-pub struct AngleDistribution {
-    n_bins: usize,
-}
-
-#[wasm_bindgen(js_class = AngleDistribution)]
-impl AngleDistribution {
-    #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize) -> Self {
-        Self { n_bins }
-    }
-
-    pub fn compute(&self, frame: &Frame, triples: &[u32]) -> Result<JsValue, JsValue> {
+    /// The distribution over `groups`, a flat atom-index array of
+    /// `arity × nGroups` (2 for distance, 3 for angle, 4 for dihedral).
+    pub fn compute(&self, frame: &Frame, groups: &[u32]) -> Result<JsValue, JsValue> {
         let groups =
-            molrs::compute::AtomGroups::new(3, triples.iter().map(|&v| v as u64).collect())
-                .map_err(|e| JsValue::from_str(&format!("AngleDistribution groups: {e}")))?;
-        let calc = molrs::compute::DistributionFunction::over_natural_range(
-            molrs::compute::AngleObservable,
-            self.n_bins,
-        )
-        .map_err(|e| JsValue::from_str(&format!("AngleDistribution: {e}")))?;
-        distribution_compute(frame, calc, groups)
-    }
-}
-
-#[wasm_bindgen(js_name = DihedralDistribution)]
-pub struct DihedralDistribution {
-    n_bins: usize,
-}
-
-#[wasm_bindgen(js_class = DihedralDistribution)]
-impl DihedralDistribution {
-    #[wasm_bindgen(constructor)]
-    pub fn new(n_bins: usize) -> Self {
-        Self { n_bins }
-    }
-
-    pub fn compute(&self, frame: &Frame, quads: &[u32]) -> Result<JsValue, JsValue> {
-        let groups = molrs::compute::AtomGroups::new(4, quads.iter().map(|&v| v as u64).collect())
-            .map_err(|e| JsValue::from_str(&format!("DihedralDistribution groups: {e}")))?;
-        let calc = molrs::compute::DistributionFunction::over_natural_range(
-            molrs::compute::DihedralObservable,
-            self.n_bins,
-        )
-        .map_err(|e| JsValue::from_str(&format!("DihedralDistribution: {e}")))?;
-        distribution_compute(frame, calc, groups)
+            molrs::compute::AtomGroups::new(self.arity, groups.iter().map(|&v| v as u64).collect())
+                .map_err(|e| JsValue::from_str(&format!("DistributionFunction groups: {e}")))?;
+        match &self.kernel {
+            DistributionKernel::Distance(calc) => distribution_compute(frame, calc, groups),
+            DistributionKernel::Angle(calc) => distribution_compute(frame, calc, groups),
+            DistributionKernel::Dihedral(calc) => distribution_compute(frame, calc, groups),
+        }
     }
 }
 

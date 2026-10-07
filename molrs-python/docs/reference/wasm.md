@@ -19,15 +19,15 @@ The generated `pkg/` directory is not committed.
 
 | Area | Exports |
 | --- | --- |
-| Data model | `Frame`, `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box`, `NDArray`, `covalentRadius` |
-| SMILES and 3D | `SmilesIr.parse` (`toFrame`), `readSmilesStr` → `Frame`, `generate3D` |
-| File formats | whole-content readers of the formats with no stream: `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader`; one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr`, `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`; `readStlBytes`; wire-encoded frames: `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` / `writeJsonFrameStr` |
+| Core data model (`molrs::core`) | `Frame` (`getMeta` / `setMeta` / `metaKeys`), `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box` (`h`, `toFrac`, `toCart`, `corners`, …), `NDArray`, `Topology` (`fromFrame`), `TriMesh`, regions (`Sphere`, `Cuboid`, …, `Region`), `NeighborList` / `NeighborQuery` / `Neighbors`, `covalentRadius` |
+| SMILES and 3D | `SmilesIr.parse` (`toFrame`), `readSmilesStr` → `Frame`, `Conformer` (`generate`) |
+| File formats | whole-content readers of the formats with no stream: `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader`; one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr`, `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`; `readStlBytes` → `TriMesh`; `readLammpsLogStr` → `LammpsLog`, `isLammpsLog`; wire-encoded frames: `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` / `writeJsonFrameStr` |
 | Chunk-fed streams (the one reader of their format) | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream` (`FrameOffset`) |
-| Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `MrecReader` (`fromZip`, `fromStorage`) |
-| Topology and perception | `Topology` (`fromFrame`), perception functions (`assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders`) |
-| Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
-| Force fields | `UffTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` (`typify`, `toPotentials`), `Potentials`, `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
-| Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
+| Record files (`*.mrec`) | `readMrecFrame`, `sectionNames` (each over a file map or packed bytes), `MrecReader` (`fromZip`, `fromStorage`) |
+| Perception | `assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders` |
+| Analysis (`molrs::compute`) | `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, `DistributionFunction`, … (one class per molrs analysis type, under its Rust name); `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`, … (molrs's free functions); `molrsComputeCatalog()` lists them all |
+| Force fields | `UffTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` (`typify`, `toPotentials`), `Potentials` (`calcEnergyForces`), `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
+| Schema | `schemaDocument`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
 
 The [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#readme)
 shows each of these in use, including the column dtype table and the record

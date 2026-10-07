@@ -5484,6 +5484,9 @@ def read_gromacs_system(
 def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
     """Read a LAMMPS log file into a structured ``LammpsLog``."""
 
+def is_lammps_log(text: str) -> bool:
+    """Whether ``text`` holds a LAMMPS run (a ``Per MPI rank memory allocation`` line)."""
+
 def read_lammps_molecule(path: PathInput) -> Frame:
     """Read a LAMMPS molecule template (the native text format)."""
 

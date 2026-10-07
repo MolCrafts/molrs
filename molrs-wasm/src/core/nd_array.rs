@@ -10,7 +10,6 @@ use ndarray::{Array2, ArrayView2};
 use wasm_bindgen::prelude::*;
 
 pub(crate) type JsFloatArray = js_sys::Float64Array;
-pub(crate) const FLOAT_DTYPE_NAME: &str = "f64";
 
 /// Owned float array with ndarray-compatible shape metadata.
 ///
@@ -117,6 +116,7 @@ impl NDArray {
     }
 
     /// Check whether the array contains no elements.
+    #[wasm_bindgen(js_name = isEmpty)]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -142,9 +142,10 @@ impl NDArray {
         self.data.as_ptr()
     }
 
-    /// Return the concrete float dtype string for this build.
+    /// The element dtype, `"float"` (core `DType::Float.name()`; stored as
+    /// `f64`), as `Block.dtype` names a float column.
     pub fn dtype(&self) -> String {
-        FLOAT_DTYPE_NAME.to_string()
+        molrs::core::DType::Float.name().to_string()
     }
 
     /// Overwrite the array contents from a JS float typed array.
@@ -166,6 +167,7 @@ impl NDArray {
     /// const wa = new NDArray([3]);
     /// wa.writeFrom(floatArray);
     /// ```
+    #[wasm_bindgen(js_name = writeFrom)]
     pub fn write_from(&mut self, arr: &JsFloatArray) -> Result<(), JsValue> {
         if arr.length() as usize != self.data.len() {
             return Err(JsValue::from_str(&format!(

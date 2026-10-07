@@ -21,12 +21,12 @@
 //! // Cluster on it
 //! const result = new Cluster(1).compute(frame, nlist);
 //!
-//! // RDF streams its own neighbor search
-//! const gr = new RDF(100, 5.0).compute(frame);
+//! // Rdf streams its own neighbor search
+//! const gr = new Rdf(100, 5.0).compute(frame);
 //! console.log(gr.binCenters(), gr.rdf());
 //!
-//! // MSD needs no neighbor table
-//! const msd = new MSD();
+//! // Msd needs no neighbor table
+//! const msd = new Msd();
 //! for (const frame of trajectory) {
 //!     msd.feed(frame);
 //! }
@@ -170,21 +170,12 @@ mod tests {
 
     /// Helper: create a Frame with N particles at given positions + cubic simbox.
     fn make_frame(positions: &[[F; 3]], box_len: F) -> Frame {
-        use molrs::core::Block;
         use molrs::core::SimBox;
-        use ndarray::{Array1, array};
+        use ndarray::{Array2, array};
 
-        let x = Array1::from_iter(positions.iter().map(|p| p[0]));
-        let y = Array1::from_iter(positions.iter().map(|p| p[1]));
-        let z = Array1::from_iter(positions.iter().map(|p| p[2]));
-
-        let mut block = Block::new();
-        block.insert("x", x.into_dyn()).unwrap();
-        block.insert("y", y.into_dyn()).unwrap();
-        block.insert("z", z.into_dyn()).unwrap();
-
+        let coords = Array2::from_shape_fn((positions.len(), 3), |(i, k)| positions[i][k]);
         let mut rs_frame = molrs::core::Frame::new();
-        rs_frame.insert("atoms", block);
+        rs_frame.set_coords(coords.view()).unwrap();
         rs_frame.simbox =
             Some(SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
 

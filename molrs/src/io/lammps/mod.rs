@@ -18,7 +18,8 @@
 //! [`LammpsDumpWriter`], [`LammpsForcefieldReader`] /
 //! [`LammpsForcefieldWriter`]), the chunked indexers, the bond/react records
 //! ([`BondReactTemplate`], [`BondReactSystem`], [`DroppedRows`]), the log
-//! records ([`LammpsLog`] and its parts), the CMAP file ([`LammpsCmapFile`]),
+//! records ([`LammpsLog`] and its parts) with the log sniffer
+//! [`is_lammps_log`], the CMAP file ([`LammpsCmapFile`]),
 //! and the `units` adapter ([`parse_lammps_units_style`],
 //! [`LammpsUnitConverter`]). The primitives the data and dump readers share
 //! (atom-style layouts, box bounds, field parsing) are crate-private.
@@ -53,7 +54,7 @@ pub use forcefield_writer::{
 pub use log::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning,
+    LammpsTimingRow, LammpsWarning, is_lammps_log,
 };
 #[cfg(feature = "ff")]
 pub use units::{LammpsLjReference, LammpsUnitConverter, parse_lammps_units_style};

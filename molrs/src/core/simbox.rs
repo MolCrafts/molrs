@@ -1008,7 +1008,7 @@ impl SimBox {
         result
     }
 
-    pub fn get_corners(&self) -> Fnx3 {
+    pub fn corners(&self) -> Fnx3 {
         self.to_cart(
             array![
                 [0.0, 0.0, 0.0],
@@ -1032,7 +1032,7 @@ impl SimBox {
     /// describe the same volume live in the regions (`crate::core::Region`)
     /// (`Cuboid` / `Parallelepiped`) — not on this type.
     pub fn bounds(&self) -> Fnx3 {
-        let corners = self.get_corners();
+        let corners = self.corners();
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
             let mut lo = corners[[0, d]];

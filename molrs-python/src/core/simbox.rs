@@ -468,7 +468,7 @@ impl PyBox {
 
     /// Eight Cartesian cell corners.
     fn corners<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        self.inner.get_corners().into_pyarray(py)
+        self.inner.corners().into_pyarray(py)
     }
 
     /// Per-axis coordinate bounds as ``[[xlo, xhi], [ylo, yhi], [zlo, zhi]]``.

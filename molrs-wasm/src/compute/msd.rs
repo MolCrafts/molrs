@@ -1,7 +1,7 @@
 //! Mean squared displacement — WASM face of `molrs::compute::Msd`.
 
 use crate::core::frame::Frame;
-use crate::core::types::JsFloatArray;
+use crate::core::nd_array::JsFloatArray;
 use molrs::compute::Compute;
 use molrs::compute::{Msd as RsMsd, MsdResult as RsMsdResult};
 use molrs::op::F;
@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const msd = new MSD();
+/// const msd = new Msd();
 /// for (const frame of trajectory) {
 ///   msd.feed(frame);         // first frame = reference
 /// }
@@ -45,7 +45,7 @@ impl Msd {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const msd = new MSD();
+    /// const msd = new Msd();
     /// ```
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
@@ -67,7 +67,7 @@ impl Msd {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const msd = new MSD();
+    /// const msd = new Msd();
     /// msd.feed(frame0);  // sets reference
     /// msd.feed(frame1);  // added to trajectory
     /// const series = msd.results();

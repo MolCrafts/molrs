@@ -62,11 +62,11 @@ doc comments.
     module, and the generated classes and functions are regular exports.
 
     ```ts
-    import { SmilesIr, generate3D, writeXyzStr } from "@molcrafts/molrs";
+    import { SmilesIr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 
     const ir = SmilesIr.parse("CCO");
     const frame2d = ir.toFrame();
-    const frame3d = generate3D(frame2d, "fast", 42);
+    const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 
     console.log(writeXyzStr(frame3d));
     ```

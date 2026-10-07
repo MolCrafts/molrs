@@ -21,11 +21,14 @@
 //!
 //! # dtype <-> JS type
 //!
+//! The names are core `DType::name()`'s, the vocabulary every binding and the
+//! Frame schema share (`float` is `f64`, `int` is `i32`, `uint` is `u64`).
+//!
 //! | `dtype(key)` | `get` / `view` returns | `set` infers it from |
 //! |--------------|------------------------|----------------------|
-//! | `"f64"` | `Float64Array` | `Float64Array` |
-//! | `"i8"` / `"i16"` / `"i32"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
-//! | `"u8"` / `"u16"` / `"u32"` / `"u64"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
+//! | `"float"` | `Float64Array` | `Float64Array` |
+//! | `"i8"` / `"i16"` / `"int"` / `"i64"` | `Int8Array` / `Int16Array` / `Int32Array` / `BigInt64Array` | same |
+//! | `"u8"` / `"u16"` / `"u32"` / `"uint"` | `Uint8Array` / `Uint16Array` / `Uint32Array` / `BigUint64Array` | same |
 //! | `"bool"` | `boolean[]` (`copy` / `get`; `view` throws) | `boolean[]` |
 //! | `"string"` | `string[]` (`copy` / `get`; `view` throws) | `string[]` (also the empty `[]`) |
 //! | `"c64"` / `"c128"` | `{ real, imag, shape, dtype }` (`copy` / `get`; `view` throws) | never |
@@ -35,7 +38,7 @@
 //! interleaved: `real` and `imag` each have one entry per element.
 //! `bool` is `boolean[]` rather than `Uint8Array` so a `copy` -> `set`
 //! round trip keeps the dtype (a `Uint8Array` would come back as `u8`).
-//! `Float32Array` is refused on `set`: the store keeps every real float as `f64`.
+//! `Float32Array` is refused on `set`: the store keeps every real float as `float` (`f64`).
 //!
 //! # Memory safety note
 //!
@@ -53,21 +56,22 @@ use ndarray::{ArrayD, IxDyn};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use molrs::core::{Block as RsBlock, BlockDtype, Column, DType};
+use molrs::core::{Block as RsBlock, BlockDtype, Column};
 use molrs_ffi::BlockRef;
 
 use super::js_err;
-use super::types::FLOAT_DTYPE_NAME;
 
 #[wasm_bindgen(typescript_custom_section)]
 const COLUMN_TYPES: &'static str = r#"
 /**
- * Column dtype as `Block.dtype` reports it. Each numeric name is the
- * element type of the typed array `Block.view` returns.
+ * Column dtype as `Block.dtype` reports it: molrs core's dtype name, the one
+ * the Frame schema and every binding use. `float` is `f64`
+ * (`Float64Array`), `int` is `i32` (`Int32Array`), `uint` is `u64`
+ * (`BigUint64Array`).
  */
 export type DType =
-    | "f64" | "i8" | "i16" | "i32" | "i64"
-    | "u8" | "u16" | "u32" | "u64"
+    | "float" | "i8" | "i16" | "int" | "i64"
+    | "u8" | "u16" | "u32" | "uint"
     | "bool" | "string" | "c64" | "c128";
 
 /** A numeric column as a typed array, in the column's own dtype. */
@@ -109,27 +113,6 @@ extern "C" {
     pub type JsShape;
 }
 
-/// The JS-facing name of a column dtype: the element type of the typed
-/// array the column crosses the boundary as.
-pub(crate) fn dtype_name(dt: DType) -> &'static str {
-    match dt {
-        DType::Float => FLOAT_DTYPE_NAME,
-        DType::Int8 => "i8",
-        DType::Int16 => "i16",
-        DType::Int => "i32",
-        DType::Int64 => "i64",
-        DType::UInt => "u64",
-        DType::U8 => "u8",
-        DType::UInt16 => "u16",
-        DType::UInt32 => "u32",
-        DType::Bool => "bool",
-        DType::String => "string",
-        DType::Complex64 => "c64",
-        DType::Complex128 => "c128",
-        _ => dt.name(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Block
 // ---------------------------------------------------------------------------
@@ -148,7 +131,7 @@ pub(crate) fn dtype_name(dt: DType) -> &'static str {
 /// atoms.set("element", ["C", "C", "O"]);
 /// atoms.set("id", new BigUint64Array([0n, 1n, 2n]));
 /// atoms.nrows;            // 3
-/// atoms.dtype("id");      // "u64"
+/// atoms.dtype("id");      // "uint"
 /// const x = atoms.view("x"); // zero-copy Float64Array; copy("x") to keep it
 /// ```
 #[wasm_bindgen]
@@ -294,7 +277,7 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "u64") { … }
+    /// if (bonds.has("bond_type") && bonds.dtype("bond_type") === "uint") { … }
     /// ```
     #[wasm_bindgen(js_name = has)]
     pub fn has(&self, key: &str) -> bool {
@@ -311,13 +294,13 @@ impl Block {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// atoms.dtype("x");       // "f64"
+    /// atoms.dtype("x");       // "float"
     /// atoms.dtype("element"); // "string"
     /// ```
     #[wasm_bindgen(js_name = dtype)]
     pub fn dtype(&self, key: &str) -> Result<JsDType, JsValue> {
         self.with_col(key, |col| {
-            Ok(JsValue::from_str(dtype_name(col.dtype())).unchecked_into())
+            Ok(JsValue::from_str(col.dtype().name()).unchecked_into())
         })
     }
 
@@ -610,7 +593,7 @@ fn row_major<T: Clone>(arr: &ArrayD<T>) -> std::borrow::Cow<'_, [T]> {
 /// Owned JS copy of `col` in its natural JS array type.
 fn column_to_js(key: &str, col: &Column) -> Result<JsValue, JsValue> {
     let shape = col.shape().to_vec();
-    let dtype = dtype_name(col.dtype());
+    let dtype = col.dtype().name();
     macro_rules! typed_copy {
         ($arr:expr, $js:ty) => {
             if let Some(arr) = $arr {
@@ -693,7 +676,7 @@ fn complex_to_js<T: Copy, U: Copy>(
 /// Zero-copy typed-array view over `col`'s storage.
 fn column_view(key: &str, col: &Column) -> Result<JsValue, JsValue> {
     let shape = col.shape().to_vec();
-    let dtype = dtype_name(col.dtype());
+    let dtype = col.dtype().name();
     macro_rules! typed_view {
         ($arr:expr, $js:ty) => {
             if let Some(arr) = $arr {
@@ -943,10 +926,16 @@ mod tests {
         };
     }
 
-    round_trip!(round_trip_f64, Float64Array, f64, "f64", [1.5, -2.0, 3.25]);
+    round_trip!(
+        round_trip_f64,
+        Float64Array,
+        f64,
+        "float",
+        [1.5, -2.0, 3.25]
+    );
     round_trip!(round_trip_i8, Int8Array, i8, "i8", [-1, 0, 7]);
     round_trip!(round_trip_i16, Int16Array, i16, "i16", [-300, 0, 300]);
-    round_trip!(round_trip_i32, Int32Array, i32, "i32", [1, -2, 3]);
+    round_trip!(round_trip_i32, Int32Array, i32, "int", [1, -2, 3]);
     round_trip!(round_trip_i64, BigInt64Array, i64, "i64", [-5, 0, 1 << 40]);
     round_trip!(round_trip_u8, Uint8Array, u8, "u8", [0, 128, 255]);
     round_trip!(round_trip_u16, Uint16Array, u16, "u16", [0, 1, 65535]);
@@ -957,7 +946,7 @@ mod tests {
         "u32",
         [0, 1, 4_000_000_000]
     );
-    round_trip!(round_trip_u64, BigUint64Array, u64, "u64", [0, 7, 1 << 50]);
+    round_trip!(round_trip_u64, BigUint64Array, u64, "uint", [0, 7, 1 << 50]);
 
     #[wasm_bindgen_test]
     fn round_trip_string() {
@@ -1017,7 +1006,7 @@ mod tests {
         b.set("c", col(Float64Array::from(&[1.0][..])), None)
             .unwrap();
         b.set("c", col(Int32Array::from(&[1][..])), None).unwrap();
-        assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), "i32");
+        assert_eq!(b.dtype("c").unwrap().as_string().unwrap(), "int");
         assert_eq!(b.keys().unwrap(), vec!["c".to_string()]);
     }
 

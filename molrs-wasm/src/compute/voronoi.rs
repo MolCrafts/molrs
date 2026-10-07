@@ -3,7 +3,7 @@
 
 use super::js_value;
 use crate::core::frame::Frame;
-use crate::core::frame::positions_from_frame;
+use crate::core::frame_coords;
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -40,7 +40,7 @@ fn voronoi_cells(
     frame: &molrs::core::Frame,
     use_atom_radii: bool,
 ) -> Result<(molrs::compute::VoronoiCells, F), JsValue> {
-    let positions = positions_from_frame(frame)?;
+    let positions = frame_coords(frame)?;
     let n = positions.nrows();
     let simbox = frame.simbox.as_ref().ok_or_else(|| {
         JsValue::from_str("Radical Voronoi needs a periodic simulation box (frame.simbox is unset)")

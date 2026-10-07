@@ -19,82 +19,99 @@
 
 use wasm_bindgen::prelude::*;
 
-use molrs::conformer::{Conformer, ConformerOptions, ConformerSpeed};
+use molrs::conformer::{Conformer as RsConformer, ConformerOptions, ConformerSpeed};
 use molrs::core::Atomistic;
 
 use crate::core::frame::Frame;
 
-/// Generate 3D coordinates for a molecular [`Frame`].
+/// 3D conformer generator — molrs `conformer::Conformer`, as Python's
+/// `molrs.conformer.Conformer`.
 ///
-/// The input frame must have an `"atoms"` block with a `"element"`
-/// string column (element symbols like `"C"`, `"N"`, `"O"`). A
-/// `"bonds"` block with `atomi`, `atomj` and the bond order (`bond_type` /
-/// `bond_number`, as `readSmilesStr` writes them) is required for correct
-/// geometry.
-///
-/// Returns a **new** [`Frame`] with 3D coordinates added as `x`, `y`,
-/// `z` (F, angstrom) columns in the `"atoms"` block.
-///
-/// # Arguments
-///
-/// * `frame` - Input molecular frame with atoms and bonds (from
-///   [`readSmilesStr`](crate::io::smiles::read_smiles_str) or file readers)
-/// * `speed` - Quality/speed preset:
-///   - `"fast"` -- minimal refinement, suitable for visualization
-///   - `"medium"` (default) -- balanced quality/speed
-///   - `"better"` -- thorough conformer search, best geometry
-/// * `seed` - Optional RNG seed (`u32`) for reproducibility. If
-///   omitted, a random seed is used.
-///
-/// # Returns
-///
-/// A new [`Frame`] with 3D coordinates. The original frame is
-/// not modified.
-///
-/// # Errors
-///
-/// Throws a `JsValue` string if:
-/// - The frame has no `"atoms"` block or is missing required columns
-/// - The molecular graph has invalid valences or topology
-/// - The 3D embedding fails to converge
-/// - A property of the result contradicts the Frame schema on the way out
+/// Construct with the generation parameters, then call
+/// [`generate`](Self::generate) on a molecular [`Frame`].
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
 /// const ir = SmilesIr.parse("c1ccccc1"); // benzene
-/// const frame2d = ir.toFrame();
-/// const frame3d = generate3D(frame2d, "fast", 42);
+/// const frame3d = new Conformer("fast", true, 42).generate(ir.toFrame());
 ///
 /// const atoms = frame3d.get("atoms");
 /// const x = atoms.view("x"); // zero-copy Float64Array of the 3D x-coords
-/// const y = atoms.view("y");
-/// const z = atoms.view("z");
 /// ```
-#[wasm_bindgen(js_name = generate3D)]
-pub fn generate_3d_wasm(
-    frame: &Frame,
-    speed: Option<String>,
-    seed: Option<u32>,
-) -> Result<Frame, JsValue> {
-    let opts = parse_opts(speed.as_deref(), seed)?;
-    let atomistic = frame.with_frame(|rs_frame| {
-        Atomistic::from_frame(rs_frame)
-            .map_err(|e| JsValue::from_str(&format!("Frame → Atomistic: {e}")))
-    })?;
-
-    let (result, _report) = Conformer::new(opts)
-        .generate(&atomistic)
-        .map_err(|e| JsValue::from_str(&format!("conformer: {e}")))?;
-
-    Frame::from_rs(
-        result
-            .to_frame()
-            .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
-    )
+#[wasm_bindgen]
+pub struct Conformer {
+    inner: RsConformer,
 }
 
-fn parse_opts(speed: Option<&str>, seed: Option<u32>) -> Result<ConformerOptions, JsValue> {
+#[wasm_bindgen]
+impl Conformer {
+    /// * `speed` - Quality/speed preset:
+    ///   - `"fast"` -- minimal refinement, suitable for visualization
+    ///   - `"medium"` (default) -- balanced quality/speed
+    ///   - `"better"` -- thorough conformer search, best geometry
+    /// * `addHydrogens` - Add implicit hydrogens before embedding (default
+    ///   `true`).
+    /// * `seed` - Optional RNG seed (`u32`) for reproducibility. If
+    ///   omitted, a random seed is used.
+    ///
+    /// # Errors
+    ///
+    /// Throws on an unknown `speed`.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        speed: Option<String>,
+        add_hydrogens: Option<bool>,
+        seed: Option<u32>,
+    ) -> Result<Conformer, JsValue> {
+        Ok(Conformer {
+            inner: RsConformer::new(parse_opts(speed.as_deref(), add_hydrogens, seed)?),
+        })
+    }
+
+    /// Generate 3D coordinates for a molecular [`Frame`].
+    ///
+    /// The input frame must have an `"atoms"` block with an `"element"`
+    /// string column (element symbols like `"C"`, `"N"`, `"O"`). A
+    /// `"bonds"` block with `atomi`, `atomj` and the bond order (`bond_type` /
+    /// `bond_number`, as `readSmilesStr` writes them) is required for correct
+    /// geometry.
+    ///
+    /// Returns a **new** [`Frame`] with 3D coordinates as `x`, `y`, `z`
+    /// (angstrom) in the `"atoms"` block; the input is not modified.
+    ///
+    /// # Errors
+    ///
+    /// Throws if:
+    /// - The frame has no `"atoms"` block or is missing required columns
+    /// - The molecular graph has invalid valences or topology
+    /// - The 3D embedding fails to converge
+    /// - A property of the result contradicts the Frame schema on the way out
+    pub fn generate(&self, frame: &Frame) -> Result<Frame, JsValue> {
+        let atomistic = frame.with_frame(|rs_frame| {
+            Atomistic::from_frame(rs_frame)
+                .map_err(|e| JsValue::from_str(&format!("Frame → Atomistic: {e}")))
+        })?;
+
+        let (result, _report) = self
+            .inner
+            .generate(&atomistic)
+            .map_err(|e| JsValue::from_str(&format!("conformer: {e}")))?;
+
+        Frame::from_rs(
+            result
+                .to_frame()
+                .map_err(|e| JsValue::from_str(&format!("toFrame: {e}")))?,
+        )
+    }
+}
+
+fn parse_opts(
+    speed: Option<&str>,
+    add_hydrogens: Option<bool>,
+    seed: Option<u32>,
+) -> Result<ConformerOptions, JsValue> {
+    let defaults = ConformerOptions::default();
     let sp = match speed.unwrap_or("medium") {
         "fast" => ConformerSpeed::Fast,
         "medium" => ConformerSpeed::Medium,
@@ -107,7 +124,8 @@ fn parse_opts(speed: Option<&str>, seed: Option<u32>) -> Result<ConformerOptions
     };
     Ok(ConformerOptions {
         speed: sp,
+        add_hydrogens: add_hydrogens.unwrap_or(defaults.add_hydrogens),
         rng_seed: seed.map(u64::from),
-        ..ConformerOptions::default()
+        ..defaults
     })
 }

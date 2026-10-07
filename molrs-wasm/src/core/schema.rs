@@ -5,14 +5,13 @@
 //!
 //! `schemaDocument()` hands back a real JS object via `serde-wasm-bindgen`
 //! rather than a string the caller has to `JSON.parse` — a browser consumer
-//! wants the object. `schemaJson()` is kept for callers that want the exact
-//! bytes to persist or diff.
+//! wants the object (`JSON.stringify` it to persist or diff).
 
 use wasm_bindgen::prelude::*;
 
 use molrs::core::schema;
 
-use crate::core::block::{JsDType, dtype_name};
+use crate::core::block::JsDType;
 
 /// The whole Frame vocabulary as a JS object.
 ///
@@ -26,13 +25,6 @@ pub fn schema_document() -> Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("schema: {e}")))
 }
 
-/// The vocabulary as canonical JSON — stable across runs, so two releases can
-/// be diffed byte for byte.
-#[wasm_bindgen(js_name = schemaJson)]
-pub fn schema_json() -> String {
-    schema::document().to_json()
-}
-
 /// Vocabulary version — what the names and dtypes *mean*.
 ///
 /// Distinct from the serialization envelope version; a consumer persisting
@@ -42,18 +34,16 @@ pub fn schema_vocab_version() -> u32 {
     schema::FRAME_VOCAB_VERSION
 }
 
-/// Declared dtype of a canonical column, named as `Block.dtype` names it
-/// (`"f64"`, `"u64"`, `"string"`, …), so the two compare directly.
-///
-/// `schemaDocument()` keeps the language-neutral vocabulary names
-/// (`"float"`, `"uint"`, …) it shares with every binding.
+/// Declared dtype of a canonical column, named as `Block.dtype` and
+/// `schemaDocument()` name it (`"float"`, `"uint"`, `"string"`, …: core
+/// `DType::name()`), so the three compare directly.
 ///
 /// Returns `undefined` when the key carries no declared dtype. That means the
 /// key is **unconstrained**, not invalid: the column vocabulary is closed but
 /// unspecified keys are the documented extension point.
 #[wasm_bindgen(js_name = schemaColumnDtype)]
 pub fn schema_column_dtype(key: &str) -> Option<JsDType> {
-    schema::column(key).map(|spec| JsValue::from_str(dtype_name(spec.dtype)).unchecked_into())
+    schema::column(key).map(|spec| JsValue::from_str(spec.dtype.name()).unchecked_into())
 }
 
 /// Whether a block name is part of the canonical vocabulary.

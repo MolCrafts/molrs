@@ -10,8 +10,8 @@
 //!
 //! No `typifyUff` / `insertIntramolecularPairs` façades, and no force-field
 //! handle: each typifier class wraps a native `Typing<…>` whose accumulated
-//! output (`forcefield()`) and library (`library()`) stay private. This is a
-//! known asymmetry with Python, which exposes both as copies.
+//! output (`forcefield()`) stays private. This is a known asymmetry with
+//! Python, which exposes it as a copy.
 
 use std::sync::Arc;
 
@@ -76,9 +76,8 @@ macro_rules! wasm_typifier {
             /// (only the definitions typing has assigned — call `typify` first).
             ///
             /// Non-bonded terms need a `pairs` block; `Lbfgs.minimize` installs
-            /// that list (from a caller-supplied [`Neighbors`] table or an
-            /// internal bruteforce topology list) and recompiles before
-            /// minimizing.
+            /// that list (from the [`Neighbors`](crate::core::Neighbors) table
+            /// it was constructed with) and recompiles before minimizing.
             /// Calling this alone with no `pairs` yields bonded-only kernels.
             ///
             /// Native: `PotentialCompiler::new(typing.forcefield()).compile(&frame)?` —
@@ -139,9 +138,10 @@ pub struct Potentials {
 
 #[wasm_bindgen(js_class = Potentials)]
 impl Potentials {
-    /// `{ energy: number, forces: Float64Array }` for flat 3N coordinates.
-    #[wasm_bindgen(js_name = energyForces)]
-    pub fn energy_forces(&self, coords: &js_sys::Float64Array) -> Result<JsValue, JsValue> {
+    /// `{ energy: number, forces: Float64Array }` for flat 3N coordinates —
+    /// molrs `Potentials::calc_energy_forces`.
+    #[wasm_bindgen(js_name = calcEnergyForces)]
+    pub fn calc_energy_forces(&self, coords: &js_sys::Float64Array) -> Result<JsValue, JsValue> {
         let mut buf = vec![0.0; coords.length() as usize];
         coords.copy_to(&mut buf);
         let (e, f) = self.inner.calc_energy_forces(&buf);

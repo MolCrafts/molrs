@@ -284,7 +284,7 @@ fn main() -> Result<(), molrs::core::MolRsError> {
 ```
 
 In the browser, `@molcrafts/molrs` reads records from bytes:
-`readMrecFrame` / `readMrecFrameFromZip` for a snapshot, `mrecSections` to
-list sections, and `MrecReader` (from a file map, a `*.mrec.zip`, or a
+`readMrecFrame` for a snapshot and `sectionNames` to list sections (each
+over a file map or a packed zip's bytes), and `MrecReader` (from a file map, a `*.mrec.zip`, or a
 lazy range-request store) for trajectories. See the
 [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#trajectory-stores-mrec).

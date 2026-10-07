@@ -1,66 +1,85 @@
 //! Static dielectric constant — WASM face of the `molrs::compute`
-//! dielectric family.
+//! dielectric family: `static_dielectric_constant` and
+//! `static_dielectric_constant_components`, free functions as in Rust and
+//! Python.
 
 use super::{array2, js_value};
 use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = StaticDielectric)]
-pub struct StaticDielectric {
+/// Neumann static dielectric constant from the fluctuation of the total
+/// dipole — molrs `compute::static_dielectric_constant`.
+///
+/// `dipoleMoments` is the flat `(nFrames, 3)` total dipole per frame (e Å),
+/// `volume` the box volume (Å³), `temperature` in K; `epsilonInf` defaults to
+/// 1 (conducting boundary).
+#[wasm_bindgen(js_name = staticDielectricConstant)]
+pub fn static_dielectric_constant(
+    dipole_moments: &[F],
+    n_frames: usize,
     volume: F,
     temperature: F,
     epsilon_inf: Option<F>,
+) -> Result<F, JsValue> {
+    let dipoles = array2(
+        dipole_moments,
+        n_frames,
+        3,
+        "staticDielectricConstant dipoleMoments",
+    )?;
+    molrs::compute::static_dielectric_constant(
+        &dipoles,
+        volume,
+        temperature,
+        epsilon_inf.unwrap_or(1.0),
+    )
+    .map_err(|e| JsValue::from_str(&format!("staticDielectricConstant: {e}")))
 }
 
-#[wasm_bindgen(js_class = StaticDielectric)]
-impl StaticDielectric {
-    #[wasm_bindgen(constructor)]
-    pub fn new(volume: F, temperature: F, epsilon_inf: Option<F>) -> Self {
-        Self {
-            volume,
-            temperature,
-            epsilon_inf,
-        }
+/// The per-axis terms of [`staticDielectricConstant`](static_dielectric_constant)
+/// — molrs `compute::static_dielectric_constant_components`, a
+/// `StaticDielectricResult`: `{ eps, epsMean, fluctuation, dipoleMean,
+/// dipoleSqMean, epsilonInf, nFrames }`.
+#[wasm_bindgen(js_name = staticDielectricConstantComponents)]
+pub fn static_dielectric_constant_components(
+    dipole_moments: &[F],
+    n_frames: usize,
+    volume: F,
+    temperature: F,
+    epsilon_inf: Option<F>,
+) -> Result<JsValue, JsValue> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Out {
+        eps: Vec<F>,
+        eps_mean: F,
+        fluctuation: Vec<F>,
+        dipole_mean: Vec<F>,
+        dipole_sq_mean: Vec<F>,
+        epsilon_inf: F,
+        n_frames: usize,
     }
-
-    pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
-        let volume = self.volume;
-        let temperature = self.temperature;
-        let epsilon_inf = self.epsilon_inf;
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Out {
-            epsilon: F,
-            eps: Vec<F>,
-            eps_mean: F,
-            fluctuation: Vec<F>,
-            dipole_mean: Vec<F>,
-            dipole_sq_mean: Vec<F>,
-            epsilon_inf: F,
-            n_frames: usize,
-        }
-        let dipoles = array2(dipoles, n_frames, 3, "StaticDielectric dipoles")?;
-        let eps_inf = epsilon_inf.unwrap_or(1.0);
-        let epsilon =
-            molrs::compute::static_dielectric_constant(&dipoles, volume, temperature, eps_inf)
-                .map_err(|e| JsValue::from_str(&format!("StaticDielectric: {e}")))?;
-        let c = molrs::compute::static_dielectric_constant_components(
-            &dipoles,
-            volume,
-            temperature,
-            eps_inf,
-        )
-        .map_err(|e| JsValue::from_str(&format!("StaticDielectric components: {e}")))?;
-        js_value(&Out {
-            epsilon,
-            eps: c.eps.to_vec(),
-            eps_mean: c.eps_mean,
-            fluctuation: c.fluctuation.to_vec(),
-            dipole_mean: c.dipole_mean.to_vec(),
-            dipole_sq_mean: c.dipole_sq_mean.to_vec(),
-            epsilon_inf: c.epsilon_inf,
-            n_frames: c.n_frames,
-        })
-    }
+    let dipoles = array2(
+        dipole_moments,
+        n_frames,
+        3,
+        "staticDielectricConstantComponents dipoleMoments",
+    )?;
+    let c = molrs::compute::static_dielectric_constant_components(
+        &dipoles,
+        volume,
+        temperature,
+        epsilon_inf.unwrap_or(1.0),
+    )
+    .map_err(|e| JsValue::from_str(&format!("staticDielectricConstantComponents: {e}")))?;
+    js_value(&Out {
+        eps: c.eps.to_vec(),
+        eps_mean: c.eps_mean,
+        fluctuation: c.fluctuation.to_vec(),
+        dipole_mean: c.dipole_mean.to_vec(),
+        dipole_sq_mean: c.dipole_sq_mean.to_vec(),
+        epsilon_inf: c.epsilon_inf,
+        n_frames: c.n_frames,
+    })
 }

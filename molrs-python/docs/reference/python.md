@@ -93,7 +93,7 @@ answers `contains`, `distance` (negative inside) and `bounds`, and composes
 with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
 `outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
 what `molrs.io.read_stl` reads (the WASM binding reads the same file with
-`readStlBytes` into `Mesh`).
+`readStlBytes` into a `TriMesh`).
 
 ::: molrs.core.Sphere
 

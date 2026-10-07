@@ -32,13 +32,12 @@ use molrs::core::{
     SphereUnion as RsSphereUnion,
 };
 use molrs::op::{F, F3, Fnx3};
+use molrs_ffi::RegionRef;
 use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 
-use crate::core::mesh::Mesh;
+use crate::core::mesh::TriMesh;
 use crate::core::simbox::Box as WasmBox;
-
-type Shared = Arc<dyn RegionTrait + Send + Sync>;
 
 /// Reshape a flat `[x0, y0, z0, x1, …]` array into the `N × 3` the core takes.
 fn points_from_flat(points: &[F]) -> Result<Fnx3, JsValue> {
@@ -75,16 +74,14 @@ fn bounds_of(region: &dyn RegionTrait) -> Vec<F> {
 /// nest without a special case.
 #[wasm_bindgen]
 pub struct Region {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 impl Region {
-    pub(crate) fn from_shared(inner: Shared) -> Self {
-        Self { inner }
-    }
-
-    pub(crate) fn shared(&self) -> Shared {
-        Arc::clone(&self.inner)
+    fn wrap(region: impl RegionTrait + 'static) -> Self {
+        Self {
+            inner: RegionRef::new(Arc::new(region)),
+        }
     }
 }
 
@@ -97,49 +94,45 @@ macro_rules! region_surface {
             /// Signed distance of each point to the boundary: negative inside,
             /// positive outside, zero on it. `points` is flat `[x, y, z, …]`.
             pub fn distance(&self, points: &[F]) -> Result<Vec<F>, JsValue> {
-                distance_of(self.inner.as_ref(), points)
+                self.inner.with_region(|r| distance_of(r, points))
             }
 
             /// `1` for each point inside the solid, `0` outside. `points` is
             /// flat `[x, y, z, …]`.
             pub fn contains(&self, points: &[F]) -> Result<Vec<u8>, JsValue> {
-                contains_of(self.inner.as_ref(), points)
+                self.inner.with_region(|r| contains_of(r, points))
             }
 
             /// Axis-aligned bounding box as
             /// `[xmin, xmax, ymin, ymax, zmin, zmax]`.
             pub fn bounds(&self) -> Vec<F> {
-                bounds_of(self.inner.as_ref())
+                self.inner.with_region(bounds_of)
             }
 
             /// Intersection — what Python spells `self & other`.
             pub fn and(&self, other: &Region) -> Region {
-                Region::from_shared(Arc::new(AndRegion::new(
-                    Arc::clone(&self.inner),
-                    other.shared(),
-                )))
+                Region::wrap(AndRegion::new(self.inner.region(), other.inner.region()))
             }
 
             /// Union — what Python spells `self | other`.
             pub fn or(&self, other: &Region) -> Region {
-                Region::from_shared(Arc::new(OrRegion::new(
-                    Arc::clone(&self.inner),
-                    other.shared(),
-                )))
+                Region::wrap(OrRegion::new(self.inner.region(), other.inner.region()))
             }
 
             /// Complement — what Python spells `~self`. The outside of a shape
             /// is `shape.not()`; a shell is `outer.and(inner.not())`.
             #[wasm_bindgen(js_name = not)]
             pub fn not_region(&self) -> Region {
-                Region::from_shared(Arc::new(NotRegion::new(Arc::clone(&self.inner))))
+                Region::wrap(NotRegion::new(self.inner.region()))
             }
 
             /// This solid as a composed [`Region`], so it can be passed to
             /// `and` / `or`.
             #[wasm_bindgen(js_name = asRegion)]
             pub fn as_region(&self) -> Region {
-                Region::from_shared(Arc::clone(&self.inner))
+                Region {
+                    inner: self.inner.clone(),
+                }
             }
         }
     };
@@ -150,7 +143,7 @@ region_surface!(Region);
 /// Ball of `radius` about `center`.
 #[wasm_bindgen]
 pub struct Sphere {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -159,7 +152,7 @@ impl Sphere {
     pub fn create(center: &[F], radius: F) -> Result<Sphere, JsValue> {
         let c = triple("center", center)?;
         Ok(Sphere {
-            inner: Arc::new(RsSphere::new(F3::from_vec(c.to_vec()), radius)),
+            inner: RegionRef::new(Arc::new(RsSphere::new(F3::from_vec(c.to_vec()), radius))),
         })
     }
 }
@@ -169,7 +162,7 @@ region_surface!(Sphere);
 /// Axis-aligned box with a corner at `origin` and the given edge `lengths`.
 #[wasm_bindgen]
 pub struct Cuboid {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -178,10 +171,10 @@ impl Cuboid {
         let o = triple("origin", origin)?;
         let l = triple("lengths", lengths)?;
         Ok(Cuboid {
-            inner: Arc::new(RsCuboid::new(
+            inner: RegionRef::new(Arc::new(RsCuboid::new(
                 F3::from_vec(o.to_vec()),
                 F3::from_vec(l.to_vec()),
-            )),
+            ))),
         })
     }
 }
@@ -191,7 +184,7 @@ region_surface!(Cuboid);
 /// Cell spanned by three edge vectors, given as a flat row-major 3×3 `h`.
 #[wasm_bindgen]
 pub struct Parallelepiped {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -204,7 +197,9 @@ impl Parallelepiped {
         let matrix = Array2::from_shape_vec((3, 3), h.to_vec())
             .map_err(|e| JsValue::from_str(&format!("h: {e}")))?;
         RsParallelepiped::new(matrix, F3::from_vec(o.to_vec()))
-            .map(|r| Parallelepiped { inner: Arc::new(r) })
+            .map(|r| Parallelepiped {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 
@@ -213,7 +208,9 @@ impl Parallelepiped {
         let l = triple("lengths", lengths)?;
         let o = triple("origin", origin)?;
         RsParallelepiped::ortho(F3::from_vec(l.to_vec()), F3::from_vec(o.to_vec()))
-            .map(|r| Parallelepiped { inner: Arc::new(r) })
+            .map(|r| Parallelepiped {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 
@@ -221,7 +218,9 @@ impl Parallelepiped {
     pub fn cube(a: F, origin: &[F]) -> Result<Parallelepiped, JsValue> {
         let o = triple("origin", origin)?;
         RsParallelepiped::cube(a, F3::from_vec(o.to_vec()))
-            .map(|r| Parallelepiped { inner: Arc::new(r) })
+            .map(|r| Parallelepiped {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 }
@@ -231,7 +230,7 @@ region_surface!(Parallelepiped);
 /// Everything on the `normal` side of the plane through `point`.
 #[wasm_bindgen]
 pub struct HalfSpace {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -240,7 +239,9 @@ impl HalfSpace {
         let n = triple("normal", normal)?;
         let p = triple("point", point)?;
         RsHalfSpace::new(n, p)
-            .map(|r| HalfSpace { inner: Arc::new(r) })
+            .map(|r| HalfSpace {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 }
@@ -250,7 +251,7 @@ region_surface!(HalfSpace);
 /// Finite cylinder: `base`, `axis`, `radius`, `length`.
 #[wasm_bindgen]
 pub struct Cylinder {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -259,7 +260,9 @@ impl Cylinder {
         let b = triple("base", base)?;
         let a = triple("axis", axis)?;
         RsCylinder::new(b, a, radius, length)
-            .map(|r| Cylinder { inner: Arc::new(r) })
+            .map(|r| Cylinder {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 }
@@ -269,7 +272,7 @@ region_surface!(Cylinder);
 /// Ellipsoid about `center` with the given `semiAxes`.
 #[wasm_bindgen]
 pub struct Ellipsoid {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
@@ -279,7 +282,9 @@ impl Ellipsoid {
         let c = triple("center", center)?;
         let s = triple("semiAxes", semi_axes)?;
         RsEllipsoid::new(c, s)
-            .map(|r| Ellipsoid { inner: Arc::new(r) })
+            .map(|r| Ellipsoid {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e))
     }
 }
@@ -289,14 +294,16 @@ region_surface!(Ellipsoid);
 /// Solid bounded by a watertight triangle mesh — what `readStlBytes` reads.
 #[wasm_bindgen]
 pub struct Polyhedron {
-    inner: Shared,
+    inner: RegionRef,
 }
 
 #[wasm_bindgen]
 impl Polyhedron {
-    pub fn create(mesh: &Mesh) -> Result<Polyhedron, JsValue> {
+    pub fn create(mesh: &TriMesh) -> Result<Polyhedron, JsValue> {
         RsPolyhedron::new(mesh.inner.clone())
-            .map(|r| Polyhedron { inner: Arc::new(r) })
+            .map(|r| Polyhedron {
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
@@ -308,7 +315,8 @@ region_surface!(Polyhedron);
 /// This is atoms as a region: pass the centers flat and one radius each.
 #[wasm_bindgen]
 pub struct SphereUnion {
-    inner: Shared,
+    inner: RegionRef,
+    n_spheres: usize,
 }
 
 #[wasm_bindgen]
@@ -323,14 +331,17 @@ impl SphereUnion {
             )));
         }
         RsSphereUnion::new(c.view(), radii, &bx.inner)
-            .map(|r| SphereUnion { inner: Arc::new(r) })
+            .map(|r| SphereUnion {
+                n_spheres: r.n_spheres(),
+                inner: RegionRef::new(Arc::new(r)),
+            })
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Number of spheres in the union.
     #[wasm_bindgen(js_name = nSpheres)]
     pub fn n_spheres(&self) -> usize {
-        self.inner.bounds().nrows()
+        self.n_spheres
     }
 }
 
@@ -426,5 +437,24 @@ mod tests {
             assert_eq!(s.bounds().len(), 6);
             assert_eq!(s.contains(&[0.0, 0.0, 0.0]).unwrap().len(), 1);
         }
+    }
+
+    #[wasm_bindgen_test]
+    fn sphere_union_counts_its_spheres() {
+        let bx = WasmBox::cube(
+            10.0,
+            &js_sys::Float64Array::from(&[0.0, 0.0, 0.0][..]),
+            true,
+            true,
+            true,
+        )
+        .unwrap();
+        let union = SphereUnion::create(
+            &[1.0, 1.0, 1.0, 5.0, 5.0, 5.0, 8.0, 1.0, 1.0, 2.0, 7.0, 3.0],
+            &[1.0, 1.0, 0.5, 0.5],
+            &bx,
+        )
+        .unwrap();
+        assert_eq!(union.n_spheres(), 4);
     }
 }

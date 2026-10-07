@@ -16,7 +16,8 @@ This module holds the family's classes: :class:`LammpsDumpReader`, the lazy
 dump reader; :class:`BondReactTemplate`, one reaction's pre/post template
 pair; and the log records :func:`~molrs.io.read_lammps_log` hands out —
 :class:`LammpsLog` and its runs, thermo tables, warnings, and performance and
-timing summaries.
+timing summaries; and :func:`is_lammps_log`, which tells a log by its first
+run before it is read.
 """
 
 from .._lib import (
@@ -35,6 +36,7 @@ from .._lib import (
     LammpsTimingBreakdown,
     LammpsTimingRow,
     LammpsWarning,
+    is_lammps_log,
 )
 
 __all__ = [
@@ -53,4 +55,5 @@ __all__ = [
     "LammpsTimingBreakdown",
     "LammpsTimingRow",
     "LammpsWarning",
+    "is_lammps_log",
 ]

@@ -3,7 +3,7 @@
 
 use super::ClusterResult;
 use crate::core::frame::Frame;
-use crate::core::types::JsFloatArray;
+use crate::core::nd_array::JsFloatArray;
 use molrs::compute::Compute;
 use molrs::compute::{
     CenterOfMass as RsCenterOfMass, CenterOfMassResult as RsCenterOfMassResult,
