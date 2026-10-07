@@ -6,7 +6,7 @@ use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::write_smarts;
 use crate::io::smiles::{LocalSmartsOptions, NeighborStyle};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use crate::perceive::rings::find_rings;
+use crate::perceive::perceive_rings;
 use molrs::core::Atomistic;
 use molrs::core::BondOrder;
 use molrs::core::Element;
@@ -30,7 +30,7 @@ pub fn local_smarts_ir(
         return Err(emit_err("center atom not in molecule"));
     }
 
-    let rings = find_rings(mol);
+    let rings = perceive_rings(mol);
 
     // BFS ball of radius reach
     let mut depth: HashMap<NodeId, u32> = HashMap::new();
@@ -95,7 +95,7 @@ fn center_query(
     mol: &Atomistic,
     id: NodeId,
     opts: &LocalSmartsOptions,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
 ) -> Result<AtomQuery, SmilesError> {
     let mut prims: Vec<AtomQuery> = Vec::new();
 
@@ -273,7 +273,7 @@ fn build_chain_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &LocalSmartsOptions,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
 ) -> Result<Chain, SmilesError> {
     fn rec(
         mol: &Atomistic,
@@ -281,7 +281,7 @@ fn build_chain_env(
         parent: Option<NodeId>,
         depth: &HashMap<NodeId, u32>,
         opts: &LocalSmartsOptions,
-        rings: &crate::perceive::rings::RingInfo,
+        rings: &crate::perceive::RingInfo,
         is_center: bool,
     ) -> Result<Chain, SmilesError> {
         let q = if is_center {
@@ -329,7 +329,7 @@ fn build_recursive_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &LocalSmartsOptions,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
 ) -> Result<Chain, SmilesError> {
     // Centre with LowAnd of primitives + Recursive fragments for each neighbour path
     let mut prims: Vec<AtomQuery> = match center_query(mol, center, opts, rings)? {

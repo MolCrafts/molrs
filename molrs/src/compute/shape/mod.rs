@@ -10,11 +10,11 @@
 //!
 //! | Method | Args | Output (per frame) |
 //! |--------|------|--------------------|
-//! | [`CenterOfMass`] | `&Vec<ClusterResult>` | `Vec<`[`COMResult`]`>` |
+//! | [`CenterOfMass`] | `&Vec<ClusterResult>` | `Vec<`[`CenterOfMassResult`]`>` |
 //! | [`ClusterCenters`] | `&Vec<ClusterResult>` | `Vec<`[`ClusterCentersResult`]`>` |
 //! | [`GyrationTensor`] | `(&Vec<ClusterResult>, &Vec<ClusterCentersResult>)` | `Vec<`[`GyrationTensorResult`]`>` |
-//! | [`InertiaTensor`] | `(&Vec<ClusterResult>, &Vec<COMResult>)` | `Vec<`[`InertiaTensorResult`]`>` |
-//! | [`RadiusOfGyration`] | `(&Vec<ClusterResult>, &Vec<COMResult>)` | `Vec<`[`RgResult`]`>` |
+//! | [`InertiaTensor`] | `(&Vec<ClusterResult>, &Vec<CenterOfMassResult>)` | `Vec<`[`InertiaTensorResult`]`>` |
+//! | [`RadiusOfGyration`] | `(&Vec<ClusterResult>, &Vec<CenterOfMassResult>)` | `Vec<`[`RadiusOfGyrationResult`]`>` |
 //!
 //! ```ignore
 //! let clusters = Cluster::new(1).compute(&frames, &nlists)?;
@@ -28,8 +28,8 @@ mod gyration_tensor;
 mod inertia_tensor;
 mod radius_of_gyration;
 
-pub use center_of_mass::{COMResult, CenterOfMass};
+pub use center_of_mass::{CenterOfMass, CenterOfMassResult};
 pub use cluster_centers::{ClusterCenters, ClusterCentersResult};
 pub use gyration_tensor::{GyrationTensor, GyrationTensorResult};
 pub use inertia_tensor::{InertiaTensor, InertiaTensorResult};
-pub use radius_of_gyration::{RadiusOfGyration, RgResult};
+pub use radius_of_gyration::{RadiusOfGyration, RadiusOfGyrationResult};

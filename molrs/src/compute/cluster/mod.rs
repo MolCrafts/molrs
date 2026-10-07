@@ -17,7 +17,7 @@ pub use result::ClusterResult;
 
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::Idx;
+use molrs::op::Idx;
 use ndarray::Array1;
 use std::collections::HashMap;
 
@@ -298,11 +298,11 @@ impl Compute for Cluster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::{Array1 as A1, array};
 
     fn make_frame_with_positions(positions: &[[F; 3]], box_len: F) -> Frame {

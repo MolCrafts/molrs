@@ -9,8 +9,8 @@
 //!
 //! | Spectrum | Raw compute | Fit transform |
 //! |----------|-------------|---------------|
-//! | VDOS | [`VACF`](crate::compute::VACF) (velocity ACF) | [`PowerSpectrum`] |
-//! | IR | [`IRFlux`] (dipole-flux ACF) | [`IRSpectrum`] |
+//! | VDOS | [`Vacf`](crate::compute::Vacf) (velocity ACF) | [`PowerSpectrum`] |
+//! | IR | [`IrFlux`] (dipole-flux ACF) | [`IrSpectrum`] |
 //! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
 //! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
 //! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
@@ -54,8 +54,8 @@ pub use dielectric_spectrum::{
     DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, KramersKronig,
     KramersKronigCheck, RouteAgreement, RouteAgreementCheck, SumRuleCheck,
 };
-pub use ir_flux::{IRFlux, IRFluxArgs, IRFluxResult};
-pub use ir_spectrum::IRSpectrum;
+pub use ir_flux::{IrFlux, IrFluxArgs, IrFluxResult};
+pub use ir_spectrum::IrSpectrum;
 pub use power_spectrum::PowerSpectrum;
 pub use raman_spectrum::RamanSpectrum;
 pub use raman_tensor::{RamanTensor, RamanTensorArgs, RamanTensorResult};
@@ -72,8 +72,8 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use crate::compute::ComputeError;
-use crate::compute::fitting::forward_fft_onesided;
 use crate::compute::lag_times as transport_lag_times;
+use crate::signal::forward_fft_onesided;
 use molrs::core::constants::{
     CENTIMETER_PER_METER, FEMTOSECOND_S, SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT,
 };

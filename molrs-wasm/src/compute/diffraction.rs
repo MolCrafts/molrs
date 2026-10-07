@@ -4,7 +4,7 @@
 use super::{Grid2Out, js_value};
 use crate::core::frame::Frame;
 use molrs::compute::Compute;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 

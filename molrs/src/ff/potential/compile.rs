@@ -606,7 +606,7 @@ fn regular_pairs<'f>(
 mod tests {
     use super::*;
     use molrs::core::Block;
-    use molrs::op::types::{F, Idx};
+    use molrs::op::{F, Idx};
     use ndarray::Array1;
 
     fn two_atoms() -> Frame {

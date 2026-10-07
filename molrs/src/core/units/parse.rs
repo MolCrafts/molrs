@@ -7,7 +7,7 @@
 //! factor   := IDENT | NUMBER | '(' expr ')'
 //! ```
 
-use crate::op::types::F;
+use crate::op::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;

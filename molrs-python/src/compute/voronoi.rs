@@ -4,10 +4,10 @@
 use crate::core::simbox::PyBox;
 use crate::error::py_value_err;
 use molrs::compute::{
-    DensityGrid, DomainAnalysis, MolecularMoments, RadicalVoronoi, VoidAnalysis, VoronoiCells,
-    VoronoiIntegration, polarizability_finite_field,
+    DensityGrid, MolecularMoments, RadicalVoronoi, VoronoiCells, VoronoiDomainAnalysis,
+    VoronoiIntegration, VoronoiVoidAnalysis, polarizability_finite_field,
 };
-use molrs::op::types::F;
+use molrs::op::F;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -80,44 +80,68 @@ impl PyRadicalVoronoi {
     }
 }
 
-/// Merge face-adjacent cells sharing the same label into domains. `labels` has
-/// one integer per cell. Returns ``{"sizes", "count", "largest_fraction",
-/// "domain_of"}``.
-#[pyfunction]
-fn voronoi_domains<'py>(
-    py: Python<'py>,
-    cells: &PyVoronoiCells,
-    labels: Vec<i64>,
-) -> PyResult<Bound<'py, PyDict>> {
-    let r = DomainAnalysis
-        .analyze(&cells.inner, &labels)
-        .map_err(py_value_err)?;
-    let d = PyDict::new(py);
-    d.set_item("sizes", r.sizes)?;
-    d.set_item("count", r.count)?;
-    d.set_item("largest_fraction", r.largest_fraction)?;
-    d.set_item("domain_of", r.domain_of)?;
-    Ok(d)
+/// Partition Voronoi cells into same-label face-adjacent domains.
+#[pyclass(module = "molrs.compute", name = "VoronoiDomainAnalysis", frozen)]
+pub struct PyVoronoiDomainAnalysis;
+
+#[pymethods]
+impl PyVoronoiDomainAnalysis {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// Merge face-adjacent cells sharing a label into domains. ``labels`` has
+    /// one entry per cell. Returns
+    /// ``{"sizes", "count", "largest_fraction", "domain_of"}``.
+    fn analyze<'py>(
+        &self,
+        py: Python<'py>,
+        cells: &PyVoronoiCells,
+        labels: Vec<i64>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let r = VoronoiDomainAnalysis
+            .analyze(&cells.inner, &labels)
+            .map_err(py_value_err)?;
+        let d = PyDict::new(py);
+        d.set_item("sizes", r.sizes)?;
+        d.set_item("count", r.count)?;
+        d.set_item("largest_fraction", r.largest_fraction)?;
+        d.set_item("domain_of", r.domain_of)?;
+        Ok(d)
+    }
 }
 
-/// Merge adjacent void-probe cells into cavities. `is_void` is a per-cell bool
-/// mask; `box_volume` normalizes the void fraction. Returns
-/// ``{"cavity_volumes", "total_void_volume", "void_fraction"}``.
-#[pyfunction]
-fn voronoi_voids<'py>(
-    py: Python<'py>,
-    cells: &PyVoronoiCells,
-    is_void: Vec<bool>,
-    box_volume: F,
-) -> PyResult<Bound<'py, PyDict>> {
-    let r = VoidAnalysis
-        .analyze(&cells.inner, &is_void, box_volume)
-        .map_err(py_value_err)?;
-    let d = PyDict::new(py);
-    d.set_item("cavity_volumes", r.cavity_volumes)?;
-    d.set_item("total_void_volume", r.total_void_volume)?;
-    d.set_item("void_fraction", r.void_fraction)?;
-    Ok(d)
+/// Merge adjacent void-probe Voronoi cells into cavities.
+#[pyclass(module = "molrs.compute", name = "VoronoiVoidAnalysis", frozen)]
+pub struct PyVoronoiVoidAnalysis;
+
+#[pymethods]
+impl PyVoronoiVoidAnalysis {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// ``is_void`` is a per-cell bool mask; ``box_volume`` normalizes the void
+    /// fraction. Returns
+    /// ``{"cavity_volumes", "total_void_volume", "void_fraction"}``.
+    fn analyze<'py>(
+        &self,
+        py: Python<'py>,
+        cells: &PyVoronoiCells,
+        is_void: Vec<bool>,
+        box_volume: F,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let r = VoronoiVoidAnalysis
+            .analyze(&cells.inner, &is_void, box_volume)
+            .map_err(py_value_err)?;
+        let d = PyDict::new(py);
+        d.set_item("cavity_volumes", r.cavity_volumes)?;
+        d.set_item("total_void_volume", r.total_void_volume)?;
+        d.set_item("void_fraction", r.void_fraction)?;
+        Ok(d)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,8 +307,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDensityGrid>()?;
     m.add_class::<PyMolecularMoments>()?;
     m.add_class::<PyVoronoiIntegration>()?;
-    crate::add_function(m, "molrs.compute", wrap_pyfunction!(voronoi_domains, m)?)?;
-    crate::add_function(m, "molrs.compute", wrap_pyfunction!(voronoi_voids, m)?)?;
+    m.add_class::<PyVoronoiDomainAnalysis>()?;
+    m.add_class::<PyVoronoiVoidAnalysis>()?;
     crate::add_function(
         m,
         "molrs.compute",

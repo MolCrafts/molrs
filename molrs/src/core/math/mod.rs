@@ -2,7 +2,7 @@
 //! harmonics, Wigner symbols and the virial.
 //!
 //! The pure 3×3 linear algebra and the symmetric eigensolvers live in
-//! [`crate::op::linalg`]; the vector kernels in [`crate::op::vec3`].
+//! [`crate::op`] (`det3`, `inv3`, `eigh_sym_3x3`); the vector kernels in [`crate::op::vec3`].
 
 mod complex;
 mod spherical_harmonics;

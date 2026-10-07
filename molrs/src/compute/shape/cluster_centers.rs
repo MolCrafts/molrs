@@ -9,7 +9,7 @@
 
 use crate::compute::{ComputeResult, DescriptorRow};
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ClusterResult;
 use crate::compute::Compute;
@@ -160,7 +160,7 @@ impl DescriptorRow for ClusterCentersResult {
 mod tests {
     use super::*;
     use crate::compute::Cluster;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;

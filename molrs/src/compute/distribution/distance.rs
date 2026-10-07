@@ -8,7 +8,7 @@
 //! for the same pair under PBC.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
 

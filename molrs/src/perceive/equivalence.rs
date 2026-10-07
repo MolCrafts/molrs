@@ -94,7 +94,7 @@ use crate::core::Atomistic;
 use crate::core::BondOrder;
 use crate::core::NodeId;
 use crate::core::keys;
-use crate::op::vec3::{cross, dot, sub};
+use crate::op::vec3::dihedral;
 use molrs::core::Element;
 
 /// Weight of a path position, `0.11` (Antechamber Eq. (I)).
@@ -180,7 +180,7 @@ impl EquivalenceOptions {
 
 /// The topological-equivalence partition of a molecule's atoms.
 ///
-/// Produced by [`find_equivalence_classes`]. Two atoms share a class iff their
+/// Produced by [`perceive_equivalence_classes`]. Two atoms share a class iff their
 /// sorted path-score arrays are **exactly** equal — the comparison is bit-for-bit,
 /// as it is in `equatom.c`, and deliberately carries no tolerance: the scores are
 /// sums of a handful of exactly-representable-ish terms, and two atoms that differ
@@ -264,7 +264,10 @@ impl EquivalenceClasses {
 /// 37 molecules peak at 28 paths for a single atom), but a large fused-ring system
 /// can blow up; [`EquivalenceOptions::max_path_length`] is the escape hatch, and is
 /// why antechamber ships `-pl`.
-pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> EquivalenceClasses {
+pub fn perceive_equivalence_classes(
+    mol: &Atomistic,
+    opts: EquivalenceOptions,
+) -> EquivalenceClasses {
     let flat = Flat::new(mol);
     let n = flat.ids.len();
 
@@ -328,7 +331,7 @@ struct Flat {
     /// Per atom: its handle, in graph atom order.
     ids: Vec<NodeId>,
     /// Per atom: atomic number (`0` when the element is unknown, as in
-    /// [`crate::perceive::bond_type`]).
+    /// [`crate::perceive::assign_bcc_bond_types`]).
     z: Vec<u8>,
     /// Per atom: neighbour indices, in bond order — antechamber's `con[]`.
     adj: Vec<Vec<usize>>,
@@ -416,7 +419,8 @@ impl Flat {
                     if l == j {
                         continue;
                     }
-                    let phi = dihedral_deg(self.xyz[i], self.xyz[j], self.xyz[k], self.xyz[l]);
+                    let phi =
+                        dihedral(self.xyz[i], self.xyz[j], self.xyz[k], self.xyz[l]).to_degrees();
                     out.push(Torsion {
                         atoms: [i, j, k, l],
                         trans: !(-90.0..=90.0).contains(&phi),
@@ -563,18 +567,25 @@ impl PathScorer<'_> {
     }
 }
 
-/// The dihedral angle `i–j–k–l`, in degrees on `(-180, 180]`.
-fn dihedral_deg(i: [f64; 3], j: [f64; 3], k: [f64; 3], l: [f64; 3]) -> f64 {
-    let b1 = sub(j, i);
-    let b2 = sub(k, j);
-    let b3 = sub(l, k);
-    let n1 = cross(b1, b2);
-    let n2 = cross(b2, b3);
-    let m = cross(n1, b2);
-    let b2_len = dot(b2, b2).sqrt();
-    let x = dot(n1, n2);
-    let y = dot(m, n2) / b2_len;
-    (-y).atan2(x).to_degrees()
+/// Perceive charge-equivalence classes and write them onto a clone of `mol`:
+/// every atom receives an [`EQUIV_CLASS`](crate::core::keys::EQUIV_CLASS) id
+/// (0-based), the [`perceive_equivalence_classes`] partition under `opts`
+/// (`EquivalenceOptions::default()` is antechamber's `-eq 1`, the path-score
+/// partition AM1-BCC averages its AM1 charges over).
+///
+/// Perception stops at the classes: the class-mean itself is a charge-model
+/// step (`ff::charge`), taken by a model that declares it, because whether to
+/// average is a property of the charge model and not of the graph. `mol` is
+/// left untouched.
+pub fn assign_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Atomistic {
+    let classes = perceive_equivalence_classes(mol, opts);
+    let mut out = mol.clone();
+    for (class, members) in classes.classes().enumerate() {
+        for id in members {
+            let _ = out.set_atom(*id, keys::EQUIV_CLASS, super::rings::saturating_i32(class));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -612,7 +623,7 @@ mod tests {
     fn methyl_hydrogens_are_one_class_and_the_hydroxyl_is_not() {
         let mol = methanol();
         let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
 
         assert_eq!(classes.n_classes(), 4, "C, O, 3×methyl H, hydroxyl H");
         let methyl = classes.class_of(ids[2]).expect("H class");
@@ -628,7 +639,7 @@ mod tests {
     #[test]
     fn off_gives_every_atom_its_own_class() {
         let mol = methanol();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::off());
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::off());
         assert_eq!(classes.n_classes(), mol.n_atoms());
 
         assert!(classes.classes().all(|c| c.len() == 1));
@@ -724,7 +735,7 @@ mod tests {
         );
 
         // … and they are still NOT merged.
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
         assert_ne!(
             classes.class_of(n1),
             classes.class_of(n2),
@@ -735,8 +746,8 @@ mod tests {
     #[test]
     fn a_path_length_cap_scores_no_longer_path() {
         let mol = methanol();
-        let uncapped = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let capped = find_equivalence_classes(
+        let uncapped = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let capped = perceive_equivalence_classes(
             &mol,
             EquivalenceOptions {
                 level: EquivalenceLevel::Paths,

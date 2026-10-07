@@ -2,7 +2,7 @@
 
 use crate::io::invalid_data;
 use molrs::core::SimBox;
-use molrs::op::types::Pbc3;
+use molrs::op::Pbc3;
 use ndarray::array;
 
 /// Simulation-box extents as written in LAMMPS data headers or dump

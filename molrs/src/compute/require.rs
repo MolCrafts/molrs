@@ -37,7 +37,7 @@
 //! about [`ComputeError`] to answer a question `core` never asks.
 
 use molrs::core::{Neighbors, QueryMode};
-use molrs::op::types::{F, FNx3View};
+use molrs::op::{F, FNx3View};
 
 use super::error::ComputeError;
 

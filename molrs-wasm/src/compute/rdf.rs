@@ -1,10 +1,10 @@
-//! Radial distribution function g(r) — WASM face of `molrs::compute::RDF`.
+//! Radial distribution function g(r) — WASM face of `molrs::compute::Rdf`.
 
 use crate::core::frame::Frame;
 use crate::core::frame::positions_from_frame;
 use crate::core::types::JsFloatArray;
-use molrs::compute::{RDF as RsRDF, RDFResult as RsRDFResult};
-use molrs::op::types::F;
+use molrs::compute::{Rdf as RsRdf, RdfResult as RsRdfResult};
+use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
 /// Radial distribution function g(r) analysis.
@@ -33,16 +33,16 @@ use wasm_bindgen::prelude::*;
 /// const r  = result.binCenters();
 /// const gr = result.rdf();
 /// ```
-#[wasm_bindgen(js_name = RDF)]
-pub struct RDF {
-    inner: RsRDF,
+#[wasm_bindgen(js_name = Rdf)]
+pub struct Rdf {
+    inner: RsRdf,
     /// Explicit normalization volume (A^3). When unset, `compute` takes the
     /// volume from `frame.simbox`.
     volume: Option<F>,
 }
 
-#[wasm_bindgen(js_class = RDF)]
-impl RDF {
+#[wasm_bindgen(js_class = Rdf)]
+impl Rdf {
     /// Create a new RDF analysis.
     ///
     /// # Arguments
@@ -70,14 +70,14 @@ impl RDF {
         r_max: F,
         r_min: Option<F>,
         volume: Option<F>,
-    ) -> Result<RDF, JsValue> {
+    ) -> Result<Rdf, JsValue> {
         if let Some(v) = volume
             && !(v.is_finite() && v > 0.0)
         {
-            return Err(JsValue::from_str("RDF: volume must be finite and > 0"));
+            return Err(JsValue::from_str("Rdf: volume must be finite and > 0"));
         }
-        let inner = RsRDF::new(n_bins, r_max, r_min.unwrap_or(0.0))
-            .map_err(|e| JsValue::from_str(&format!("RDF: {e}")))?;
+        let inner = RsRdf::new(n_bins, r_max, r_min.unwrap_or(0.0))
+            .map_err(|e| JsValue::from_str(&format!("Rdf: {e}")))?;
         Ok(Self { inner, volume })
     }
 
@@ -100,14 +100,14 @@ impl RDF {
     /// const rdf = new RDF(100, 5.0);       // r_max is required
     /// const result = rdf.compute(frame);
     /// ```
-    pub fn compute(&self, frame: &Frame) -> Result<RDFResult, JsValue> {
+    pub fn compute(&self, frame: &Frame) -> Result<RdfResult, JsValue> {
         frame.with_frame(|rs_frame| {
             // If constructor set an explicit volume and the frame has no box,
             // synthesize a cubic box so compute_frame can proceed.
             if rs_frame.simbox.is_none() {
                 let v = self.volume.ok_or_else(|| {
                     JsValue::from_str(
-                        "RDF compute: frame has no box — pass volume to the RDF constructor",
+                        "Rdf compute: frame has no box — pass volume to the RDF constructor",
                     )
                 })?;
                 return self.compute_with_synth_box(rs_frame, v);
@@ -115,11 +115,11 @@ impl RDF {
             let mut result = self
                 .inner
                 .compute_frame(rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("Rdf compute: {e}")))?;
             if let Some(v) = self.volume {
                 apply_volume_override(&mut result, v);
             }
-            Ok(RDFResult { inner: result })
+            Ok(RdfResult { inner: result })
         })
     }
 
@@ -133,7 +133,7 @@ impl RDF {
         &self,
         ref_frame: &Frame,
         query_frame: &Frame,
-    ) -> Result<RDFResult, JsValue> {
+    ) -> Result<RdfResult, JsValue> {
         ref_frame.with_frame(|rs_ref| {
             let ref_pos = positions_from_frame(rs_ref)?;
             let owned_box;
@@ -142,7 +142,7 @@ impl RDF {
                 None => {
                     let v = self.volume.ok_or_else(|| {
                         JsValue::from_str(
-                            "RDF computeCross: frame has no box — pass volume to the RDF constructor",
+                            "Rdf computeCross: frame has no box — pass volume to the RDF constructor",
                         )
                     })?;
                     let box_len = v.cbrt();
@@ -151,7 +151,7 @@ impl RDF {
                         ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
                         [false, false, false],
                     )
-                    .map_err(|e| JsValue::from_str(&format!("RDF computeCross: {e:?}")))?;
+                    .map_err(|e| JsValue::from_str(&format!("Rdf computeCross: {e:?}")))?;
                     &owned_box
                 }
             };
@@ -160,11 +160,11 @@ impl RDF {
                 let mut result = self
                     .inner
                     .compute_cross(ref_pos.view(), query_pos.view(), bx)
-                    .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
+                    .map_err(|e| JsValue::from_str(&format!("Rdf compute: {e}")))?;
                 if let Some(v) = self.volume {
                     apply_volume_override(&mut result, v);
                 }
-                Ok(RDFResult { inner: result })
+                Ok(RdfResult { inner: result })
             })
         })
     }
@@ -173,7 +173,7 @@ impl RDF {
         &self,
         rs_frame: &molrs::core::Frame,
         volume: F,
-    ) -> Result<RDFResult, JsValue> {
+    ) -> Result<RdfResult, JsValue> {
         // Temporarily attach a cubic box for the streaming path, then restore.
         // Frame is behind shared store — we can't mutate easily. Interleave
         // positions and call compute_self with an owned box instead.
@@ -184,16 +184,16 @@ impl RDF {
             ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
             [false, false, false],
         )
-        .map_err(|e| JsValue::from_str(&format!("RDF compute: {e:?}")))?;
+        .map_err(|e| JsValue::from_str(&format!("Rdf compute: {e:?}")))?;
         let result = self
             .inner
             .compute_self(pos.view(), &bx)
-            .map_err(|e| JsValue::from_str(&format!("RDF compute: {e}")))?;
-        Ok(RDFResult { inner: result })
+            .map_err(|e| JsValue::from_str(&format!("Rdf compute: {e}")))?;
+        Ok(RdfResult { inner: result })
     }
 }
 
-fn apply_volume_override(result: &mut molrs::compute::RDFResult, volume: F) {
+fn apply_volume_override(result: &mut molrs::compute::RdfResult, volume: F) {
     use molrs::compute::ComputeResult;
     result.volume = volume;
     result.finalized = false;
@@ -215,13 +215,13 @@ fn apply_volume_override(result: &mut molrs::compute::RDFResult, volume: F) {
 /// console.log("Volume:", result.volume, "A^3");
 /// console.log("N_ref:", result.numPoints);
 /// ```
-#[wasm_bindgen(js_name = RDFResult)]
-pub struct RDFResult {
-    inner: RsRDFResult,
+#[wasm_bindgen(js_name = RdfResult)]
+pub struct RdfResult {
+    inner: RsRdfResult,
 }
 
-#[wasm_bindgen(js_class = RDFResult)]
-impl RDFResult {
+#[wasm_bindgen(js_class = RdfResult)]
+impl RdfResult {
     /// Zero-copy `Float64Array` view of bin center positions in A.
     /// Length equals `n_bins`. **Invalidated** on WASM memory growth;
     /// copy in JS if it needs to outlive later calls.

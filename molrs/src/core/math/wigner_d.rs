@@ -22,7 +22,7 @@ use libm::lgamma;
 use ndarray::Array2;
 
 use crate::core::Complex;
-use crate::op::types::F;
+use crate::op::F;
 
 #[inline]
 fn lfact(n: i64) -> F {

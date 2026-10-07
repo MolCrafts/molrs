@@ -132,7 +132,7 @@ impl BlockAccess for BlockView<'_> {
 mod tests {
     use super::*;
     use crate::core::Column;
-    use crate::op::types::{F, Idx};
+    use crate::op::{F, Idx};
     use ndarray::Array1;
 
     fn make_block() -> Block {

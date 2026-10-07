@@ -6,7 +6,7 @@
 //! fixed seed.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
@@ -249,7 +249,7 @@ fn sq_dist(a: &[F], b: &[F]) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::random::standard_normal;
+    use crate::op::standard_normal;
     use molrs::core::Frame;
     use rand::SeedableRng;
     use rand::rngs::StdRng;

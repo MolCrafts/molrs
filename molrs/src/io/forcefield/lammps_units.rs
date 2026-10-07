@@ -22,7 +22,7 @@
 
 use crate::ff::ir::UnitScale;
 use molrs::core::{Quantity, UnitRegistry, UnitsError};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Map a LAMMPS `units` keyword onto a core preset name (`"lj"` / `"real"` / `"metal"`).
 pub fn parse_style(s: &str) -> Result<&'static str, String> {

@@ -39,7 +39,7 @@ use crate::ff::potential::pair::exceptions::dihedral_weights;
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The `lj/charmm` style param naming the 1-4 semantics.
 pub const ONE_FOUR: &str = "one_four";
@@ -332,7 +332,7 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::SpecialBonds;
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
 
     fn lj_charmm(one_four: Option<&str>) -> ForceField {
         let mut ff = ForceField::new("x");

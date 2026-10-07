@@ -1,7 +1,7 @@
 //! Store: owns frames and mediates access via handles.
 //!
 //! Column access methods use uppercase type-alias suffixes (`F`, `I`, `U`)
-//! matching the compile-time aliases in [`molrs::op::types`].
+//! matching the compile-time aliases in [`molrs::op`].
 #![allow(non_snake_case)]
 
 use crate::error::FfiError;
@@ -9,7 +9,7 @@ use crate::handle::{BlockHandle, FrameId};
 use molrs::core::MetaMap;
 use molrs::core::SimBox;
 use molrs::core::{Block, Frame};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 
@@ -490,7 +490,7 @@ impl Default for Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::Array1;
 
     #[test]

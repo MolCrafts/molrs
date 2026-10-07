@@ -2,16 +2,16 @@
 //!
 //! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
 //! ([`ClusterResult`],
-//! [`COMResult`]) pairs — run
+//! [`CenterOfMassResult`]) pairs — run
 //! [`Cluster`](crate::compute::Cluster) and
 //! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
 //! per-cluster `R_g` (Å).
 
 use crate::compute::{ComputeResult, DescriptorRow};
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
-use crate::compute::COMResult;
+use crate::compute::CenterOfMassResult;
 use crate::compute::ClusterResult;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -23,7 +23,7 @@ use molrs::core::{Mic, SimBox};
 ///
 /// `R_g_k = sqrt( (1/M_k) * SUM_i m_i * |s_i|^2 )`
 /// where `s_i = shortest_vector(com_k, r_i)` is the MIC displacement from the
-/// center of mass. Centers of mass come from the [`COMResult`] arg — this
+/// center of mass. Centers of mass come from the [`CenterOfMassResult`] arg — this
 /// Compute does **not** recompute them.
 #[derive(Debug, Clone, Default)]
 pub struct RadiusOfGyration {
@@ -47,8 +47,8 @@ impl RadiusOfGyration {
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-        com: &COMResult,
-    ) -> Result<RgResult, ComputeError> {
+        com: &CenterOfMassResult,
+    ) -> Result<RadiusOfGyrationResult, ComputeError> {
         let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
         let xs = xs_p.slice();
         let ys = ys_p.slice();
@@ -72,7 +72,7 @@ impl RadiusOfGyration {
             return Err(ComputeError::DimensionMismatch {
                 expected: nc,
                 got: com.centers_of_mass.len(),
-                what: "COMResult cluster count",
+                what: "CenterOfMassResult cluster count",
             });
         }
 
@@ -98,19 +98,19 @@ impl RadiusOfGyration {
             }
         }
 
-        Ok(RgResult(radii))
+        Ok(RadiusOfGyrationResult(radii))
     }
 }
 
 impl Compute for RadiusOfGyration {
-    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<COMResult>);
-    type Output = Vec<RgResult>;
+    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<CenterOfMassResult>);
+    type Output = Vec<RadiusOfGyrationResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         (clusters, com): Self::Args<'a>,
-    ) -> Result<Vec<RgResult>, ComputeError> {
+    ) -> Result<Vec<RadiusOfGyrationResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -125,7 +125,7 @@ impl Compute for RadiusOfGyration {
             return Err(ComputeError::DimensionMismatch {
                 expected: frames.len(),
                 got: com.len(),
-                what: "COMResult count",
+                what: "CenterOfMassResult count",
             });
         }
         #[cfg(feature = "rayon")]
@@ -154,11 +154,11 @@ impl Compute for RadiusOfGyration {
 ///
 /// `self.0[c]` is the radius of gyration of cluster `c`, in **Å**.
 #[derive(Debug, Clone, Default)]
-pub struct RgResult(pub Vec<F>);
+pub struct RadiusOfGyrationResult(pub Vec<F>);
 
-impl ComputeResult for RgResult {}
+impl ComputeResult for RadiusOfGyrationResult {}
 
-impl DescriptorRow for RgResult {
+impl DescriptorRow for RadiusOfGyrationResult {
     fn as_row(&self) -> &[F] {
         &self.0
     }
@@ -211,7 +211,7 @@ mod tests {
         }
     }
 
-    fn rg_single(frame: &Frame, cl: ClusterResult, rg: RadiusOfGyration) -> RgResult {
+    fn rg_single(frame: &Frame, cl: ClusterResult, rg: RadiusOfGyration) -> RadiusOfGyrationResult {
         let masses: Option<Vec<F>> = rg.masses.clone();
         let com_calc = match masses {
             Some(ref ms) => CenterOfMass::new().with_masses(ms),

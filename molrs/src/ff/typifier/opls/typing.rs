@@ -13,7 +13,7 @@
 //!
 //! The engine never sees the caller's graph as given. It matches a clone
 //! brought to the standard aromatic form by
-//! [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity),
+//! [`assign_aromaticity`](molrs::perceive::assign_aromaticity),
 //! which keeps every [`NodeId`], so a Kekulé ring and an aromatic-declared ring
 //! type alike under the aromatic rules (`c`, `n`, `:`). Only the assigned type
 //! names travel back; the caller's bond types and bond numbers are never
@@ -60,7 +60,7 @@ use std::collections::HashMap;
 
 use molrs::core::PropValue;
 use molrs::core::{Atomistic, NodeId};
-use molrs::perceive::Perceive;
+use molrs::perceive::assign_aromaticity;
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::typifier::Annotation;
@@ -102,7 +102,7 @@ pub(crate) fn typify_atoms(
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
-    let perceived = Perceive::new().find_aromaticity(mol);
+    let perceived = assign_aromaticity(mol);
     let types = engine.assign(&perceived);
     let atom_full = ff.get_style("atom", "full");
 

@@ -8,7 +8,7 @@ use crate::error::py_value_err;
 use molrs::compute::{
     Compute, DebyeFit, DebyeRelaxation, DipoleRateCross, EinsteinConductivity, EinsteinDiffusion,
     EinsteinDiffusionArgs, EwaldBoundary, Fit, GreenKuboConductivity, GreenKuboDiffusion,
-    OnsagerCorrelation, VACF,
+    OnsagerCorrelation, Vacf,
 };
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray1, PyReadonlyArray2};
@@ -25,11 +25,11 @@ use pyo3::types::{PyAny, PyDict, PyDictMethods};
 /// Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
 /// [`PowerSpectrum`](PyPowerSpectrum) for VDOS or
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) for D.
-#[pyclass(module = "molrs.compute", name = "VACF")]
-pub struct PyVACF;
+#[pyclass(module = "molrs.compute", name = "Vacf")]
+pub struct PyVacf;
 
 #[pymethods]
-impl PyVACF {
+impl PyVacf {
     #[new]
     fn new() -> Self {
         Self
@@ -47,7 +47,7 @@ impl PyVACF {
         resolution: usize,
     ) -> PyResult<Bound<'py, PyDict>> {
         let v = velocities.as_array().to_owned();
-        let r = VACF
+        let r = Vacf
             .compute(EMPTY_FRAMES, (&v, dt, resolution))
             .map_err(py_value_err)?;
         let d = PyDict::new(py);
@@ -60,7 +60,7 @@ impl PyVACF {
 // ── GreenKuboDiffusion (raw velocity ACF, diffusion route) ────────────────────
 
 /// Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
-/// [`VACF`](PyVACF)). `D = (1/d)·∫ VACF dt` is then a
+/// [`Vacf`](PyVacf)). `D = (1/d)·∫ Vacf dt` is then a
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
 #[pyclass(module = "molrs.compute", name = "GreenKuboDiffusion")]
 pub struct PyGreenKuboDiffusion;
@@ -94,7 +94,7 @@ impl PyGreenKuboDiffusion {
 // ── EinsteinDiffusion (raw self-MSD; consumes frames) ─────────────────────────
 
 /// Raw self-MSD for the Einstein diffusion route. Delegates to
-/// `MSD::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
+/// `Msd::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
 /// [`LinearFit`](PyLinearFit) + scale step.
 #[pyclass(module = "molrs.compute", name = "EinsteinDiffusion")]
 pub struct PyEinsteinDiffusion;
@@ -336,15 +336,22 @@ impl PyDebyeFit {
     }
 }
 
-/// Onsager collective mean-displacement cross-correlation.
-#[pyclass(module = "molrs.compute", name = "Onsager", frozen)]
-pub struct PyOnsager;
+/// Onsager collective mean-displacement cross-correlation
+/// `⟨ΔP_i(t) · ΔP_j(t)⟩` (the integrand of the Onsager coefficients `L_ij`).
+#[pyclass(module = "molrs.compute", name = "OnsagerCorrelation", frozen)]
+pub struct PyOnsagerCorrelation;
 
 #[pymethods]
-impl PyOnsager {
-    #[staticmethod]
+impl PyOnsagerCorrelation {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// Returns a dict ``{"lag_times", "correlation"}`` of float64 arrays.
     #[pyo3(signature = (p_i, p_j, dt, max_correlation_time))]
-    fn correlation<'py>(
+    fn compute<'py>(
+        &self,
         py: Python<'py>,
         p_i: PyReadonlyArray2<'py, f64>,
         p_j: PyReadonlyArray2<'py, f64>,
@@ -365,7 +372,7 @@ impl PyOnsager {
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyVACF>()?;
+    m.add_class::<PyVacf>()?;
     m.add_class::<PyGreenKuboDiffusion>()?;
     m.add_class::<PyEinsteinDiffusion>()?;
     m.add_class::<PyEinsteinConductivity>()?;
@@ -373,6 +380,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDipoleRateCross>()?;
     m.add_class::<PyDebyeRelaxation>()?;
     m.add_class::<PyDebyeFit>()?;
-    m.add_class::<PyOnsager>()?;
+    m.add_class::<PyOnsagerCorrelation>()?;
     Ok(())
 }

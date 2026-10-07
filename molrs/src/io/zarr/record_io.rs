@@ -1108,7 +1108,7 @@ mod tests {
     use molrs::core::Frame;
     use molrs::core::{Block, Column};
     use molrs::io::mrec::RESERVED_META_KEYS;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::ArrayD;
     use tempfile::tempdir;
 

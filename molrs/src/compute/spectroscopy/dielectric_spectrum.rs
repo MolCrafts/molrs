@@ -42,8 +42,8 @@ use rustfft::num_complex::Complex64;
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::compute::fitting::forward_fft_onesided;
 use crate::compute::{Check, Fit, Verdict};
+use crate::signal::forward_fft_onesided;
 use molrs::signal as sig;
 
 /// Zero-padding multiplier for the dielectric one-sided FT.

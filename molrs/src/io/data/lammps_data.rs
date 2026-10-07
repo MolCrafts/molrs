@@ -27,7 +27,7 @@ use molrs::core::FrameAccess;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::keys;
-use molrs::op::types::{F, I, Idx, Pbc3};
+use molrs::op::{F, I, Idx, Pbc3};
 use ndarray::ArrayViewD;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;

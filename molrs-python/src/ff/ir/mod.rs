@@ -40,7 +40,7 @@ use molrs::ff::ir::{
 };
 use molrs::ff::potential::CompileError;
 use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::ff::potential::ErrSlot;
 

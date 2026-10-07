@@ -25,7 +25,7 @@ pub use potential::LBFGS;
 use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
-use crate::op::types::F;
+use crate::op::F;
 use ndarray::Array1;
 
 #[cfg(feature = "conformer")]

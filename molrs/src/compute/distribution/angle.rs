@@ -7,7 +7,7 @@
 //! collinear triple yields exactly 0 or π instead of a rounding NaN.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
 

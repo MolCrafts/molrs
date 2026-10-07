@@ -2,7 +2,7 @@
 
 use super::collect_frames;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, DistKind, HBondCriterion, HBonds, HBondsResult};
+use molrs::compute::{Compute, HBondCriterion, HBondDistanceKind, HBonds, HBondsResult};
 use molrs::core::Frame as CoreFrame;
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
@@ -28,8 +28,8 @@ impl PyHBondCriterion {
     #[pyo3(signature = (dist_cutoff=3.5, dist_kind="donor_acceptor".to_string(), angle_cutoff=150.0))]
     fn new(dist_cutoff: f64, dist_kind: String, angle_cutoff: f64) -> PyResult<Self> {
         let kind = match dist_kind.as_str() {
-            "donor_acceptor" => DistKind::DonorAcceptor,
-            "hydrogen_acceptor" => DistKind::HydrogenAcceptor,
+            "donor_acceptor" => HBondDistanceKind::DonorAcceptor,
+            "hydrogen_acceptor" => HBondDistanceKind::HydrogenAcceptor,
             other => {
                 return Err(PyValueError::new_err(format!(
                     "dist_kind must be 'donor_acceptor' or 'hydrogen_acceptor', got {other:?}"

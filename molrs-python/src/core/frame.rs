@@ -1077,10 +1077,7 @@ impl PyFrame {
     ///     On write, if the array is not ``(N, 3)`` or ``N`` differs from the
     ///     ``atoms`` row count.
     #[getter]
-    fn coords<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, numpy::PyArray2<molrs::op::types::F>>> {
+    fn coords<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, numpy::PyArray2<molrs::op::F>>> {
         use molrs::core::schema::block_names::ATOMS;
         use numpy::IntoPyArray;
         let xyz = self.with_frame(|f| {

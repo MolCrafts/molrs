@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use super::forcefield::{ForceField, StyleDefs};
-use crate::op::superpose::centroid;
+use crate::op::centroid;
 
 const C0: f64 = 0.254_952;
 const C1: f64 = 0.106_906;

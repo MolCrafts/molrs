@@ -5,11 +5,11 @@ use super::cluster::PyClusterResult;
 use super::{collect_frames, was_batched};
 use crate::error::py_value_err;
 use molrs::compute::{
-    COMResult, CenterOfMass, ClusterCenters, ClusterCentersResult, ClusterResult, Compute,
-    GyrationTensor, InertiaTensor, RadiusOfGyration, RgResult,
+    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, ClusterResult, Compute,
+    GyrationTensor, InertiaTensor, RadiusOfGyration, RadiusOfGyrationResult,
 };
 use molrs::core::Frame as CoreFrame;
-use molrs::op::types::F;
+use molrs::op::F;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -128,7 +128,7 @@ impl PyClusterCenters {
 #[pyclass(module = "molrs.compute", name = "CenterOfMassResult", from_py_object)]
 #[derive(Clone)]
 pub struct PyCenterOfMassResult {
-    pub(crate) inner: COMResult,
+    pub(crate) inner: CenterOfMassResult,
 }
 
 #[pymethods]
@@ -161,7 +161,7 @@ impl PyCenterOfMassResult {
     }
 }
 
-fn extract_com_vec(arg: &Bound<'_, PyAny>) -> PyResult<Vec<COMResult>> {
+fn extract_com_vec(arg: &Bound<'_, PyAny>) -> PyResult<Vec<CenterOfMassResult>> {
     if let Ok(single) = arg.extract::<PyRef<'_, PyCenterOfMassResult>>() {
         return Ok(vec![single.inner.clone()]);
     }
@@ -423,7 +423,7 @@ impl PyRadiusOfGyration {
         } else {
             RadiusOfGyration::new()
         };
-        let out: Vec<RgResult> = calc
+        let out: Vec<RadiusOfGyrationResult> = calc
             .compute(&refs, (&cl_vec, &com_vec))
             .map_err(py_value_err)?;
 

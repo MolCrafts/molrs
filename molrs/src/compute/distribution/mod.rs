@@ -23,14 +23,16 @@ mod histogram1d;
 mod observable;
 
 pub use angle::AngleObservable;
-pub use combined::{AnyObservable, AxisSpec, CombinedDistribution, CombinedDistributionResult};
+pub use combined::{
+    AxisSpec, CombinedDistribution, CombinedDistributionResult, InternalCoordinate,
+};
 pub use dihedral::DihedralObservable;
 pub use distance::DistanceObservable;
 pub use histogram1d::{Histogram1d, renormalize_density};
 pub use observable::{AtomGroups, Observable};
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 use crate::compute::Compute;

@@ -6,7 +6,7 @@ use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
 use molrs::compute::Compute;
 use molrs::core::keys;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -75,40 +75,40 @@ struct PmftOut {
     pmf: Vec<F>,
 }
 
-#[wasm_bindgen(js_name = PMFTR12)]
-pub struct PMFTR12 {
-    inner: molrs::compute::PMFTR12,
+#[wasm_bindgen(js_name = PmftR12)]
+pub struct PmftR12 {
+    inner: molrs::compute::PmftR12,
 }
 
-#[wasm_bindgen(js_class = PMFTR12)]
-impl PMFTR12 {
+#[wasm_bindgen(js_class = PmftR12)]
+impl PmftR12 {
     /// Radial range `r_max` (A); `n_r × n_t1 × n_t2` bins over `(r, θ₁, θ₂)`.
     #[wasm_bindgen(constructor)]
     pub fn new(r_max: F, n_r: usize, n_t1: usize, n_t2: usize) -> Result<Self, JsValue> {
         Ok(Self {
-            inner: molrs::compute::PMFTR12::new(r_max, n_r, n_t1, n_t2)
-                .map_err(|e| JsValue::from_str(&format!("PMFTR12: {e}")))?,
+            inner: molrs::compute::PmftR12::new(r_max, n_r, n_t1, n_t2)
+                .map_err(|e| JsValue::from_str(&format!("PmftR12: {e}")))?,
         })
     }
 
     /// Requires per-atom orientation angles on the frame.
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
-            let orientations = vec![require_angles(rs_frame, "PMFTR12")?];
+            let orientations = vec![require_angles(rs_frame, "PmftR12")?];
             let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
-                    molrs::compute::PMFTR12Args {
+                    molrs::compute::PmftR12Args {
                         nlists,
                         orientations: &orientations,
                     },
                 )
-                .map_err(|e| JsValue::from_str(&format!("PMFTR12 compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("PmftR12 compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("PMFTR12: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("PmftR12: empty result"))?;
             js_value(&PmftOut {
                 axes: vec!["r", "theta1", "theta2"],
                 shape: r.density.shape().to_vec(),
@@ -121,19 +121,19 @@ impl PMFTR12 {
     }
 }
 
-#[wasm_bindgen(js_name = PMFTXY)]
-pub struct PMFTXY {
-    inner: molrs::compute::PMFTXY,
+#[wasm_bindgen(js_name = PmftXy)]
+pub struct PmftXy {
+    inner: molrs::compute::PmftXy,
 }
 
-#[wasm_bindgen(js_class = PMFTXY)]
-impl PMFTXY {
+#[wasm_bindgen(js_class = PmftXy)]
+impl PmftXy {
     /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y` bins.
     #[wasm_bindgen(constructor)]
     pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize) -> Result<Self, JsValue> {
         Ok(Self {
-            inner: molrs::compute::PMFTXY::new(x_max, y_max, n_x, n_y)
-                .map_err(|e| JsValue::from_str(&format!("PMFTXY: {e}")))?,
+            inner: molrs::compute::PmftXy::new(x_max, y_max, n_x, n_y)
+                .map_err(|e| JsValue::from_str(&format!("PmftXy: {e}")))?,
         })
     }
 
@@ -147,15 +147,15 @@ impl PMFTXY {
                 .inner
                 .compute(
                     &[rs_frame],
-                    molrs::compute::PMFTXYArgs {
+                    molrs::compute::PmftXyArgs {
                         nlists,
                         query_orientations: orientations.as_deref(),
                     },
                 )
-                .map_err(|e| JsValue::from_str(&format!("PMFTXY compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("PmftXy compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("PMFTXY: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("PmftXy: empty result"))?;
             js_value(&PmftOut {
                 axes: vec!["x", "y"],
                 shape: r.density.shape().to_vec(),
@@ -168,41 +168,41 @@ impl PMFTXY {
     }
 }
 
-#[wasm_bindgen(js_name = PMFTXYT)]
-pub struct PMFTXYT {
-    inner: molrs::compute::PMFTXYT,
+#[wasm_bindgen(js_name = PmftXyt)]
+pub struct PmftXyt {
+    inner: molrs::compute::PmftXyt,
 }
 
-#[wasm_bindgen(js_class = PMFTXYT)]
-impl PMFTXYT {
+#[wasm_bindgen(js_class = PmftXyt)]
+impl PmftXyt {
     /// Body-frame window `±x_max × ±y_max` (A); `n_x × n_y × n_t` bins over
     /// `(x, y, θ)` where `θ` is the relative orientation.
     #[wasm_bindgen(constructor)]
     pub fn new(x_max: F, y_max: F, n_x: usize, n_y: usize, n_t: usize) -> Result<Self, JsValue> {
         Ok(Self {
-            inner: molrs::compute::PMFTXYT::new(x_max, y_max, n_x, n_y, n_t)
-                .map_err(|e| JsValue::from_str(&format!("PMFTXYT: {e}")))?,
+            inner: molrs::compute::PmftXyt::new(x_max, y_max, n_x, n_y, n_t)
+                .map_err(|e| JsValue::from_str(&format!("PmftXyt: {e}")))?,
         })
     }
 
     /// Requires per-atom orientation angles on the frame.
     pub fn compute(&self, frame: &Frame, neighbors: &Neighbors) -> Result<JsValue, JsValue> {
         frame.with_frame(|rs_frame| {
-            let orientations = vec![require_angles(rs_frame, "PMFTXYT")?];
+            let orientations = vec![require_angles(rs_frame, "PmftXyt")?];
             let nlists = std::slice::from_ref(&neighbors.inner);
             let mut out = self
                 .inner
                 .compute(
                     &[rs_frame],
-                    molrs::compute::PMFTXYTArgs {
+                    molrs::compute::PmftXytArgs {
                         nlists,
                         orientations: &orientations,
                     },
                 )
-                .map_err(|e| JsValue::from_str(&format!("PMFTXYT compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("PmftXyt compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("PMFTXYT: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("PmftXyt: empty result"))?;
             js_value(&PmftOut {
                 axes: vec!["x", "y", "theta"],
                 shape: r.density.shape().to_vec(),
@@ -215,13 +215,13 @@ impl PMFTXYT {
     }
 }
 
-#[wasm_bindgen(js_name = PMFTXYZ)]
-pub struct PMFTXYZ {
-    inner: molrs::compute::PMFTXYZ,
+#[wasm_bindgen(js_name = PmftXyz)]
+pub struct PmftXyz {
+    inner: molrs::compute::PmftXyz,
 }
 
-#[wasm_bindgen(js_class = PMFTXYZ)]
-impl PMFTXYZ {
+#[wasm_bindgen(js_class = PmftXyz)]
+impl PmftXyz {
     /// Body-frame window `±x_max × ±y_max × ±z_max` (A); `n_x × n_y × n_z` bins.
     #[wasm_bindgen(constructor)]
     pub fn new(
@@ -233,8 +233,8 @@ impl PMFTXYZ {
         n_z: usize,
     ) -> Result<Self, JsValue> {
         Ok(Self {
-            inner: molrs::compute::PMFTXYZ::new(x_max, y_max, z_max, n_x, n_y, n_z)
-                .map_err(|e| JsValue::from_str(&format!("PMFTXYZ: {e}")))?,
+            inner: molrs::compute::PmftXyz::new(x_max, y_max, z_max, n_x, n_y, n_z)
+                .map_err(|e| JsValue::from_str(&format!("PmftXyz: {e}")))?,
         })
     }
 
@@ -248,15 +248,15 @@ impl PMFTXYZ {
                 .inner
                 .compute(
                     &[rs_frame],
-                    molrs::compute::PMFTXYZArgs {
+                    molrs::compute::PmftXyzArgs {
                         nlists,
                         query_orientations: orientations.as_deref(),
                     },
                 )
-                .map_err(|e| JsValue::from_str(&format!("PMFTXYZ compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("PmftXyz compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("PMFTXYZ: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("PmftXyz: empty result"))?;
             js_value(&PmftOut {
                 axes: vec!["x", "y", "z"],
                 shape: r.density.shape().to_vec(),

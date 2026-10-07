@@ -4,7 +4,7 @@
 //! gradient over a compound term's point coordinates. Every operation applies
 //! the chain rule exactly, so a derivative is as exact as the value.
 
-use molrs::op::types::F;
+use molrs::op::F;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 #[derive(Debug, Clone, Copy, PartialEq)]

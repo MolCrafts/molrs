@@ -21,7 +21,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Multi/harmonic (or nharmonic) proper dihedral with pre-resolved flat arrays.
 pub struct DihedralMultiHarmonic {
@@ -287,7 +287,7 @@ mod nharmonic_tests {
     use crate::ff::potential::PotentialCompiler;
     use molrs::core::Block;
     use molrs::core::Frame;
-    use molrs::op::types::{F, Idx};
+    use molrs::op::{F, Idx};
     use ndarray::Array1;
 
     fn one_dihedral(

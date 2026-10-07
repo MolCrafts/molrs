@@ -149,7 +149,7 @@ impl AtomSpec {
     /// the aromaticity the string *declares*, before any perception step has
     /// looked at rings. A Kekulé-spelled benzene (`C1=CC=CC=C1`) writes no
     /// aromatic atom and answers `false` for every one of its carbons, however
-    /// aromatic [`crate::perceive::aromaticity`] would later find the ring.
+    /// aromatic [`crate::perceive::assign_aromaticity`] would later find the ring.
     ///
     /// The SMARTS primitives `a` ([`BracketSymbol::Aromatic`]) and
     /// [`AtomSpec::Query`] answer `false`: a query *asks* whether an atom is

@@ -429,7 +429,7 @@ pub fn write_smarts(
 ///
 /// Connectivity only: hydrogens implicit in the SMILES are **not** added, and
 /// no coordinates are generated. Filling open valences is a perception step
-/// (:meth:`molrs.perceive.Perceive.find_hydrogens`), and 3D embedding a
+/// (:meth:`molrs.perceive.add_hydrogens`), and 3D embedding a
 /// conformer step (:mod:`molrs.conformer`).
 ///
 /// Parameters

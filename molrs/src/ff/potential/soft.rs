@@ -33,7 +33,7 @@ use molrs::core::NeighborQuery;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK};
 use molrs::core::schema::block_names::{ANGLES, BONDS};
 use molrs::core::{Mic, SimBox};
-use molrs::op::types::F;
+use molrs::op::F;
 use molrs::op::vec3::norm;
 
 /// How far past the cut-off the neighbour list reaches (Å), so that it stays
@@ -257,7 +257,7 @@ fn spring(coords: &[F], forces: &mut [F], i: usize, j: usize, t: F, k: F, shift:
 mod tests {
     use super::*;
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::{Array1, array};
 
     /// A frame carrying the bonds/angles blocks of a linear n-atom chain

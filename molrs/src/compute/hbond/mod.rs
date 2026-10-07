@@ -20,7 +20,7 @@ mod detect;
 mod lifetime;
 mod network;
 
-pub use criterion::{DistKind, HBondCriterion};
+pub use criterion::{HBondCriterion, HBondDistanceKind};
 pub use detect::{HBond, HBonds, HBondsResult};
-pub use lifetime::{LifetimeResult, hbond_lifetimes, presence_from_hbonds};
-pub use network::{NetworkResult, hbond_components};
+pub use lifetime::{HBondLifetimeResult, hbond_lifetimes, presence_from_hbonds};
+pub use network::{HBondNetworkResult, hbond_components};

@@ -1,4 +1,4 @@
-//! Ring facts (`molrs::perceive::rings`): [`PyRingInfo`] reports the SSSR
+//! Ring facts (`molrs::perceive::perceive_rings`): [`PyRingInfo`] reports the SSSR
 //! rings of a molecule and the systems they fuse into, without touching it.
 
 use molrs::core::{node_from_u64, node_to_u64};
@@ -8,34 +8,27 @@ use crate::core::molgraph::PyAtomistic;
 
 /// The ring facts of a molecule: SSSR rings and the systems they fuse into.
 ///
-/// Perception runs once, in the constructor; every method reads the result.
+/// Returned by :func:`perceive_rings`, which runs the perception once; every
+/// method reads the result.
 ///
-/// Not to be confused with :meth:`Perceive.find_rings`, which answers a
+/// Not to be confused with :func:`assign_rings`, which answers a
 /// different question — it *decorates* a graph with ring flags and hands the
 /// graph back. This type *reports*, and never touches the molecule.
 ///
 /// Examples
 /// --------
-/// >>> rings = molrs.perceive.RingInfo(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
+/// >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
 /// >>> rings.num_rings()
 /// 1
 /// >>> rings.ring_sizes()
 /// [6]
 #[pyclass(module = "molrs.perceive", name = "RingInfo", subclass)]
 pub struct PyRingInfo {
-    inner: molrs::perceive::rings::RingInfo,
+    inner: molrs::perceive::RingInfo,
 }
 
 #[pymethods]
 impl PyRingInfo {
-    /// Perceive the rings of `mol` (SSSR / minimum cycle basis).
-    #[new]
-    fn new(mol: &Bound<'_, PyAtomistic>) -> Self {
-        Self {
-            inner: molrs::perceive::rings::find_rings(mol.borrow().core()),
-        }
-    }
-
     /// Every ring, as a list of atom handles forming a closed path.
     fn rings(&self) -> Vec<Vec<u64>> {
         self.inner
@@ -93,5 +86,14 @@ impl PyRingInfo {
             self.inner.num_rings(),
             self.inner.ring_sizes()
         )
+    }
+}
+
+/// Perceive the rings of ``mol`` (SSSR / minimum cycle basis) as a
+/// :class:`RingInfo` side table; ``mol`` is left untouched.
+#[pyfunction(name = "perceive_rings")]
+pub(super) fn perceive_rings_py(mol: &Bound<'_, PyAtomistic>) -> PyRingInfo {
+    PyRingInfo {
+        inner: molrs::perceive::perceive_rings(mol.borrow().core()),
     }
 }

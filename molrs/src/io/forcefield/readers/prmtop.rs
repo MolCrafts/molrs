@@ -70,7 +70,7 @@ use crate::io::data::prmtop_tables::{
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::{Block, Frame};
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.
 type Lj = (f64, f64);

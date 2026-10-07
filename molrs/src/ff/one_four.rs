@@ -26,7 +26,7 @@ use crate::io::forcefield::readers::ForceFieldReader;
 use crate::io::forcefield::readers::lammps::LammpsFfReader;
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 const TYPES: [&str; 7] = ["CT3", "CT2", "CT2", "CT2", "OH1", "H", "CT3"];
 const CHARGES: [F; 7] = [-0.09, 0.03, -0.12, 0.05, -0.66, 0.43, 0.36];

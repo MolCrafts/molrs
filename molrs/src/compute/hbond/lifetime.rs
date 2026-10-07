@@ -20,7 +20,7 @@
 //! intermittent definitions to the geometric presence series produced by
 //! [`HBonds`](super::detect::HBonds), rather than re-deriving a different TCF.
 
-use molrs::op::types::F;
+use molrs::op::F;
 use molrs::signal as sig;
 use ndarray::Array1;
 use rustfft::FftPlanner;
@@ -31,7 +31,7 @@ use crate::compute::ComputeError;
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]
-pub struct LifetimeResult {
+pub struct HBondLifetimeResult {
     /// Lag times (`tau * dt`), length `max_lag + 1`.
     pub lag_times: Array1<F>,
     /// Continuous `S_HB(t)`, normalized to `S_HB(0) = 1`.
@@ -64,7 +64,7 @@ pub fn hbond_lifetimes(
     present: &[Vec<bool>],
     dt: F,
     max_lag: usize,
-) -> Result<LifetimeResult, ComputeError> {
+) -> Result<HBondLifetimeResult, ComputeError> {
     if present.is_empty() {
         return Err(ComputeError::EmptyInput);
     }
@@ -125,7 +125,7 @@ pub fn hbond_lifetimes(
     let tau_continuous = trapz(&cont, dt);
     let tau_intermittent = trapz(&inter, dt);
 
-    Ok(LifetimeResult {
+    Ok(HBondLifetimeResult {
         lag_times,
         continuous: cont,
         intermittent: inter,

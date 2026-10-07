@@ -57,7 +57,7 @@ use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::core::MolRsError;
 use molrs::core::SimBox;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 // ---------------------------------------------------------------------------
 // Public API

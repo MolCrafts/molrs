@@ -16,7 +16,7 @@ use pyo3::types::PyModule;
 
 use molrs::core::DType;
 use molrs::core::schema;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use num_complex::Complex;
 
 // ── Key ──────────────────────────────────────────────────────────────────────

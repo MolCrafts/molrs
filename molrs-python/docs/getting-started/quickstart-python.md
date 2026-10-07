@@ -111,8 +111,8 @@ neigh = nl.neighbors()
 print("pairs:", neigh.n_pairs)
 print("first pairs:", neigh.query_point_indices()[:5], neigh.point_indices()[:5])
 
-from molrs.compute import RDF
-rdf = RDF(64, 6.0)
+from molrs.compute import Rdf
+rdf = Rdf(64, 6.0)
 rdf_result = rdf.compute(frame, neigh)
 print("rdf bins:", len(rdf_result.bin_centers))
 print("first g(r):", rdf_result.rdf[:5])
@@ -229,7 +229,7 @@ This quickstart crossed the main molrs boundaries:
 - `Conformer.generate` produced coordinates and diagnostics.
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
-- `RDF` consumed an explicit neighbor list.
+- `Rdf` consumed an explicit neighbor list.
 - `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
 - `write_xyz` and `write_mrec` wrote the result to disk.

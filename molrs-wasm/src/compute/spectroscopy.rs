@@ -4,7 +4,7 @@
 use super::{SeriesOut, array1, array2, js_value};
 use molrs::compute::Compute;
 use molrs::compute::Fit;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -66,14 +66,14 @@ fn dielectric_spectrum_out(r: molrs::compute::DielectricSpectrumResult) -> Diele
     }
 }
 
-#[wasm_bindgen(js_name = IRFlux)]
-pub struct IRFlux {
+#[wasm_bindgen(js_name = IrFlux)]
+pub struct IrFlux {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = IRFlux)]
-impl IRFlux {
+#[wasm_bindgen(js_class = IrFlux)]
+impl IrFlux {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -82,12 +82,12 @@ impl IRFlux {
     pub fn compute(&self, dipoles: &[F], n_frames: usize) -> Result<JsValue, JsValue> {
         let dt = self.dt;
         let resolution = self.resolution;
-        let dipoles = array2(dipoles, n_frames, 3, "IRFlux dipoles")?;
+        let dipoles = array2(dipoles, n_frames, 3, "IrFlux dipoles")?;
         let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::IRFlux;
+        let calc = molrs::compute::IrFlux;
         let r = calc
             .compute(&frames, (&dipoles, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("IRFlux: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("IrFlux: {e}")))?;
         js_value(&SeriesOut {
             lag_times: r.lag_times.to_vec(),
             values: r.acf.to_vec(),
@@ -240,7 +240,7 @@ macro_rules! spectrum_fit_class {
 }
 
 spectrum_fit_class!(PowerSpectrum, molrs::compute::PowerSpectrum);
-spectrum_fit_class!(IRSpectrum, molrs::compute::IRSpectrum);
+spectrum_fit_class!(IrSpectrum, molrs::compute::IrSpectrum);
 spectrum_fit_class!(VcdSpectrum, molrs::compute::VcdSpectrum);
 
 #[wasm_bindgen(js_name = RamanSpectrum)]

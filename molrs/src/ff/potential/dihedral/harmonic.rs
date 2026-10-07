@@ -31,7 +31,7 @@ mod tests {
     use crate::ff::forcefield::ForceField;
     use crate::ff::potential::PotentialCompiler;
     use molrs::core::Block;
-    use molrs::op::types::{F, Idx};
+    use molrs::op::{F, Idx};
     use ndarray::Array1;
 
     /// LAMMPS `dihedral_style harmonic`: E = K[1 + d·cos(nφ)], here

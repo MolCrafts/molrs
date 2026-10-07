@@ -29,7 +29,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Tang-Toennies damped Coulomb pair potential. `b`/`n`/`c` are style-level;
 /// `qq[idx]` is the charge product `q_i q_j` of each pair.

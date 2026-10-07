@@ -11,7 +11,7 @@ use crate::core::Atomistic;
 use crate::core::Frame;
 use crate::core::SimBox;
 use crate::core::keys;
-use crate::op::types::F;
+use crate::op::F;
 
 type SiteKey = (i64, i64, u8);
 

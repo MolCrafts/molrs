@@ -20,7 +20,7 @@ use molrs::core::Block as RsBlock;
 use molrs::core::Frame as RsFrame;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{Potential, PotentialCompiler, Potentials as RsPotentials};
-use molrs::op::types::Idx;
+use molrs::op::Idx;
 use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
 use ndarray::Array1;
 

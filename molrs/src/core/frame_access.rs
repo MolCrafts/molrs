@@ -110,7 +110,7 @@ impl FrameAccess for FrameView<'_> {
 mod tests {
     use super::*;
     use crate::core::Block;
-    use crate::op::types::{F, Idx};
+    use crate::op::{F, Idx};
     use ndarray::Array1;
 
     fn make_frame() -> Frame {

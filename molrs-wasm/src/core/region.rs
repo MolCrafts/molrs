@@ -31,7 +31,7 @@ use molrs::core::{
     Polyhedron as RsPolyhedron, Region as RegionTrait, Sphere as RsSphere,
     SphereUnion as RsSphereUnion,
 };
-use molrs::op::types::{F, F3, FNx3};
+use molrs::op::{F, F3, FNx3};
 use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 

@@ -24,7 +24,7 @@
 
 use libm::lgamma;
 
-use crate::op::types::F;
+use crate::op::F;
 
 #[inline]
 fn lfact(n: i64) -> F {

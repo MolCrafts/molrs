@@ -9,7 +9,7 @@
 use molrs::core::FrameAccess;
 use molrs::core::Mic;
 use molrs::core::keys;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 use crate::compute::ComputeError;
 use crate::compute::positions::{Positions, get_positions_ref};

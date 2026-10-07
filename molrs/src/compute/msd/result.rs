@@ -1,25 +1,25 @@
-//! Result types for [`MSD`](super::MSD): one [`MSDResult`] per lag time,
-//! collected in an [`MSDTimeSeries`]. Distances squared, (Å²).
+//! Result types for [`Msd`](super::Msd): one [`MsdResult`] per lag time,
+//! collected in an [`MsdTimeSeries`]. Distances squared, (Å²).
 
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Per-particle and mean squared displacement at a single time.
 #[derive(Debug, Clone)]
-pub struct MSDResult {
+pub struct MsdResult {
     /// Per-particle squared displacement from the reference frame.
     pub per_particle: Array1<F>,
     /// System-average mean squared displacement.
     pub mean: F,
 }
 
-impl DescriptorRow for MSDResult {
+impl DescriptorRow for MsdResult {
     fn as_row(&self) -> &[F] {
         self.per_particle
             .as_slice()
-            .expect("MSDResult::per_particle must be contiguous")
+            .expect("MsdResult::per_particle must be contiguous")
     }
 }
 
@@ -28,13 +28,13 @@ impl DescriptorRow for MSDResult {
 /// `data[0]` is the reference frame (its MSD is zero); `data[i]` is the MSD at
 /// frame `i` relative to frame `0`.
 #[derive(Debug, Clone, Default)]
-pub struct MSDTimeSeries {
-    pub data: Vec<MSDResult>,
+pub struct MsdTimeSeries {
+    pub data: Vec<MsdResult>,
 }
 
-impl MSDTimeSeries {
+impl MsdTimeSeries {
     /// Wrap per-lag results (index = lag frame).
-    pub fn new(data: Vec<MSDResult>) -> Self {
+    pub fn new(data: Vec<MsdResult>) -> Self {
         Self { data }
     }
     pub fn len(&self) -> usize {
@@ -45,10 +45,10 @@ impl MSDTimeSeries {
     }
 }
 
-impl ComputeResult for MSDTimeSeries {}
+impl ComputeResult for MsdTimeSeries {}
 
-impl AsRef<[MSDResult]> for MSDTimeSeries {
-    fn as_ref(&self) -> &[MSDResult] {
+impl AsRef<[MsdResult]> for MsdTimeSeries {
+    fn as_ref(&self) -> &[MsdResult] {
         &self.data
     }
 }

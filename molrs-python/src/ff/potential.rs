@@ -44,7 +44,7 @@ use molrs::ff::forcefield::{ForceField, Params};
 use molrs::ff::ir::{self as rir, ParamKind, StyleSpec};
 use molrs::ff::potential::pair::{LJCut, PairPotential};
 use molrs::ff::potential::{Instances, Member, Potential, PotentialCompiler, Potentials};
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array2, ArrayD, Axis};
 use numpy::{
     IntoPyArray, PyArray2, PyArrayDyn, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,

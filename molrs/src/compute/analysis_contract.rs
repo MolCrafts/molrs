@@ -1,9 +1,21 @@
-//! Unified [`Compute`] trait — the single public entry point for any analysis.
+//! The analysis contract: the traits every compute, fit and check
+//! implements, and the traits every output carries.
+//!
+//! - [`Compute`] — run an analysis over frames; [`Fit`] — turn a raw curve
+//!   into a derived quantity; [`Check`] → [`Verdict`] — judge a result.
+//! - [`ComputeResult`] — "finalize into a fully-usable value". Multi-frame
+//!   accumulations can return a not-yet-normalized intermediate value from
+//!   `Compute::compute`; `ComputeResult::finalize` turns it into the
+//!   user-facing final form; callers (or the Python-side `Workflow`
+//!   orchestrator) invoke it once after `compute`.
+//! - [`DescriptorRow`] — "flatten into an `&[F]` row". Used by downstream
+//!   matrix consumers such as PCA and k-means to treat any prior Compute
+//!   output as a descriptor row without an extra conversion step.
 
 use molrs::core::FrameAccess;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
-use crate::compute::ComputeResult;
 
 /// Run an analysis over a sequence of frames and produce a finalized result.
 ///
@@ -29,19 +41,19 @@ use crate::compute::ComputeResult;
 /// # Example (conceptual)
 ///
 /// ```ignore
-/// struct COM;
-/// struct COMResult { /* ... */ }
-/// impl ComputeResult for COMResult {}
+/// struct CenterOfMass;
+/// struct CenterOfMassResult { /* ... */ }
+/// impl ComputeResult for CenterOfMassResult {}
 ///
-/// impl Compute for COM {
+/// impl Compute for CenterOfMass {
 ///     type Args<'a> = &'a Vec<ClusterResult>;
-///     type Output = Vec<COMResult>;
+///     type Output = Vec<CenterOfMassResult>;
 ///     fn compute<'a, FA: FrameAccess + 'a>(
 ///         &self,
 ///         frames: &[&'a FA],
 ///         clusters: Self::Args<'a>,
 ///     ) -> Result<Self::Output, ComputeError> {
-///         // one COMResult per frame, aligned by index
+///         // one CenterOfMassResult per frame, aligned by index
 ///         # unimplemented!()
 ///     }
 /// }
@@ -184,9 +196,8 @@ pub trait Check {
 }
 
 #[cfg(test)]
-mod tests {
+mod compute_contract_tests {
     use super::*;
-    use crate::compute::ComputeResult;
     use ndarray::Array1;
 
     /// Trivial in-crate `Fit` over `&Array1<f64>` — exercises the GAT input and
@@ -223,5 +234,104 @@ mod tests {
     fn trivial_fit_empty_errors() {
         let curve: Array1<f64> = Array1::from_vec(vec![]);
         assert!(matches!(Sum.fit(&curve), Err(ComputeError::EmptyInput)));
+    }
+}
+
+/// Marker + finalization hook for Compute outputs.
+///
+/// `finalize` is called **once** on the output of `compute` before the
+/// value is consumed downstream.
+/// The default is a no-op, which suits outputs already in their final form
+/// (cluster assignments, per-frame observables, etc.). Accumulating outputs
+/// (notably RDF's raw pair histogram) override it to perform their
+/// normalization step.
+///
+/// # Invariant
+///
+/// Implementations **must** be idempotent: calling `finalize` twice must
+/// yield the same state as calling it once. Graph calls it exactly once, but
+/// users may call it again on persisted results.
+pub trait ComputeResult {
+    /// Convert any accumulated intermediate state into the final user-facing form.
+    fn finalize(&mut self) {}
+}
+
+/// Flatten a Compute output into a row of floats.
+///
+/// Consumed by downstream multi-frame analyses (PCA, k-means) that treat a
+/// `Vec<T: DescriptorRow>` as a row-major matrix. Implementations must return
+/// a **consistent** row length across calls on a given type — changing
+/// dimension between rows is a programmer error that the caller checks at
+/// matrix assembly time.
+pub trait DescriptorRow {
+    /// The flat row representation.
+    fn as_row(&self) -> &[F];
+}
+
+/// Per-frame sequences automatically finalize by propagating to each element.
+impl<T: ComputeResult + Clone + Send + Sync + 'static> ComputeResult for Vec<T> {
+    fn finalize(&mut self) {
+        for item in self.iter_mut() {
+            item.finalize();
+        }
+    }
+}
+
+#[cfg(test)]
+mod result_contract_tests {
+    use super::*;
+
+    #[derive(Clone)]
+    struct NoopResult;
+    impl ComputeResult for NoopResult {}
+
+    #[derive(Clone)]
+    struct Counter {
+        raw: f64,
+        norm: f64,
+        finalized: bool,
+    }
+
+    impl ComputeResult for Counter {
+        fn finalize(&mut self) {
+            if !self.finalized {
+                self.norm = self.raw / 10.0;
+                self.finalized = true;
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct Row(Vec<F>);
+    impl DescriptorRow for Row {
+        fn as_row(&self) -> &[F] {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn default_finalize_is_noop() {
+        let mut x = NoopResult;
+        x.finalize();
+        x.finalize();
+    }
+
+    #[test]
+    fn finalize_is_idempotent() {
+        let mut c = Counter {
+            raw: 50.0,
+            norm: 0.0,
+            finalized: false,
+        };
+        c.finalize();
+        assert!((c.norm - 5.0).abs() < 1e-12);
+        c.finalize();
+        assert!((c.norm - 5.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn descriptor_row_as_row() {
+        let r = Row(vec![1.0, 2.0, 3.0]);
+        assert_eq!(r.as_row(), &[1.0, 2.0, 3.0]);
     }
 }

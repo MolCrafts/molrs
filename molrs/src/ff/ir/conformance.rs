@@ -40,7 +40,7 @@ use crate::ff::ir::{
 };
 use crate::ff::ir::{ExpressionCompiler, ExpressionForm};
 use crate::ff::potential::generic::{CompoundForm, ScalarForm, TermParams, columns};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// `dE/dq` against a central difference.
 pub const DERIVATIVE_RTOL: F = 1e-6;

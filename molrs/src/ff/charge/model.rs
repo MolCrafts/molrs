@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use molrs::core::keys;
 use molrs::core::{Atomistic, NodeId};
 
-use molrs::perceive::equivalence::{EquivalenceOptions, find_equivalence_classes};
+use molrs::perceive::{EquivalenceOptions, perceive_equivalence_classes};
 
 use crate::ff::typifier::atd::{AtdError, DUMMY_TYPE};
 
@@ -107,7 +107,7 @@ pub(super) fn check_count(mol: &Atomistic, charges: &[f64]) -> Result<(), Charge
 /// `0.053 / 0.098 / 0.053` purely because one of them eclipses the O–H — and the
 /// class-mean removes that artefact before any bond-charge correction is applied.
 ///
-/// Perception owns the classes ([`find_equivalence_classes`]); the mean is this
+/// Perception owns the classes ([`perceive_equivalence_classes`]); the mean is this
 /// charge-model step. Each class's charges are summed in graph atom order, as
 /// `bccharge()` sums them, and the mean is given to every member; a singleton
 /// keeps its charge bit for bit.
@@ -137,7 +137,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
         .map(|(i, id)| (id, i))
         .collect();
     let mut out = qm.to_vec();
-    for members in find_equivalence_classes(mol, EquivalenceOptions::bcc()).classes() {
+    for members in perceive_equivalence_classes(mol, EquivalenceOptions::bcc()).classes() {
         if members.len() < 2 {
             continue;
         }

@@ -14,8 +14,8 @@
 use super::primitives::Region;
 use crate::core::bvh::Bvh;
 use crate::core::{BoxError, SimBox};
-use crate::op::types::{F, FNx3, FNx3View};
 use crate::op::vec3::{add, norm, sub};
+use crate::op::{F, FNx3, FNx3View};
 use ndarray::Array2;
 
 /// Why a set of centres and radii cannot become a [`SphereUnion`].

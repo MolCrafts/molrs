@@ -43,7 +43,7 @@ use std::fmt;
 use ndarray::{Array2, ArrayView2};
 
 use crate::core::SimBox;
-use crate::op::types::{F, FNx3};
+use crate::op::{F, FNx3};
 
 use super::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
 

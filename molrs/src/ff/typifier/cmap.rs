@@ -9,7 +9,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
 use molrs::core::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
-use molrs::op::types::Idx;
+use molrs::op::Idx;
 
 /// Build `frame`'s `cmaps` block from its dihedrals and `ff`'s `cmap` rows,
 /// and return the number of crossterms.

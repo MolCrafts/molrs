@@ -53,7 +53,7 @@ use super::vasp_header::{expand_symbols, parse_usize_vec, read_coords, read_head
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::MolRsError;
-use molrs::op::types::F;
+use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // Public API

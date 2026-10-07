@@ -24,7 +24,7 @@
 //! Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use super::ClusterResult;
 use crate::compute::Compute;

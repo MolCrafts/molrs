@@ -10,7 +10,7 @@
 //! This is the single 1-D histogram implementation behind every geometric
 //! distribution function (ADF, DDF, distance DF).
 
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 /// A linear 1-D histogram over `[min, max]` with `n_bins` equal-width bins.
@@ -90,7 +90,7 @@ impl Histogram1d {
 
     /// **Nearest-bin** deposition (the simple `floor((d−min)·fac)` rule, *not*
     /// cloud-in-cell). Use this for RDF-family consumers that must match
-    /// [`RDF`](crate::compute::RDF)'s nearest-bin convention — namely
+    /// [`Rdf`](crate::compute::Rdf)'s nearest-bin convention — namely
     /// the Van Hove distinct part `G_d`, whose `G_d(r,0) = ρ g(r)` contract is
     /// checked against `compute::rdf`. The geometric ADF/DDF/distance and CDF
     /// family use the reference implementation cloud-in-cell [`add`](Self::add) instead.

@@ -29,7 +29,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// CHARMM proper dihedral with pre-resolved flat arrays.
 pub struct DihedralCharmm {
@@ -209,7 +209,7 @@ mod tests {
     fn lammps_charmm(w: &str) -> (crate::ff::forcefield::ForceField, Frame) {
         use crate::io::forcefield::readers::ForceFieldReader;
         use molrs::core::Block;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
         let text = format!(
             "special_bonds charmm\ndihedral_style charmm\ndihedral_coeff a-b-c-d 0.2 3 180 {w}\n"

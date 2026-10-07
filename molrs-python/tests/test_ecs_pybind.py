@@ -3,7 +3,7 @@
 The core is an ECS *world*: entities are stable opaque handles, components live
 in aligned columns, and topology is kind-tagged relations. Rigid-body moves
 (translate, rotate, scale) are methods of the leaves and return the leaf; chemical
-perception has owners (`molrs.perceive.Perceive` / `RingInfo`,
+perception has owners (`molrs.perceive.assign_*` / `perceive_rings`,
 `molrs.ff.charge.*`, `molrs.io.smiles.SmilesIR`) and is reached through them, never
 through a method on the graph classes. Leaves (`Atomistic`/`CoarseGrain`) hold a
 core leaf from construction and subclass `MolGraph`; they are never *converted*
@@ -222,16 +222,16 @@ def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
 
 
 def test_find_rings_system():
-    bz = molrs.perceive.Perceive().find_hydrogens(
+    bz = molrs.perceive.add_hydrogens(
         molrs.io.smiles.SmilesIR("C1=CC=CC=C1").to_atomistic()
     )
-    rings = molrs.perceive.RingInfo(bz).rings()
+    rings = molrs.perceive.perceive_rings(bz).rings()
     assert len(rings) == 1
     assert len(rings[0]) == 6  # six-membered ring
 
 
 def test_gasteiger_charges_system():
-    eth = molrs.perceive.Perceive().find_hydrogens(
+    eth = molrs.perceive.add_hydrogens(
         molrs.io.smiles.SmilesIR("CO").to_atomistic()
     )
     charges = np.asarray(molrs.ff.charge.GasteigerModel().assign(eth))
@@ -253,9 +253,8 @@ def test_generic_graph_has_no_translate():
 
 def test_perceive_aromaticity_pipeline():
     # Aromaticity perception needs explicit hydrogens (pi-electron counting).
-    perceive = molrs.perceive.Perceive()
-    bz = perceive.find_hydrogens(molrs.io.smiles.SmilesIR("C1=CC=CC=C1").to_atomistic())
-    bz = perceive.find_aromaticity(bz)
+    bz = molrs.perceive.add_hydrogens(molrs.io.smiles.SmilesIR("C1=CC=CC=C1").to_atomistic())
+    bz = molrs.perceive.assign_aromaticity(bz)
     aromatic = [h for h in bz.entities() if bz.get(h, "is_aromatic")]
     assert len(aromatic) == 6
 
@@ -303,12 +302,10 @@ def test_find_rotatable_unknown_bond_policy():
         # A bond handle names a relation: `get` would read the node that
         # happens to share its slot.
         return out.get_relation_prop("bonds", bonds[1], "is_rotatable")
-
-    perceive = molrs.perceive.Perceive()
-    assert middle_flag(perceive.find_rotatable(mol)) == 0
-    assert middle_flag(perceive.find_rotatable(mol, unknown_bond="single")) == 1
+    assert middle_flag(molrs.perceive.assign_rotatable_bonds(mol)) == 0
+    assert middle_flag(molrs.perceive.assign_rotatable_bonds(mol, unknown_bond="single")) == 1
     with pytest.raises(ValueError):
-        perceive.find_rotatable(mol, unknown_bond="guess")
+        molrs.perceive.assign_rotatable_bonds(mol, unknown_bond="guess")
 
 
 # --------------------------------------------------------------------------- #
@@ -493,3 +490,17 @@ def test_to_frame_keeps_only_the_requested_atom_fields():
     assert set(frame["atoms"].keys()) == {"element", "x"}
     with pytest.raises(ValueError, match="'mass'"):
         mol.to_frame(atom_fields=["x", "mass"])
+
+
+def test_perception_is_free_functions():
+    # Two verbs: `perceive_*` reports a side table, `assign_*` writes a clone.
+    assert not hasattr(molrs.perceive, "Perceive")
+    mol = molrs.io.smiles.SmilesIR("C1CC1C").to_atomistic()
+    info = molrs.perceive.perceive_rings(mol)
+    assert info.ring_sizes() == [3]
+    with pytest.raises(TypeError):
+        molrs.perceive.RingInfo(mol)
+    flagged = molrs.perceive.assign_rings(mol)
+    in_ring = sorted(flagged.get(h, "is_in_ring") for h in flagged.entities())
+    assert in_ring == [0, 1, 1, 1]
+    assert not any(mol.has(h, "is_in_ring") for h in mol.entities())

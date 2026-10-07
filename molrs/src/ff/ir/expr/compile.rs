@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use super::ast::{BinOp, Expr, Func, Parsed};
 use super::error::ExprError;
 use super::parse::parse;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// What a category's rows give an expression: its geometric variables and
 /// its points.

@@ -9,7 +9,7 @@ use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 pub struct UffTorsion {
     atom_i: Vec<usize>,

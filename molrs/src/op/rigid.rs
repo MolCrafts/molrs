@@ -13,8 +13,8 @@
 //! v_z k`, the rotated vector is `q v q*`; the rotation by angle `θ` about the
 //! unit axis `k̂` is `q = (cos(θ/2), sin(θ/2) k̂)`.
 
-use crate::op::types::{F, Mat3, Quat, Vec3};
 use crate::op::vec3::{add, cross, dot, norm, normalize, perpendicular, scale, sub, unit_or_zero};
+use crate::op::{F, Mat3, Quat, Vec3};
 
 /// A rigid motion `p' = R p + t`: rotate by `rotation`, then translate by
 /// `translation`.
@@ -43,13 +43,13 @@ fn mat_vec(m: &Mat3, v: Vec3) -> Vec3 {
 
 /// The image `R p + t` of one point.
 #[inline]
-pub fn apply(rigid: &Rigid, point: Vec3) -> Vec3 {
+pub fn transform_point(rigid: &Rigid, point: Vec3) -> Vec3 {
     add(mat_vec(&rigid.rotation, point), rigid.translation)
 }
 
 /// The images `R pᵢ + t` of every point, in order.
-pub fn apply_all(rigid: &Rigid, points: &[Vec3]) -> Vec<Vec3> {
-    points.iter().map(|&p| apply(rigid, p)).collect()
+pub fn transform_points(rigid: &Rigid, points: &[Vec3]) -> Vec<Vec3> {
+    points.iter().map(|&p| transform_point(rigid, p)).collect()
 }
 
 /// The rotation by `angle` radians (right-handed) about `axis`, by Rodrigues'
@@ -94,7 +94,7 @@ pub fn axis_angle(axis: Vec3, angle: F) -> Option<Mat3> {
 
 /// The motion that rotates by `rotation` about the fixed point `center`:
 /// `t = c − R c`, so `center` maps to itself.
-pub fn about(rotation: Mat3, center: Vec3) -> Rigid {
+pub fn rotation_about(rotation: Mat3, center: Vec3) -> Rigid {
     let rc = mat_vec(&rotation, center);
     Rigid {
         rotation,
@@ -109,7 +109,7 @@ pub fn about(rotation: Mat3, center: Vec3) -> Rigid {
 /// than 1e-8 after normalisation) give a half turn about a perpendicular
 /// ([`perpendicular`]). `None` when the two already point the same way (cross
 /// product at most 1e-15) or either one is not a direction ([`normalize`]).
-pub fn alignment(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
+pub fn alignment_axis_angle(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
     let (a, b) = (normalize(from)?, normalize(to)?);
     let axis = cross(a, b);
     let cross_norm = norm(axis);
@@ -136,11 +136,11 @@ pub fn alignment(from: Vec3, to: Vec3) -> Option<(Vec3, F)> {
 /// columns `[e₁ e₂ e₃]` of a proper rotation: `e₁ = p̂`,
 /// `e₂ = normalize(s − (s·e₁) e₁)` (Gram–Schmidt), `e₃ = e₁ × e₂`.
 ///
-/// `R = frame(a, b) · frame(a′, b′)ᵀ` is the rotation that takes the
+/// `R = orthonormal_frame(a, b) · orthonormal_frame(a′, b′)ᵀ` is the rotation that takes the
 /// direction `a′` onto `a` and the plane of `(a′, b′)` onto that of
 /// `(a, b)`. `None` when `primary` is not a direction ([`normalize`]) or
 /// `secondary` has no component across it.
-pub fn frame(primary: Vec3, secondary: Vec3) -> Option<Mat3> {
+pub fn orthonormal_frame(primary: Vec3, secondary: Vec3) -> Option<Mat3> {
     let e1 = normalize(primary)?;
     let e2 = normalize(sub(secondary, scale(e1, dot(secondary, e1))))?;
     let e3 = cross(e1, e2);
@@ -153,9 +153,9 @@ pub fn frame(primary: Vec3, secondary: Vec3) -> Option<Mat3> {
 
 /// The motion `outer ∘ inner`: apply `inner`, then `outer`.
 ///
-/// `R = R_o R_i`, `t = R_o t_i + t_o`, so `apply(compose(o, i), p)` equals
-/// `apply(o, apply(i, p))` to rounding.
-pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
+/// `R = R_o R_i`, `t = R_o t_i + t_o`, so `transform_point(compose_rigid(o, i), p)` equals
+/// `transform_point(o, transform_point(i, p))` to rounding.
+pub fn compose_rigid(outer: &Rigid, inner: &Rigid) -> Rigid {
     let mut rotation = [[0.0; 3]; 3];
     for (row, out) in rotation.iter_mut().enumerate() {
         for (col, cell) in out.iter_mut().enumerate() {
@@ -166,7 +166,7 @@ pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
     }
     Rigid {
         rotation,
-        translation: apply(outer, inner.translation),
+        translation: transform_point(outer, inner.translation),
     }
 }
 
@@ -185,7 +185,14 @@ pub fn compose(outer: &Rigid, inner: &Rigid) -> Rigid {
 /// [`unit_or_zero`](crate::op::vec3)), and so does every off-axis component.
 ///
 /// Parsons et al., *J. Comput. Chem.* **26** (2005) 1063.
-pub fn nerf(a: Vec3, b: Vec3, c: Vec3, bond: F, angle: F, torsion: F) -> Vec3 {
+pub fn place_from_internal_coords(
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    bond: F,
+    angle: F,
+    torsion: F,
+) -> Vec3 {
     let bc = unit_or_zero(sub(c, b));
     let n = unit_or_zero(cross(sub(b, a), bc));
     let m = cross(n, bc);
@@ -275,7 +282,7 @@ pub fn quat_to_matrix(q: Quat) -> Mat3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, Mat3, Quat, Vec3};
+    use crate::op::{F, Mat3, Quat, Vec3};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
     const TOL: F = 1e-12;
@@ -316,7 +323,10 @@ mod tests {
 
     #[test]
     fn identity_leaves_points_unchanged() {
-        assert_eq!(apply(&Rigid::IDENTITY, [1.5, -2.0, 3.0]), [1.5, -2.0, 3.0]);
+        assert_eq!(
+            transform_point(&Rigid::IDENTITY, [1.5, -2.0, 3.0]),
+            [1.5, -2.0, 3.0]
+        );
     }
 
     #[test]
@@ -326,7 +336,7 @@ mod tests {
             translation: [1.0, 2.0, 3.0],
         };
         // R x̂ + t = ŷ + (1,2,3)
-        assert_vec_close(apply(&rigid, [1.0, 0.0, 0.0]), [1.0, 3.0, 3.0]);
+        assert_vec_close(transform_point(&rigid, [1.0, 0.0, 0.0]), [1.0, 3.0, 3.0]);
     }
 
     #[test]
@@ -335,7 +345,7 @@ mod tests {
             rotation: RZ90,
             translation: [1.0, 2.0, 3.0],
         };
-        let out = apply_all(&rigid, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        let out = transform_points(&rigid, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
         assert_eq!(out.len(), 2);
         assert_vec_close(out[0], [1.0, 3.0, 3.0]);
         assert_vec_close(out[1], [0.0, 2.0, 3.0]);
@@ -366,10 +376,10 @@ mod tests {
     #[test]
     fn about_keeps_its_center_fixed() {
         let c = [1.0, 2.0, 3.0];
-        let rigid = about(RZ90, c);
-        assert_vec_close(apply(&rigid, c), c);
+        let rigid = rotation_about(RZ90, c);
+        assert_vec_close(transform_point(&rigid, c), c);
         // A point one unit along x̂ from the centre ends one unit along ŷ.
-        assert_vec_close(apply(&rigid, [2.0, 2.0, 3.0]), [1.0, 3.0, 3.0]);
+        assert_vec_close(transform_point(&rigid, [2.0, 2.0, 3.0]), [1.0, 3.0, 3.0]);
     }
 
     // ---------- quaternion kernels ----------
@@ -378,14 +388,16 @@ mod tests {
 
     #[test]
     fn alignment_of_perpendicular_directions_is_a_quarter_turn() {
-        let (axis, angle) = alignment([1.0, 0.0, 0.0], [0.0, 2.0, 0.0]).expect("distinct");
+        let (axis, angle) =
+            alignment_axis_angle([1.0, 0.0, 0.0], [0.0, 2.0, 0.0]).expect("distinct");
         assert_vec_close(axis, [0.0, 0.0, 1.0]);
         assert!((angle - FRAC_PI_2).abs() < TOL, "angle = {angle}");
     }
 
     #[test]
     fn alignment_of_antiparallel_directions_is_a_half_turn_about_a_perpendicular() {
-        let (axis, angle) = alignment([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]).expect("antiparallel");
+        let (axis, angle) =
+            alignment_axis_angle([1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]).expect("antiparallel");
         assert!((angle - PI).abs() < TOL, "angle = {angle}");
         assert!(axis[0].abs() < TOL, "axis {axis:?} not ⟂ x̂");
         let len = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
@@ -394,12 +406,12 @@ mod tests {
 
     #[test]
     fn alignment_of_parallel_directions_is_none() {
-        assert_eq!(alignment([0.0, 1.0, 0.0], [0.0, 3.0, 0.0]), None);
+        assert_eq!(alignment_axis_angle([0.0, 1.0, 0.0], [0.0, 3.0, 0.0]), None);
     }
 
     #[test]
     fn alignment_refuses_a_zero_direction() {
-        assert_eq!(alignment([0.0, 0.0, 0.0], [0.0, 1.0, 0.0]), None);
+        assert_eq!(alignment_axis_angle([0.0, 0.0, 0.0], [0.0, 1.0, 0.0]), None);
     }
 
     // ---------- frame ----------
@@ -407,14 +419,14 @@ mod tests {
     #[test]
     fn frame_takes_the_primary_axis_and_the_secondary_plane() {
         // primary +y, secondary (1, 1, 0): e1 = ŷ, e2 = x̂, e3 = ŷ × x̂ = −ẑ.
-        let f = frame([0.0, 2.0, 0.0], [1.0, 1.0, 0.0]).expect("a frame");
+        let f = orthonormal_frame([0.0, 2.0, 0.0], [1.0, 1.0, 0.0]).expect("a frame");
         assert_eq!(f, [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]]);
     }
 
     #[test]
     fn frame_refuses_a_secondary_along_the_primary() {
-        assert_eq!(frame([1.0, 0.0, 0.0], [-3.0, 0.0, 0.0]), None);
-        assert_eq!(frame([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]), None);
+        assert_eq!(orthonormal_frame([1.0, 0.0, 0.0], [-3.0, 0.0, 0.0]), None);
+        assert_eq!(orthonormal_frame([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]), None);
     }
 
     // ---------- compose ----------
@@ -432,10 +444,13 @@ mod tests {
         };
         // (1, 0, 0) -> RZ90 -> (0, 1, 0) -> +x -> (1, 1, 0) -> +z -> (1, 1, 2).
         let p = [1.0, 0.0, 0.0];
-        assert_vec_close(apply(&compose(&outer, &inner), p), [1.0, 1.0, 2.0]);
         assert_vec_close(
-            apply(&compose(&outer, &inner), p),
-            apply(&outer, apply(&inner, p)),
+            transform_point(&compose_rigid(&outer, &inner), p),
+            [1.0, 1.0, 2.0],
+        );
+        assert_vec_close(
+            transform_point(&compose_rigid(&outer, &inner), p),
+            transform_point(&outer, transform_point(&inner, p)),
         );
     }
 
@@ -503,7 +518,7 @@ mod tests {
         use crate::op::vec3::{angle, dihedral};
         let (a, b, c) = ([0.3, -1.1, 0.2], [0.0, 0.0, 0.0], [1.5, 0.1, -0.2]);
         for &(r, theta, phi) in &[(1.09, 1.91, 0.4), (1.53, 2.1, -2.9), (0.96, 1.2, PI)] {
-            let d = nerf(a, b, c, r, theta, phi);
+            let d = place_from_internal_coords(a, b, c, r, theta, phi);
             assert!((norm(sub(d, c)) - r).abs() < 1e-12);
             assert!((angle(b, c, d) - theta).abs() < 1e-12);
             let got = dihedral(a, b, c, d);

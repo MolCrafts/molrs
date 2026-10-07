@@ -155,7 +155,7 @@ use molrs::core::SimBox;
 use molrs::core::Trajectory;
 use molrs::core::{Block, Column, DType};
 use molrs::core::{MetaMap, MetaValue};
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::io::reader::TrajectoryReader;
 

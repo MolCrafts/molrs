@@ -26,17 +26,17 @@
 //! `g(r)` and tends to 1 far from the reference for an unstructured target.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array2, Array3, Array4};
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::positions::get_positions_ref;
-use crate::op::rigid::{Rigid, apply};
-use crate::op::superpose::{DEFAULT_GAP_TOL, Freedom, centroid, superpose};
-use crate::op::types::{Vec3, to_vec3};
 use crate::op::vec3::{normalize, sub};
+use crate::op::{DEFAULT_GAP_TOL, Freedom, centroid, superpose};
+use crate::op::{Rigid, transform_point};
+use crate::op::{Vec3, to_vec3};
 use molrs::core::{Mic, SimBox};
 
 /// A regular axis-aligned voxel grid centred on the reference COM.
@@ -238,7 +238,7 @@ impl SpatialDistribution {
         for (t, &ai) in self.target.iter().enumerate() {
             // Minimum-image vector COM → target, then rotate into body frame.
             let disp = mic.apply(sub([xs[ai], ys[ai], zs[ai]], com));
-            let body = apply(&body_rotation, disp);
+            let body = transform_point(&body_rotation, disp);
             let Some([ix, iy, iz]) = self.grid.index(body) else {
                 continue;
             };
@@ -253,7 +253,7 @@ impl SpatialDistribution {
                     [xs[tail], ys[tail], zs[tail]],
                 ));
                 if let Some(u) = normalize(v) {
-                    let bu = apply(&body_rotation, u);
+                    let bu = transform_point(&body_rotation, u);
                     for d in 0..3 {
                         osum[[ix, iy, iz, d]] += bu[d];
                     }

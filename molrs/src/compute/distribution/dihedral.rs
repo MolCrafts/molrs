@@ -14,7 +14,7 @@
 //! arrangement and ±π for trans, matching the reference implementation's signed DDF output.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
 

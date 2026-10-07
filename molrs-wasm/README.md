@@ -69,10 +69,9 @@ atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 ### Perception
 
 ```js
-const p = new Perceive();
-const rings = p.findRings(frame);     // atoms/bonds gain is_in_ring, n_rings
-const arom  = p.findAromaticity(frame);
-const withH = p.findHydrogens(frame);
+const rings = assignRings(frame);     // atoms/bonds gain is_in_ring, n_rings
+const arom  = assignAromaticity(frame);
+const withH = addHydrogens(frame);
 ```
 
 ### I/O
@@ -111,13 +110,13 @@ const report   = new LBFGS(pots, nl.neighbors()).run(typed, 200);  // pairs come
 ### Analysis
 
 ```js
-import { NeighborList, RDF } from "@molcrafts/molrs";
+import { NeighborList, Rdf } from "@molcrafts/molrs";
 
 const nl = new NeighborList(5.0);         // cutoff = 5.0 A, O(N) cell list
 nl.build(frame);                          // index only — no pair table
 const nlist = nl.neighbors();             // materialize: distSq + disp
 
-const rdf = new RDF(100, 5.0);
+const rdf = new Rdf(100, 5.0);
 const result = rdf.compute(frame);        // streams its own neighbor search
 console.log(result.binCenters(), result.rdf());
 ```
@@ -136,16 +135,16 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
   `pointIndices()`, `distSq()`, `disp()`)
 - **`NeighborQuery`** — the cross search: `new NeighborQuery(refFrame, cutoff)`
   indexes a reference frame, `query(otherFrame)` returns the directed pairs
-- **`RDF`** — radial distribution function (periodic and free-boundary)
-- **`MSD`** — mean squared displacement
+- **`Rdf`** — radial distribution function (periodic and free-boundary)
+- **`Msd`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
-- **`VACF`**, **`Steinhardt`**, **`HBonds`**, **`PMFTXY`**, **`RadicalVoronoi`**, …
+- **`Vacf`**, **`Steinhardt`**, **`HBonds`**, **`PmftXy`**, **`RadicalVoronoi`**, …
   — one class per analysis, named after its molrs owner;
   `molrsComputeCatalog()` lists every one with its parameters
 
 Neighbor searches support frames without a simulation box. RDF additionally
 needs a normalization volume: for a frame without a box, pass it as the fourth
-constructor argument, e.g. `new RDF(100, 5.0, undefined, 1000.0)`.
+constructor argument, e.g. `new Rdf(100, 5.0, undefined, 1000.0)`.
 
 ### Block column conventions
 

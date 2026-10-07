@@ -37,7 +37,7 @@ use ndarray::{Array1, IxDyn};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::schema::consts as keys;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};

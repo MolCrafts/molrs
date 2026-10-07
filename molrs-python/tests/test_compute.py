@@ -15,7 +15,7 @@ from molrs.compute import GaussianDensity, LocalDensity
 from molrs.compute import StaticStructureFactorDebye
 from molrs.compute import BondOrientationalOrder
 from molrs.compute import Hexatic, Nematic, SolidLiquid, Steinhardt
-from molrs.compute import PMFTXY
+from molrs.compute import PmftXy
 
 
 def _nlist(frame, pts, cutoff=1.2):
@@ -150,12 +150,12 @@ class TestStaticStructureFactorDebye:
         assert ssf is not None
 
 
-class TestPMFTXY:
+class TestPmftXy:
     def test_two_particles_two_bins(self):
         pts = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float64)
         f = make_frame(pts, box_len=10.0)
         nl = _nlist(f, pts, cutoff=1.5)
-        out = PMFTXY(2.0, 2.0, 8, 8).compute(f, nl)
+        out = PmftXy(2.0, 2.0, 8, 8).compute(f, nl)
         counts, _density, _pmf = out[0]
         assert counts.sum() == 2  # one each side, self-query symmetric pair
 
@@ -173,8 +173,8 @@ class TestClusterProperties:
         assert abs(d["centers_of_mass"][0, 0] - 1.0) < 1e-10
 
 
-class TestMSDMethodSelection:
-    """``MSD(method=...)`` picks the estimator; there is no per-mode factory.
+class TestMsdMethodSelection:
+    """``Msd(method=...)`` picks the estimator; there is no per-mode factory.
 
     The two are different estimators of the same quantity, so the choice is a
     constructor argument rather than a second constructor to keep in sync.
@@ -195,20 +195,20 @@ class TestMSDMethodSelection:
         return frames, pos
 
     def test_default_is_direct(self):
-        assert molrs.compute.MSD().method == "direct"
+        assert molrs.compute.Msd().method == "direct"
 
     def test_window_is_selected_by_method(self):
-        assert molrs.compute.MSD(method="window").method == "window"
+        assert molrs.compute.Msd(method="window").method == "window"
 
     def test_unknown_method_raises(self):
         with pytest.raises(ValueError, match="unknown MSD method"):
-            molrs.compute.MSD(method="rolling")
+            molrs.compute.Msd(method="rolling")
 
     def test_the_two_methods_disagree(self):
         """Otherwise the parameter would be pinning nothing."""
         frames, _ = self._random_walk_frames()
-        direct = np.asarray(molrs.compute.MSD().compute(frames).mean)
-        window = np.asarray(molrs.compute.MSD(method="window").compute(frames).mean)
+        direct = np.asarray(molrs.compute.Msd().compute(frames).mean)
+        window = np.asarray(molrs.compute.Msd(method="window").compute(frames).mean)
         assert not np.allclose(direct, window)
 
 
@@ -216,8 +216,9 @@ class TestAcf:
     """Generic all-time-origins autocorrelation.
 
     The FFT route is checked against the definition written out longhand, and
-    against ``VACF`` to pin that the two are *different* estimators — swapping
-    one for the other is the mistake this class exists to prevent.
+    against ``Vacf`` to pin that the two give different numbers on the same
+    array — swapping one for the other is the mistake this class exists to
+    prevent.
     """
 
     @staticmethod
@@ -256,13 +257,75 @@ class TestAcf:
         assert np.allclose(got, 8.0)  # n_components * value^2
 
     def test_is_not_the_same_estimator_as_vacf(self):
-        """VACF mean-subtracts, averages over DOF, and is biased."""
+        """Vacf mean-subtracts and averages over degrees of freedom: the same
+        estimator on a different view, so the numbers differ."""
         s = self._series()
         acf = np.asarray(molrs.compute.Acf().compute(s, max_lag=10).acf)
         flat = s.reshape(s.shape[0], -1)
-        vacf = np.asarray(molrs.compute.VACF().compute(flat, 1.0, 10)["acf"])
+        vacf = np.asarray(molrs.compute.Vacf().compute(flat, 1.0, 10)["acf"])
         assert not np.allclose(acf, vacf), "the two estimators must not coincide"
 
     def test_too_few_frames_raises(self):
         with pytest.raises(ValueError):
             molrs.compute.Acf().compute(np.zeros((1, 2, 3)), max_lag=0)
+
+
+class TestRustNames:
+    """Every ``molrs.compute`` name is the Rust name (wave S4)."""
+
+    def test_namespace_classes_are_functions_or_rust_classes(self):
+        for gone in (
+            "Dielectric",
+            "Persist",
+            "Onsager",
+            "AngleDistribution",
+            "DihedralDistribution",
+            "DistanceDistribution",
+            "kramers_kronig",
+            "conductivity_sum_rule",
+            "route_agreement",
+            "voronoi_domains",
+            "voronoi_voids",
+        ):
+            assert not hasattr(molrs.compute, gone), gone
+
+    def test_dielectric_functions(self):
+        charges = np.array([1.0, -1.0])
+        positions = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        m = molrs.compute.dipole_moment(charges, positions)
+        np.testing.assert_allclose(m, [-1.0, 0.0, 0.0])
+        dipoles = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]])
+        j = molrs.compute.current_density(dipoles, 1.0, 2.0)
+        assert j.shape == (3, 3)
+        assert np.isnan(j[0]).all()
+        np.testing.assert_allclose(j[1:, 0], [0.5, 1.0])
+
+    def test_onsager_correlation_is_a_compute(self):
+        p = np.cumsum(np.ones((8, 3)), axis=0)
+        out = molrs.compute.OnsagerCorrelation().compute(p, p, 1.0, 4)
+        assert set(out) == {"lag_times", "correlation"}
+        assert out["lag_times"].shape == out["correlation"].shape
+
+    def test_distribution_function_reads_the_observable(self):
+        with pytest.raises(ValueError, match="unknown observable"):
+            molrs.compute.DistributionFunction("torsion", 10)
+        with pytest.raises(ValueError, match="required"):
+            molrs.compute.DistributionFunction("distance", 10)
+        with pytest.raises(ValueError):
+            molrs.compute.DistributionFunction("angle", 10, min=0.0)
+        molrs.compute.DistributionFunction("angle", 18)
+        molrs.compute.DistributionFunction("dihedral", 36)
+        molrs.compute.DistributionFunction("distance", 10, 0.0, 5.0)
+
+    def test_route_agreement_is_a_check(self):
+        curve = np.linspace(0.0, 1.0, 16)
+        out = molrs.compute.RouteAgreement().check({"a": curve, "b": curve})
+        assert out["passed"]
+        assert out["pairwise_rms"]
+
+    def test_kramers_kronig_is_a_check(self):
+        assert isinstance(molrs.compute.KramersKronig(1.0), molrs.compute.KramersKronig)
+        assert isinstance(
+            molrs.compute.ConductivitySumRule(1.0, 1.0, 300.0),
+            molrs.compute.ConductivitySumRule,
+        )

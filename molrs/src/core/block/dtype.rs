@@ -4,7 +4,7 @@ use ndarray::ArrayD;
 use num_complex::Complex;
 
 use super::column::Column;
-use crate::op::types::{F, I, Idx};
+use crate::op::{F, I, Idx};
 
 /// Supported data types for Block columns.
 ///

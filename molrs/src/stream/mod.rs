@@ -83,7 +83,7 @@ mod tests {
     use super::*;
     use crate::core::Block;
     use crate::core::SimBox;
-    use crate::op::types::{F, I, Idx};
+    use crate::op::{F, I, Idx};
     use ndarray::{Array1, array};
 
     /// Build a full Frame used by the net-streaming lossless round-trip contract

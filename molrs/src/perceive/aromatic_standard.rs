@@ -34,7 +34,7 @@ use std::collections::{HashMap, HashSet};
 use crate::core::Atomistic;
 use crate::core::PropValue;
 use crate::core::{NodeId, RelationId};
-use crate::perceive::Perceive;
+use crate::perceive::{add_hydrogens, assign_aromaticity, assign_kekule_bond_orders};
 
 /// Bond prop: the chemical class (§2.1).
 const BOND_TYPE: &str = "bond_type";
@@ -107,7 +107,7 @@ fn parse(smiles: &str) -> Atomistic {
 /// atom's valence, so `add_hydrogens` stays a separate, optional operation and
 /// standardization never changes the structure behind the caller's back.
 fn standardize(smiles: &str) -> Atomistic {
-    Perceive::new().find_aromaticity(&parse(smiles))
+    assign_aromaticity(&parse(smiles))
 }
 
 fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
@@ -463,7 +463,7 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
 fn standardizing_twice_changes_nothing() {
     for (name, smiles) in MATRIX {
         let once = standardize(smiles);
-        let twice = Perceive::new().find_aromaticity(&once);
+        let twice = assign_aromaticity(&once);
         assert_eq!(
             signature(&once),
             signature(&twice),
@@ -592,12 +592,12 @@ fn a_declared_aromatic_input_is_kekulized_not_re_perceived() {
 
 #[test]
 fn kekulization_alone_never_invents_aromaticity() {
-    // `find_kekule_orders` decides a phase; it does not decide which bonds are
+    // `assign_kekule_bond_orders` decides a phase; it does not decide which bonds are
     // aromatic. A Kekulé benzene has no aromatic bonds to phase, so it comes
     // back untouched — that is the boundary that keeps the two from calling
     // each other.
     let kekule = parse("C1=CC=CC=C1");
-    let out = Perceive::new().find_kekule_orders(&kekule);
+    let out = assign_kekule_bond_orders(&kekule);
 
     assert_eq!(
         out.bonds()
@@ -618,13 +618,11 @@ fn perception_alone_never_needs_hydrogens_added() {
     // Implicit hydrogens are read off valence, so `add_hydrogens` is optional
     // and changes no answer. If this ever fails, standardization has grown a
     // hidden structural modification.
-    let p = Perceive::new();
     for (name, smiles) in MATRIX {
         let heavy = standardize(smiles);
-        let repleted = p
-            .find_hydrogens(&parse(smiles))
-            .expect("repletion succeeds on a well-formed graph");
-        let with_h = p.find_aromaticity(&repleted);
+        let repleted =
+            add_hydrogens(&parse(smiles)).expect("repletion succeeds on a well-formed graph");
+        let with_h = assign_aromaticity(&repleted);
         assert_eq!(
             aromatic_bonds(&heavy).len(),
             aromatic_bonds(&with_h).len(),
@@ -664,8 +662,8 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
             if atom.get_str("element") != Some("N") {
                 continue;
             }
-            let total = valence[index[&id]]
-                + crate::perceive::hydrogens::implicit_h_count(&mol, id).unwrap_or(0);
+            let total =
+                valence[index[&id]] + crate::perceive::implicit_h_count(&mol, id).unwrap_or(0);
             assert!(
                 total <= 3,
                 "{name}: a neutral ring nitrogen reached valence {total}"

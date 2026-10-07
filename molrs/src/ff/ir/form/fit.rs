@@ -9,7 +9,7 @@
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::schema::block_names::ATOMS;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params};

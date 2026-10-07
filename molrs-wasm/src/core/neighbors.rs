@@ -9,7 +9,7 @@
 //!   ask which of its atoms lie within the cutoff of another frame's atoms.
 //!
 //! Both produce the same [`Neighbors`] column table, which the analysis classes
-//! (`RDF`, `Cluster`, the order parameters, …) and `LBFGS` consume.
+//! (`Rdf`, `Cluster`, the order parameters, …) and `LBFGS` consume.
 //!
 //! All distances are in angstrom (Å).
 
@@ -18,7 +18,7 @@ use molrs::core::{
     NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
     NeighborsStorage as RsNeighborsStorage, QueryMode,
 };
-use molrs::op::types::F;
+use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::{Frame, positions_from_frame};
@@ -272,7 +272,7 @@ fn storage_flag(storage: &JsValue, key: &str) -> Result<bool, JsValue> {
 /// A column store — two index columns that are always present, plus whichever
 /// physical columns the search was told to keep. Row `k` of every column
 /// describes the same pair. Produced by [`NeighborList::neighbors`] and
-/// consumed by the analysis classes (`RDF`, `Cluster`, `Steinhardt`, …) and `LBFGS`.
+/// consumed by the analysis classes (`Rdf`, `Cluster`, `Steinhardt`, …) and `LBFGS`.
 ///
 /// A **self** search is half-shell: each unordered pair appears exactly once,
 /// with `i < j`. A cross search ([`NeighborQuery::query`]) is directed and has no

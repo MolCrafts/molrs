@@ -17,8 +17,8 @@ use super::primitives::Region;
 use crate::core::TriMesh;
 use crate::core::bvh::{Bvh, triangle_box};
 use crate::core::mesh::DEGENERATE_AREA2;
-use crate::op::types::{F, FNx3};
 use crate::op::vec3::{add, cross, dot, norm, scale, sub};
+use crate::op::{F, FNx3};
 use ndarray::Array2;
 
 /// Points closer than this to the surface count as on it: `distance` is

@@ -22,7 +22,7 @@ use crate::ff::forcefield::{ForceField, Params, Style, pair_key};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The relation categories and the frame block each one's rows live in.
 const RELATIONS: [(&str, &str); 5] = [
@@ -275,7 +275,7 @@ fn write(
 mod tests {
     use super::*;
     use crate::ff::forcefield::Params;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
 
     fn uint(values: &[Idx]) -> ndarray::ArrayD<Idx> {
         Array1::from_vec(values.to_vec()).into_dyn()

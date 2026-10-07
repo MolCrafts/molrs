@@ -1,19 +1,20 @@
 //! Raw velocity autocorrelation function — the VDOS / Green–Kubo-diffusion
 //! input.
 //!
-//! [`VACF`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
+//! [`Vacf`] returns the **unbiased** velocity ACF (per-DOF trajectory-mean
 //! removal, then time-origin average `1/(n-τ)`, then DOF average). No windowing
 //! and no integrated D — the fit step is the analyst's choice of
 //! [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) or
 //! [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + `1/d` (D).
 
 use molrs::core::FrameAccess;
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::{lag_times, unbiased_cartesian_acf_scaled};
+use super::correlation::lag_times;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::autocorrelation;
 
 /// Unbiased velocity autocorrelation function result.
 #[derive(Debug, Clone)]
@@ -35,17 +36,17 @@ impl ComputeResult for VacfResult {}
 /// Lifts the per-DOF mean-subtract + FFT-ACF + DOF-average block from
 /// the VDOS path (the part *before* windowing), returning only the raw ACF.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct VACF;
+pub struct Vacf;
 
-/// `(velocities, dt, resolution)` argument bundle for [`VACF`] /
+/// `(velocities, dt, resolution)` argument bundle for [`Vacf`] /
 /// [`GreenKuboDiffusion`](super::GreenKuboDiffusion).
 pub type VacfArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-/// Per-DOF mean-subtract → FFT-ACF → DOF-average core, shared by [`VACF`] and
+/// Per-DOF mean-subtract → FFT-ACF → DOF-average core, shared by [`Vacf`] and
 /// [`GreenKuboDiffusion`](super::GreenKuboDiffusion).
 ///
-/// Implemented as the shared Cartesian ACF (sum over DOFs) scaled by
-/// `1/n_dof` — one primitive path for all multi-component unbiased ACFs.
+/// [`autocorrelation`] with each degree of freedom as one single-component
+/// entity, mean-subtracted: the one ACF estimator, on a reshaped view.
 pub(super) fn velocity_acf(
     velocities: &Array2<f64>,
     dt: f64,
@@ -64,8 +65,9 @@ pub(super) fn velocity_acf(
     }
     let max_lag = resolution.min(n_frames - 1);
 
-    // Σ_d ⟨δv_d(0) δv_d(τ)⟩ with fused DOF average: scale = 1/n_dof.
-    let acf = unbiased_cartesian_acf_scaled(velocities, max_lag, true, 1.0 / n_dof as f64)?;
+    // ⟨δv_d(0) δv_d(τ)⟩ averaged over the n_dof degrees of freedom: each DOF
+    // is one entity of a single component.
+    let acf = autocorrelation(velocities.view().insert_axis(Axis(2)), max_lag, true)?.acf;
 
     Ok(VacfResult {
         lag_times: lag_times(max_lag, dt),
@@ -73,7 +75,7 @@ pub(super) fn velocity_acf(
     })
 }
 
-impl Compute for VACF {
+impl Compute for Vacf {
     /// `(velocities (n_frames, n_dof), dt, resolution)`. The `frames` slice is
     /// unused.
     type Args<'a> = VacfArgs<'a>;
@@ -141,7 +143,7 @@ mod tests {
             acf_sum[k] *= (1.0 / 9.0) / (n - k) as f64;
         }
 
-        let raw = VACF.compute(&no_frames(), (&v, dt, res)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, dt, res)).unwrap();
         assert_eq!(raw.acf.len(), acf_sum.len());
         for k in 0..raw.acf.len() {
             assert!((raw.acf[k] - acf_sum[k]).abs() < 1e-12, "k={k}");
@@ -152,7 +154,7 @@ mod tests {
     #[test]
     fn raw_max_lag_exceeds_length_clamps_not_panics() {
         let v = rng_series(8, 3, 1);
-        let raw = VACF.compute(&no_frames(), (&v, 1.0, 1000)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, 1.0, 1000)).unwrap();
         assert_eq!(raw.acf.len(), 8); // clamped to n_frames - 1 + 1.
     }
 
@@ -164,7 +166,9 @@ mod tests {
         let res = 20;
         let v = rng_series(n, n_dof, 99);
         let raw = velocity_acf(&v, dt, res).unwrap();
-        let cart = crate::compute::unbiased_cartesian_acf(&v, res, true).unwrap();
+        let cart = autocorrelation(v.view().insert_axis(Axis(1)), res, true)
+            .unwrap()
+            .acf;
         for k in 0..raw.acf.len() {
             // Fused vs sequential DOF scale may differ by 1 ULP; allow tiny tol.
             assert!((raw.acf[k] - cart[k] / n_dof as f64).abs() < 1e-12, "k={k}");

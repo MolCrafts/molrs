@@ -8,7 +8,7 @@
 //! caller.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use super::error::ComputeError;
 

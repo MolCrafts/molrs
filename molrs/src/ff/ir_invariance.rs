@@ -39,7 +39,7 @@ use crate::io::forcefield::readers::lammps::LammpsFfReader;
 use crate::io::forcefield::readers::opls::OplsXmlReader;
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// Per `(category/style)`, the energy of that style alone on `frame`.
 fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
@@ -544,7 +544,7 @@ const ACETANILIDE_XYZ: [[f64; 3]; 19] = [
 
 fn acetanilide() -> molrs::core::Atomistic {
     use crate::io::smiles::{parse_smiles, to_atomistic};
-    use crate::perceive::hydrogens::add_hydrogens;
+    use crate::perceive::add_hydrogens;
     let mut mol =
         add_hydrogens(&to_atomistic(&parse_smiles("CC(=O)Nc1ccccc1").unwrap()).unwrap()).unwrap();
     let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
@@ -650,7 +650,7 @@ fn typed_molecules_price_as_in_0_15() {
         &[
             // UFF's bonded terms changed with its atom labels, which 0.16
             // takes from RDKit's hybridization and conjugation
-            // (`perceive::hybridizations`): the amide N, carbonyl C and O are
+            // (`perceive::perceive_hybridizations`): the amide N, carbonyl C and O are
             // `N_R` / `C_R` / `O_R` (0.15.1: `N_3` / `C_2` / `O_2`), and the
             // amide C-N is priced at order 1, not 1.41. The four bonded
             // terms below sum to RDKit 2026.03's UFF energy on the same

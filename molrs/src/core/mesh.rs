@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::op::types::F;
+use crate::op::F;
 use crate::op::vec3::{cross, sub};
 
 /// Below this twice-area a face has no usable normal and no interior.

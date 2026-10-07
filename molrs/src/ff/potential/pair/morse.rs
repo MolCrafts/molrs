@@ -22,7 +22,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Where a pair's Morse `(D₀, α, r₀)` comes from.
 enum Source {

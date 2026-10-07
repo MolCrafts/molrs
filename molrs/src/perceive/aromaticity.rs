@@ -10,7 +10,7 @@
 //!
 //! # Algorithm (RDKit `aromaticityHelper(mol, srings, 0, 0, true)`)
 //!
-//! 1. Compute SSSR rings ([`crate::perceive::rings::find_rings`]).
+//! 1. Compute SSSR rings ([`crate::perceive::perceive_rings`]).
 //! 2. For each ring atom, classify its π-electron donor type
 //!    (`getAtomDonorTypeArom` → `ElectronDonor`) using a per-atom electron
 //!    count (`countAtomElec`) plus exocyclic / cyclic multiple-bond rules, and
@@ -39,12 +39,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use super::kekule::assign_kekule_numbers;
 use crate::core::Atomistic;
 use crate::core::PropValue;
 use crate::core::keys;
 use crate::core::{BondNumber, BondOrder};
 use crate::core::{NodeId, RelationId};
-use crate::perceive::rings::find_rings;
+use crate::perceive::perceive_rings;
 use molrs::core::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
@@ -278,7 +279,7 @@ fn explicit_valence(mol: &Atomistic, id: NodeId) -> i32 {
 /// non-ring bond. Returns the partner atom if found.
 fn incident_noncyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
     id: NodeId,
 ) -> Option<NodeId> {
     for (bid, other, order) in incident_bonds(mol, id) {
@@ -293,7 +294,7 @@ fn incident_noncyclic_multiple_bond(
 /// ring.
 fn incident_cyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
     id: NodeId,
 ) -> bool {
     incident_bonds(mol, id).any(|(bid, _, order)| rings.is_bond_in_ring(bid) && order >= 2.0)
@@ -349,7 +350,7 @@ fn count_atom_elec(mol: &Atomistic, id: NodeId) -> i32 {
 /// (the default-model setting).
 fn atom_donor_type(
     mol: &Atomistic,
-    rings: &crate::perceive::rings::RingInfo,
+    rings: &crate::perceive::RingInfo,
     id: NodeId,
 ) -> ElectronDonor {
     let z = atomic_num(mol, id);
@@ -688,6 +689,36 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>])
 // Public entry point
 // ---------------------------------------------------------------------------
 
+/// Bring a molecule to the standard aromatic representation, graph in / graph
+/// out (`mol` is left untouched).
+///
+/// On return every aromatic atom carries `is_aromatic`, every aromatic bond
+/// carries `bond_type = Aromatic`, and every bond carries an integer
+/// `bond_number` — the localized Lewis structure. Nothing carries a fractional
+/// order, because aromaticity is a bond *type*.
+///
+/// Two inputs, two questions. When the notation already declared the aromatic
+/// subgraph (a lowercase SMILES), aromaticity is *given*: only a localized
+/// structure is missing, so one is assigned
+/// ([`assign_kekule_bond_orders`](crate::perceive::assign_kekule_bond_orders))
+/// and nothing is re-perceived. A Kekulé or plain structure has aromaticity
+/// *unknown*: it is perceived (RDKit's default model) from the integer bond
+/// numbers, rings, valences and electron counts, and only the aromatic bonds
+/// the perception just created that have no number of their own are then
+/// filled in. The existing numbers are a legal Lewis structure and are kept.
+///
+/// Hydrogens are neither added nor required: implicit hydrogens are read off
+/// each atom's valence, so running
+/// [`add_hydrogens`](crate::perceive::add_hydrogens) first changes no answer.
+pub fn assign_aromaticity(mol: &Atomistic) -> Atomistic {
+    let mut out = mol.clone();
+    if !out.bonds().any(|(bid, _)| out.bond_type(bid).is_aromatic()) {
+        let _ = mark_aromaticity(&mut out);
+    }
+    assign_kekule_numbers(&mut out);
+    out
+}
+
 /// Perceive aromaticity using the RDKit default model and annotate the graph
 /// in place.
 ///
@@ -703,11 +734,11 @@ fn is_connected_subset(subset: &[usize], ring_bond_sets: &[HashSet<RelationId>])
 /// Port of RDKit `setAromaticity(mol, AROMATICITY_RDKIT)` →
 /// `aromaticityHelper(mol, srings, 0, 0, /*includeFused=*/true)`.
 /// `Code/GraphMol/Aromaticity.cpp`, BSD 3-Clause, © RDKit contributors.
-pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
+pub(crate) fn mark_aromaticity(mol: &mut Atomistic) -> usize {
     // No snapshot: `bond_number` is never overwritten by perception, so the
     // input's own localized structure *is* the memory. This is what makes the
     // pass idempotent, and it is why there is no second localized-order field.
-    let rings_info = find_rings(mol);
+    let rings_info = perceive_rings(mol);
     let srings: Vec<Vec<NodeId>> = rings_info.rings().to_vec();
 
     // ---- 1. classify every ring atom -----------------------------------
@@ -811,7 +842,7 @@ mod tests {
     #[test]
     fn test_benzene_all_aromatic() {
         let mut g = benzene();
-        let n = perceive_aromaticity(&mut g);
+        let n = mark_aromaticity(&mut g);
         assert_eq!(n, 6);
     }
 
@@ -830,14 +861,14 @@ mod tests {
                 g.add_bond(ci, h).unwrap();
             }
         }
-        assert_eq!(perceive_aromaticity(&mut g), 0);
+        assert_eq!(mark_aromaticity(&mut g), 0);
     }
 
     #[test]
     fn test_idempotent() {
         let mut g = benzene();
-        let n1 = perceive_aromaticity(&mut g);
-        let n2 = perceive_aromaticity(&mut g);
+        let n1 = mark_aromaticity(&mut g);
+        let n2 = mark_aromaticity(&mut g);
         assert_eq!(n1, n2);
     }
 
@@ -858,7 +889,7 @@ mod tests {
         let mut mol = to_atomistic(&parse_smiles(smiles).expect("parse")).expect("to_atomistic");
         let before = bond_classes(&mol);
 
-        let n = perceive_aromaticity(&mut mol);
+        let n = mark_aromaticity(&mut mol);
 
         assert_eq!(n, 0, "{smiles}: no atom of a chain is aromatic");
         for (id, _) in mol.atoms() {

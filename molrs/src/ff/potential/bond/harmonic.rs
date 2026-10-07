@@ -13,7 +13,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Harmonic bond potential with pre-resolved flat arrays.
 pub struct BondHarmonic {

@@ -21,16 +21,16 @@
 //! bonds. The output is a per-particle solid-bond count plus the boolean
 //! solid mask.
 //!
-//! This phase reuses [`compute_qlm`] directly
+//! This phase reuses [`steinhardt_qlm`] directly
 //! — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
 
 use crate::compute::ComputeResult;
 use molrs::core::Complex;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 
-use super::steinhardt::compute_qlm;
+use super::steinhardt::steinhardt_qlm;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
@@ -83,7 +83,7 @@ impl SolidLiquid {
         let n = xs_p.slice().len();
         let m_count = (2 * self.l + 1) as usize;
 
-        let qlm = compute_qlm(frame, nlist, self.l)?;
+        let qlm = steinhardt_qlm(frame, nlist, self.l)?;
 
         // |qℓm(i)| for normalisation. Skip particles with no neighbors → norm = 0.
         let mut norms = vec![0.0_f64; n];
@@ -191,7 +191,7 @@ impl ComputeResult for SolidLiquidResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -345,7 +345,7 @@ mod tests {
 
         // Premise of the derivation above, checked rather than assumed: the two
         // centres really do end up with the same q₆ₘ vector.
-        let qlm = compute_qlm(&frame, &nl, 6).unwrap();
+        let qlm = steinhardt_qlm(&frame, &nl, 6).unwrap();
         let m = 13_usize; // 2·6 + 1
         for k in 0..m {
             let a = qlm[k];

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use crate::core::Atomistic;
 use crate::core::NodeId;
 use crate::core::PropValue;
-use crate::perceive::rings::{RingInfo, find_rings};
+use crate::perceive::{RingInfo, perceive_rings};
 
 /// Precomputed, read-only context shared by every primitive evaluation.
 ///
@@ -63,7 +63,7 @@ impl<'m> MolContext<'m> {
     /// Build the context for `mol` with an external label map for `%LABEL`
     /// context predicates. `labels[atom] == "L"` makes `[...;%L]` match `atom`.
     pub fn with_labels(mol: &'m Atomistic, labels: &'m HashMap<NodeId, String>) -> Self {
-        let rings = find_rings(mol);
+        let rings = perceive_rings(mol);
         let mut aromatic_atom = HashMap::new();
         let mut h_count = HashMap::new();
         let mut degree = HashMap::new();

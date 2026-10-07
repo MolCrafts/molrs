@@ -6,10 +6,10 @@
 //! frames from the caller's flat buffers and delegates the math to molrs; no
 //! analysis math lives here. The engine measures; molrs analyzes.
 
-use molrs::compute::RDFAccumulator as RDFAccumulatorCore;
+use molrs::compute::RdfAccumulator as RdfAccumulatorCore;
 use molrs::core::SimBox;
 use molrs::core::{Block, Frame};
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array1, Array2};
 
 /// Build a bare frame carrying only `atoms.{x,y,z}` (+ optional simbox).
@@ -54,15 +54,15 @@ pub(crate) fn msd_compute_new() -> Box<MsdCompute> {
 }
 
 impl MsdCompute {
-    /// `MSD(t)` over a raw `[n_frames, n_dof]` position buffer.
+    /// `Msd(t)` over a raw `[n_frames, n_dof]` position buffer.
     ///
     /// `positions` is row-major with each frame blocked `x[0..na) y[..) z[..)`
-    /// (`na = n_dof/3`). `MsdMode::Direct` — `MSD(t) = ⟨|r(t) − r(0)|²⟩_i` with
+    /// (`na = n_dof/3`). `MsdMode::Direct` — `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` with
     /// the first frame as reference (LAMMPS `compute msd`). All math is molrs
-    /// (`compute::MSD`). Returns one mean value per frame (index 0 = 0); empty on
+    /// (`compute::Msd`). Returns one mean value per frame (index 0 = 0); empty on
     /// < 2 frames or a bad shape — never panics.
     pub fn compute(&self, positions: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64> {
-        use molrs::compute::{Compute, MSD};
+        use molrs::compute::{Compute, Msd};
         if n_frames < 2 || n_dof < 3 || n_dof % 3 != 0 {
             return Vec::new();
         }
@@ -87,7 +87,7 @@ impl MsdCompute {
             Err(_) => return Vec::new(),
         };
         let refs: Vec<&Frame> = frames.iter().collect();
-        match MSD::new().compute(&refs, ()) {
+        match Msd::new().compute(&refs, ()) {
             Ok(ts) => ts.data.iter().map(|r| r.mean).collect(),
             Err(_) => Vec::new(),
         }
@@ -119,13 +119,13 @@ pub(crate) fn diffusion_compute_new(
 }
 
 impl DiffusionCompute {
-    /// `D = slope / (2*dims)` from the windowed-MSD slope over `[fit_lo, fit_hi]`
+    /// Einstein `D` (molrs `EinsteinDiffusionResult::diffusion_coefficient`) from the windowed-MSD slope over `[fit_lo, fit_hi]`
     /// (fractions of the last lag), over a raw `[n_frames, n_dof]` position
     /// buffer (same layout as [`MsdCompute::compute`]). All math is molrs
     /// (`EinsteinDiffusion` + `LinearFit`). Returns `NaN` on < 2 frames, a bad
     /// shape/args, or a fit error — never panics.
     pub fn compute(&self, positions: &[f64], n_frames: i64, n_dof: i64) -> f64 {
-        use molrs::compute::{Compute, EinsteinDiffusion, EinsteinDiffusionArgs, Fit, LinearFit};
+        use molrs::compute::{Compute, EinsteinDiffusion, EinsteinDiffusionArgs};
         if n_frames < 2
             || n_dof < 3
             || n_dof % 3 != 0
@@ -156,18 +156,10 @@ impl DiffusionCompute {
             Err(_) => return f64::NAN,
         };
         let refs: Vec<&Frame> = frames.iter().collect();
-        let ed = match EinsteinDiffusion.compute(&refs, EinsteinDiffusionArgs { dt: self.dt }) {
-            Ok(r) => r,
-            Err(_) => return f64::NAN,
-        };
-        match (LinearFit {
-            window: (self.fit_lo, self.fit_hi),
-        })
-        .fit((&ed.lag_times, &ed.msd))
-        {
-            Ok(fit) => fit.slope / (2.0 * self.dims as f64),
-            Err(_) => f64::NAN,
-        }
+        EinsteinDiffusion
+            .compute(&refs, EinsteinDiffusionArgs { dt: self.dt })
+            .and_then(|ed| ed.diffusion_coefficient(self.dims as usize, (self.fit_lo, self.fit_hi)))
+            .unwrap_or(f64::NAN)
     }
 }
 
@@ -185,11 +177,11 @@ pub(crate) fn vacf_compute_new(dt: f64, resolution: i64) -> Box<VacfCompute> {
 
 impl VacfCompute {
     /// DOF-averaged VACF over a row-major `[n_frames, n_dof]` velocity buffer.
-    /// All math is molrs (`compute::VACF`, FFT-ACF). Returns the VACF curve (one
+    /// All math is molrs (`compute::Vacf`, FFT-ACF). Returns the VACF curve (one
     /// value per lag, index 0 = zero lag); empty on fewer than two frames, a
     /// shape/arg error, or a compute error.
     pub fn compute(&self, velocities: &[f64], n_frames: i64, n_dof: i64) -> Vec<f64> {
-        use molrs::compute::{Compute, VACF};
+        use molrs::compute::{Compute, Vacf};
         if n_frames < 2 || n_dof < 1 || self.dt <= 0.0 || self.dt.is_nan() || self.resolution < 1 {
             return Vec::new();
         }
@@ -202,7 +194,7 @@ impl VacfCompute {
             Err(_) => return Vec::new(),
         };
         let frames: &[&Frame] = &[]; // VACF ignores the frame slice; velocities are in args
-        match VACF.compute(frames, (&vel, self.dt, self.resolution as usize)) {
+        match Vacf.compute(frames, (&vel, self.dt, self.resolution as usize)) {
             Ok(r) => r.acf.to_vec(),
             Err(_) => Vec::new(),
         }
@@ -217,7 +209,7 @@ pub struct RdfCompute {
 }
 
 /// Construct an RDF compute. `n_bins`, `r_max`, `r_min` (Å) — argument order
-/// mirrors molrs `RDF::new(n_bins, r_max, r_min)`.
+/// mirrors molrs `Rdf::new(n_bins, r_max, r_min)`.
 pub(crate) fn rdf_compute_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfCompute> {
     Box::new(RdfCompute {
         n_bins,
@@ -232,7 +224,7 @@ impl RdfCompute {
     ///
     /// Per frame: rebuild a transient `Frame` (x/y/z + `SimBox` from the 9 cell
     /// values, periodic) and a `LinkCell` self-neighbor list (cutoff `r_max`),
-    /// then `compute::RDF` batch-accumulates pair distances into `n_bins` bins
+    /// then `compute::Rdf` batch-accumulates pair distances into `n_bins` bins
     /// over `[r_min, r_max]` (Å), normalized by the ideal-gas shell volume at
     /// each frame's number density. The per-frame `boxes` support NPT. The
     /// caller derives bin-center radii. Returns an empty vector on bad
@@ -244,7 +236,7 @@ impl RdfCompute {
         n_frames: i64,
         n_atoms: i64,
     ) -> Vec<f64> {
-        use molrs::compute::RDF;
+        use molrs::compute::Rdf;
         if n_frames < 1
             || n_atoms < 1
             || self.n_bins < 1
@@ -262,11 +254,11 @@ impl RdfCompute {
         }
         // Stream frame-by-frame through the core accumulator (one transient
         // frame + LinkCell at a time — the batch buffer is never duplicated).
-        let rdf = match RDF::new(self.n_bins as usize, self.r_max, self.r_min) {
+        let rdf = match Rdf::new(self.n_bins as usize, self.r_max, self.r_min) {
             Ok(r) => r,
             Err(_) => return Vec::new(),
         };
-        let mut acc = RDFAccumulatorCore::new(rdf);
+        let mut acc = RdfAccumulatorCore::new(rdf);
         for t in 0..nf {
             let b = t * nd;
             let Some((frame, nlist)) =
@@ -323,22 +315,22 @@ fn frame_and_self_nlist(
     Some((frame, nlist))
 }
 
-/// Streaming g(r) accumulator — wraps molrs `compute::RDFAccumulator`
+/// Streaming g(r) accumulator — wraps molrs `compute::RdfAccumulator`
 /// (O(n_bins) state). Invalid construction parameters leave it inert: every
 /// `accumulate` returns `false` and `finalize` returns empty.
 pub struct RdfAccumulator {
     r_max: f64,
-    inner: Option<RDFAccumulatorCore>,
+    inner: Option<RdfAccumulatorCore>,
 }
 
 /// Construct a streaming RDF accumulator. `n_bins`, `r_max`, `r_min` (Å) —
 /// same argument order as [`rdf_compute_new`].
 pub(crate) fn rdf_accumulator_new(n_bins: i64, r_max: f64, r_min: f64) -> Box<RdfAccumulator> {
-    use molrs::compute::RDF;
+    use molrs::compute::Rdf;
     let inner = if n_bins >= 1 {
-        RDF::new(n_bins as usize, r_max, r_min)
+        Rdf::new(n_bins as usize, r_max, r_min)
             .ok()
-            .map(RDFAccumulatorCore::new)
+            .map(RdfAccumulatorCore::new)
     } else {
         None
     };
@@ -373,17 +365,17 @@ impl RdfAccumulator {
     }
 }
 
-/// Streaming MSD accumulator — wraps molrs `compute::MSDAccumulator`
+/// Streaming MSD accumulator — wraps molrs `compute::MsdAccumulator`
 /// (Direct curve + windowed sums capped at `window` lags).
 pub struct MsdAccumulator {
-    inner: molrs::compute::MSDAccumulator,
+    inner: molrs::compute::MsdAccumulator,
 }
 
 /// Construct a streaming MSD accumulator resolving windowed lags up to
 /// `window` frames (`<= 0` = Direct curve only; `diffusion` then returns NaN).
 pub(crate) fn msd_accumulator_new(window: i64) -> Box<MsdAccumulator> {
     Box::new(MsdAccumulator {
-        inner: molrs::compute::MSDAccumulator::new(window.max(0) as usize),
+        inner: molrs::compute::MsdAccumulator::new(window.max(0) as usize),
     })
 }
 
@@ -404,11 +396,10 @@ impl MsdAccumulator {
         self.inner.direct_curve().to_vec()
     }
 
-    /// Einstein D = LinearFit slope / (2·dims) over the windowed-MSD curve
+    /// Einstein D (molrs `EinsteinDiffusionResult::diffusion_coefficient`) over the windowed-MSD curve
     /// within `[fit_lo, fit_hi]` fractions of the max resolved lag. NaN on bad
     /// args, fewer than two frames, `window = 0`, or a fit error.
     pub fn diffusion(&self, dt: f64, dims: i32, fit_lo: f64, fit_hi: f64) -> f64 {
-        use molrs::compute::{Fit, LinearFit};
         if dt <= 0.0 || dt.is_nan() || dims <= 0 {
             return f64::NAN;
         }
@@ -416,29 +407,26 @@ impl MsdAccumulator {
         if msd.len() < 2 {
             return f64::NAN;
         }
-        let lag_times: Array1<f64> = (0..msd.len()).map(|i| i as f64 * dt).collect();
-        let msd = Array1::from_vec(msd);
-        match (LinearFit {
-            window: (fit_lo, fit_hi),
-        })
-        .fit((&lag_times, &msd))
-        {
-            Ok(fit) => fit.slope / (2.0 * f64::from(dims)),
-            Err(_) => f64::NAN,
-        }
+        let curve = molrs::compute::EinsteinDiffusionResult {
+            lag_times: (0..msd.len()).map(|i| i as f64 * dt).collect(),
+            msd: Array1::from_vec(msd),
+        };
+        curve
+            .diffusion_coefficient(dims as usize, (fit_lo, fit_hi))
+            .unwrap_or(f64::NAN)
     }
 }
 
 /// Streaming DOF-averaged velocity-ACF accumulator — wraps molrs
-/// `compute::VACFAccumulator`. `resolution < 1` leaves it inert.
+/// `compute::VacfAccumulator`. `resolution < 1` leaves it inert.
 pub struct VacfAccumulator {
-    inner: Option<molrs::compute::VACFAccumulator>,
+    inner: Option<molrs::compute::VacfAccumulator>,
 }
 
 /// Construct a streaming VACF accumulator resolving lags `0..=resolution`.
 pub(crate) fn vacf_accumulator_new(resolution: i64) -> Box<VacfAccumulator> {
     let inner = if resolution >= 1 {
-        molrs::compute::VACFAccumulator::new(resolution as usize).ok()
+        molrs::compute::VacfAccumulator::new(resolution as usize).ok()
     } else {
         None
     };

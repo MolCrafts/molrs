@@ -8,7 +8,7 @@
 //!
 //! | Method | Raw output | Downstream fit |
 //! |--------|-----------|----------------|
-//! | [`VACF`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) / [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) (D) |
+//! | [`Vacf`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) / [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) (D) |
 //! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`](crate::compute::LinearFit) (D = slope/2d) |
 //! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`](crate::compute::LinearFit) (σ) |
 //! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) (σ) |
@@ -16,8 +16,8 @@
 //! | [`DipoleRateCross`] | `C_{ṀM}` (FD Ṁ × M) | [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum) |
 //! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`](crate::compute::LinearFit) per pair |
 //!
-//! [`VACFAccumulator`] is the streaming (frame-by-frame, bounded-memory)
-//! counterpart of [`VACF`] for on-the-fly MD analysis. Units follow the MD
+//! [`VacfAccumulator`] is the streaming (frame-by-frame, bounded-memory)
+//! counterpart of [`Vacf`] for on-the-fly MD analysis. Units follow the MD
 //! convention of the caller (time in the `dt` unit, velocities/dipoles as
 //! supplied); the fits document the MD→SI prefactors.
 //!
@@ -38,7 +38,7 @@ mod vacf;
 mod vacf_accumulator;
 
 pub use correlation::{
-    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, lag_times, unbiased_cartesian_acf,
+    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, lag_times,
     unbiased_cartesian_xcorr,
 };
 pub use debye_relaxation::{
@@ -53,6 +53,6 @@ pub use green_kubo_conductivity::{
     GreenKuboConductivity, GreenKuboConductivityArgs, GreenKuboConductivityResult,
 };
 pub use green_kubo_diffusion::GreenKuboDiffusion;
-pub use onsager::{OnsagerCorrelation, OnsagerCorrelationArgs, OnsagerResult};
-pub use vacf::{VACF, VacfArgs, VacfResult};
-pub use vacf_accumulator::VACFAccumulator;
+pub use onsager::{OnsagerCorrelation, OnsagerCorrelationArgs, OnsagerCorrelationResult};
+pub use vacf::{Vacf, VacfArgs, VacfResult};
+pub use vacf_accumulator::VacfAccumulator;

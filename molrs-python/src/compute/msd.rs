@@ -1,9 +1,9 @@
-//! Mean-squared displacement (`molrs::compute::msd`): `MSD`, `MSDResult`,
-//! `MSDTimeSeries`.
+//! Mean-squared displacement (`molrs::compute::msd`): `Msd`, `MsdResult`,
+//! `MsdTimeSeries`.
 
 use super::collect_frames;
 use crate::error::py_value_err;
-use molrs::compute::{Compute, MSD, MSDResult, MSDTimeSeries, MsdMode};
+use molrs::compute::{Compute, Msd, MsdMode, MsdResult, MsdTimeSeries};
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;
@@ -15,13 +15,13 @@ use pyo3::types::PyAny;
 // ---------------------------------------------------------------------------
 
 /// Per-frame MSD result (from a single time point).
-#[pyclass(module = "molrs.compute", name = "MSDResult")]
-pub struct PyMSDResult {
-    inner: MSDResult,
+#[pyclass(module = "molrs.compute", name = "MsdResult")]
+pub struct PyMsdResult {
+    inner: MsdResult,
 }
 
 #[pymethods]
-impl PyMSDResult {
+impl PyMsdResult {
     #[getter]
     fn mean(&self) -> f64 {
         self.inner.mean
@@ -34,7 +34,7 @@ impl PyMSDResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "MSDResult(mean={:.4}, n_particles={})",
+            "MsdResult(mean={:.4}, n_particles={})",
             self.inner.mean,
             self.inner.per_particle.len(),
         )
@@ -45,13 +45,13 @@ impl PyMSDResult {
 ///
 /// `series.data[0]` is the reference frame (mean = 0); `series.data[i]`
 /// compares frame `i` against frame `0`.
-#[pyclass(module = "molrs.compute", name = "MSDTimeSeries")]
-pub struct PyMSDTimeSeries {
-    inner: MSDTimeSeries,
+#[pyclass(module = "molrs.compute", name = "MsdTimeSeries")]
+pub struct PyMsdTimeSeries {
+    inner: MsdTimeSeries,
 }
 
 #[pymethods]
-impl PyMSDTimeSeries {
+impl PyMsdTimeSeries {
     #[getter]
     fn mean<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         let v: Vec<f64> = self.inner.data.iter().map(|r| r.mean).collect();
@@ -71,13 +71,13 @@ impl PyMSDTimeSeries {
         for row in &self.inner.data {
             if row.per_particle.len() != n {
                 return Err(PyValueError::new_err(
-                    "MSD per-particle width not constant across frames",
+                    "Msd per-particle width not constant across frames",
                 ));
             }
             flat.extend(row.per_particle.iter().copied());
         }
         Ok(ndarray::Array2::from_shape_vec((t, n), flat)
-            .expect("MSD shape")
+            .expect("Msd shape")
             .into_pyarray(py))
     }
 
@@ -85,19 +85,19 @@ impl PyMSDTimeSeries {
         self.inner.data.len()
     }
 
-    fn __getitem__(&self, i: isize) -> PyResult<PyMSDResult> {
+    fn __getitem__(&self, i: isize) -> PyResult<PyMsdResult> {
         let n = self.inner.data.len() as isize;
         let idx = if i < 0 { i + n } else { i };
         if idx < 0 || idx >= n {
-            return Err(PyValueError::new_err("MSD index out of range"));
+            return Err(PyValueError::new_err("Msd index out of range"));
         }
-        Ok(PyMSDResult {
+        Ok(PyMsdResult {
             inner: self.inner.data[idx as usize].clone(),
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("MSDTimeSeries(n_frames={})", self.inner.data.len())
+        format!("MsdTimeSeries(n_frames={})", self.inner.data.len())
     }
 }
 
@@ -106,14 +106,14 @@ impl PyMSDTimeSeries {
 /// Two estimators of the same quantity, chosen by ``method``; they are not
 /// interchangeable and there is no default that suits both:
 ///
-/// - ``"direct"`` (default) — ``MSD(t) = ⟨|r(t) − r(0)|²⟩``, frame 0 as the one
+/// - ``"direct"`` (default) — ``Msd(t) = ⟨|r(t) − r(0)|²⟩``, frame 0 as the one
 ///   time origin.
-/// - ``"window"`` — ``MSD(t) = ⟨|r(τ+t) − r(τ)|²⟩`` averaged over **every** time
+/// - ``"window"`` — ``Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩`` averaged over **every** time
 ///   origin τ. Far better statistics at long lag, which is what a diffusion
 ///   coefficient needs, and O(T log T) via the Wiener–Khinchin identity rather
 ///   than the O(T²) nested loop. Conventions match ``freud.msd``.
 ///
-/// ``compute(frames)`` returns an ``MSDTimeSeries`` as long as ``frames``
+/// ``compute(frames)`` returns an ``MsdTimeSeries`` as long as ``frames``
 /// either way.
 ///
 /// Parameters
@@ -123,13 +123,13 @@ impl PyMSDTimeSeries {
 /// Examples
 /// --------
 /// >>> molrs.compute.MSD(method="window").compute(frames).mean
-#[pyclass(module = "molrs.compute", name = "MSD")]
-pub struct PyMSD {
-    inner: MSD,
+#[pyclass(module = "molrs.compute", name = "Msd")]
+pub struct PyMsd {
+    inner: Msd,
 }
 
 #[pymethods]
-impl PyMSD {
+impl PyMsd {
     #[new]
     #[pyo3(signature = (method = "direct"))]
     fn new(method: &str) -> PyResult<Self> {
@@ -143,7 +143,7 @@ impl PyMSD {
             }
         };
         Ok(Self {
-            inner: MSD::with_mode(mode),
+            inner: Msd::with_mode(mode),
         })
     }
 
@@ -157,25 +157,25 @@ impl PyMSD {
     }
 
     /// Compute the MSD time series.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyMSDTimeSeries> {
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyMsdTimeSeries> {
         let owned = collect_frames(frames)?;
         if owned.is_empty() {
-            return Err(PyValueError::new_err("MSD.compute requires >= 1 frame"));
+            return Err(PyValueError::new_err("Msd.compute requires >= 1 frame"));
         }
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let series = self.inner.compute(&refs, ()).map_err(py_value_err)?;
-        Ok(PyMSDTimeSeries { inner: series })
+        Ok(PyMsdTimeSeries { inner: series })
     }
 
     fn __repr__(&self) -> String {
-        format!("MSD(method={:?})", self.method())
+        format!("Msd(method={:?})", self.method())
     }
 }
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMSDResult>()?;
-    m.add_class::<PyMSDTimeSeries>()?;
-    m.add_class::<PyMSD>()?;
+    m.add_class::<PyMsdResult>()?;
+    m.add_class::<PyMsdTimeSeries>()?;
+    m.add_class::<PyMsd>()?;
     Ok(())
 }

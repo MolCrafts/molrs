@@ -18,7 +18,7 @@ use super::occupancy::{OccupancyGrid, OccupancyMode};
 use crate::core::BoxError;
 use crate::core::SimBox;
 use crate::core::Trace;
-use crate::op::types::{F, Pbc3};
+use crate::op::{F, Pbc3};
 
 /// How many attempts a strategy gets to seed the first monomer of a chain
 /// before reporting a dead-end for that placement.
@@ -309,7 +309,7 @@ impl<S: GrowthStrategy> SelfAvoidingWalk<S> {
 mod tests {
     use super::*;
     use crate::builder::{FccLattice, OffLattice};
-    use crate::op::types::Vec3;
+    use crate::op::Vec3;
 
     const B: F = 1.53;
 

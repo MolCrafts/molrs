@@ -4,7 +4,7 @@
 use super::{array1, js_value};
 use crate::core::types::JsFloatArray;
 use molrs::compute::Fit;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 

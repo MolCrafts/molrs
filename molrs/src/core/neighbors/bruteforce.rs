@@ -12,7 +12,7 @@
 
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
-use crate::op::types::{F, FNx3, FNx3View};
+use crate::op::{F, FNx3, FNx3View};
 
 /// Brute-force O(N^2) neighbor search — the reference
 /// [`NeighborList`](crate::core::NeighborList) backend.

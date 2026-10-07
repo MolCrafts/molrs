@@ -18,7 +18,7 @@
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array2;
 
 use crate::compute::Compute;
@@ -181,7 +181,7 @@ impl ComputeResult for BondOrientationalOrderResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;

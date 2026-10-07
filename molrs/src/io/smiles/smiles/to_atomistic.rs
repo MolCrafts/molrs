@@ -31,7 +31,7 @@ use molrs::core::keys;
 ///
 /// This resolves ring closures into bonds, sets atom properties (charge,
 /// isotope, chirality), and records bond orders. Implicit hydrogens are
-/// **not** added — call [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens)
+/// **not** added — call [`add_hydrogens`](crate::perceive::add_hydrogens)
 /// separately if needed.
 ///
 /// # Aromaticity
@@ -51,7 +51,7 @@ use molrs::core::keys;
 /// A bracket atom states its hydrogen count exactly, so every bracket atom
 /// gets an `h_count` component — `0` when the notation omits it. Organic-subset
 /// atoms get none and are left to valence-based
-/// [`Perceive::find_hydrogens`](crate::perceive::Perceive::find_hydrogens).
+/// [`add_hydrogens`](crate::perceive::add_hydrogens).
 ///
 /// # Errors
 ///
@@ -442,7 +442,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Record the notation's aromatic declaration on `id`, using the same
-    /// `is_aromatic` marker that [`crate::perceive::aromaticity`] writes.
+    /// `is_aromatic` marker that [`crate::perceive::assign_aromaticity`] writes.
     ///
     /// # Errors
     ///

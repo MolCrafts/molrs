@@ -35,7 +35,7 @@ use wasm_bindgen::prelude::*;
 
 use molrs::core::Block as RsBlock;
 use molrs::core::MetaValue;
-use molrs::op::types::F;
+use molrs::op::F;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;

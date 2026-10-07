@@ -4,12 +4,13 @@
 //! Registered as a submodule of `_lib`, like `md`. Points cross as `(k, 3)`
 //! arrays and rotations as `(3, 3)` row-major matrices. A
 //! wrong shape is a `ValueError` naming the argument; a
-//! [`SuperposeError`](molrs::op::superpose::SuperposeError) is a `ValueError`
+//! [`SuperpositionError`](molrs::op::SuperpositionError) is a `ValueError`
 //! carrying the Rust message.
 
-use molrs::op::rigid::Rigid;
-use molrs::op::superpose::{self, DEFAULT_GAP_TOL, Fit, Freedom};
-use molrs::op::types::{Mat3, Vec3};
+use molrs::op;
+use molrs::op::Rigid;
+use molrs::op::{DEFAULT_GAP_TOL, Freedom, Superposition};
+use molrs::op::{Mat3, Vec3};
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArrayDyn};
 use pyo3::exceptions::PyValueError;
@@ -104,7 +105,7 @@ fn weights_or_uniform(
 }
 
 // ---------------------------------------------------------------------------
-// Fit
+// Superposition
 // ---------------------------------------------------------------------------
 
 /// The best-fit proper rigid motion ``target ≈ rotation @ reference + translation``
@@ -129,19 +130,24 @@ fn weights_or_uniform(
 ///     ``"free"`` (no rotation determined; ``rotation`` is the identity).
 /// axis : ndarray, shape (3,), float64, or None
 ///     The unit spin axis; ``None`` unless ``freedom == "spin"``.
-#[pyclass(module = "molrs.op", name = "Fit", frozen, skip_from_py_object)]
-pub struct PyFit {
-    pub(crate) inner: Fit,
+#[pyclass(
+    module = "molrs.op",
+    name = "Superposition",
+    frozen,
+    skip_from_py_object
+)]
+pub struct PySuperposition {
+    pub(crate) inner: Superposition,
 }
 
-impl PyFit {
-    pub(crate) fn from_core(inner: Fit) -> Self {
+impl PySuperposition {
+    pub(crate) fn from_core(inner: Superposition) -> Self {
         Self { inner }
     }
 }
 
 #[pymethods]
-impl PyFit {
+impl PySuperposition {
     #[getter]
     fn rotation<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         matrix_to_py(py, &self.inner.rigid.rotation)
@@ -186,7 +192,7 @@ impl PyFit {
 
     fn __repr__(&self) -> String {
         format!(
-            "Fit(freedom='{}', rmsd={}, rho={})",
+            "Superposition(freedom='{}', rmsd={}, rho={})",
             self.freedom(),
             self.inner.rmsd,
             self.inner.rho
@@ -211,7 +217,7 @@ impl PyFit {
 ///
 /// Returns
 /// -------
-/// Fit
+/// Superposition
 ///
 /// Raises
 /// ------
@@ -225,12 +231,12 @@ fn py_superpose(
     target: PyReadonlyArrayDyn<'_, f64>,
     weights: Option<PyReadonlyArrayDyn<'_, f64>>,
     gap_tol: f64,
-) -> PyResult<PyFit> {
+) -> PyResult<PySuperposition> {
     let reference = points_from_array(&reference, "reference")?;
     let target = points_from_array(&target, "target")?;
     let weights = weights_or_uniform(weights, reference.len())?;
-    superpose::superpose(&reference, &target, &weights, gap_tol)
-        .map(PyFit::from_core)
+    op::superpose(&reference, &target, &weights, gap_tol)
+        .map(PySuperposition::from_core)
         .map_err(py_value_err)
 }
 
@@ -262,12 +268,12 @@ fn py_centroid<'py>(
 ) -> PyResult<Option<Bound<'py, PyArray1<f64>>>> {
     let points = points_from_array(&points, "points")?;
     let weights = weights_or_uniform(weights, points.len())?;
-    Ok(superpose::centroid(&points, &weights).map(|c| vector_to_py(py, &c)))
+    Ok(op::centroid(&points, &weights).map(|c| vector_to_py(py, &c)))
 }
 
 /// Populate the `molrs.op` submodule.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyFit>()?;
+    m.add_class::<PySuperposition>()?;
     m.add("DEFAULT_GAP_TOL", DEFAULT_GAP_TOL)?;
     m.add_function(wrap_pyfunction!(py_superpose, m)?)?;
     m.add_function(wrap_pyfunction!(py_centroid, m)?)?;

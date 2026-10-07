@@ -24,7 +24,7 @@ use crate::ff::potential::geometry::{
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 
@@ -232,7 +232,7 @@ pub fn mmff_angle_ctor(
 fn linear_column<'a>(
     block: &'a molrs::core::Block,
     style: &str,
-) -> Result<&'a ndarray::ArrayD<molrs::op::types::I>, crate::ff::ir::IrError> {
+) -> Result<&'a ndarray::ArrayD<molrs::op::I>, crate::ff::ir::IrError> {
     block
         .get("linear")
         .and_then(|c| c.as_int())

@@ -54,7 +54,7 @@ use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 const MIN_R2: F = 1e-24;
 

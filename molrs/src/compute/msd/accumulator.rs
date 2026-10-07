@@ -1,9 +1,9 @@
 //! Streaming (frame-by-frame) MSD accumulation with bounded memory.
 //!
-//! [`MSDAccumulator`] is the streaming counterpart of the batch [`MSD`](super::MSD)
+//! [`MsdAccumulator`] is the streaming counterpart of the batch [`Msd`](super::Msd)
 //! compute. Feed one frame of flat positions at a time; it maintains
 //!
-//! - the **Direct-mode** curve `MSD(t) = ⟨|r(t) − r(0)|²⟩_i` (frame 0 =
+//! - the **Direct-mode** curve `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` (frame 0 =
 //!   reference, one scalar per frame — exactly [`MsdMode::Direct`](super::MsdMode)),
 //! - **windowed** per-lag sums `Σ_{i,τ} |r_i(τ+k) − r_i(τ)|²` for lags
 //!   `k ≤ window`, over a ring buffer of the last `window` frames — the same
@@ -11,13 +11,13 @@
 //!
 //! Memory is O(`window · n_dof`) for the ring plus O(n_frames) scalars for the
 //! direct curve — never O(trajectory · n_dof). The windowed curve equals the
-//! batch `MSD` `Window`-mode means for every lag `k ≤ window` (the batch path
+//! batch `Msd` `Window`-mode means for every lag `k ≤ window` (the batch path
 //! computes all lags up to `n_frames − 1`; a streaming estimator must cap the
 //! lag to bound the ring).
 
 use std::collections::VecDeque;
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
 
@@ -26,7 +26,7 @@ use crate::compute::ComputeError;
 /// Positions are fed as one flat slice per frame, blocked `x[0..n) y[..) z[..)`
 /// (`n_dof = 3 · n_atoms`) — the raw-buffer convention of the FFI computes.
 #[derive(Debug, Clone)]
-pub struct MSDAccumulator {
+pub struct MsdAccumulator {
     window: usize,
     n_dof: usize, // latched on the first frame; 0 = not yet latched
     reference: Vec<F>,
@@ -36,7 +36,7 @@ pub struct MSDAccumulator {
     n_frames: usize,
 }
 
-impl MSDAccumulator {
+impl MsdAccumulator {
     /// New accumulator keeping windowed-MSD sums up to lag `window` (frames).
     ///
     /// `window = 0` disables the windowed estimator (Direct curve only,
@@ -83,7 +83,7 @@ impl MSDAccumulator {
             return Err(ComputeError::DimensionMismatch {
                 expected: self.n_dof,
                 got: positions.len(),
-                what: "MSD DOF count",
+                what: "Msd DOF count",
             });
         }
 
@@ -109,14 +109,14 @@ impl MSDAccumulator {
         Ok(())
     }
 
-    /// Direct-mode curve `MSD(t)` (one value per accumulated frame, index 0 = 0).
+    /// Direct-mode curve `Msd(t)` (one value per accumulated frame, index 0 = 0).
     pub fn direct_curve(&self) -> &[F] {
         &self.direct
     }
 
     /// Windowed MSD per lag, `k in [0, min(window, n_frames − 1)]`:
-    /// `MSD(k) = Σ_{i,τ} |r_i(τ+k) − r_i(τ)|² / ((n_frames − k) · n_atoms)` —
-    /// the `MSD` `Window`-mode estimator truncated at `window`. Empty before the
+    /// `Msd(k) = Σ_{i,τ} |r_i(τ+k) − r_i(τ)|² / ((n_frames − k) · n_atoms)` —
+    /// the `Msd` `Window`-mode estimator truncated at `window`. Empty before the
     /// second frame.
     pub fn windowed_msd(&self) -> Vec<F> {
         if self.n_frames < 2 || self.n_dof == 0 {
@@ -147,7 +147,7 @@ fn sum_sq_disp(a: &[F], b: &[F], n_atoms: usize) -> F {
 
 #[cfg(test)]
 mod tests {
-    use super::super::MSD;
+    use super::super::Msd;
     use super::*;
     use crate::compute::Compute;
     use crate::compute::MsdMode;
@@ -206,9 +206,9 @@ mod tests {
         let flat = walk(t, n, 42);
         let frames = to_molrs_frames(&flat, n);
         let refs: Vec<&Frame> = frames.iter().collect();
-        let batch = MSD::new().compute(&refs, ()).unwrap();
+        let batch = Msd::new().compute(&refs, ()).unwrap();
 
-        let mut acc = MSDAccumulator::new(0);
+        let mut acc = MsdAccumulator::new(0);
         for f in &flat {
             acc.accumulate(f).unwrap();
         }
@@ -227,9 +227,9 @@ mod tests {
         let flat = walk(t, n, 7);
         let frames = to_molrs_frames(&flat, n);
         let refs: Vec<&Frame> = frames.iter().collect();
-        let batch = MSD::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
+        let batch = Msd::with_mode(MsdMode::Window).compute(&refs, ()).unwrap();
 
-        let mut acc = MSDAccumulator::new(w);
+        let mut acc = MsdAccumulator::new(w);
         for f in &flat {
             acc.accumulate(f).unwrap();
         }
@@ -248,7 +248,7 @@ mod tests {
     fn window_shorter_than_trajectory_bounds_ring() {
         let (t, n, w) = (50, 3, 4);
         let flat = walk(t, n, 3);
-        let mut acc = MSDAccumulator::new(w);
+        let mut acc = MsdAccumulator::new(w);
         for f in &flat {
             acc.accumulate(f).unwrap();
         }
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn dof_mismatch_is_error() {
-        let mut acc = MSDAccumulator::new(2);
+        let mut acc = MsdAccumulator::new(2);
         acc.accumulate(&[0.0; 6]).unwrap();
         assert!(matches!(
             acc.accumulate(&[0.0; 9]).unwrap_err(),

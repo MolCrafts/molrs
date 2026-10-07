@@ -1788,7 +1788,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         use crate::ff::potential::PotentialCompiler;
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let text = "special_bonds amber\n\

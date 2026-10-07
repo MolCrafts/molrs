@@ -659,7 +659,7 @@ async fn pump<S>(
 mod tests {
     use super::*;
     use crate::core::Block;
-    use crate::op::types::{F, I};
+    use crate::op::{F, I};
     use crate::stream::bytes_to_frame;
     use futures_util::{SinkExt, StreamExt};
     use ndarray::Array1;

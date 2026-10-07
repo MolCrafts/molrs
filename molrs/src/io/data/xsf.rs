@@ -22,7 +22,7 @@ use molrs::core::Block;
 use molrs::core::Element;
 use molrs::core::Frame;
 use molrs::core::SimBox;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 
 // ---------------------------------------------------------------------------
 // Error helpers

@@ -2,7 +2,7 @@
 //! dielectric family.
 
 use super::{array2, js_value};
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 

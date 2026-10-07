@@ -5,18 +5,18 @@ use super::{SeriesOut, array1, array2, js_value};
 use crate::core::frame::Frame;
 use molrs::compute::Compute;
 use molrs::compute::Fit;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = VACF)]
-pub struct VACF {
+#[wasm_bindgen(js_name = Vacf)]
+pub struct Vacf {
     dt: F,
     resolution: usize,
 }
 
-#[wasm_bindgen(js_class = VACF)]
-impl VACF {
+#[wasm_bindgen(js_class = Vacf)]
+impl Vacf {
     #[wasm_bindgen(constructor)]
     pub fn new(dt: F, resolution: usize) -> Self {
         Self { dt, resolution }
@@ -30,12 +30,12 @@ impl VACF {
     ) -> Result<JsValue, JsValue> {
         let dt = self.dt;
         let resolution = self.resolution;
-        let v = array2(velocities, n_frames, n_dof, "VACF velocities")?;
+        let v = array2(velocities, n_frames, n_dof, "Vacf velocities")?;
         let frames: [&molrs::core::Frame; 0] = [];
-        let calc = molrs::compute::VACF;
+        let calc = molrs::compute::Vacf;
         let r = calc
             .compute(&frames, (&v, dt, resolution))
-            .map_err(|e| JsValue::from_str(&format!("VACF: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("Vacf: {e}")))?;
         js_value(&SeriesOut {
             lag_times: r.lag_times.to_vec(),
             values: r.acf.to_vec(),

@@ -55,13 +55,13 @@
 //!
 //! # Errors
 //!
-//! [`SuperposeError`], a local enum: mismatched lengths, a negative or
+//! [`SuperpositionError`], a local enum: mismatched lengths, a negative or
 //! non-finite weight, a non-finite coordinate, or no positive weight.
 
-use crate::op::linalg::{eigh_sym_3x3, eigh_sym_4x4};
-use crate::op::rigid::{Rigid, apply, quat_conj, quat_mul, quat_to_matrix};
-use crate::op::types::{F, Mat3, Vec3};
 use crate::op::vec3::{dot, norm, sub};
+use crate::op::{F, Mat3, Vec3};
+use crate::op::{Rigid, quat_conj, quat_mul, quat_to_matrix, transform_point};
+use crate::op::{eigh_sym_3x3, eigh_sym_4x4};
 
 /// Default threshold on the scale-free eigen-gap `ρ = (λ₁ − λ₂)/(2σ₁)` below
 /// which [`superpose`] reports the rotation as under-determined.
@@ -77,15 +77,15 @@ pub const DEFAULT_GAP_TOL: F = 1e-4;
 /// `σ₁` at or below this fraction of `√(Σw|p|²·Σw|x|²)` counts as zero.
 const FREE_REL_TOL: F = 1e-15;
 
-/// How far the data determine the rotation of a [`Fit`].
+/// How far the data determine the rotation of a [`Superposition`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Freedom {
     /// The optimal rotation is unique (`ρ ≥ gap_tol`).
     Unique,
-    /// Every rotation `Rot(axis, α)·R` about `axis` through [`Fit::center`] is
+    /// Every rotation `Rot(axis, α)·R` about `axis` through [`Superposition::center`] is
     /// (near-)optimal; `axis` is a unit vector.
     Spin {
-        /// Unit spin axis `R₁v`, through [`Fit::center`].
+        /// Unit spin axis `R₁v`, through [`Superposition::center`].
         axis: Vec3,
     },
     /// No rotation is determined (`σ₁ = 0`); the fit is a translation and
@@ -95,7 +95,7 @@ pub enum Freedom {
 
 /// The result of [`superpose`]: the motion mapping reference onto target.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Fit {
+pub struct Superposition {
     /// Best-fit proper motion, `yᵢ ≈ R rᵢ + t`.
     pub rigid: Rigid,
     /// Weighted root-mean-square deviation
@@ -114,7 +114,7 @@ pub struct Fit {
 
 /// Why [`superpose`] refused its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SuperposeError {
+pub enum SuperpositionError {
     /// `reference`, `target` and `weights` do not have matching lengths.
     LengthMismatch {
         /// Number of reference points.
@@ -138,7 +138,7 @@ pub enum SuperposeError {
     },
 }
 
-impl std::fmt::Display for SuperposeError {
+impl std::fmt::Display for SuperpositionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LengthMismatch {
@@ -160,7 +160,7 @@ impl std::fmt::Display for SuperposeError {
     }
 }
 
-impl std::error::Error for SuperposeError {}
+impl std::error::Error for SuperpositionError {}
 
 /// Weighted centroid `Σ wᵢ pᵢ / Σ wᵢ` (with masses as weights, the centre of
 /// mass), in the length unit of `points`.
@@ -192,19 +192,19 @@ pub fn centroid(points: &[Vec3], weights: &[F]) -> Option<Vec3> {
 ///
 /// # Errors
 ///
-/// - [`SuperposeError::LengthMismatch`] if the three lengths differ.
-/// - [`SuperposeError::BadWeight`] for a negative or non-finite weight.
-/// - [`SuperposeError::NonFinite`] for a non-finite coordinate of a weighted
+/// - [`SuperpositionError::LengthMismatch`] if the three lengths differ.
+/// - [`SuperpositionError::BadWeight`] for a negative or non-finite weight.
+/// - [`SuperpositionError::NonFinite`] for a non-finite coordinate of a weighted
 ///   point, in either set.
-/// - [`SuperposeError::NoPoints`] if no weight is positive.
+/// - [`SuperpositionError::NoPoints`] if no weight is positive.
 pub fn superpose(
     reference: &[Vec3],
     target: &[Vec3],
     weights: &[F],
     gap_tol: F,
-) -> Result<Fit, SuperposeError> {
+) -> Result<Superposition, SuperpositionError> {
     if reference.len() != target.len() || reference.len() != weights.len() {
-        return Err(SuperposeError::LengthMismatch {
+        return Err(SuperpositionError::LengthMismatch {
             reference: reference.len(),
             target: target.len(),
             weights: weights.len(),
@@ -216,25 +216,25 @@ pub fn superpose(
     let mut w_kept = Vec::with_capacity(reference.len());
     for (index, ((r, y), &w)) in reference.iter().zip(target).zip(weights).enumerate() {
         if !(w.is_finite() && w >= 0.0) {
-            return Err(SuperposeError::BadWeight { index });
+            return Err(SuperpositionError::BadWeight { index });
         }
         if w == 0.0 {
             continue;
         }
         if !(r.iter().chain(y).all(|x| x.is_finite())) {
-            return Err(SuperposeError::NonFinite { index });
+            return Err(SuperpositionError::NonFinite { index });
         }
         r_kept.push(*r);
         y_kept.push(*y);
         w_kept.push(w);
     }
     if w_kept.is_empty() {
-        return Err(SuperposeError::NoPoints);
+        return Err(SuperpositionError::NoPoints);
     }
 
     // A positive finite total is guaranteed unless the sum overflows.
-    let c_r = centroid(&r_kept, &w_kept).ok_or(SuperposeError::NoPoints)?;
-    let c_y = centroid(&y_kept, &w_kept).ok_or(SuperposeError::NoPoints)?;
+    let c_r = centroid(&r_kept, &w_kept).ok_or(SuperpositionError::NoPoints)?;
+    let c_y = centroid(&y_kept, &w_kept).ok_or(SuperpositionError::NoPoints)?;
     let total: F = w_kept.iter().sum();
 
     let p: Vec<Vec3> = r_kept.iter().map(|&r| sub(r, c_r)).collect();
@@ -279,7 +279,7 @@ pub fn superpose(
             let v = [d[1], d[2], d[3]];
             let n = norm(v);
             let v = [v[0] / n, v[1] / n, v[2] / n];
-            let axis = apply(
+            let axis = transform_point(
                 &Rigid {
                     rotation,
                     translation: [0.0; 3],
@@ -297,12 +297,12 @@ pub fn superpose(
     };
     let mut residual: F = 0.0;
     for ((pi, xi), &w) in p.iter().zip(&x).zip(&w_kept) {
-        let e = sub(apply(&linear, *pi), *xi);
+        let e = sub(transform_point(&linear, *pi), *xi);
         residual += w * dot(e, e);
     }
-    let rc = apply(&linear, c_r);
+    let rc = transform_point(&linear, c_r);
 
-    Ok(Fit {
+    Ok(Superposition {
         rigid: Rigid {
             rotation,
             translation: sub(c_y, rc),
@@ -330,9 +330,9 @@ fn horn_matrix(s: &Mat3) -> [[F; 4]; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::linalg::{det3, eigh_sym_4x4};
-    use crate::op::rigid::{Rigid, apply, apply_all};
-    use crate::op::types::{F, Mat3, Vec3};
+    use crate::op::{F, Mat3, Vec3};
+    use crate::op::{Rigid, transform_point, transform_points};
+    use crate::op::{det3, eigh_sym_4x4};
 
     const TOL: F = 1e-12;
 
@@ -415,7 +415,7 @@ mod tests {
             Freedom::Spin { axis } => assert_close(axis[1].abs(), 1.0, TOL, "|axis·ŷ|"),
             other => panic!("expected Spin, got {other:?}"),
         }
-        let mapped = apply_all(&fit.rigid, &reference);
+        let mapped = transform_points(&fit.rigid, &reference);
         for (i, (m, y)) in mapped.iter().zip(target.iter()).enumerate() {
             assert_vec_close(*m, *y, TOL, &format!("mapped point {i}"));
         }
@@ -550,7 +550,7 @@ mod tests {
         assert_close(fit.rmsd, 1.1547005383792515, TOL, "rmsd");
         assert_close(fit.rho, 0.0, TOL, "rho");
         assert_vec_close(
-            apply(
+            transform_point(
                 &Rigid {
                     rotation: fit.rigid.rotation,
                     translation: [0.0; 3],
@@ -604,7 +604,7 @@ mod tests {
         let target: Vec<Vec3> = reference
             .iter()
             .map(|p| {
-                let rp = apply(
+                let rp = transform_point(
                     &Rigid {
                         rotation: r_true,
                         translation: [0.0; 3],
@@ -631,7 +631,7 @@ mod tests {
             Freedom::Spin { axis } => assert_close(axis[0].abs(), 1.0, TOL, "|axis·x̂|"),
             other => panic!("expected Spin, got {other:?}"),
         }
-        let mapped = apply_all(&fit.rigid, &line);
+        let mapped = transform_points(&fit.rigid, &line);
         for (i, (m, y)) in mapped.iter().zip(line.iter()).enumerate() {
             assert_vec_close(*m, *y, TOL, &format!("mapped point {i}"));
         }
@@ -672,7 +672,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            SuperposeError::LengthMismatch {
+            SuperpositionError::LengthMismatch {
                 reference: 2,
                 target: 3,
                 weights: 2
@@ -691,7 +691,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            SuperposeError::LengthMismatch {
+            SuperpositionError::LengthMismatch {
                 reference: 2,
                 target: 2,
                 weights: 1
@@ -703,34 +703,34 @@ mod tests {
     fn negative_weight_is_refused() {
         let pts = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let err = superpose(&pts, &pts, &[1.0, -1.0, 1.0], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::BadWeight { index: 1 });
+        assert_eq!(err, SuperpositionError::BadWeight { index: 1 });
     }
 
     #[test]
     fn nan_weight_is_refused() {
         let pts = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let err = superpose(&pts, &pts, &[F::NAN, 1.0, 1.0], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::BadWeight { index: 0 });
+        assert_eq!(err, SuperpositionError::BadWeight { index: 0 });
     }
 
     #[test]
     fn infinite_weight_is_refused() {
         let pts = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let err = superpose(&pts, &pts, &[1.0, 1.0, F::INFINITY], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::BadWeight { index: 2 });
+        assert_eq!(err, SuperpositionError::BadWeight { index: 2 });
     }
 
     #[test]
     fn all_zero_weights_are_refused() {
         let pts = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let err = superpose(&pts, &pts, &[0.0; 3], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::NoPoints);
+        assert_eq!(err, SuperpositionError::NoPoints);
     }
 
     #[test]
     fn empty_input_is_refused() {
         let err = superpose(&[], &[], &[], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::NoPoints);
+        assert_eq!(err, SuperpositionError::NoPoints);
     }
 
     #[test]
@@ -739,7 +739,7 @@ mod tests {
         let mut bad = good;
         bad[1][0] = F::NAN;
         let err = superpose(&bad, &good, &[1.0; 3], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::NonFinite { index: 1 });
+        assert_eq!(err, SuperpositionError::NonFinite { index: 1 });
     }
 
     #[test]
@@ -748,7 +748,7 @@ mod tests {
         let mut bad = good;
         bad[2][1] = F::INFINITY;
         let err = superpose(&good, &bad, &[1.0; 3], DEFAULT_GAP_TOL).unwrap_err();
-        assert_eq!(err, SuperposeError::NonFinite { index: 2 });
+        assert_eq!(err, SuperpositionError::NonFinite { index: 2 });
     }
 
     #[test]

@@ -9,8 +9,8 @@ use crate::core::constants::UFF_COULOMB;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, LAMBDA, params_for_label};
 use crate::ff::typifier::{Annotation, Match, Typifier};
-use crate::perceive::rings::find_rings;
-use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
+use crate::perceive::perceive_rings;
+use crate::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
 
 /// Universal Force Field typifier (Rappé 1992, RDKit-aligned).
 ///
@@ -196,7 +196,7 @@ impl Typifier for UFFTypifier {
                 .unwrap_or(1.0)
         };
 
-        let rings = find_rings(graph);
+        let rings = perceive_rings(graph);
         let mut aromatic_atom = vec![false; n];
         for ring in rings.rings() {
             if ring.len() == 5 || ring.len() == 6 {
@@ -240,8 +240,8 @@ impl Typifier for UFFTypifier {
         let mut params: Vec<&'static AtomicParams> = Vec::with_capacity(n);
         // RDKit's hybridization and conjugation (`perceive`): what its
         // `getAtomLabel`, angle coordination codes and torsion rules read.
-        let hyb = hybridizations(graph);
-        let conjugated = conjugated_atoms(graph);
+        let hyb = perceive_hybridizations(graph);
+        let conjugated = perceive_conjugated_atoms(graph);
         let mut z: Vec<u8> = Vec::with_capacity(n);
         let mut m = Match::default();
         let mut lj_used: HashSet<String> = HashSet::new();
@@ -513,7 +513,7 @@ fn element_of(mol: &Atomistic, id: NodeId) -> Element {
 /// The UFF atom label of an atom: RDKit `Tools::getAtomLabel` +
 /// `addAtomChargeFlags` (the full default UFF set).
 ///
-/// `hyb` is RDKit's hybridization ([`hybridizations`]); `resonant` is whether
+/// `hyb` is RDKit's hybridization ([`perceive_hybridizations`]); `resonant` is whether
 /// the atom is aromatic or carries a conjugated bond, which turns an sp²
 /// C / N / O / S into its `_R` type. Shared with the ETKDG bounds builder,
 /// whose 1-2 bounds are UFF rest lengths.

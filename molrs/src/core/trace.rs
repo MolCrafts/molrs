@@ -5,7 +5,7 @@
 //! `builder::SelfAvoidingWalk` generates one trace per chain; the generator is
 //! not the trace.
 
-use crate::op::types::Vec3;
+use crate::op::Vec3;
 
 /// An ordered path of 3D points.
 #[derive(Debug, Clone, PartialEq)]

@@ -4,7 +4,7 @@
 use super::{SeriesOut, array2, js_value};
 use crate::core::frame::Frame;
 use molrs::compute::Compute;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array3;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -96,8 +96,8 @@ impl VanHove {
     }
 }
 
-#[wasm_bindgen(js_name = PairPersistence)]
-pub struct PairPersistence {
+#[wasm_bindgen(js_name = PairSurvival)]
+pub struct PairSurvival {
     r0: F,
     r1: F,
     method: String,
@@ -106,8 +106,8 @@ pub struct PairPersistence {
     exclude_self: bool,
 }
 
-#[wasm_bindgen(js_class = PairPersistence)]
-impl PairPersistence {
+#[wasm_bindgen(js_class = PairSurvival)]
+impl PairSurvival {
     #[wasm_bindgen(constructor)]
     pub fn new(r0: F, r1: F, method: String, dt: F, max_lag: usize, exclude_self: bool) -> Self {
         Self {
@@ -135,11 +135,11 @@ impl PairPersistence {
         let dt = self.dt;
         let max_lag = self.max_lag;
         let exclude_self = self.exclude_self;
-        let ci = array3(coords_i, n_frames, n_i, 3, "PairPersistence coords_i")?;
-        let cj = array3(coords_j, n_frames, n_j, 3, "PairPersistence coords_j")?;
-        let bl = array2(box_lengths, n_frames, 3, "PairPersistence box_lengths")?;
+        let ci = array3(coords_i, n_frames, n_i, 3, "PairSurvival coords_i")?;
+        let cj = array3(coords_j, n_frames, n_j, 3, "PairSurvival coords_j")?;
+        let bl = array2(box_lengths, n_frames, 3, "PairSurvival box_lengths")?;
         let method = molrs::compute::SurvivalMethod::parse(&method)
-            .map_err(|e| JsValue::from_str(&format!("PairPersistence method: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("PairSurvival method: {e}")))?;
         let r = molrs::compute::pair_survival_tcf(
             &ci,
             &cj,
@@ -151,7 +151,7 @@ impl PairPersistence {
             max_lag,
             exclude_self,
         )
-        .map_err(|e| JsValue::from_str(&format!("PairPersistence: {e}")))?;
+        .map_err(|e| JsValue::from_str(&format!("PairSurvival: {e}")))?;
         js_value(&SeriesOut {
             lag_times: r.lag_times.to_vec(),
             values: r.correlation.to_vec(),

@@ -38,7 +38,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Thole-screened Coulomb pair potential with pre-resolved flat arrays.
 ///

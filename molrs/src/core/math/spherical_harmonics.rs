@@ -17,7 +17,7 @@
 use libm::lgamma;
 
 use crate::core::Complex;
-use crate::op::types::F;
+use crate::op::F;
 
 const FOUR_PI: F = 4.0 * std::f64::consts::PI;
 

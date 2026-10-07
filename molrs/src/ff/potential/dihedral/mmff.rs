@@ -10,7 +10,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 pub struct MMFFTorsion {
     atom_i: Vec<usize>,

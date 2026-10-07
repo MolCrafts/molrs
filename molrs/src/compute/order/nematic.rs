@@ -26,10 +26,10 @@
 //! vs bond directions), so the caller passes them in directly.
 
 use crate::compute::ComputeResult;
-use crate::op::linalg::eigh_sym_3x3;
+use crate::op::eigh_sym_3x3;
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;

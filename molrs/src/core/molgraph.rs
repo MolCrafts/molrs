@@ -44,7 +44,7 @@
 //! assert_eq!(g.n_nodes(), 2);
 //! assert_eq!(g.n_relations(bond), 1);
 //!
-//! molrs::op::geometry::translate(&mut g, [1.0, 0.0, 0.0]);
+//! molrs::op::translate(&mut g, [1.0, 0.0, 0.0]);
 //! assert!((g.get_node(o).expect("get node").get_f64("x").unwrap() - 1.0).abs() < 1e-12);
 //! ```
 
@@ -61,7 +61,7 @@ use crate::core::Frame;
 use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::{EntityCell, EntityTable, Validity};
-use crate::op::types::{F, I, Idx};
+use crate::op::{F, I, Idx};
 
 use crate::core::keys::FRAG_ID;
 
@@ -1251,7 +1251,7 @@ impl MolGraph {
     ///   appended with `EntityTable::extend_repeated`, one pass per column;
     ///   no per-node [`add_node_with`](Self::add_node_with) runs.
     /// - **Coordinates.** `x`/`y`/`z` of a template row holding the full
-    ///   triple are rewritten per copy by [`crate::op::rigid::apply_all`]. A
+    ///   triple are rewritten per copy by [`crate::op::transform_points`]. A
     ///   row without the full triple is copied untransformed.
     /// - **Relations.** Every relation kind of `template` is registered on
     ///   `self` by name, its endpoints offset into each copy and its props
@@ -1281,7 +1281,7 @@ impl MolGraph {
     pub fn replicate(
         &mut self,
         template: &MolGraph,
-        transforms: &[crate::op::rigid::Rigid],
+        transforms: &[crate::op::Rigid],
         frag_ids: &[I],
     ) -> Result<Vec<NodeId>, MolRsError> {
         // ---- checks: nothing is written until all pass ----
@@ -1337,7 +1337,7 @@ impl MolGraph {
         if !placed_rows.is_empty() {
             let images: Vec<Vec<[F; 3]>> = transforms
                 .iter()
-                .map(|rigid| crate::op::rigid::apply_all(rigid, &points))
+                .map(|rigid| crate::op::transform_points(rigid, &points))
                 .collect();
             for (axis, key) in [keys::X, keys::Y, keys::Z].into_iter().enumerate() {
                 let (col, _) = self
@@ -1805,7 +1805,7 @@ mod tests {
         let mut g = MolGraph::new();
         let n = g.add_node();
         assert!(g.get_node(n).unwrap().is_empty());
-        crate::op::geometry::translate(&mut g, [1.0, 2.0, 3.0]);
+        crate::op::translate(&mut g, [1.0, 2.0, 3.0]);
         assert!(g.get_node(n).unwrap().get_f64("x").is_none());
         g.set_node(n, "element", "C").unwrap();
         assert_eq!(g.get_node(n).unwrap().get_str("element"), Some("C"));
@@ -1942,13 +1942,13 @@ mod tests {
         let id = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::op::geometry::translate(&mut g, [10.0, 20.0, 30.0]);
+        crate::op::translate(&mut g, [10.0, 20.0, 30.0]);
         let a = g.get_node(id).unwrap();
         assert!((a.get_f64("x").unwrap() - 11.0).abs() < 1e-12);
         let id2 = g
             .add_node_with(Atom::xyz("C", 1.0, 0.0, 0.0))
             .expect("fixture node");
-        crate::op::geometry::rotate(&mut g, [0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
+        crate::op::rotate(&mut g, [0.0, 0.0, 1.0], std::f64::consts::FRAC_PI_2, None)
             .expect("the z axis is a direction");
         let b = g.get_node(id2).unwrap();
         assert!((b.get_f64("x").unwrap()).abs() < 1e-12);
@@ -2561,7 +2561,7 @@ mod tests {
     use crate::core::Atomistic;
     use crate::core::BondNumber;
     use crate::core::PortKind;
-    use crate::op::rigid::Rigid;
+    use crate::op::Rigid;
 
     /// C (0,0,0), O (1,0,0), H handle (-1,0,0); bonds C-O and C-H; one port
     /// (anchor C, handle H). Template node order is C, O, H.

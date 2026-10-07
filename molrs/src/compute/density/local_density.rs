@@ -23,7 +23,7 @@
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -166,7 +166,7 @@ impl ComputeResult for LocalDensityResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;

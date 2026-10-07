@@ -37,14 +37,14 @@
 /// One slot of antechamber's ring table (`RING`): the ring's atoms (sorted
 /// ascending once purified) and its size, `0` for an empty or removed slot.
 #[derive(Debug, Clone, Copy)]
-pub struct RingSlot {
+pub struct AntechamberRingMembership {
     /// The ring's atoms; only the first [`num`](Self::num) are meaningful.
     pub atoms: [usize; 12],
     /// The ring size, or `0`.
     pub num: usize,
 }
 
-impl Default for RingSlot {
+impl Default for AntechamberRingMembership {
     fn default() -> Self {
         Self {
             atoms: [usize::MAX; 12],
@@ -53,7 +53,7 @@ impl Default for RingSlot {
     }
 }
 
-impl RingSlot {
+impl AntechamberRingMembership {
     /// The ring's atoms.
     pub fn members(&self) -> &[usize] {
         &self.atoms[..self.num]
@@ -62,7 +62,7 @@ impl RingSlot {
 
 /// One atom's ring facts — antechamber's `AROM`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct RingFacts {
+pub struct AntechamberRingSummary {
     /// `rg[0]` — rings the atom is in; `rg[n]` — rings of size `n`.
     pub rg: [i32; 11],
     /// `1` when the atom is in no classified ring.
@@ -76,9 +76,9 @@ pub struct RingFacts {
 pub struct RingClasses {
     /// Every slot of the ring table, empty and stale ones included — the slots
     /// antechamber's later passes iterate over.
-    pub rings: Vec<RingSlot>,
+    pub rings: Vec<AntechamberRingMembership>,
     /// Per atom, in index order.
-    pub atoms: Vec<RingFacts>,
+    pub atoms: Vec<AntechamberRingSummary>,
 }
 
 /// antechamber's `ringdetect` on a molecule in index space.
@@ -89,7 +89,7 @@ pub struct RingClasses {
 /// * `con` — every atom's neighbours, in the order its bonds are listed.
 /// * `bonds` — `(i, j, antechamber bond type)` per bond, in bond order.
 /// * `bcc` — apply the AM1-BCC indole rule (`ringdetect(…, 1)`).
-pub fn ring_classes(
+pub fn perceive_ring_classes(
     z: &[u8],
     con: &[Vec<usize>],
     bonds: &[(usize, usize, i32)],
@@ -107,7 +107,7 @@ pub fn ring_classes(
             walker.walk(&mut path, 0, start, &mut count, None);
         }
     }
-    let mut rings = vec![RingSlot::default(); count];
+    let mut rings = vec![AntechamberRingMembership::default(); count];
     let mut used = 0;
     for start in 0..n {
         if walker.ring_capable(start) {
@@ -118,9 +118,9 @@ pub fn ring_classes(
     purify(con, &mut rings[..used]);
 
     let mut atoms = vec![
-        RingFacts {
+        AntechamberRingSummary {
             nr: 1,
-            ..RingFacts::default()
+            ..AntechamberRingSummary::default()
         };
         n
     ];
@@ -175,7 +175,7 @@ impl Walker<'_> {
         len: usize,
         atom: usize,
         ringnum: &mut usize,
-        mut store: Option<&mut [RingSlot]>,
+        mut store: Option<&mut [AntechamberRingMembership]>,
     ) {
         path[len] = atom;
         let len = len + 1;
@@ -206,7 +206,7 @@ impl Walker<'_> {
 /// `purify`: sort each ring's atoms, drop duplicates and rings with a chord
 /// (an atom with three ring neighbours), and compact the survivors to the front
 /// — leaving the slots behind them as they were.
-fn purify(con: &[Vec<usize>], rings: &mut [RingSlot]) {
+fn purify(con: &[Vec<usize>], rings: &mut [AntechamberRingMembership]) {
     if rings.is_empty() {
         return;
     }
@@ -238,7 +238,8 @@ fn purify(con: &[Vec<usize>], rings: &mut [RingSlot]) {
             ring.num = 0;
         }
     }
-    let kept: Vec<RingSlot> = rings.iter().filter(|r| r.num != 0).copied().collect();
+    let kept: Vec<AntechamberRingMembership> =
+        rings.iter().filter(|r| r.num != 0).copied().collect();
     for (slot, ring) in rings.iter_mut().zip(kept) {
         slot.num = ring.num;
         slot.atoms[..ring.num].copy_from_slice(ring.members());
@@ -250,8 +251,8 @@ fn classify(
     z: &[u8],
     con: &[Vec<usize>],
     bonds: &[(usize, usize, i32)],
-    rings: &[RingSlot],
-    atoms: &mut [RingFacts],
+    rings: &[AntechamberRingMembership],
+    atoms: &mut [AntechamberRingSummary],
 ) {
     // `initarom`: 2 for an atom that can be planar with a π bond, 1 for a lone
     // pair donor, negative for a saturated centre.
@@ -283,7 +284,7 @@ fn classify(
         let num = ring.num as i32;
         let members = ring.members();
         let total: i32 = members.iter().map(|a| init[*a]).sum();
-        let mark = |atoms: &mut [RingFacts], class: usize| {
+        let mark = |atoms: &mut [AntechamberRingSummary], class: usize| {
             for a in members {
                 atoms[*a].ar[class] += 1;
             }
@@ -352,7 +353,7 @@ mod tests {
             .enumerate()
             .map(|(k, (i, j))| (*i, *j, types.get(k).copied().unwrap_or(1)))
             .collect();
-        ring_classes(z, &con, &typed, bcc)
+        perceive_ring_classes(z, &con, &typed, bcc)
     }
 
     /// Carbazole's heavy atoms and the hydrogens that make the ring atoms

@@ -13,7 +13,7 @@ use std::fmt;
 use crate::core::CoarseGrain;
 use crate::core::keys;
 use crate::core::{MolGraph, NodeId, node_to_u64};
-use crate::op::geometry::{CenterError, center};
+use crate::op::{CenterError, center};
 
 /// Why [`Coarsener::coarsen`] refuses its input. Nothing is built when it
 /// returns one.

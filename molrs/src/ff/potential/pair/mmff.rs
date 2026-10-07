@@ -42,7 +42,7 @@ use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // MMFFVdW: Buffered 14-7 potential

@@ -5,7 +5,7 @@ tab_width = 4
 style = "both"
 cpp_compat = true
 documentation = false
-# `F` is `molrs::op::types::F` (always f64); cbindgen does not parse
+# `F` is `molrs::op::F` (always f64); cbindgen does not parse
 # dependencies, so the header states it here.
 after_includes = "typedef double F;"
 

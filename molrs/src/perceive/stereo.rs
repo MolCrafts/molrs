@@ -4,9 +4,9 @@
 //! * [`TetrahedralStereo`] — CW / CCW / Unspecified chirality at a tetrahedral centre.
 //! * [`BondStereo`] — E / Z / Either / None for double-bond stereochemistry.
 //! * [`chiral_volume`] — signed scalar triple product from 3-D coordinates.
-//! * [`find_chiral_centers`] — atoms with 4 distinct neighbours.
-//! * [`assign_stereo_from_3d`] — infer tetrahedral chirality from coordinates.
-//! * [`assign_bond_stereo_from_3d`] — infer E/Z from coordinates.
+//! * [`perceive_chiral_centers`] — atoms with 4 distinct neighbours.
+//! * [`perceive_tetrahedral_stereo`] — infer tetrahedral chirality from coordinates.
+//! * [`perceive_bond_stereo`] — infer E/Z from coordinates.
 //!
 //! # Storage convention
 //! Stereochemistry labels may be persisted in atom/bond properties:
@@ -17,13 +17,13 @@
 //! ([`TetrahedralStereo::Unspecified`]) means "this atom is not a stereocentre",
 //! and `"none"` ([`BondStereo::None`]) means "this bond is not a stereo bond".
 //! They record the **absence** of a stereochemical fact, not a perceived one.
-//! Accordingly, the builder [`Perceive::find_stereo`](crate::perceive::Perceive::find_stereo)
+//! Accordingly, the builder [`assign_stereo`](crate::perceive::assign_stereo)
 //! writes **only** the real descriptors — `"CW"` / `"CCW"` on atoms and `"E"` /
 //! `"Z"` / `"either"` on bonds — and omits the sentinels entirely, so a `"stereo"`
 //! prop is present exactly where stereochemistry was perceived and absent
 //! everywhere else. The full four-way vocabulary above still applies to graphs
 //! written by other producers (a file reader, or a caller persisting the maps
-//! returned by [`assign_stereo_from_3d`] / [`assign_bond_stereo_from_3d`], both of
+//! returned by [`perceive_tetrahedral_stereo`] / [`perceive_bond_stereo`], both of
 //! which are total and do carry the sentinel variants).
 //!
 //! # Chiral-volume sign convention
@@ -115,7 +115,7 @@ pub fn chiral_volume(mol: &Atomistic, center: NodeId, neighbor_order: &[NodeId; 
 /// Note: this is a *topological* screen only.  Two neighbours may be
 /// constitutionally identical.  CIP rank comparison is outside the scope
 /// of this module.
-pub fn find_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
+pub fn perceive_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
     let mut centers = Vec::new();
     for (id, _atom) in mol.atoms() {
         let nbrs: Vec<NodeId> = mol.neighbor_bonds(id).map(|(nb, _)| nb).collect();
@@ -147,9 +147,9 @@ pub fn find_chiral_centers(mol: &Atomistic) -> Vec<NodeId> {
 ///
 /// Returns a map `NodeId → TetrahedralStereo`.  Atoms without 3-D coordinates
 /// receive `Unspecified`.
-pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<NodeId, TetrahedralStereo> {
+pub fn perceive_tetrahedral_stereo(mol: &Atomistic) -> HashMap<NodeId, TetrahedralStereo> {
     let mut result = HashMap::new();
-    for center in find_chiral_centers(mol) {
+    for center in perceive_chiral_centers(mol) {
         let nbrs: Vec<NodeId> = mol.neighbor_bonds(center).map(|(nb, _)| nb).collect();
         if nbrs.len() < 4 {
             result.insert(center, TetrahedralStereo::Unspecified);
@@ -182,7 +182,7 @@ pub fn assign_stereo_from_3d(mol: &Atomistic) -> HashMap<NodeId, TetrahedralSter
 /// * |cos φ| > 0 (φ < 90°) → E (opposite sides, trans).
 ///
 /// Returns a map `RelationId → BondStereo`.
-pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondStereo> {
+pub fn perceive_bond_stereo(mol: &Atomistic) -> HashMap<RelationId, BondStereo> {
     let mut result = HashMap::new();
 
     for (bid, bond) in mol.bonds() {
@@ -295,6 +295,44 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Atom / bond prop written by [`assign_stereo`]: the perceived descriptor.
+const STEREO: &str = "stereo";
+
+/// Perceive stereochemistry from 3-D coordinates and write it onto a clone of
+/// `mol`.
+///
+/// The [`perceive_tetrahedral_stereo`] and [`perceive_bond_stereo`] side
+/// tables, projected as props. Both are **maps**, and the bond map is
+/// *total*: it carries [`BondStereo::None`] for every bond that is not a
+/// double bond. That variant is a sentinel meaning "not a stereo bond", not a
+/// perceived fact, so it is **skipped** — as is
+/// [`TetrahedralStereo::Unspecified`]. A `stereo` prop appears only where a real
+/// descriptor was perceived: `"CW"` / `"CCW"` on atoms, `"E"` / `"Z"` /
+/// `"either"` on bonds. `mol` is left untouched.
+pub fn assign_stereo(mol: &Atomistic) -> Atomistic {
+    let atom_stereo = perceive_tetrahedral_stereo(mol);
+    let bond_stereo = perceive_bond_stereo(mol);
+    let mut out = mol.clone();
+    for (id, s) in atom_stereo {
+        let label = match s {
+            TetrahedralStereo::CW => "CW",
+            TetrahedralStereo::CCW => "CCW",
+            TetrahedralStereo::Unspecified => continue,
+        };
+        let _ = out.set_atom(id, STEREO, label);
+    }
+    for (bid, s) in bond_stereo {
+        let label = match s {
+            BondStereo::E => "E",
+            BondStereo::Z => "Z",
+            BondStereo::Either => "either",
+            BondStereo::None => continue,
+        };
+        let _ = out.set_bond_prop(bid, STEREO, label);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,7 +383,7 @@ mod tests {
         assert!(vol_swapped < 0.0);
     }
 
-    // --- find_chiral_centers ---
+    // --- perceive_chiral_centers ---
 
     #[test]
     fn test_no_chiral_centers_in_ethane() {
@@ -353,7 +391,7 @@ mod tests {
         let c1 = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
         let c2 = g.add_atom(atom_xyz("C", 1.5, 0.0, 0.0));
         g.add_bond(c1, c2).expect("add bond");
-        assert!(find_chiral_centers(&g).is_empty());
+        assert!(perceive_chiral_centers(&g).is_empty());
     }
 
     #[test]
@@ -365,12 +403,12 @@ mod tests {
             g.add_bond(c, h).expect("add bond");
         }
         // 4 neighbours, all with distinct IDs → detected
-        let centers = find_chiral_centers(&g);
+        let centers = perceive_chiral_centers(&g);
         assert_eq!(centers.len(), 1);
         assert_eq!(centers[0], c);
     }
 
-    // --- assign_stereo_from_3d ---
+    // --- perceive_tetrahedral_stereo ---
 
     #[test]
     fn test_assign_stereo_returns_entry_for_center() {
@@ -383,12 +421,12 @@ mod tests {
         for &n in &[n1, n2, n3, n4] {
             g.add_bond(c, n).expect("add bond");
         }
-        let stereo = assign_stereo_from_3d(&g);
+        let stereo = perceive_tetrahedral_stereo(&g);
         assert!(stereo.contains_key(&c));
         assert_ne!(stereo[&c], TetrahedralStereo::Unspecified);
     }
 
-    // --- assign_bond_stereo_from_3d ---
+    // --- perceive_bond_stereo ---
 
     #[test]
     fn test_cis_2_butene_is_z() {
@@ -407,7 +445,7 @@ mod tests {
         g.add_bond(c1, sub1).expect("add bond");
         g.add_bond(c2, sub2).expect("add bond");
 
-        let stereo = assign_bond_stereo_from_3d(&g);
+        let stereo = perceive_bond_stereo(&g);
         let double_bid = stereo
             .iter()
             .find(|&(_, v)| *v == BondStereo::Z || *v == BondStereo::E)
@@ -428,7 +466,7 @@ mod tests {
         g.add_bond(c1, sub1).expect("add bond");
         g.add_bond(c2, sub2).expect("add bond");
 
-        let stereo = assign_bond_stereo_from_3d(&g);
+        let stereo = perceive_bond_stereo(&g);
         let double_bid = stereo
             .iter()
             .find(|&(_, v)| *v == BondStereo::E || *v == BondStereo::Z)
@@ -443,7 +481,7 @@ mod tests {
         let a = g.add_atom(atom_xyz("C", 0.0, 0.0, 0.0));
         let b = g.add_atom(atom_xyz("C", 1.5, 0.0, 0.0));
         g.add_bond(a, b).expect("add bond"); // default single bond
-        let stereo = assign_bond_stereo_from_3d(&g);
+        let stereo = perceive_bond_stereo(&g);
         let bid = g.bonds().next().unwrap().0;
         assert_eq!(stereo[&bid], BondStereo::None);
     }
@@ -473,7 +511,7 @@ mod tests {
                 mol.add_bond(c3, et).unwrap();
                 mol.add_bond(c3, me).unwrap();
             }
-            let stereo = assign_bond_stereo_from_3d(&mol);
+            let stereo = perceive_bond_stereo(&mol);
             stereo.get(&d).copied()
         };
 

@@ -31,7 +31,7 @@ use ndarray::ArrayD;
 use num_complex::Complex;
 
 use super::dtype::DType;
-use crate::op::types::{F, I, Idx};
+use crate::op::{F, I, Idx};
 
 /// Walk every column variant, binding the inner column array.
 macro_rules! map_column {
@@ -851,7 +851,7 @@ impl std::fmt::Debug for Column {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, I, Idx};
+    use crate::op::{F, I, Idx};
     use ndarray::{Array1, ArrayD};
 
     // ---- helpers ----

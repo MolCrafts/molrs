@@ -14,7 +14,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Harmonic angle potential with pre-resolved flat arrays. Its own `theta0`
 /// array is in radians (the parameter is degrees; see [`angle_harmonic_ctor`]).
@@ -189,7 +189,7 @@ mod tests {
     /// Atoms at (1,0,0), (0,0,0), (0,1,0): one 90° angle of type `label`.
     fn right_angle_frame(label: &str) -> Frame {
         use molrs::core::Block;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
         let mut atoms = Block::new();
         for (key, v) in [

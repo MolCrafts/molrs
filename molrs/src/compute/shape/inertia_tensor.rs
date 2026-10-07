@@ -2,7 +2,7 @@
 //!
 //! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
 //! ([`ClusterResult`],
-//! [`COMResult`]) pairs — run
+//! [`CenterOfMassResult`]) pairs — run
 //! [`Cluster`](crate::compute::Cluster) and
 //! [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
 //! per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
@@ -10,9 +10,9 @@
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
-use crate::compute::COMResult;
+use crate::compute::CenterOfMassResult;
 use crate::compute::ClusterResult;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -24,7 +24,7 @@ use molrs::core::{Mic, SimBox};
 ///
 /// `I_k[a][b] = SUM_i m_i * (|s_i|^2 * delta_ab - s_i[a] * s_i[b])`
 /// where `s_i = shortest_vector(com_k, r_i)` is the MIC displacement from the
-/// center of mass. Centers of mass come from the [`COMResult`] arg — this
+/// center of mass. Centers of mass come from the [`CenterOfMassResult`] arg — this
 /// Compute does **not** recompute them.
 #[derive(Debug, Clone, Default)]
 pub struct InertiaTensor {
@@ -48,7 +48,7 @@ impl InertiaTensor {
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-        com: &COMResult,
+        com: &CenterOfMassResult,
     ) -> Result<InertiaTensorResult, ComputeError> {
         let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
         let xs = xs_p.slice();
@@ -73,7 +73,7 @@ impl InertiaTensor {
             return Err(ComputeError::DimensionMismatch {
                 expected: nc,
                 got: com.centers_of_mass.len(),
-                what: "COMResult cluster count",
+                what: "CenterOfMassResult cluster count",
             });
         }
 
@@ -109,7 +109,7 @@ impl InertiaTensor {
 }
 
 impl Compute for InertiaTensor {
-    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<COMResult>);
+    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<CenterOfMassResult>);
     type Output = Vec<InertiaTensorResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
@@ -131,7 +131,7 @@ impl Compute for InertiaTensor {
             return Err(ComputeError::DimensionMismatch {
                 expected: frames.len(),
                 got: com.len(),
-                what: "COMResult count",
+                what: "CenterOfMassResult count",
             });
         }
         #[cfg(feature = "rayon")]

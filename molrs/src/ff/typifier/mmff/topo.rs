@@ -17,7 +17,7 @@ use molrs::core::Element;
 use molrs::core::PropValue;
 use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::Hybridization;
-use molrs::perceive::rings::{RingInfo, find_rings};
+use molrs::perceive::{RingInfo, perceive_rings};
 
 /// Bond order (Kekulé): we treat the SDF integer order verbatim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub struct Topo {
     pub is_aromatic: Vec<bool>,
     /// MMFF aromatic flag per ring (parallel to `ring_idx`).
     pub ring_aromatic: Vec<bool>,
-    /// RDKit hybridization per atom ([`molrs::perceive::hybridizations`]),
+    /// RDKit hybridization per atom ([`molrs::perceive::perceive_hybridizations`]),
     /// read by MMFF aromaticity to reject non-sp² ring carbon and nitrogen.
     pub hybridization: Vec<Hybridization>,
 }
@@ -120,7 +120,7 @@ impl Topo {
             }
         }
 
-        let rings = find_rings(mol);
+        let rings = perceive_rings(mol);
         let ring_idx: Vec<Vec<usize>> = rings
             .rings()
             .iter()
@@ -140,7 +140,7 @@ impl Topo {
             ring_idx,
             is_aromatic: vec![false; n],
             ring_aromatic,
-            hybridization: molrs::perceive::hybridizations(mol),
+            hybridization: molrs::perceive::perceive_hybridizations(mol),
         })
     }
 

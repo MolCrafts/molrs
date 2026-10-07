@@ -8,7 +8,7 @@ use num_complex::Complex;
 
 use super::column::Column;
 use super::dtype::DType;
-use crate::op::types::{F, I, Idx};
+use crate::op::{F, I, Idx};
 
 macro_rules! map_view {
     ($view:expr, $arr:ident => $body:expr) => {

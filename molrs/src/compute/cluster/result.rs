@@ -4,7 +4,7 @@
 use ndarray::Array1;
 
 use crate::compute::ComputeResult;
-use molrs::op::types::Idx;
+use molrs::op::Idx;
 
 /// Result of a cluster analysis on one frame.
 #[derive(Debug, Clone)]

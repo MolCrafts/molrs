@@ -108,7 +108,7 @@ const AROMATIC_BOND_TYPE: u64 = 4;
 /// WL color, and a labeled adjacency list built once so the refinement loop and
 /// the matcher never re-materialize relations.
 ///
-/// Shared with the subgraph matcher (`perceive::subgraph`), which reads `nodes`
+/// Shared with the subgraph matcher (`perceive::SubgraphMatcher`), which reads `nodes`
 /// and the neighbours in `adj` (it zeroes their edge labels); the WL colors are
 /// this module's alone.
 pub(crate) struct GraphView {
@@ -426,7 +426,7 @@ fn backtrack(
 /// Map slots hold a dense index of the other graph, or `usize::MAX` when
 /// unmapped. The check is purely structural, so it serves both the bijective
 /// [`is_isomorphic`] search and the injective, induced subgraph search of
-/// `perceive::subgraph` (where `map_ba` is sized to the larger graph and its
+/// `perceive::SubgraphMatcher` (where `map_ba` is sized to the larger graph and its
 /// unmapped slots are skipped); node-label compatibility is each caller's own
 /// test.
 pub(crate) fn feasible(

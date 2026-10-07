@@ -1,9 +1,9 @@
-//! Radial distribution function (`molrs::compute::rdf`): `RDF` and its
-//! `RDFResult`.
+//! Radial distribution function (`molrs::compute::rdf`): `Rdf` and its
+//! `RdfResult`.
 
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{Compute, RDF, RDFResult};
+use molrs::compute::{Compute, Rdf, RdfResult};
 use molrs::core::Frame as CoreFrame;
 use molrs::core::Neighbors;
 use numpy::{IntoPyArray, PyArray1};
@@ -18,13 +18,13 @@ use pyo3::types::PyAny;
 /// Radial distribution function g(r) result.
 ///
 /// `rdf` is already normalized (RDF.compute finalizes eagerly).
-#[pyclass(module = "molrs.compute", name = "RDFResult")]
-pub struct PyRDFResult {
-    inner: RDFResult,
+#[pyclass(module = "molrs.compute", name = "RdfResult")]
+pub struct PyRdfResult {
+    inner: RdfResult,
 }
 
 #[pymethods]
-impl PyRDFResult {
+impl PyRdfResult {
     #[getter]
     fn bin_centers<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         self.inner.bin_centers.clone().into_pyarray(py)
@@ -67,7 +67,7 @@ impl PyRDFResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "RDFResult(n_bins={}, n_frames={}, n_points={})",
+            "RdfResult(n_bins={}, n_frames={}, n_points={})",
             self.inner.bin_centers.len(),
             self.inner.n_frames,
             self.inner.n_points,
@@ -79,17 +79,17 @@ impl PyRDFResult {
 ///
 /// Accepts either a single `(frame, nlist)` pair or a list of each. Results
 /// accumulate across frames and are ideal-gas normalized on return.
-#[pyclass(module = "molrs.compute", name = "RDF")]
-pub struct PyRDF {
-    inner: RDF,
+#[pyclass(module = "molrs.compute", name = "Rdf")]
+pub struct PyRdf {
+    inner: Rdf,
 }
 
 #[pymethods]
-impl PyRDF {
+impl PyRdf {
     #[new]
     #[pyo3(signature = (n_bins, r_max, r_min = 0.0))]
     fn new(n_bins: usize, r_max: f64, r_min: f64) -> PyResult<Self> {
-        let inner = RDF::new(n_bins, r_max, r_min).map_err(py_value_err)?;
+        let inner = Rdf::new(n_bins, r_max, r_min).map_err(py_value_err)?;
         Ok(Self { inner })
     }
 
@@ -108,7 +108,7 @@ impl PyRDF {
         &self,
         frames: &Bound<'_, PyAny>,
         nlists: &Bound<'_, PyAny>,
-    ) -> PyResult<PyRDFResult> {
+    ) -> PyResult<PyRdfResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();
         let nlists_vec: Vec<Neighbors> = collect_neighbors(nlists)?;
@@ -123,17 +123,17 @@ impl PyRDF {
             .inner
             .compute(&refs, &nlists_vec)
             .map_err(py_value_err)?;
-        Ok(PyRDFResult { inner: result })
+        Ok(PyRdfResult { inner: result })
     }
 
     fn __repr__(&self) -> String {
-        "RDF(...)".to_string()
+        "Rdf(...)".to_string()
     }
 }
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyRDFResult>()?;
-    m.add_class::<PyRDF>()?;
+    m.add_class::<PyRdfResult>()?;
+    m.add_class::<PyRdf>()?;
     Ok(())
 }

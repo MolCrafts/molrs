@@ -17,43 +17,87 @@
 //! `crate::ff::charge` (feature `ff`) — one implementation, reached through the
 //! `ChargeModel` trait there.
 //!
-//! # One way to perceive
+//! # Two verbs: `perceive_*` reports, `assign_*` writes
 //!
-//! Writing perceived facts onto a graph has one public spelling: the
-//! [`Perceive`] builder, graph in / graph out and non-mutating —
-//! `Perceive::new().find_rings(&mol) -> Atomistic`. The graph-writing
-//! functions behind it (hydrogen addition, aromaticity, bond orders, BCC bond
-//! types, Kekulé numbers) are crate-private.
+//! Every perception is a free function, in one of two shapes — the split
+//! RDKit makes between a query and an `Assign*` (`AssignStereochemistry`,
+//! `AssignAtomChiralTagsFromStructure`), and the term the literature uses for
+//! the computation itself (ring perception, bond-order perception):
 //!
-//! The modules keep only the *side tables* public — what the builder
-//! projects onto props, for callers that need the table itself rather than a
-//! graph: [`rings::find_rings`] → [`rings::RingInfo`],
-//! [`rotatable::detect_rotatable_bonds`], [`stereo::assign_stereo_from_3d`],
-//! [`equivalence::find_equivalence_classes`], [`bond_order::judge_bond_orders`],
-//! [`hybridizations`] / [`conjugated_atoms`] (→ [`Hybridization`]).
-//! [`hydrogens::remove_hydrogens`] is an edit, not a perception, and stays a
-//! function.
+//! - **`perceive_<fact>(mol) -> table`** computes a fact and returns it as a
+//!   side table, leaving the graph alone: [`perceive_rings`] → [`RingInfo`],
+//!   [`perceive_rotatable_bonds`], [`perceive_chiral_centers`],
+//!   [`perceive_tetrahedral_stereo`], [`perceive_bond_stereo`],
+//!   [`perceive_equivalence_classes`], [`perceive_bond_orders`],
+//!   [`perceive_hybridizations`], [`perceive_conjugated_atoms`],
+//!   [`perceive_ring_classes`].
+//! - **`assign_<fact>(mol) -> Atomistic`** writes a perceived fact onto a
+//!   *clone* of the graph as atom / bond props and returns it — graph in /
+//!   graph out, non-mutating, so the steps compose: [`assign_rings`],
+//!   [`assign_aromaticity`], [`assign_stereo`], [`assign_rotatable_bonds`],
+//!   [`assign_bond_orders`], [`assign_kekule_bond_orders`],
+//!   [`assign_bcc_bond_types`], [`assign_bcc_bond_types_from_connectivity`],
+//!   [`assign_equivalence_classes`].
+//!
+//! [`add_hydrogens`] / [`remove_hydrogens`] are edits of the graph, not
+//! perceptions, and keep their verbs.
+//!
+//! | Function | Atom props | Bond props |
+//! |---|---|---|
+//! | [`assign_rings`] | `is_in_ring` (0/1), `n_rings` | `is_in_ring` (0/1), `n_rings` |
+//! | [`assign_aromaticity`] | `is_aromatic` (0/1) | `bond_type` (aromatic), `bond_number` |
+//! | [`assign_stereo`] | `stereo` (`"CW"` / `"CCW"`) | `stereo` (`"E"` / `"Z"` / `"either"`) |
+//! | [`assign_rotatable_bonds`] | — | `is_rotatable` (0/1) |
+//! | [`assign_bond_orders`] | — | `bond_number`, `bond_type` (antechamber's Kekulé structure) |
+//! | [`assign_kekule_bond_orders`] | — | `bond_number` of every aromatic bond |
+//! | [`assign_bcc_bond_types`] | — | `bcc_bond_type` (1/2/3/6/7/8/9) |
+//! | [`assign_bcc_bond_types_from_connectivity`] | — | `bcc_bond_type`, from connectivity-judged orders |
+//! | [`assign_equivalence_classes`] | `equiv_class` (0-based class id) | — |
+//!
+//! The modules are private; every name is re-exported here, so the Rust path
+//! `molrs::perceive::<name>` is the Python path `molrs.perceive.<name>`.
 
 /// Executable specification for the Aromatic Bond Representation Standard.
 /// Tests only; see the module docs for how to run the red line.
 #[cfg(all(test, feature = "smiles"))]
 mod aromatic_standard;
-pub(crate) mod aromaticity;
-pub mod bond_order;
-pub mod bond_type;
-mod builder;
-pub mod equivalence;
+mod aromaticity;
+mod bcc_bond_class;
+mod bond_order;
+mod equivalence;
 mod hybridization;
-pub mod hydrogens;
-pub mod ring_class;
-pub mod rings;
-pub mod rotatable;
+mod hydrogens;
+mod kekule;
+mod ring_class;
+mod rings;
+mod rotatable;
 // SMARTS matching compiles from the `io::smiles` parser, so it needs `smiles`.
 #[cfg(feature = "smiles")]
 pub mod smarts;
-pub mod stereo;
+mod stereo;
 mod subgraph;
 
-pub use builder::Perceive;
-pub use hybridization::{Hybridization, conjugated_atoms, hybridizations};
+pub use aromaticity::assign_aromaticity;
+pub(crate) use aromaticity::mark_aromaticity;
+pub use bcc_bond_class::{assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity};
+pub use bond_order::{assign_bond_orders, perceive_bond_orders};
+pub use equivalence::{
+    EquivalenceClasses, EquivalenceLevel, EquivalenceOptions, assign_equivalence_classes,
+    perceive_equivalence_classes,
+};
+pub use hybridization::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
+pub use hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
+pub use kekule::assign_kekule_bond_orders;
+pub use ring_class::{
+    AntechamberRingMembership, AntechamberRingSummary, RingClasses, perceive_ring_classes,
+};
+pub use rings::{RingInfo, assign_rings, perceive_rings, small_ring_closure};
+pub use rotatable::{
+    RotatableBond, UnknownBondPolicy, assign_rotatable_bonds, downstream_atoms,
+    perceive_rotatable_bonds, perceive_rotatable_bonds_with_downstream,
+};
+pub use stereo::{
+    BondStereo, TetrahedralStereo, assign_stereo, chiral_volume, perceive_bond_stereo,
+    perceive_chiral_centers, perceive_tetrahedral_stereo,
+};
 pub use subgraph::SubgraphMatcher;

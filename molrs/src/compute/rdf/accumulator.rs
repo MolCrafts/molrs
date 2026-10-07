@@ -1,33 +1,33 @@
 //! Streaming (frame-by-frame) RDF accumulation.
 //!
-//! [`RDFAccumulator`] is the bounded-memory streaming counterpart of the batch
-//! [`RDF`](super::RDF) compute: feed one frame + neighbor list at a time via
-//! [`accumulate`](RDFAccumulator::accumulate), then read the normalized g(r)
-//! from [`finalize`](RDFAccumulator::finalize). State is O(`n_bins`) — never
+//! [`RdfAccumulator`] is the bounded-memory streaming counterpart of the batch
+//! [`Rdf`](super::Rdf) compute: feed one frame + neighbor list at a time via
+//! [`accumulate`](RdfAccumulator::accumulate), then read the normalized g(r)
+//! from [`finalize`](RdfAccumulator::finalize). State is O(`n_bins`) — never
 //! O(trajectory) — so an arbitrarily long MD run can stream through it.
 //!
 //! It folds exactly the per-frame sums the batch path folds (`n_r`, point
 //! counts, volume), in the same order, so `finalize()` reproduces
-//! `RDF::compute` over the same frames bit-for-bit. The batch compute is
+//! `Rdf::compute` over the same frames bit-for-bit. The batch compute is
 //! itself implemented on top of this accumulator — one source of truth for
 //! the accumulation math.
 
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
-use super::{RDF, RDFResult, RdfMode};
+use super::{Rdf, RdfMode, RdfResult};
 use crate::compute::ComputeError;
 
 /// Streaming g(r) accumulator (bounded memory).
 ///
-/// Construct from a configured [`RDF`], feed frames one at a time, finalize
+/// Construct from a configured [`Rdf`], feed frames one at a time, finalize
 /// once. See the module docs for the equivalence guarantee with the batch
-/// [`RDF::compute`](crate::compute::Compute::compute).
+/// [`Rdf::compute`](crate::compute::Compute::compute).
 #[derive(Debug, Clone)]
-pub struct RDFAccumulator {
-    rdf: RDF,
+pub struct RdfAccumulator {
+    rdf: Rdf,
     n_r: Array1<F>,
     n_points: usize,
     n_query_points: usize,
@@ -39,9 +39,9 @@ pub struct RDFAccumulator {
     mode: Option<RdfMode>,
 }
 
-impl RDFAccumulator {
+impl RdfAccumulator {
     /// New accumulator over the given RDF configuration.
-    pub fn new(rdf: RDF) -> Self {
+    pub fn new(rdf: Rdf) -> Self {
         let n_bins = rdf.n_bins();
         Self {
             rdf,
@@ -60,7 +60,7 @@ impl RDFAccumulator {
     }
 
     /// The RDF configuration this accumulator bins with.
-    pub fn rdf(&self) -> &RDF {
+    pub fn rdf(&self) -> &Rdf {
         &self.rdf
     }
 
@@ -92,7 +92,7 @@ impl RDFAccumulator {
         let vol = simbox.volume();
         if !(vol.is_finite() && vol > 0.0) {
             return Err(ComputeError::OutOfRange {
-                field: "RDF::volume",
+                field: "Rdf::volume",
                 value: vol.to_string(),
             });
         }
@@ -110,16 +110,16 @@ impl RDFAccumulator {
         Ok(())
     }
 
-    /// Normalize the accumulated histogram into a finalized [`RDFResult`].
+    /// Normalize the accumulated histogram into a finalized [`RdfResult`].
     ///
     /// Errors with [`ComputeError::EmptyInput`] when no frame has been
     /// accumulated. The accumulator itself is unchanged and may keep
     /// accumulating afterwards.
-    pub fn finalize(&self) -> Result<RDFResult, ComputeError> {
+    pub fn finalize(&self) -> Result<RdfResult, ComputeError> {
         if self.n_frames == 0 {
             return Err(ComputeError::EmptyInput);
         }
-        let mut result = RDFResult {
+        let mut result = RdfResult {
             bin_edges: self.rdf.bin_edges.clone(),
             bin_centers: self.rdf.bin_centers.clone(),
             rdf: Array1::zeros(self.rdf.n_bins()),

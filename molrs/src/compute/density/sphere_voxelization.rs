@@ -17,7 +17,7 @@ use ndarray::Array3;
 
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;

@@ -57,7 +57,7 @@ use ndarray::{Array1, Array2, IxDyn, array};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 
 use crate::core::constants::ANGSTROM_PER_NM;
 use crate::io::reader::{FrameReader, Reader};
@@ -142,7 +142,7 @@ fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
 /// Insert an unsigned column, rejecting negatives with a message that names
 /// the key — used for the canonical identifier columns.
 fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
-    let unsigned: Vec<molrs::op::types::Idx> = vals
+    let unsigned: Vec<molrs::op::Idx> = vals
         .iter()
         .map(|&v| {
             Idx::try_from(v).map_err(|_| {
@@ -543,9 +543,7 @@ pub fn write_gro_frame<W: Write>(writer: &mut W, frame: &Frame) -> Result<()> {
             .map(|c| c[[i]].as_str())
             .or_else(|| element.map(|c| c[[i]].as_str()))
             .unwrap_or("X");
-        let aid = atom_id
-            .map(|c| c[[i]])
-            .unwrap_or((i as molrs::op::types::Idx) + 1);
+        let aid = atom_id.map(|c| c[[i]]).unwrap_or((i as molrs::op::Idx) + 1);
         // GROMACS truncates the residue number and atom number at 5 digits via modulo.
         let r_mod = r.rem_euclid(100_000);
         let aid_mod = aid.rem_euclid(100_000);

@@ -9,7 +9,7 @@ use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Harmonic UFF bond stretch with per-instance `kb` / `r0`.
 pub struct UffBond {

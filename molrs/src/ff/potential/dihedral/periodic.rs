@@ -24,7 +24,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// One cosine term `k·[1 + cos(n·φ − γ)]` with the phase `γ` in radians.
 #[derive(Clone, Copy)]

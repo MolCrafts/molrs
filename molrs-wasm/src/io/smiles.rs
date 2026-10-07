@@ -75,7 +75,7 @@ impl SmilesIR {
     ///   `bond_type` (u64: 1 single, 2 double, 3 triple, 4 aromatic) and
     ///   `bond_number` (u64: the localized Lewis/Kekulé integer, 0 when the
     ///   notation declared aromaticity without a phase — call
-    ///   `new Perceive().findAromaticity(frame)` to fill it in).
+    ///   `assignAromaticity(frame)` to fill it in).
     ///
     /// # Returns
     ///

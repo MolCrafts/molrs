@@ -94,12 +94,12 @@ named_keys! {
     /// writes per atom.
     pub const FRAG_ID: &str = "frag_id";
     /// Atom prop: the 0-based id of the atom's charge-equivalence class,
-    /// written by `perceive::Perceive::find_equivalence_classes`. Class ids
+    /// written by `perceive::assign_equivalence_classes`. Class ids
     /// are assigned in order of first appearance in the atom order, so the
     /// atom antechamber picks as a class's representative (its lowest-indexed
     /// member) names it.
     pub const EQUIV_CLASS: &str = "equiv_class";
-    /// Bond prop: the antechamber bond type (`perceive::bond_type`), read by
+    /// Bond prop: the antechamber bond type (`perceive::assign_bcc_bond_types`), read by
     /// the `ATOMTYPE_*.DEF` rule engine and the `BCCPARM.DAT` corrections.
     /// Deliberately not [`TYPE`]: that key is the caller's, the force-field
     /// type name.

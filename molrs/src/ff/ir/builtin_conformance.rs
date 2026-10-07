@@ -43,7 +43,7 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;
@@ -672,7 +672,7 @@ fn every_param_source_is_what_its_constructor_reads() {
             let v = plausible(&decl.name);
             if decl.name == "linear" {
                 // MMFF's linear-centre flag is an integer column.
-                let flags: Vec<molrs::op::types::I> = vec![v as molrs::op::types::I; n];
+                let flags: Vec<molrs::op::I> = vec![v as molrs::op::I; n];
                 b.insert("linear", Array1::from_vec(flags).into_dyn())
                     .unwrap();
             } else {

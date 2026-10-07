@@ -4,7 +4,7 @@
 use super::js_value;
 use crate::core::frame::Frame;
 use molrs::compute::Compute;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -165,7 +165,7 @@ impl CombinedDistribution {
     /// `groups` is `number[][]`: one flat atom-index array per observable, each
     /// of length `arity × nGroups` (arity 2/3/4 for distance/angle/dihedral).
     pub fn compute(&self, frame: &Frame, groups: JsValue) -> Result<JsValue, JsValue> {
-        use molrs::compute::{AnyObservable, AtomGroups};
+        use molrs::compute::{AtomGroups, InternalCoordinate};
 
         let raw: Vec<Vec<u32>> = serde_wasm_bindgen::from_value(groups)
             .map_err(|e| JsValue::from_str(&format!("CombinedDistribution groups: {e}")))?;
@@ -178,7 +178,7 @@ impl CombinedDistribution {
         let mut observables = Vec::with_capacity(self.kinds.len());
         let mut atom_groups = Vec::with_capacity(self.kinds.len());
         for (i, kind) in self.kinds.iter().enumerate() {
-            let (obs, arity) = AnyObservable::from_kind(kind).map_err(|e| {
+            let (obs, arity) = InternalCoordinate::from_kind(kind).map_err(|e| {
                 JsValue::from_str(&format!("CombinedDistribution observable {i}: {e}"))
             })?;
             observables.push(obs);

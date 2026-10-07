@@ -1,7 +1,7 @@
 //! Streaming (frame-by-frame) velocity-ACF accumulation with bounded memory.
 //!
-//! [`VACFAccumulator`] is the streaming counterpart of the batch
-//! [`VACF`](super::VACF) compute (`velocity_acf`: per-DOF mean-subtract →
+//! [`VacfAccumulator`] is the streaming counterpart of the batch
+//! [`Vacf`](super::Vacf) compute (`velocity_acf`: per-DOF mean-subtract →
 //! FFT-ACF → DOF-average). A streaming pass cannot subtract the global
 //! per-DOF mean up front, so it accumulates the **raw** lagged products and
 //! applies the exact algebraic correction at finalize:
@@ -21,7 +21,7 @@
 
 use std::collections::VecDeque;
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ComputeError;
 
@@ -30,9 +30,9 @@ use crate::compute::ComputeError;
 /// Velocities are fed as one flat slice per frame (any fixed `n_dof ≥ 1`;
 /// Atomiverse feeds blocked `vx|vy|vz`). Finalize returns the same
 /// unnormalized, mean-subtracted, DOF-averaged ACF curve as the batch
-/// [`VACF`](super::VACF) compute truncated at `min(resolution, n_frames − 1)`.
+/// [`Vacf`](super::Vacf) compute truncated at `min(resolution, n_frames − 1)`.
 #[derive(Debug, Clone)]
-pub struct VACFAccumulator {
+pub struct VacfAccumulator {
     resolution: usize,
     n_dof: usize,           // latched on the first frame; 0 = not yet latched
     acc: Vec<F>,            // acc[k] = Σ_t Σ_d v_d(t)·v_d(t−k), raw (no mean subtraction)
@@ -42,7 +42,7 @@ pub struct VACFAccumulator {
     n_frames: usize,
 }
 
-impl VACFAccumulator {
+impl VacfAccumulator {
     /// New accumulator resolving lags `0..=resolution` (frames).
     ///
     /// # Errors
@@ -51,7 +51,7 @@ impl VACFAccumulator {
     pub fn new(resolution: usize) -> Result<Self, ComputeError> {
         if resolution == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "VACFAccumulator::resolution",
+                field: "VacfAccumulator::resolution",
                 value: resolution.to_string(),
             });
         }
@@ -95,7 +95,7 @@ impl VACFAccumulator {
             return Err(ComputeError::DimensionMismatch {
                 expected: self.n_dof,
                 got: velocities.len(),
-                what: "VACF DOF count",
+                what: "Vacf DOF count",
             });
         }
 
@@ -135,7 +135,7 @@ impl VACFAccumulator {
 
     /// The mean-subtracted, DOF-averaged ACF curve for lags
     /// `0..=min(resolution, n_frames − 1)` — the batch
-    /// [`VACF`](super::VACF) output.
+    /// [`Vacf`](super::Vacf) output.
     ///
     /// # Errors
     /// [`ComputeError::EmptyInput`] with fewer than two accumulated frames.
@@ -179,7 +179,7 @@ impl VACFAccumulator {
 mod tests {
     use super::*;
     use crate::compute::Compute;
-    use crate::compute::VACF;
+    use crate::compute::Vacf;
     use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
@@ -205,9 +205,9 @@ mod tests {
         let (n, dof, res) = (128, 9, 20);
         let v = rng_series(n, dof, 11);
 
-        let batch = VACF.compute(&no_frames(), (&v, 1.0, res)).unwrap();
+        let batch = Vacf.compute(&no_frames(), (&v, 1.0, res)).unwrap();
 
-        let mut acc = VACFAccumulator::new(res).unwrap();
+        let mut acc = VacfAccumulator::new(res).unwrap();
         for t in 0..n {
             let frame: Vec<f64> = (0..dof).map(|d| v[[t, d]]).collect();
             acc.accumulate(&frame).unwrap();
@@ -231,8 +231,8 @@ mod tests {
         let (n, dof, res) = (6, 3, 20); // T − 1 < resolution
         let v = rng_series(n, dof, 5);
 
-        let batch = VACF.compute(&no_frames(), (&v, 1.0, res)).unwrap();
-        let mut acc = VACFAccumulator::new(res).unwrap();
+        let batch = Vacf.compute(&no_frames(), (&v, 1.0, res)).unwrap();
+        let mut acc = VacfAccumulator::new(res).unwrap();
         for t in 0..n {
             let frame: Vec<f64> = (0..dof).map(|d| v[[t, d]]).collect();
             acc.accumulate(&frame).unwrap();
@@ -248,10 +248,10 @@ mod tests {
     #[test]
     fn zero_resolution_and_dof_mismatch_are_errors() {
         assert!(matches!(
-            VACFAccumulator::new(0).unwrap_err(),
+            VacfAccumulator::new(0).unwrap_err(),
             ComputeError::OutOfRange { .. }
         ));
-        let mut acc = VACFAccumulator::new(4).unwrap();
+        let mut acc = VacfAccumulator::new(4).unwrap();
         acc.accumulate(&[1.0, 2.0]).unwrap();
         assert!(matches!(
             acc.accumulate(&[1.0]).unwrap_err(),

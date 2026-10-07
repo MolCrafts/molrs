@@ -794,7 +794,7 @@ mod tests {
     fn explicit_cross_rows_round_trip_and_still_override_mixing() {
         use crate::ff::potential::PotentialCompiler;
         use molrs::core::Frame;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let gromacs = "[ defaults ]\n1 3 yes 0.5 0.5\n\

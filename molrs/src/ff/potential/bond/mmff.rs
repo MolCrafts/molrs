@@ -9,7 +9,7 @@ use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 /// Cubic stretch constant (A^-1).

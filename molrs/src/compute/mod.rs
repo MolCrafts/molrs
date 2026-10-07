@@ -72,8 +72,8 @@
 //!
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`compute_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`MatchEnv`] | `NeighborsStorage::DISP` or `FULL` |
-//! | `dist_sq` — distances only | [`RDF`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborsStorage::DIST_SQ` or `FULL` |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborsStorage::DISP` or `FULL` |
+//! | `dist_sq` — distances only | [`Rdf`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborsStorage::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
@@ -87,8 +87,8 @@
 //! [`RdfMode`].
 //!
 //! Some entry points take no table at all, because they run a search of their
-//! own per call: [`RDF::compute_self`], [`RDF::compute_frame`] and
-//! [`RDF::compute_cross`] stream pairs straight out of the cell list without
+//! own per call: [`Rdf::compute_self`], [`Rdf::compute_frame`] and
+//! [`Rdf::compute_cross`] stream pairs straight out of the cell list without
 //! ever materializing them, and [`HBonds`] and [`VanHove`] build a cross-query
 //! internally, one per frame and one per time origin respectively.
 //!
@@ -103,26 +103,27 @@
 //! One folder per kernel family. **UI/catalog categories** (see
 //! `molrs-wasm` `molrsComputeCatalog`, catalog v3) follow freud's top-level
 //! modules and are not always 1:1 with folder names:
-//! - g(r) ([`RDF`]) lives in `rdf/` but is catalogued under **density**
-//!   (`freud.density.RDF`)
+//! - g(r) ([`Rdf`]) lives in `rdf/` but is catalogued under **density**
+//!   (`freud.density.Rdf`)
 //! - Voronoi kernels are catalogued under **locality**
 //!   (`freud.locality.Voronoi`)
-//! - van Hove / pair persistence live under **transport** (with VACF/diffusion)
+//! - van Hove / pair survival live under **transport** (with VACF/diffusion)
 //! - static dielectric is under **spectroscopy**
 //! - cluster radius-of-gyration is under **cluster** (freud.cluster.ClusterProperties)
 //!
 //! | Folder | Methods |
 //! |----------|---------|
-//! | `rdf` | pair distribution g(r) (+ streaming [`RDFAccumulator`]) |
-//! | `msd` | mean squared displacement (+ streaming [`MSDAccumulator`]) |
-//! | `transport` | VACF (+ streaming [`VACFAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
+//! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
+//! | `msd` | mean squared displacement (+ streaming [`MsdAccumulator`]) |
+//! | `transport` | VACF (+ streaming [`VacfAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
 //! | `spectroscopy` | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
 //! | `fitting` | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
-//! | `dynamics` | van Hove G(r, t), pair persistence |
+//! | `dynamics` | van Hove G(r, t), pair survival |
 //! | `dielectric` | static dielectric constant from dipole fluctuations |
 //! | `cluster` | connected-component clustering + per-cluster properties |
 //! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
-//! | `ml` | PCA projection, k-means |
+//! | `decomposition` | PCA projection |
+//! | `clustering` | k-means |
 //! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
 //! | `order` | Steinhardt, hexatic, nematic, cubatic, solid-liquid, … |
 //! | `environment` | bond order, local descriptors, environment matching, … |
@@ -132,7 +133,10 @@
 //! | `hbond` | hydrogen-bond detection, lifetimes, network components |
 //! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
+mod analysis_contract;
 mod cluster;
+mod clustering;
+mod decomposition;
 mod density;
 mod dielectric;
 mod diffraction;
@@ -141,33 +145,33 @@ mod dynamics;
 mod environment;
 mod error;
 mod fitting;
+#[cfg(test)]
+pub(crate) mod fixtures;
 mod hbond;
-mod ml;
 mod msd;
 mod order;
 mod pmft;
 pub(crate) mod positions;
 mod rdf;
 pub(crate) mod require;
-mod result;
 mod shape;
 mod spectroscopy;
-#[cfg(test)]
-pub(crate) mod test_support;
-mod traits;
 mod transport;
 #[cfg(feature = "voronoi")]
 mod voronoi;
 
 // Re-exports
+pub use analysis_contract::{Check, Compute, ComputeResult, DescriptorRow, Fit, Verdict};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
+pub use clustering::{KMeans, KMeansResult};
+pub use decomposition::{Pca, PcaResult};
 pub use density::{
     CorrelationArgs, CorrelationFunction, CorrelationFunctionResult, GaussianDensity,
     GaussianDensityResult, GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution,
     SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
 };
 pub use dielectric::{
-    StaticDielectricResult, compute_current_density, compute_dipole_moment, decompose_current,
+    StaticDielectricResult, current_density, decompose_current, dipole_moment,
     static_dielectric_constant, static_dielectric_constant_components,
 };
 pub use diffraction::{
@@ -176,20 +180,20 @@ pub use diffraction::{
     StaticStructureFactorDirectResult,
 };
 pub use distribution::{
-    AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
-    CombinedDistributionResult, DihedralObservable, DistanceObservable, DistributionFunction,
-    DistributionResult, Histogram1d, Observable, renormalize_density,
+    AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
+    DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult, Histogram1d,
+    InternalCoordinate, Observable, renormalize_density,
 };
 pub use dynamics::{
-    Acf, AcfArgs, AcfResult, PersistResult, SurvivalMethod, VanHove, VanHoveResult,
+    Acf, AcfArgs, AcfResult, PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult,
     autocorrelation, pair_survival_tcf,
 };
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
     AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
-    BondOrientationalOrder, BondOrientationalOrderResult, LocalBondProjection,
-    LocalBondProjectionArgs, LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsResult,
-    MatchEnv, MatchEnvResult,
+    BondOrientationalOrder, BondOrientationalOrderResult, EnvironmentMatch, EnvironmentMatchResult,
+    LocalBondProjection, LocalBondProjectionArgs, LocalBondProjectionResult, LocalDescriptors,
+    LocalDescriptorsResult,
 };
 pub use error::ComputeError;
 pub use fitting::{
@@ -197,22 +201,21 @@ pub use fitting::{
     PlateauResult,
 };
 pub use hbond::{
-    DistKind, HBond, HBondCriterion, HBonds, HBondsResult, LifetimeResult, NetworkResult,
-    hbond_components, hbond_lifetimes, presence_from_hbonds,
+    HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
+    HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
 };
-pub use ml::{KMeans, KMeansResult, Pca2, PcaResult};
-pub use msd::{MSD, MSDAccumulator, MSDResult, MSDTimeSeries, MsdMode};
+pub use msd::{Msd, MsdAccumulator, MsdMode, MsdResult, MsdTimeSeries};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
     HexaticResult, LegendreReorientation, LegendreReorientationResult, Nematic, NematicResult,
     RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
-    SolidLiquid, SolidLiquidResult, Steinhardt, SteinhardtResult, compute_qlm,
+    SolidLiquid, SolidLiquidResult, Steinhardt, SteinhardtResult, steinhardt_qlm,
 };
 pub use pmft::{
-    PMFTR12, PMFTR12Args, PMFTR12Result, PMFTXY, PMFTXYArgs, PMFTXYResult, PMFTXYT, PMFTXYTArgs,
-    PMFTXYTResult, PMFTXYZ, PMFTXYZArgs, PMFTXYZResult,
+    PmftR12, PmftR12Args, PmftR12Result, PmftXy, PmftXyArgs, PmftXyResult, PmftXyt, PmftXytArgs,
+    PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult,
 };
-pub use rdf::{RDF, RDFAccumulator, RDFResult, RdfMode};
+pub use rdf::{Rdf, RdfAccumulator, RdfMode, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both
 /// endpoints of a row and so depends on the table being half-shell.
@@ -224,34 +227,34 @@ pub use rdf::{RDF, RDFAccumulator, RDFResult, RdfMode};
 /// answer `Option` / [`QueryMode`](molrs::core::QueryMode) rather
 /// than [`ComputeError`].
 pub(crate) use require::{require_disp, require_dist_sq, require_self_query};
-pub use result::{ComputeResult, DescriptorRow};
 pub use shape::{
-    COMResult, CenterOfMass, ClusterCenters, ClusterCentersResult, GyrationTensor,
-    GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration, RgResult,
+    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, GyrationTensor,
+    GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration,
+    RadiusOfGyrationResult,
 };
 pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
-    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IRFlux, IRFluxArgs,
-    IRFluxResult, IRSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
+    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IrFlux, IrFluxArgs,
+    IrFluxResult, IrSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
     RamanSpectrumResult, RamanTensor, RamanTensorArgs, RamanTensorResult, ResonanceRamanArgs,
     ResonanceRamanSpectrum, ResonanceRamanTensor, RoaCrossArgs, RoaCrossResult, RoaCrossTensor,
     RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult, SumRuleCheck, VcdCrossArgs,
     VcdCrossFlux, VcdCrossResult, VcdSpectrum,
 };
-pub use traits::{Check, Compute, Fit, Verdict};
 pub use transport::{
     DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
     DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, EinsteinConductivity,
     EinsteinConductivityArgs, EinsteinConductivityResult, EinsteinDiffusion, EinsteinDiffusionArgs,
     EinsteinDiffusionResult, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityArgs,
     GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation, OnsagerCorrelationArgs,
-    OnsagerResult, VACF, VACFAccumulator, VacfArgs, VacfResult, lag_times, unbiased_cartesian_acf,
+    OnsagerCorrelationResult, Vacf, VacfAccumulator, VacfArgs, VacfResult, lag_times,
     unbiased_cartesian_xcorr,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{
-    BOUNDARY, DensityGrid, DomainAnalysis, DomainResult, Face, MolecularMoments, RadicalVoronoi,
-    VoidAnalysis, VoidResult, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
+    DensityGrid, MolecularMoments, RadicalVoronoi, VORONOI_BOUNDARY, VoronoiCells,
+    VoronoiDomainAnalysis, VoronoiDomainResult, VoronoiFace, VoronoiIntegration,
+    VoronoiVoidAnalysis, VoronoiVoidResult, polarizability_finite_field,
 };
 
 // ---------------------------------------------------------------------------
@@ -282,7 +285,7 @@ mod require_tests {
     use crate::compute::ComputeError;
     use crate::compute::{require_disp, require_dist_sq};
     use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-    use molrs::op::types::F;
+    use molrs::op::F;
 
     /// Two hard-coded half-shell pairs (`i < j`), legal under
     /// `SelfQuery { num_points: 4 }`.

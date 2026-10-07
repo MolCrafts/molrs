@@ -82,9 +82,9 @@ impl MolGraph {
     /// "do not select part of one". The chemistry case is ring systems: a cut
     /// ring is not a smaller molecule, it is a different one, and ring
     /// perception downstream reads it as such. Build them with
-    /// [`small_ring_closure`](crate::perceive::rings::small_ring_closure),
+    /// [`small_ring_closure`](crate::perceive::small_ring_closure),
     /// which bounds ring size and costs the ball rather than the parent;
-    /// [`RingInfo::ring_systems`](crate::perceive::rings::RingInfo::ring_systems)
+    /// [`RingInfo::ring_systems`](crate::perceive::RingInfo::ring_systems)
     /// answers the same question globally and without a bound, so it closes on
     /// macrocycles too and can hand back the entire molecule.
     pub fn extract_ball(

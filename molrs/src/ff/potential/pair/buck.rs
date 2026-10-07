@@ -20,7 +20,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Where a pair's Buckingham `(A, ρ, C)` comes from.
 enum Source {
@@ -446,7 +446,7 @@ mod tests {
         use crate::ff::forcefield::Params;
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let build = |scale: f64| {

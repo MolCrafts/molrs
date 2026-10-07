@@ -12,7 +12,7 @@ use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, Mix, ParamKind, Para
 use crate::ff::ir::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Members an indexed family binds in an expression: `k1 … k16`. A table
 /// whose rows have fewer leaves the rest unread (an expression that reads

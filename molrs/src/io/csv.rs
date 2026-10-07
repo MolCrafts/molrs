@@ -15,7 +15,7 @@ use ndarray::Array1;
 
 use crate::core::Block;
 use crate::core::Column;
-use crate::op::types::{F, I};
+use crate::op::{F, I};
 
 /// Parse CSV `text` into a [`Block`].
 ///
@@ -170,9 +170,9 @@ fn insert_as(
                 .map_err(|e| e.to_string())
         }
         DType::UInt => {
-            let v: Vec<crate::op::types::Idx> = raw
+            let v: Vec<crate::op::Idx> = raw
                 .iter()
-                .map(|s| s.parse::<crate::op::types::Idx>().map_err(parse_err))
+                .map(|s| s.parse::<crate::op::Idx>().map_err(parse_err))
                 .collect::<Result<_, _>>()?;
             block
                 .insert(name, Array1::from(v).into_dyn())

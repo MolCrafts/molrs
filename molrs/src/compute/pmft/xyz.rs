@@ -1,7 +1,7 @@
 //! 3-D `(x, y, z)` Pair Mode Fourier Transform.
 //!
-//! Mirrors `freud.pmft.PMFTXYZ`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PMFTXYZ.cc)).
+//! Mirrors `freud.pmft.PmftXyz`
+//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyz.cc)).
 //!
 //! For every neighbor pair the bond vector `(dx, dy, dz)` is binned into
 //! a 3-D histogram on
@@ -9,7 +9,7 @@
 //! `−ln(ρ(x, y, z) / ρ_ref)` with `ρ_ref = N² / V_box`. Empty bins → `+∞`.
 //!
 //! When per-particle orientations are supplied as quaternions via
-//! [`PMFTXYZArgs::query_orientations`], every bond is rotated into the
+//! [`PmftXyzArgs::query_orientations`], every bond is rotated into the
 //! query particle's local frame before binning (matches freud's
 //! `query_orientations` argument). Without orientations the analyzer
 //! works in the lab frame.
@@ -18,17 +18,17 @@ use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array3;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::op::rigid::{quat_conj, rotate_by_quat};
+use crate::op::{quat_conj, rotate_by_quat};
 
-/// `PMFTXYZ` analyzer.
+/// `PmftXyz` analyzer.
 #[derive(Debug, Clone, Copy)]
-pub struct PMFTXYZ {
+pub struct PmftXyz {
     x_max: F,
     y_max: F,
     z_max: F,
@@ -37,7 +37,7 @@ pub struct PMFTXYZ {
     n_z: usize,
 }
 
-impl PMFTXYZ {
+impl PmftXyz {
     /// Body-frame window `±x_max × ±y_max × ±z_max` (Å); `n_x × n_y × n_z` bins.
     pub fn new(
         x_max: F,
@@ -55,13 +55,13 @@ impl PMFTXYZ {
             || z_max <= 0.0
         {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXYZ ranges",
+                field: "PmftXyz ranges",
                 value: format!("x_max={x_max}, y_max={y_max}, z_max={z_max}"),
             });
         }
         if n_x == 0 || n_y == 0 || n_z == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXYZ bin counts",
+                field: "PmftXyz bin counts",
                 value: format!("n_x={n_x}, n_y={n_y}, n_z={n_z}"),
             });
         }
@@ -80,13 +80,13 @@ impl PMFTXYZ {
         frame: &FA,
         nlist: &Neighbors,
         orientations: Option<&[[F; 4]]>,
-    ) -> Result<PMFTXYZResult, ComputeError> {
+    ) -> Result<PmftXyzResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
         let (lx, ly, lz) = match simbox.kind() {
             BoxKind::Ortho { len, .. } => (len[0], len[1], len[2]),
             BoxKind::Triclinic => {
                 return Err(ComputeError::OutOfRange {
-                    field: "PMFTXYZ::simbox",
+                    field: "PmftXyz::simbox",
                     value: "triclinic boxes not supported".into(),
                 });
             }
@@ -127,7 +127,7 @@ impl PMFTXYZ {
                         return Err(ComputeError::DimensionMismatch {
                             expected: i + 1,
                             got: o.len(),
-                            what: "PMFTXYZ orientations length",
+                            what: "PmftXyz orientations length",
                         });
                     }
                     // Rotate the lab-frame bond into i's local frame: use
@@ -146,7 +146,7 @@ impl PMFTXYZ {
                             return Err(ComputeError::DimensionMismatch {
                                 expected: j + 1,
                                 got: o.len(),
-                                what: "PMFTXYZ orientations length",
+                                what: "PmftXyz orientations length",
                             });
                         }
                         let r = rotate_by_quat(quat_conj(o[j]), [-vx, -vy, -vz]);
@@ -190,7 +190,7 @@ impl PMFTXYZ {
         let y_edges: Vec<F> = (0..=self.n_y).map(|i| -self.y_max + i as F * dy).collect();
         let z_edges: Vec<F> = (0..=self.n_z).map(|i| -self.z_max + i as F * dz).collect();
 
-        Ok(PMFTXYZResult {
+        Ok(PmftXyzResult {
             density,
             raw_counts: counts,
             pmf,
@@ -201,23 +201,23 @@ impl PMFTXYZ {
     }
 }
 
-/// `Args` for [`PMFTXYZ`]. When `query_orientations` is `Some`, each entry
+/// `Args` for [`PmftXyz`]. When `query_orientations` is `Some`, each entry
 /// is a per-frame `Vec<[F;4]>` of unit quaternions `(w, x, y, z)` used to
 /// rotate every bond into the query particle's local frame before binning.
-pub struct PMFTXYZArgs<'a> {
+pub struct PmftXyzArgs<'a> {
     pub nlists: &'a [Neighbors],
     pub query_orientations: Option<&'a [Vec<[F; 4]>]>,
 }
 
-impl Compute for PMFTXYZ {
-    type Args<'a> = PMFTXYZArgs<'a>;
-    type Output = Vec<PMFTXYZResult>;
+impl Compute for PmftXyz {
+    type Args<'a> = PmftXyzArgs<'a>;
+    type Output = Vec<PmftXyzResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: PMFTXYZArgs<'a>,
-    ) -> Result<Vec<PMFTXYZResult>, ComputeError> {
+        args: PmftXyzArgs<'a>,
+    ) -> Result<Vec<PmftXyzResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -234,7 +234,7 @@ impl Compute for PMFTXYZ {
             return Err(ComputeError::DimensionMismatch {
                 expected: frames.len(),
                 got: o.len(),
-                what: "PMFTXYZ orientations frame count",
+                what: "PmftXyz orientations frame count",
             });
         }
         #[cfg(feature = "rayon")]
@@ -266,7 +266,7 @@ impl Compute for PMFTXYZ {
 
 /// Per-frame PMFTXYZ result.
 #[derive(Debug, Clone, Default)]
-pub struct PMFTXYZResult {
+pub struct PmftXyzResult {
     pub density: Array3<F>,
     pub raw_counts: Array3<u64>,
     pub pmf: Array3<F>,
@@ -275,12 +275,12 @@ pub struct PMFTXYZResult {
     pub z_edges: Vec<F>,
 }
 
-impl ComputeResult for PMFTXYZResult {}
+impl ComputeResult for PmftXyzResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -309,11 +309,11 @@ mod tests {
     fn antiparallel_bonds_populate_symmetric_bins() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [0.5, 0.4, 0.3]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 1.5);
-        let r = &PMFTXYZ::new(1.0, 1.0, 1.0, 8, 8, 8)
+        let r = &PmftXyz::new(1.0, 1.0, 1.0, 8, 8, 8)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYZArgs {
+                PmftXyzArgs {
                     nlists: &[nl],
                     query_orientations: None,
                 },
@@ -327,11 +327,11 @@ mod tests {
     fn out_of_range_dropped() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]], 10.0, [false; 3]);
         let nl = build_nlist(&frame, 5.0);
-        let r = &PMFTXYZ::new(1.0, 1.0, 1.0, 4, 4, 4)
+        let r = &PmftXyz::new(1.0, 1.0, 1.0, 4, 4, 4)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYZArgs {
+                PmftXyzArgs {
                     nlists: &[nl],
                     query_orientations: None,
                 },
@@ -342,8 +342,8 @@ mod tests {
 
     #[test]
     fn invalid_args_error() {
-        assert!(PMFTXYZ::new(0.0, 1.0, 1.0, 4, 4, 4).is_err());
-        assert!(PMFTXYZ::new(1.0, 1.0, 1.0, 0, 4, 4).is_err());
+        assert!(PmftXyz::new(0.0, 1.0, 1.0, 4, 4, 4).is_err());
+        assert!(PmftXyz::new(1.0, 1.0, 1.0, 0, 4, 4).is_err());
     }
 
     #[test]
@@ -363,11 +363,11 @@ mod tests {
         let identity = [1.0_f64, 0.0, 0.0, 0.0];
         let orient = vec![q0, identity];
 
-        let r = &PMFTXYZ::new(1.5, 1.5, 1.5, 6, 6, 6)
+        let r = &PmftXyz::new(1.5, 1.5, 1.5, 6, 6, 6)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYZArgs {
+                PmftXyzArgs {
                     nlists: std::slice::from_ref(&nl),
                     query_orientations: Some(std::slice::from_ref(&orient)),
                 },

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::op::types::F;
+use crate::op::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;

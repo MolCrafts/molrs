@@ -24,7 +24,7 @@ use ndarray::{Array2, array};
 
 use crate::io::invalid_data;
 use molrs::core::SimBox;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// VASP coordinate mode for atom positions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

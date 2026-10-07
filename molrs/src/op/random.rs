@@ -4,7 +4,7 @@
 
 use rand::RngExt;
 
-use crate::op::types::F;
+use crate::op::F;
 
 /// One standard normal deviate, `N(0, 1)`, by the Box–Muller transform.
 ///

@@ -46,7 +46,7 @@ use molrs::core::Virial;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
 /// enumerating.
@@ -1095,7 +1095,7 @@ mod tests {
 
     use crate::ff::forcefield::{ForceField, Params};
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     struct DummyPotential {
@@ -1748,7 +1748,7 @@ mod tests {
 #[cfg(test)]
 pub(crate) mod test_util {
     use super::Potential;
-    use molrs::op::types::F;
+    use molrs::op::F;
 
     /// Central-difference check that every force component is `-dE/dx`.
     pub(crate) fn assert_forces_are_negative_gradient(pot: &dyn Potential, coords: &[F], tol: F) {

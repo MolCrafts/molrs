@@ -27,7 +27,7 @@
 //! |-------------|-------------|---------|
 //! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
-//! | `perceive`  | `perceive` | Chemical perception builder (`Perceive.findRings`, `findHydrogens`, …) |
+//! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
 //! | `conformer` | `conformer` | 3D conformer generation (`generate3D`) |
 //! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s) and the `Potentials` they compile |
@@ -115,4 +115,6 @@ pub use ff::*;
 pub use io::*;
 #[cfg(feature = "conformer")]
 pub use optimize::*;
-pub use perceive::Perceive;
+pub use perceive::{
+    add_hydrogens, assign_aromaticity, assign_kekule_bond_orders, assign_rings, remove_hydrogens,
+};

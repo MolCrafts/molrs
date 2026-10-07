@@ -4,7 +4,7 @@
 
 use molrs::core::Column;
 use molrs::core::{ObservableRecord, ObservableValues, Trajectory as CoreTrajectory};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
 use pyo3::exceptions::{PyIndexError, PyTypeError};

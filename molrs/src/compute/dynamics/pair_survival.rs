@@ -78,7 +78,7 @@ impl SurvivalMethod {
 
 /// Result of a pair-survival correlation computation.
 #[derive(Debug, Clone)]
-pub struct PersistResult {
+pub struct PairSurvivalResult {
     /// Lag times τ = i·dt, length `max_lag + 1` (same unit as `dt`).
     pub lag_times: Array1<f64>,
     /// Persistence correlation `C(τ)` (mean surviving partners per reference
@@ -126,7 +126,7 @@ pub fn pair_survival_tcf(
     dt: f64,
     max_correlation_time: usize,
     exclude_self: bool,
-) -> Result<PersistResult, ComputeError> {
+) -> Result<PairSurvivalResult, ComputeError> {
     let si = coords_i.shape();
     let sj = coords_j.shape();
     if si[2] != 3 {
@@ -261,7 +261,7 @@ pub fn pair_survival_tcf(
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
 
-    Ok(PersistResult {
+    Ok(PairSurvivalResult {
         lag_times,
         correlation,
     })

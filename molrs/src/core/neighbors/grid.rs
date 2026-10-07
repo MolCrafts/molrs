@@ -25,7 +25,7 @@
 //! particle from its true neighbours while showing it to unrelated ones.
 
 use crate::core::SimBox;
-use crate::op::types::F;
+use crate::op::F;
 
 /// A regular partition of a [`SimBox`] into cells, indexed in fractional space.
 ///

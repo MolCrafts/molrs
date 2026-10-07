@@ -34,7 +34,7 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;

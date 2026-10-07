@@ -6,8 +6,8 @@
 
 //! 2-D `(x, y, θ)` Pair Mode Fourier Transform.
 //!
-//! Mirrors `freud.pmft.PMFTXYT`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PMFTXYT.cc)).
+//! Mirrors `freud.pmft.PmftXyt`
+//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftXyt.cc)).
 //!
 //! For a 2-D system of oriented particles: bin each neighbor pair `(i, j)`
 //! by the bond vector **rotated into the query particle's local frame**
@@ -26,7 +26,7 @@ use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array3;
 
 use crate::compute::Compute;
@@ -35,9 +35,9 @@ use crate::compute::require_disp;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
-/// `PMFTXYT` analyzer.
+/// `PmftXyt` analyzer.
 #[derive(Debug, Clone, Copy)]
-pub struct PMFTXYT {
+pub struct PmftXyt {
     x_max: F,
     y_max: F,
     n_x: usize,
@@ -45,7 +45,7 @@ pub struct PMFTXYT {
     n_t: usize,
 }
 
-impl PMFTXYT {
+impl PmftXyt {
     /// Body-frame window `±x_max × ±y_max` (Å); `n_x × n_y × n_t` (x, y, θ) bins.
     pub fn new(
         x_max: F,
@@ -56,13 +56,13 @@ impl PMFTXYT {
     ) -> Result<Self, ComputeError> {
         if x_max.is_nan() || y_max.is_nan() || x_max <= 0.0 || y_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXYT ranges",
+                field: "PmftXyt ranges",
                 value: format!("x_max={x_max}, y_max={y_max}"),
             });
         }
         if n_x == 0 || n_y == 0 || n_t == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTXYT bin counts",
+                field: "PmftXyt bin counts",
                 value: format!("n_x={n_x}, n_y={n_y}, n_t={n_t}"),
             });
         }
@@ -76,7 +76,7 @@ impl PMFTXYT {
     }
 }
 
-pub struct PMFTXYTArgs<'a> {
+pub struct PmftXytArgs<'a> {
     pub nlists: &'a [Neighbors],
     pub orientations: &'a [Vec<F>],
 }
@@ -87,19 +87,19 @@ fn wrap_2pi(a: F) -> F {
     if v < 0.0 { v + TWO_PI } else { v }
 }
 
-impl PMFTXYT {
+impl PmftXyt {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         nlist: &Neighbors,
         orientations: &[F],
-    ) -> Result<PMFTXYTResult, ComputeError> {
+    ) -> Result<PmftXytResult, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
         let (lx, ly) = match simbox.kind() {
             BoxKind::Ortho { len, .. } => (len[0], len[1]),
             BoxKind::Triclinic => {
                 return Err(ComputeError::OutOfRange {
-                    field: "PMFTXYT::simbox",
+                    field: "PmftXyt::simbox",
                     value: "triclinic boxes not supported".into(),
                 });
             }
@@ -137,7 +137,7 @@ impl PMFTXYT {
                 return Err(ComputeError::DimensionMismatch {
                     expected: i.max(j) + 1,
                     got: orientations.len(),
-                    what: "PMFTXYT orientations length",
+                    what: "PmftXyt orientations length",
                 });
             }
             // i-side: rotate bond into i's frame, t = orient_j − orient_i.
@@ -191,7 +191,7 @@ impl PMFTXYT {
         let y_edges: Vec<F> = (0..=self.n_y).map(|i| -self.y_max + i as F * dy).collect();
         let t_edges: Vec<F> = (0..=self.n_t).map(|i| i as F * dt).collect();
 
-        Ok(PMFTXYTResult {
+        Ok(PmftXytResult {
             density,
             raw_counts: counts,
             pmf,
@@ -202,15 +202,15 @@ impl PMFTXYT {
     }
 }
 
-impl Compute for PMFTXYT {
-    type Args<'a> = PMFTXYTArgs<'a>;
-    type Output = Vec<PMFTXYTResult>;
+impl Compute for PmftXyt {
+    type Args<'a> = PmftXytArgs<'a>;
+    type Output = Vec<PmftXytResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: PMFTXYTArgs<'a>,
-    ) -> Result<Vec<PMFTXYTResult>, ComputeError> {
+        args: PmftXytArgs<'a>,
+    ) -> Result<Vec<PmftXytResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -219,7 +219,7 @@ impl Compute for PMFTXYT {
             return Err(ComputeError::DimensionMismatch {
                 expected: nf,
                 got: args.nlists.len().min(args.orientations.len()),
-                what: "PMFTXYT frame-aligned inputs",
+                what: "PmftXyt frame-aligned inputs",
             });
         }
         #[cfg(feature = "rayon")]
@@ -244,7 +244,7 @@ impl Compute for PMFTXYT {
 
 /// Per-frame PMFTXYT result.
 #[derive(Debug, Clone, Default)]
-pub struct PMFTXYTResult {
+pub struct PmftXytResult {
     pub density: Array3<F>,
     pub raw_counts: Array3<u64>,
     pub pmf: Array3<F>,
@@ -253,12 +253,12 @@ pub struct PMFTXYTResult {
     pub t_edges: Vec<F>,
 }
 
-impl ComputeResult for PMFTXYTResult {}
+impl ComputeResult for PmftXytResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -291,11 +291,11 @@ mod tests {
         // is (+1, 0); t = 0. The reverse contributes (−1, 0, 0).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
         let nl = nlist_from_frame(&frame, 1.5);
-        let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 8)
+        let r = &PmftXyt::new(2.0, 2.0, 8, 8, 8)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYTArgs {
+                PmftXytArgs {
                     nlists: std::slice::from_ref(&nl),
                     orientations: std::slice::from_ref(&vec![0.0_f64, 0.0]),
                 },
@@ -312,11 +312,11 @@ mod tests {
         // -y axis (i.e. local (x, y) = (0, -1)).
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
         let nl = nlist_from_frame(&frame, 1.5);
-        let r = &PMFTXYT::new(2.0, 2.0, 8, 8, 4)
+        let r = &PmftXyt::new(2.0, 2.0, 8, 8, 4)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTXYTArgs {
+                PmftXytArgs {
                     nlists: std::slice::from_ref(&nl),
                     orientations: std::slice::from_ref(&vec![std::f64::consts::FRAC_PI_2, 0.0]),
                 },
@@ -340,8 +340,8 @@ mod tests {
 
     #[test]
     fn invalid_args_error() {
-        assert!(PMFTXYT::new(0.0, 1.0, 4, 4, 4).is_err());
-        assert!(PMFTXYT::new(1.0, 1.0, 0, 4, 4).is_err());
-        assert!(PMFTXYT::new(1.0, 1.0, 4, 4, 0).is_err());
+        assert!(PmftXyt::new(0.0, 1.0, 4, 4, 4).is_err());
+        assert!(PmftXyt::new(1.0, 1.0, 0, 4, 4).is_err());
+        assert!(PmftXyt::new(1.0, 1.0, 4, 4, 0).is_err());
     }
 }

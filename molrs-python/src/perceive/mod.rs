@@ -1,32 +1,17 @@
 //! Python bindings for the chemical-perception layer (`molrs::perceive`,
 //! Python `molrs.perceive`).
 //!
-//! The main class, [`PyPerceive`] (`molrs.perceive.Perceive`), mirrors the Rust
-//! builder: the layer's free functions have four different shapes (a side
-//! table, an in-place mutation returning a count, a graph-out transform, and
-//! maps), and the builder normalises all four to a single contract —
+//! Every perception is a free function at the Rust name, in one of two shapes:
+//! `perceive_<fact>(mol)` reports a side table (here `perceive_rings` →
+//! `RingInfo`) and leaves the graph alone; `assign_<fact>(mol)` writes the fact
+//! onto a **clone** of the molecule as atom / bond props and returns it, so the
+//! steps compose. Every `assign_*` takes `&PyAtomistic` (a shared borrow) and
+//! returns a **new** `Atomistic`: the non-mutating contract is enforced by the
+//! borrow checker rather than by convention. `add_hydrogens` is an edit of the
+//! graph and keeps its verb.
 //!
-//! > **graph in / graph out, non-mutating** — each `find_*` clones the molecule,
-//! > writes the perceived facts onto the clone as atom / bond props, and returns
-//! > it. The input is never touched.
-//!
-//! That contract is the whole reason the builder exists, and it is the property a
-//! binding is most likely to lose: handing PyO3 a `&mut` and returning `None` would
-//! still "work" for a caller who only looks at the output. Every `Perceive` method takes
-//! `&PyAtomistic` (a shared borrow) and returns a **new** `Atomistic`, so the shape
-//! is enforced by the borrow checker rather than by convention.
-//!
-//! No perception step is bound as a free function: Python reaches every one of
-//! them through a method — `molrs.perceive.Perceive.find_hydrogens`,
-//! `.find_aromaticity`, `.find_rings` and the rest of the `find_*` family.
-//! The layer's other classes answer other questions and are not replaced by
-//! the builder: [`rings`]' `RingInfo` *reports* the ring list (where
-//! `Perceive.find_rings` hands back the annotated graph that composes with the
-//! next finder), and [`smarts`]' `SmartsPattern` / `Reaction` match a query
-//! against, or rewrite, a perceived graph.
-//!
-//! Chemical perception is all-atom, so every `Perceive` method is typed
-//! against `Atomistic`; a `CoarseGrain` leaf is a `TypeError` from PyO3's own
+//! Chemical perception is all-atom, so every function is typed against
+//! `Atomistic`; a `CoarseGrain` leaf is a `TypeError` from PyO3's own
 //! extraction, not a wrong answer.
 //!
 //! [`PySubgraphMatcher`] (`molrs.perceive.SubgraphMatcher`) is the
@@ -40,7 +25,12 @@ mod smarts;
 
 use pyo3::prelude::*;
 
-use molrs::perceive::{Perceive, SubgraphMatcher};
+use molrs::perceive::{
+    EquivalenceOptions, SubgraphMatcher, UnknownBondPolicy, add_hydrogens, assign_aromaticity,
+    assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity, assign_bond_orders,
+    assign_equivalence_classes, assign_kekule_bond_orders, assign_rings, assign_rotatable_bonds,
+    assign_stereo,
+};
 
 use molrs::core::node_to_u64;
 
@@ -48,291 +38,159 @@ use crate::core::molgraph::{PyAtomistic, PyCoarseGrain};
 
 use crate::error::molrs_error_to_pyerr;
 
-/// Chemical perception, as a builder — `molrs.perceive.Perceive`.
+/// Perceive rings (SSSR) and write them onto a clone of ``mol``.
 ///
-/// Exposed to Python as `molrs.perceive.Perceive`. Every ``find_*`` method is graph-in /
-/// graph-out and **non-mutating**.
-///
-/// Props written (atom / bond components on the returned clone):
-///
-/// ===============================  ==========================  ==========================
-/// Method                           Atom props                  Bond props
-/// ===============================  ==========================  ==========================
-/// ``find_rings``                   ``is_in_ring``, ``n_rings`` ``is_in_ring``, ``n_rings``
-/// ``find_aromaticity``             ``is_aromatic``             ``bond_type``, ``bond_number``
-/// ``find_hydrogens``               — (adds H atoms)            — (adds H bonds)
-/// ``find_stereo``                  ``stereo``                  ``stereo``
-/// ``find_rotatable``               —                           ``is_rotatable``
-/// ``find_bond_orders``             —                           ``bond_number``, ``bond_type``
-/// ``find_bond_types``              —                           ``bcc_bond_type``
-/// ``find_kekule_orders``           —                           ``bond_number``
-/// ``find_equivalence_classes``     ``equiv_class``             —
-/// ===============================  ==========================  ==========================
+/// Every atom and every bond receives ``is_in_ring`` (0/1) and ``n_rings`` —
+/// including the acyclic ones, which are explicitly flagged ``0`` rather than
+/// left unset. For the ring list itself use :func:`perceive_rings`.
 ///
 /// Examples
 /// --------
-/// >>> perceived = molrs.perceive.Perceive().find_rings(mol)
+/// >>> perceived = molrs.perceive.assign_rings(mol)
 /// >>> perceived.get(atom, "is_in_ring")
 /// 1
 /// >>> mol.has(atom, "is_in_ring")   # the input is untouched
 /// False
-// `subclass`: molpy layers a thin `Perceive` over this one so its finders
-// return molpy graphs. Without it the base type is final and molpy cannot
-// import at all.
-#[pyclass(module = "molrs.perceive", name = "Perceive", subclass)]
-#[derive(Debug)]
-pub struct PyPerceive {
-    inner: Perceive,
+#[pyfunction(name = "assign_rings")]
+fn assign_rings_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_rings(mol.core()))
 }
 
-#[pymethods]
-impl PyPerceive {
-    /// Create a perception builder with default settings.
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: Perceive::new(),
+/// Bring a molecule to the standard aromatic representation.
+///
+/// On return every aromatic atom carries ``is_aromatic``, every aromatic bond
+/// carries ``bond_type = 4``, and every bond carries an integer
+/// ``bond_number`` — the localized Lewis structure. Nothing carries a
+/// fractional order: aromaticity is a bond *type*, not the number 1.5.
+///
+/// An input that already declares its aromatic bonds (a lowercase SMILES) is
+/// *kekulized*; one that does not is *perceived* from its integer bond
+/// numbers, rings, valences and electron counts, and any assignment it already
+/// stated is kept. Hydrogens are neither added nor required.
+#[pyfunction(name = "assign_aromaticity")]
+fn assign_aromaticity_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_aromaticity(mol.core()))
+}
+
+/// Add the hydrogens implied by each heavy atom's open valence.
+///
+/// Returns a new graph: the heavy-atom skeleton of ``mol`` plus the perceived
+/// hydrogens and their bonds; ``mol`` is left untouched.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If repletion reports a stale atom handle on the graph it built — an
+///     invariant no molecule built through this package can break.
+#[pyfunction(name = "add_hydrogens")]
+fn add_hydrogens_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    let out = add_hydrogens(mol.core()).map_err(molrs_error_to_pyerr)?;
+    mol.derive(py, out)
+}
+
+/// Perceive stereochemistry from 3-D coordinates and write it onto a clone of
+/// ``mol``: a ``stereo`` prop appears only where a real descriptor was
+/// perceived — ``"CW"`` / ``"CCW"`` on atoms, ``"E"`` / ``"Z"`` /
+/// ``"either"`` on bonds.
+#[pyfunction(name = "assign_stereo")]
+fn assign_stereo_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_stereo(mol.core()))
+}
+
+/// Perceive rotatable bonds and write them onto a clone of ``mol``.
+///
+/// A bond is rotatable when it is a single, acyclic bond with two non-terminal
+/// endpoints. Every bond receives ``is_rotatable`` (0/1).
+///
+/// Parameters
+/// ----------
+/// mol : Atomistic
+///     The molecule to perceive; left untouched.
+/// unknown_bond : {"not_rotatable", "single"}, default "not_rotatable"
+///     What a bond with no ``bond_type`` written counts as (a graph read
+///     from connectivity alone). ``"not_rotatable"`` never guesses;
+///     ``"single"`` lets it rotate under the degree and ring rules.
+///
+/// Raises
+/// ------
+/// ValueError
+///     If ``unknown_bond`` is not one of the two policies.
+#[pyfunction(name = "assign_rotatable_bonds")]
+#[pyo3(signature = (mol, *, unknown_bond = "not_rotatable"))]
+fn assign_rotatable_bonds_py(
+    py: Python<'_>,
+    mol: &PyAtomistic,
+    unknown_bond: &str,
+) -> PyResult<Py<PyAtomistic>> {
+    let unknown = match unknown_bond {
+        "not_rotatable" => UnknownBondPolicy::NotRotatable,
+        "single" => UnknownBondPolicy::AsSingle,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown_bond must be 'not_rotatable' or 'single', got {other:?}"
+            )));
         }
-    }
+    };
+    mol.derive(py, assign_rotatable_bonds(mol.core(), unknown))
+}
 
-    /// Perceive rings (SSSR) and project them onto the graph.
-    ///
-    /// Every atom and every bond receives ``is_in_ring`` (0/1) and ``n_rings`` —
-    /// including the acyclic ones, which are explicitly flagged ``0`` rather than
-    /// left unset.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` carrying the ring props.
-    fn find_rings(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_rings(mol.core()))
-    }
+/// Perceive antechamber's BCC bond types from the bond orders ``mol`` states
+/// and write them onto a clone: every bond receives a ``bcc_bond_type`` in
+/// ``{1, 2, 3, 6, 7, 8, 9}`` — the alphabet AM1-BCC's atom-type rules and
+/// correction table are keyed on, which distinguishes aromatic bonds (7/8) and
+/// *delocalized* ones (9, e.g. a carboxylate's two equivalent C–O bonds) from
+/// plain orders. The bond's ``type`` — the caller's force-field label — is
+/// neither read nor written.
+#[pyfunction(name = "assign_bcc_bond_types")]
+fn assign_bcc_bond_types_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_bcc_bond_types(mol.core()))
+}
 
-    /// Bring a molecule to the standard aromatic representation.
-    ///
-    /// On return every aromatic atom carries ``is_aromatic``, every aromatic
-    /// bond carries ``bond_type = 4``, and every bond carries an integer
-    /// ``bond_number`` — the localized Lewis structure. Nothing carries a
-    /// fractional order: aromaticity is a bond *type*, not the number 1.5.
-    ///
-    /// Two inputs get two treatments. An input that already declares its
-    /// aromatic bonds (a lowercase SMILES) is *kekulized* — the notation
-    /// answered which bonds are aromatic, and only the phase is missing. An
-    /// input that does not is *perceived* from its integer bond numbers, rings,
-    /// valences and electron counts, and any assignment it already stated is
-    /// kept.
-    ///
-    /// Hydrogens are neither added nor required: implicit hydrogens are read
-    /// off each atom's valence, so :meth:`find_hydrogens` stays an independent
-    /// operation and running it first changes no answer here.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to standardize; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` carrying both facts about every bond.
-    fn find_aromaticity(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_aromaticity(mol.core()))
-    }
+/// :func:`assign_bcc_bond_types` as antechamber runs it: the bond orders are
+/// judged from the connectivity alone (``bondtype -j full``), whatever orders
+/// ``mol`` states. Every hydrogen must be drawn.
+#[pyfunction(name = "assign_bcc_bond_types_from_connectivity")]
+fn assign_bcc_bond_types_from_connectivity_py(
+    py: Python<'_>,
+    mol: &PyAtomistic,
+) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_bcc_bond_types_from_connectivity(mol.core()))
+}
 
-    /// Add the hydrogens implied by each heavy atom's open valence.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to fill; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A new graph: the heavy-atom skeleton of ``mol`` plus the perceived
-    ///     hydrogens and their bonds.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If repletion reports a stale atom handle on the graph it built — an
-    ///     invariant no molecule built through this package can break.
-    fn find_hydrogens(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        let out = self
-            .inner
-            .find_hydrogens(mol.core())
-            .map_err(molrs_error_to_pyerr)?;
-        mol.derive(py, out)
-    }
+/// Judge every bond's order from the connectivity alone, as antechamber's
+/// ``bondtype -j full`` does, and write it onto a clone of ``mol``: every
+/// judged bond gets a localized ``bond_number`` (1/2/3) and the ``bond_type``
+/// it implies. The answer follows the atom and bond order, as antechamber's
+/// does; the bonds of a residue no valence state closes are left untouched.
+#[pyfunction(name = "assign_bond_orders")]
+fn assign_bond_orders_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_bond_orders(mol.core()))
+}
 
-    /// Perceive stereochemistry from 3-D coordinates and project it onto the graph.
-    ///
-    /// A ``stereo`` prop appears only where a real descriptor was perceived:
-    /// ``"CW"`` / ``"CCW"`` on atoms, ``"E"`` / ``"Z"`` / ``"either"`` on bonds.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` carrying a ``stereo`` prop on each perceived
-    ///     stereocentre and stereo bond, and none elsewhere.
-    fn find_stereo(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_stereo(mol.core()))
-    }
+/// Assign a localized (Kekulé) ``bond_number`` to every aromatic bond of a
+/// clone of ``mol``.
+///
+/// Kekulization and nothing else: a molecule whose aromatic bonds are not
+/// marked yet comes back unchanged, because deciding *which* bonds are
+/// aromatic belongs to :func:`assign_aromaticity`. An aromatic bond that
+/// already carries a legal number keeps it; a system with no legal assignment
+/// is left entirely unchanged rather than half-assigned.
+#[pyfunction(name = "assign_kekule_bond_orders")]
+fn assign_kekule_bond_orders_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(py, assign_kekule_bond_orders(mol.core()))
+}
 
-    /// Perceive rotatable bonds and project them onto the graph.
-    ///
-    /// A bond is rotatable when it is a single, acyclic bond with two non-terminal
-    /// endpoints. Every bond is flagged — non-rotatable ones explicitly with ``0``.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
-    /// unknown_bond : {"not_rotatable", "single"}, default "not_rotatable"
-    ///     What a bond with no ``bond_type`` written counts as (a graph read
-    ///     from connectivity alone). ``"not_rotatable"`` never guesses;
-    ///     ``"single"`` lets it rotate under the degree and ring rules.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` with ``is_rotatable`` (0/1) on every bond.
-    ///
-    /// Raises
-    /// ------
-    /// ValueError
-    ///     If ``unknown_bond`` is not one of the two policies.
-    #[pyo3(signature = (mol, *, unknown_bond = "not_rotatable"))]
-    fn find_rotatable(
-        &self,
-        py: Python<'_>,
-        mol: &PyAtomistic,
-        unknown_bond: &str,
-    ) -> PyResult<Py<PyAtomistic>> {
-        use molrs::perceive::rotatable::UnknownBondPolicy;
-        let unknown = match unknown_bond {
-            "not_rotatable" => UnknownBondPolicy::NotRotatable,
-            "single" => UnknownBondPolicy::AsSingle,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown_bond must be 'not_rotatable' or 'single', got {other:?}"
-                )));
-            }
-        };
-        mol.derive(py, self.inner.find_rotatable(mol.core(), unknown))
-    }
-
-    /// Perceive antechamber bond types, from the bond orders ``mol`` states,
-    /// and project them onto the graph. (``AtdTypifier`` judges the orders
-    /// from the connectivity instead, as antechamber does — see
-    /// :meth:`find_bond_orders`.)
-    ///
-    /// Every bond receives a ``bcc_bond_type`` prop in ``{1, 2, 3, 6, 7, 8, 9}`` —
-    /// the alphabet AM1-BCC's atom-type rules and correction table are keyed on,
-    /// which distinguishes aromatic bonds (7/8) and *delocalized* ones (9, e.g. a
-    /// carboxylate's two equivalent C–O bonds) from plain orders. The bond's
-    /// ``type`` — the caller's force-field label — is neither read nor written.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` with ``bcc_bond_type`` on every bond.
-    fn find_bond_types(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_bond_types(mol.core()))
-    }
-
-    /// Judge every bond's order from the connectivity alone, as antechamber's
-    /// ``bondtype -j full`` does.
-    ///
-    /// Every judged bond gets a localized ``bond_number`` (1/2/3) and the
-    /// ``bond_type`` it implies, whatever the input stated. Like antechamber's,
-    /// the answer follows the atom and bond order: where a molecule has more
-    /// than one Kekulé structure, it is the one antechamber settles on for the
-    /// same order. The bonds of a residue no valence state closes are left
-    /// untouched.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule, every hydrogen drawn; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` carrying antechamber's Kekulé structure.
-    fn find_bond_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_bond_orders(mol.core()))
-    }
-
-    /// Assign a localized (Kekulé) ``bond_number`` to every aromatic bond.
-    ///
-    /// Kekulization and nothing else: a molecule whose aromatic bonds are not
-    /// marked yet comes back unchanged, because deciding *which* bonds are
-    /// aromatic belongs to :meth:`find_aromaticity`. Reach for this directly
-    /// when the input already declares its aromatic subgraph and only the phase
-    /// is missing.
-    ///
-    /// An aromatic bond that already carries a legal number keeps it — a file
-    /// that round-trips does not come back renumbered. A system with no legal
-    /// assignment is left entirely unchanged rather than half-assigned.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to kekulize; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` whose aromatic bonds carry a legal localized
-    ///     number.
-    fn find_kekule_orders(&self, py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_kekule_orders(mol.core()))
-    }
-
-    /// Perceive charge-equivalence classes and project them onto the graph.
-    ///
-    /// antechamber's default ``-eq 1`` — the path-score partition AM1-BCC averages
-    /// its AM1 charges over. Perception stops at the classes: whether to average is
-    /// a property of the charge model (`BccModel` declares it via
-    /// :meth:`BccModel.needs_equivalencing`), not of the graph.
-    ///
-    /// Parameters
-    /// ----------
-    /// mol : Atomistic
-    ///     The molecule to perceive; left untouched.
-    ///
-    /// Returns
-    /// -------
-    /// Atomistic
-    ///     A clone of ``mol`` with an ``equiv_class`` id on every atom.
-    fn find_equivalence_classes(
-        &self,
-        py: Python<'_>,
-        mol: &PyAtomistic,
-    ) -> PyResult<Py<PyAtomistic>> {
-        mol.derive(py, self.inner.find_equivalence_classes(mol.core()))
-    }
-
-    fn __repr__(&self) -> String {
-        "Perceive()".to_string()
-    }
+/// Perceive charge-equivalence classes and write them onto a clone of ``mol``:
+/// every atom receives an ``equiv_class`` id, antechamber's default ``-eq 1``
+/// partition (the one AM1-BCC averages its AM1 charges over). Whether to
+/// average is a property of the charge model (:meth:`BccModel.needs_equivalencing`),
+/// not of the graph.
+#[pyfunction(name = "assign_equivalence_classes")]
+fn assign_equivalence_classes_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<Py<PyAtomistic>> {
+    mol.derive(
+        py,
+        assign_equivalence_classes(mol.core(), EquivalenceOptions::default()),
+    )
 }
 
 /// Bead-group pattern matching over coarse-grained graphs —
@@ -415,7 +273,21 @@ impl PySubgraphMatcher {
 
 /// Register `molrs.perceive`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyPerceive>()?;
+    for f in [
+        wrap_pyfunction!(assign_rings_py, m)?,
+        wrap_pyfunction!(assign_aromaticity_py, m)?,
+        wrap_pyfunction!(add_hydrogens_py, m)?,
+        wrap_pyfunction!(assign_stereo_py, m)?,
+        wrap_pyfunction!(assign_rotatable_bonds_py, m)?,
+        wrap_pyfunction!(assign_bcc_bond_types_py, m)?,
+        wrap_pyfunction!(assign_bcc_bond_types_from_connectivity_py, m)?,
+        wrap_pyfunction!(assign_bond_orders_py, m)?,
+        wrap_pyfunction!(assign_kekule_bond_orders_py, m)?,
+        wrap_pyfunction!(assign_equivalence_classes_py, m)?,
+        wrap_pyfunction!(rings::perceive_rings_py, m)?,
+    ] {
+        crate::add_function(m, "molrs.perceive", f)?;
+    }
     m.add_class::<PySubgraphMatcher>()?;
     m.add_class::<rings::PyRingInfo>()?;
     m.add_class::<smarts::PySmartsPattern>()?;

@@ -10,7 +10,7 @@
 //! ```
 //!
 //! with the structural anchor `G_d(r,0) = ρ g(r)` (ρ = N/V the number density,
-//! `g(r)` the RDF) and the dynamical anchor `∫ r² G_s(r,t) dr = MSD(t)`. The
+//! `g(r)` the RDF) and the dynamical anchor `∫ r² G_s(r,t) dr = Msd(t)`. The
 //! two thus bridge [`rdf`](crate::compute::rdf) (structure) and
 //! [`msd`](crate::compute::msd) (dynamics).
 //!
@@ -43,7 +43,7 @@
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
 use molrs::core::NeighborQuery;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array1, Array2};
 
 use crate::compute::Compute;

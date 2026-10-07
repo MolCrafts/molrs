@@ -62,7 +62,7 @@
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
 use crate::core::bvh::Bvh;
-use crate::op::types::{F, FNx3, FNx3View};
+use crate::op::{F, FNx3, FNx3View};
 
 /// AABB-tree k-nearest-neighbor query.
 ///
@@ -421,8 +421,8 @@ mod tests {
             let a_i = bx.lattice((k + 1) % 3);
             let a_j = bx.lattice((k + 2) % 3);
             let cross = crate::op::vec3::cross(
-                crate::op::types::to_vec3(a_i.view()),
-                crate::op::types::to_vec3(a_j.view()),
+                crate::op::to_vec3(a_i.view()),
+                crate::op::to_vec3(a_j.view()),
             );
             let hand = bx.volume() / crate::op::vec3::norm(cross);
             assert!((dk - hand).abs() < 1e-12, "axis {k}: {dk} vs {hand}");

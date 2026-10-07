@@ -9,7 +9,7 @@
 use std::fmt::{self, Write as _};
 
 use super::ast::{Expr, NEG_PRECEDENCE, Parsed};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Precedence of an atom (number, name, call, parenthesised group).
 const ATOM: u8 = 4;

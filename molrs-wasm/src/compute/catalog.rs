@@ -3,7 +3,7 @@
 
 use super::js_value;
 use molrs::core::keys;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -189,7 +189,7 @@ struct ComputeCatalogEntry {
 /// extensions. Not 1:1 with every Rust `compute/` folder.
 ///
 /// freud mappings:
-/// - `density` — g(r) (`freud.density.RDF`) + Local/Gaussian density, …
+/// - `density` — g(r) (`freud.density.Rdf`) + Local/Gaussian density, …
 /// - `locality` — Voronoi (`freud.locality.Voronoi`); neighbor queries are infra
 /// - `msd` / `cluster` / `order` / `environment` / `diffraction` / `pmft` — 1:1
 ///
@@ -209,7 +209,7 @@ const CATEGORIES: [CatalogCategory; 15] = [
     },
     CatalogCategory {
         id: "msd",
-        label: "MSD",
+        label: "Msd",
     },
     CatalogCategory {
         id: "cluster",
@@ -303,13 +303,12 @@ fn entry(
 pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
     let analyses = vec![
         // --- density (freud.density: RDF + local/gaussian density, …) -------
-        // Analysis id keeps the `rdf.*` prefix for stable clients; the menu
-        // category is `density` to match freud.density.RDF.
+        // The menu category is `density`, matching freud.density.RDF.
         entry(
-            "rdf.radial_distribution",
+            "density.radial_distribution",
             "density",
             "Radial distribution g(r)",
-            "RDF",
+            "Rdf",
             "frameNeighbors",
             "lineSeries",
             &[],
@@ -325,7 +324,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "msd.mean_squared_displacement",
             "msd",
             "Mean squared displacement",
-            "MSD",
+            "Msd",
             "accumulate",
             "trajectorySeries",
             &[],
@@ -335,8 +334,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         entry(
             "transport.vacf",
             "transport",
-            "VACF",
-            "VACF",
+            "Vacf",
+            "Vacf",
             "series",
             "lineSeries",
             &["velocity"],
@@ -428,10 +427,10 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         entry(
-            "dynamics.pair_persistence",
+            "dynamics.pair_survival",
             "transport",
-            "Pair persistence",
-            "PairPersistence",
+            "Pair survival",
+            "PairSurvival",
             "series",
             "lineSeries",
             &["atomPairs"],
@@ -467,7 +466,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "spectroscopy.ir_spectrum",
             "spectroscopy",
             "IR spectrum",
-            "IRSpectrum",
+            "IrSpectrum",
             "series",
             "lineSeries",
             &["dipole"],
@@ -879,7 +878,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "environment.environment_matching",
             "environment",
             "Environment matching",
-            "MatchEnv",
+            "EnvironmentMatch",
             "frameNeighbors",
             "table",
             &[],
@@ -981,7 +980,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "pmft.pmft_r12",
             "pmft",
             "PMFT R12",
-            "PMFTR12",
+            "PmftR12",
             "frameNeighbors",
             "matrix",
             &["orientation"],
@@ -997,7 +996,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "pmft.pmft_xy",
             "pmft",
             "PMFT XY",
-            "PMFTXY",
+            "PmftXy",
             "frameNeighbors",
             "matrix",
             &[],
@@ -1013,7 +1012,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "pmft.pmft_xyt",
             "pmft",
             "PMFT XYT",
-            "PMFTXYT",
+            "PmftXyt",
             "frameNeighbors",
             "matrix",
             &["orientation"],
@@ -1030,7 +1029,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "pmft.pmft_xyz",
             "pmft",
             "PMFT XYZ",
-            "PMFTXYZ",
+            "PmftXyz",
             "frameNeighbors",
             "matrix",
             &[],
@@ -1088,9 +1087,8 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![],
         ),
         // --- locality (freud.locality: Voronoi; neighbor queries are infra) --
-        // Analysis ids keep the `voronoi.*` prefix for stable clients.
         entry(
-            "voronoi.radical_voronoi",
+            "locality.radical_voronoi",
             "locality",
             "Radical Voronoi",
             "RadicalVoronoi",
@@ -1100,7 +1098,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             vec![p_bool("useAtomRadii", "Weight by covalent radii", true)],
         ),
         entry(
-            "voronoi.domain_analysis",
+            "locality.voronoi_domain_analysis",
             "locality",
             "Domain analysis",
             "VoronoiDomainAnalysis",
@@ -1118,7 +1116,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             ],
         ),
         entry(
-            "voronoi.void_analysis",
+            "locality.voronoi_void_analysis",
             "locality",
             "Void analysis",
             "VoronoiVoidAnalysis",
@@ -1135,7 +1133,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "ml.pca",
             "ml",
             "PCA",
-            "Pca2",
+            "Pca",
             "series",
             "custom",
             &["descriptorMatrix"],
@@ -1161,7 +1159,12 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
         // v3: freud core order + molrs extensions — dynamics→transport,
         // static dielectric→spectroscopy; cluster_properties→cluster.
         // v4: `wasmExport` names drop the `Wasm` prefix (`WasmVACF` → `VACF`).
-        version: 4,
+        // v5: exports cased as words (`VACF` → `Vacf`, `PMFTXY` → `PmftXy`,
+        // `MatchEnv` → `EnvironmentMatch`, `PairPersistence` → `PairSurvival`);
+        // the `rdf.*` / `voronoi.*` id prefixes are gone (`density.*`,
+        // `locality.*`), and `dynamics.pair_persistence` is
+        // `dynamics.pair_survival`.
+        version: 5,
         categories: &CATEGORIES,
         analyses,
     })

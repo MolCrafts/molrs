@@ -50,7 +50,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::{Array1, Array2, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};

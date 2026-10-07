@@ -35,13 +35,13 @@
 
 use molrs::core::Frame;
 use molrs::core::{Mic, SimBox};
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array2, ArrayView2};
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::core::constants::ANGSTROM_PER_BOHR;
-use crate::op::linalg::det3;
+use crate::op::det3;
 use crate::op::vec3::sub;
 
 /// A volumetric scalar density on a regular (possibly sheared) grid, in molrs

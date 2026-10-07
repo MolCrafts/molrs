@@ -173,7 +173,7 @@ const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 /// `bond_type` it implies, replacing whatever the input stated — aromatic
 /// markings included; perceive aromaticity afterwards if it is wanted. The bonds
 /// of a residue no valence state closes are left as they were (see
-/// [`judge_bond_orders`]).
+/// [`perceive_bond_orders`]).
 ///
 /// # Arguments
 ///
@@ -182,10 +182,10 @@ const CAP_H: [i32; 8] = [64, 0, 64, NONE, NONE, NONE, NONE, NONE];
 /// # Returns
 ///
 /// A clone of `mol` carrying the judged Kekulé structure.
-pub(crate) fn find_bond_orders(mol: &Atomistic) -> Atomistic {
+pub fn assign_bond_orders(mol: &Atomistic) -> Atomistic {
     let mut out = mol.clone();
     let bond_ids: Vec<_> = mol.bonds().map(|(bid, _)| bid).collect();
-    for (bid, order) in bond_ids.into_iter().zip(judge_bond_orders(mol)) {
+    for (bid, order) in bond_ids.into_iter().zip(perceive_bond_orders(mol)) {
         if let Some(order) = order {
             let number = BondNumber::from_code(u32::from(order));
             let _ = out.set_bond_prop(bid, keys::BOND_NUMBER, number);
@@ -210,7 +210,7 @@ pub(crate) fn find_bond_orders(mol: &Atomistic) -> Atomistic {
 /// or 3), or `None` for every bond of a residue no valence state up to
 /// `PSCUTOFF` gives a consistent structure (where `bondtype` warns "The assigned
 /// bond types may be wrong" and keeps the file's bond types).
-pub fn judge_bond_orders(mol: &Atomistic) -> Vec<Option<u8>> {
+pub fn perceive_bond_orders(mol: &Atomistic) -> Vec<Option<u8>> {
     let graph = Graph::new(mol);
     let mut out: Vec<Option<u8>> = vec![None; graph.bonds.len()];
     if graph.bonds.is_empty() {
@@ -881,9 +881,9 @@ mod tests {
         mol
     }
 
-    /// The heavy-atom part of `judge_bond_orders`: the first `n` bonds.
+    /// The heavy-atom part of `perceive_bond_orders`: the first `n` bonds.
     fn judged(mol: &Atomistic, n: usize) -> Vec<Option<u8>> {
-        judge_bond_orders(mol)[..n].to_vec()
+        perceive_bond_orders(mol)[..n].to_vec()
     }
 
     fn all(orders: &[u8]) -> Vec<Option<u8>> {
@@ -991,7 +991,7 @@ mod tests {
             &["C", "N", "N", "N", "H", "H", "H"],
             &[(0, 1), (1, 2), (2, 3), (0, 4), (0, 5), (0, 6)],
         );
-        assert_eq!(judge_bond_orders(&mol), all(&[1, 1, 3, 1, 1, 1]));
+        assert_eq!(perceive_bond_orders(&mol), all(&[1, 1, 3, 1, 1, 1]));
     }
 
     #[test]
@@ -1004,7 +1004,7 @@ mod tests {
         bonds.push((0, 6));
         bonds.extend((0..7).map(|i| (i, i + 7)));
         let mol = mol2(&elements, &bonds);
-        assert!(judge_bond_orders(&mol).iter().all(Option::is_none));
+        assert!(perceive_bond_orders(&mol).iter().all(Option::is_none));
     }
 
     #[test]
@@ -1035,7 +1035,7 @@ mod tests {
 
     #[test]
     fn find_bond_orders_writes_the_judged_structure() {
-        let out = find_bond_orders(&azulene());
+        let out = assign_bond_orders(&azulene());
         let numbers: Vec<u32> = out
             .bonds()
             .map(|(b, _)| out.bond_number(b).code())

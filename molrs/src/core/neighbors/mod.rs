@@ -136,7 +136,7 @@
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
 use crate::core::SimBox;
-use crate::op::types::{F, FNx3, FNx3View};
+use crate::op::{F, FNx3, FNx3View};
 use ndarray::ArrayView2;
 
 mod aabb;
@@ -1175,7 +1175,7 @@ mod test_fixtures {
     //! `from_pairs_tests`, `engine_tests`, and `linkcell::tests` — so one
     //! hand-derived MIC golden set has one home.
     use super::{Neighbors, SimBox};
-    use crate::op::types::F;
+    use crate::op::F;
     use ndarray::{Array2, array};
 
     /// Orthorhombic 10 × 8 × 6 Å box, fully periodic.

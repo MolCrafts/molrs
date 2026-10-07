@@ -7,8 +7,8 @@
 //!
 //! | spectrum | raw compute (raw ACF) | transform |
 //! |----------|-----------------------|-----------|
-//! | VDOS  | [`VACF`](crate::compute::VACF) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
-//! | IR    | [`IRFlux`](super::IRFlux) (dipole-flux ACF) | [`IRSpectrum`](super::IRSpectrum) |
+//! | VDOS  | [`Vacf`](crate::compute::Vacf) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
+//! | IR    | [`IrFlux`](super::IrFlux) (dipole-flux ACF) | [`IrSpectrum`](super::IrSpectrum) |
 //! | Raman | [`RamanTensor`](super::RamanTensor) (polarizability iso/aniso ACFs) | [`RamanSpectrum`](super::RamanSpectrum) |
 //!
 //! The legacy `power_spectrum` / `ir_spectrum` / `raman_spectrum` free functions

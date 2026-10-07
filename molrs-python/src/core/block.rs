@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use molrs::core::{Block as CoreBlock, BlockDtype, BlockError, Column, ColumnArray, DType};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use molrs_ffi::BlockRef;
 use ndarray::{Array1, ArrayD, IxDyn};
 use num_complex::Complex;

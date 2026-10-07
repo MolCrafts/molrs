@@ -40,7 +40,7 @@ use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Below this squared separation a pair's force has no direction, so only the
 /// (buffered) energy is accumulated. Unchanged from the unbuffered kernel.

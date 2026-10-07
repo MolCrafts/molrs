@@ -26,8 +26,8 @@ and the docs build.
 | `molrs.core.keys` | `molrs::core::keys` | the canonical column, frame-meta and graph keys |
 | `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
 | `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
-| `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Fit`, `DEFAULT_GAP_TOL` |
-| `molrs.perceive` | `molrs::perceive` | `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
+| `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Superposition`, `DEFAULT_GAP_TOL` |
+| `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingInfo`, the `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
 | `molrs.io` | `molrs::io` | every file reader and writer, as a function: structure, trajectory and force-field files, `*.mrec` records (`read_mrec` / `write_mrec` and partners), frame bytes, `read_smiles`, the LAMMPS log |
 | `molrs.io.trajectory` | `molrs::io::trajectory` | `TrajectoryReader` |
 | `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIR`, `SmilesError`, `CGSmilesIR` and the CGsmiles records |
@@ -84,7 +84,7 @@ functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
 `scale(factor, about=None)`. Each moves every node that has coordinates in
 place and returns the graph itself, so moves chain:
 `mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
-In Rust the moves are `molrs::op::geometry`'s functions over a `MolGraph`.
+In Rust the moves are `molrs::op`'s functions (`translate`, `scale`, `rotate`, `center`) over a `MolGraph`.
 
 ::: molrs.core.Box
 
@@ -123,7 +123,30 @@ what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 
 ## `molrs.perceive`
 
-::: molrs.perceive.Perceive
+Two verbs: `perceive_<fact>` reports a side table and leaves the graph
+alone; `assign_<fact>` writes the fact onto a clone and returns it.
+
+::: molrs.perceive.perceive_rings
+
+::: molrs.perceive.assign_rings
+
+::: molrs.perceive.assign_aromaticity
+
+::: molrs.perceive.add_hydrogens
+
+::: molrs.perceive.assign_stereo
+
+::: molrs.perceive.assign_rotatable_bonds
+
+::: molrs.perceive.assign_bond_orders
+
+::: molrs.perceive.assign_kekule_bond_orders
+
+::: molrs.perceive.assign_bcc_bond_types
+
+::: molrs.perceive.assign_bcc_bond_types_from_connectivity
+
+::: molrs.perceive.assign_equivalence_classes
 
 ::: molrs.perceive.RingInfo
 
@@ -381,9 +404,9 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ### Structure
 
-::: molrs.compute.RDF
+::: molrs.compute.Rdf
 
-::: molrs.compute.RDFResult
+::: molrs.compute.RdfResult
 
 ::: molrs.compute.GaussianDensity
 
@@ -391,7 +414,7 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ::: molrs.compute.StaticStructureFactorDebye
 
-::: molrs.compute.PMFTXY
+::: molrs.compute.PmftXy
 
 ::: molrs.compute.BondOrientationalOrder
 
@@ -429,17 +452,17 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ### Dynamics
 
-::: molrs.compute.MSD
+::: molrs.compute.Msd
 
-::: molrs.compute.MSDResult
+::: molrs.compute.MsdResult
 
-::: molrs.compute.MSDTimeSeries
+::: molrs.compute.MsdTimeSeries
 
 ### Descriptors
 
 ::: molrs.compute.DescriptorRow
 
-::: molrs.compute.Pca2
+::: molrs.compute.Pca
 
 ::: molrs.compute.PcaResult
 
@@ -453,6 +476,6 @@ Electrolyte transport kernels (ports of the *tame* recipes). Worked examples,
 units, and signatures are in the
 [molpy documentation](https://docs.molcrafts.org/molpy/).
 
-::: molrs.compute.Onsager
+::: molrs.compute.OnsagerCorrelation
 
-::: molrs.compute.Persist
+::: molrs.compute.pair_survival_tcf

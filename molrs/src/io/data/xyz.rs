@@ -5,7 +5,7 @@ use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::MetaValue;
 use molrs::core::SimBox;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use ndarray::{Array1, Array2, ArrayD};
 use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -485,7 +485,7 @@ fn build_block_from_props(
                 if molrs::core::schema::column(&name).map(|c| c.dtype)
                     == Some(molrs::core::DType::UInt)
                 {
-                    let unsigned: Vec<molrs::op::types::Idx> = v
+                    let unsigned: Vec<molrs::op::Idx> = v
                         .iter()
                         .map(|&x| {
                             Idx::try_from(x).map_err(|_| {

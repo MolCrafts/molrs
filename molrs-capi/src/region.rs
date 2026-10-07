@@ -30,7 +30,7 @@ use molrs::core::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
-use molrs::op::types::{F3, FNx3};
+use molrs::op::{F3, FNx3};
 use molrs_ffi::RegionRef;
 use ndarray::{Array2, ArrayView2};
 
@@ -41,7 +41,7 @@ use crate::handle::{
 };
 use crate::store::lock_store;
 use crate::{ffi_try, null_check};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Insert a freshly built region and hand back its handle.
 fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolrsRegionHandle) -> MolrsStatus {

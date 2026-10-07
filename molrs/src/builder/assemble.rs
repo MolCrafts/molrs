@@ -30,10 +30,10 @@ use crate::core::NodeId;
 use crate::core::Port;
 use crate::core::RelationId;
 use crate::core::keys;
-use crate::op::rigid::{Rigid, apply};
-use crate::op::types::I;
-use crate::op::types::Vec3;
+use crate::op::I;
+use crate::op::Vec3;
 use crate::op::vec3::sub;
+use crate::op::{Rigid, transform_point};
 
 /// The most port assignments tried at one site before it is refused.
 const MAX_ASSIGNMENTS: usize = 5040;
@@ -541,8 +541,8 @@ impl Assembler {
                         })?;
                         Some(ParentJoin {
                             port: port_of(u, b).id,
-                            anchor: apply(&poses[p], anchor),
-                            handle: apply(&poses[p], handle),
+                            anchor: transform_point(&poses[p], anchor),
+                            handle: transform_point(&poses[p], handle),
                         })
                     }
                 };
@@ -838,8 +838,7 @@ impl Assembler {
             })
         };
         let position = |atom: NodeId| template.get_node(atom).ok().and_then(|a| a.position());
-        let center =
-            crate::op::geometry::center(template, &template.node_ids().collect::<Vec<_>>()).ok();
+        let center = crate::op::center(template, &template.node_ids().collect::<Vec<_>>()).ok();
         let mut out = Vec::new();
         for id in template.ports() {
             let port = template.port(id).map_err(refuse)?;
@@ -926,8 +925,8 @@ mod tests {
     use crate::core::NodeId;
     use crate::core::PortKind;
     use crate::core::keys;
-    use crate::op::rigid::{Rigid, about};
-    use crate::op::types::Vec3;
+    use crate::op::Vec3;
+    use crate::op::{Rigid, rotation_about};
 
     const TOL: f64 = 1e-9;
 
@@ -1332,10 +1331,10 @@ mod tests {
             template: &MolGraph,
             sites: &[SiteView<'_>],
         ) -> Result<Vec<Rigid>, OrientError> {
-            let c = crate::op::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
+            let c = crate::op::center(template, &template.node_ids().collect::<Vec<_>>())
                 .map_err(OrientError::Center)?;
             let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
-            Ok(vec![about(rz, c); sites.len()])
+            Ok(vec![rotation_about(rz, c); sites.len()])
         }
     }
 

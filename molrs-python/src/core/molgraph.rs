@@ -45,7 +45,7 @@ use pyo3::types::{PyDict, PyList, PyTuple, PyType};
 
 use pyo3::{PyTraverseError, PyVisit};
 
-use molrs::op::geometry::CenterError;
+use molrs::op::CenterError;
 
 use molrs::core::keys;
 
@@ -1703,7 +1703,7 @@ impl PyAtomistic {
         let ids: Vec<_> = centers.into_iter().map(node_from_u64).collect();
         let groups = match max_ring_size {
             Some(max_ring_size) => {
-                molrs::perceive::rings::small_ring_closure(&self.inner, &ids, radius, max_ring_size)
+                molrs::perceive::small_ring_closure(&self.inner, &ids, radius, max_ring_size)
             }
             None => Vec::new(),
         };
@@ -1761,8 +1761,8 @@ impl PyAtomistic {
     ///     its int handle); or if the total mass is not positive.
     fn center<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let atoms: Vec<NodeId> = self.inner.node_ids().collect();
-        let center = molrs::op::geometry::center(self.inner.as_molgraph(), &atoms)
-            .map_err(center_error_to_pyerr)?;
+        let center =
+            molrs::op::center(self.inner.as_molgraph(), &atoms).map_err(center_error_to_pyerr)?;
         Ok(vector_to_py(py, &center))
     }
 }
@@ -2312,8 +2312,8 @@ impl PyCoarseGrain {
     ///     If a handle in ``group`` is negative (handles are unsigned ints).
     fn center<'py>(&self, py: Python<'py>, group: Vec<u64>) -> PyResult<Bound<'py, PyArray1<f64>>> {
         let group: Vec<NodeId> = group.into_iter().map(node_from_u64).collect();
-        let center = molrs::op::geometry::center(self.inner.as_molgraph(), &group)
-            .map_err(center_error_to_pyerr)?;
+        let center =
+            molrs::op::center(self.inner.as_molgraph(), &group).map_err(center_error_to_pyerr)?;
         Ok(vector_to_py(py, &center))
     }
 
@@ -2441,7 +2441,7 @@ fn replicate_args(
     rotations: &PyReadonlyArrayDyn<'_, f64>,
     translations: &PyReadonlyArrayDyn<'_, f64>,
     frag_ids: &Bound<'_, PyAny>,
-) -> PyResult<(Vec<molrs::op::rigid::Rigid>, Vec<i32>)> {
+) -> PyResult<(Vec<molrs::op::Rigid>, Vec<i32>)> {
     let transforms = crate::op::rigids_from_arrays(rotations, translations)?;
     let frag_ids = match frag_ids.extract::<PyReadonlyArrayDyn<'_, i32>>() {
         Ok(array) => {
@@ -2542,7 +2542,7 @@ macro_rules! rigid_body_impl {
             /// Translate every node that has coordinates by `delta`. Returns
             /// this graph, so moves chain.
             fn translate(mut slf: PyRefMut<'_, Self>, delta: [f64; 3]) -> PyRefMut<'_, Self> {
-                molrs::op::geometry::translate(slf.mol_mut(), delta);
+                molrs::op::translate(slf.mol_mut(), delta);
                 slf
             }
 
@@ -2556,7 +2556,7 @@ macro_rules! rigid_body_impl {
                 angle: f64,
                 about: Option<[f64; 3]>,
             ) -> PyResult<PyRefMut<'_, Self>> {
-                molrs::op::geometry::rotate(slf.mol_mut(), axis, angle, about)
+                molrs::op::rotate(slf.mol_mut(), axis, angle, about)
                     .map_err(|error| PyValueError::new_err(error.to_string()))?;
                 Ok(slf)
             }
@@ -2570,7 +2570,7 @@ macro_rules! rigid_body_impl {
                 factor: [f64; 3],
                 about: Option<[f64; 3]>,
             ) -> PyRefMut<'_, Self> {
-                molrs::op::geometry::scale(slf.mol_mut(), factor, about);
+                molrs::op::scale(slf.mol_mut(), factor, about);
                 slf
             }
         }

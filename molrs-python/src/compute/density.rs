@@ -10,7 +10,7 @@ use molrs::compute::{
     SpatialDistributionResult,
 };
 use molrs::core::{Frame as CoreFrame, FrameAccess};
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray3, PyArray4, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;

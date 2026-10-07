@@ -47,7 +47,7 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::core::wigner_3j;
 use molrs::core::ylm_all;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -149,7 +149,7 @@ impl Steinhardt {
 /// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table.
 /// Positions are read from the `atoms.x/y/z` columns, so a frame without
 /// them errors there instead.
-pub fn compute_qlm<FA: FrameAccess>(
+pub fn steinhardt_qlm<FA: FrameAccess>(
     frame: &FA,
     nlist: &Neighbors,
     l: u32,
@@ -224,11 +224,11 @@ pub fn compute_qlm<FA: FrameAccess>(
 /// Apply the Lechner-Dellago "near-shell" average over self + neighbors.
 /// In place: `q̄_ℓm(i) = (q_ℓm(i) + Σ_{j ∈ neigh(i)} q_ℓm(j)) / (N_i + 1)`.
 ///
-/// Carries the same half-shell requirement as [`compute_qlm`] — it too visits
+/// Carries the same half-shell requirement as [`steinhardt_qlm`] — it too visits
 /// each row once and updates both endpoints, and on a cross table the
 /// denominator would be `1 + 2·N_i`. It is not guarded again here because its
 /// only caller is [`Steinhardt::one_frame`], which reaches it solely through
-/// `compute_qlm(frame, nlist, l)?` on this same `nlist`; a new caller must
+/// `steinhardt_qlm(frame, nlist, l)?` on this same `nlist`; a new caller must
 /// either come through that guard or call [`require_self_query`] itself.
 fn average_qlm(qlm: &[Complex], nlist: &Neighbors, n: usize, m_count: usize) -> Vec<Complex> {
     let mut acc = qlm.to_vec();
@@ -334,7 +334,7 @@ impl Steinhardt {
 
         for &l in &self.l {
             let m_count = (2 * l + 1) as usize;
-            let qlm_raw = compute_qlm(frame, nlist, l)?;
+            let qlm_raw = steinhardt_qlm(frame, nlist, l)?;
             let qlm_used = if self.average {
                 average_qlm(&qlm_raw, nlist, n, m_count)
             } else {
@@ -423,7 +423,7 @@ impl ComputeResult for SteinhardtResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -667,10 +667,10 @@ mod tests {
     // -- 7) Public compute_qlm helper -----------------------------------------
 
     #[test]
-    fn compute_qlm_normalization_matches_internal() {
+    fn steinhardt_qlm_normalization_matches_internal() {
         let frame = octahedron(20.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let qlm_raw = compute_qlm(&frame, &nl, 6).unwrap();
+        let qlm_raw = steinhardt_qlm(&frame, &nl, 6).unwrap();
 
         // Plain (non-averaged) Steinhardt should yield the same qlm.
         let s = Steinhardt::new(&[6]).unwrap();
@@ -962,7 +962,7 @@ mod tests {
     /// Edge: a **cross-query** [`Neighbors`] table must be refused with
     /// [`ComputeError::BadShape`], not consumed.
     ///
-    /// `compute_qlm` visits each row once and updates *both* endpoints, using
+    /// `steinhardt_qlm` visits each row once and updates *both* endpoints, using
     /// `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)` for the `j` side. That double update is only
     /// correct for a half-shell [`QueryMode::SelfQuery`], where each unordered
     /// pair appears exactly once. On a full-shell or cross table every pair is
@@ -978,7 +978,7 @@ mod tests {
     ///
     /// The table below is well-formed in every other respect (FULL storage,
     /// finite displacements, in-range indices), so the mode is the only thing
-    /// left to refuse. The guard belongs in `compute_qlm`, which `SolidLiquid`
+    /// left to refuse. The guard belongs in `steinhardt_qlm`, which `SolidLiquid`
     /// and `ContinuousCoordination` call directly — checking it only inside
     /// `Steinhardt::one_frame` would leave those two entry points open.
     #[test]
@@ -1030,7 +1030,7 @@ mod tests {
 
         // Deliberately not `expect_err`: the Ok payload is the whole q_ℓm
         // buffer, and dumping it buries the one thing the failure says.
-        let Err(err) = compute_qlm(&frame, &nl, 6) else {
+        let Err(err) = steinhardt_qlm(&frame, &nl, 6) else {
             panic!("compute_qlm must refuse a cross-query table outright, but returned Ok");
         };
         assert!(

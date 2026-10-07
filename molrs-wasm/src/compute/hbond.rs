@@ -4,7 +4,7 @@
 use super::{js_value, u32_pairs, usize_pairs};
 use crate::core::frame::Frame;
 use molrs::compute::Compute;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -62,9 +62,11 @@ impl HBonds {
             counts: Vec<usize>,
         }
         let dist_kind = match self.dist_kind.to_ascii_lowercase().as_str() {
-            "donor_acceptor" | "donor-acceptor" | "da" => molrs::compute::DistKind::DonorAcceptor,
+            "donor_acceptor" | "donor-acceptor" | "da" => {
+                molrs::compute::HBondDistanceKind::DonorAcceptor
+            }
             "hydrogen_acceptor" | "hydrogen-acceptor" | "ha" => {
-                molrs::compute::DistKind::HydrogenAcceptor
+                molrs::compute::HBondDistanceKind::HydrogenAcceptor
             }
             other => {
                 return Err(JsValue::from_str(&format!(

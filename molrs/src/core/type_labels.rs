@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::core::FrameAccess;
 use crate::core::keys;
-use crate::op::types::Idx;
+use crate::op::Idx;
 
 /// Starts the qualifier of a [`TypeName`]; reserved inside endpoint labels.
 const QUALIFIER: char = '@';
@@ -553,7 +553,7 @@ mod tests {
     use crate::core::Block;
     use crate::core::Frame;
     use crate::core::keys;
-    use crate::op::types::Idx;
+    use crate::op::Idx;
     use ndarray::{ArrayD, IxDyn};
 
     #[test]

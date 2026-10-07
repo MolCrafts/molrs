@@ -4,7 +4,7 @@
 //! This module is the one owner of ring perception in the tree. Its SSSR
 //! search computes the **Smallest Set of Smallest Rings** (equivalently the
 //! minimum cycle basis) over the contiguous `usize` vertex/edge indices of a
-//! [`Topology`]; [`find_rings`]:
+//! [`Topology`]; [`perceive_rings`]:
 //!
 //! 1. projects an [`Atomistic`] onto that index space — atom index `i` is the
 //!    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
@@ -28,7 +28,7 @@ use crate::core::{NodeId, RelationId};
 // Public types
 // ---------------------------------------------------------------------------
 
-/// All ring information for an [`Atomistic`], produced by [`find_rings`]:
+/// All ring information for an [`Atomistic`], produced by [`perceive_rings`]:
 /// the SSSR rings and per-atom / per-bond ring membership, addressed by
 /// [`NodeId`] / [`RelationId`].
 #[derive(Debug, Clone)]
@@ -177,12 +177,6 @@ impl RingInfo {
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
-
-/// Size of the largest fused/bridged ring system in `mol` (see
-/// [`RingInfo::max_ring_system_size`]).
-pub fn max_ring_system_size(mol: &Atomistic) -> usize {
-    find_rings(mol).max_ring_system_size()
-}
 
 /// The ring systems a `radius`-ball around `centers` must not cut, counting
 /// only rings of at most `max_ring_size` atoms.
@@ -336,7 +330,7 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 /// Runs the SSSR search over the molecule's index-space [`Topology`] and
 /// lifts its `usize` indices back onto [`NodeId`] / [`RelationId`] handles.
 /// Rings come back smallest-first.
-pub fn find_rings(mol: &Atomistic) -> RingInfo {
+pub fn perceive_rings(mol: &Atomistic) -> RingInfo {
     // ---- 1. Project onto the core index space ------------------------------
     // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
     // `i`-th bond of `mol.bonds()` (`Topology::from_edges` preserves edge
@@ -396,6 +390,53 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
     }
 }
 
+/// Atom / bond prop written by [`assign_rings`]: `1` when the atom / bond lies
+/// on at least one SSSR ring.
+const IS_IN_RING: &str = "is_in_ring";
+/// Atom / bond prop written by [`assign_rings`]: the number of SSSR rings the
+/// atom / bond belongs to.
+const N_RINGS: &str = "n_rings";
+
+/// Perceive rings (SSSR) and write them onto a clone of `mol`.
+///
+/// The [`perceive_rings`] side table, projected as props: every atom and every
+/// bond receives `is_in_ring` (`0` / `1`) and `n_rings` — including the acyclic
+/// ones, which are explicitly flagged `0` rather than left unset. `mol` is left
+/// untouched.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::core::Atomistic;
+/// use molrs::perceive::assign_rings;
+///
+/// let mol = Atomistic::new();
+/// let perceived = assign_rings(&mol);
+/// assert_eq!(perceived.n_atoms(), mol.n_atoms());
+/// ```
+pub fn assign_rings(mol: &Atomistic) -> Atomistic {
+    let info = perceive_rings(mol);
+    let mut out = mol.clone();
+    let atom_ids: Vec<NodeId> = out.atoms().map(|(id, _)| id).collect();
+    for id in atom_ids {
+        let _ = out.set_atom(id, IS_IN_RING, i32::from(info.is_atom_in_ring(id)));
+        let _ = out.set_atom(id, N_RINGS, saturating_i32(info.num_atom_rings(id)));
+    }
+    let bond_ids: Vec<RelationId> = out.bonds().map(|(id, _)| id).collect();
+    for bid in bond_ids {
+        let _ = out.set_bond_prop(bid, IS_IN_RING, i32::from(info.is_bond_in_ring(bid)));
+        let _ = out.set_bond_prop(bid, N_RINGS, saturating_i32(info.num_bond_rings(bid)));
+    }
+    out
+}
+
+/// Narrow a count to the `i32` that [`crate::core::PropValue`] stores,
+/// saturating instead of wrapping (counts never approach the bound in
+/// practice).
+pub(super) fn saturating_i32(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
 // ---------------------------------------------------------------------------
 // SSSR over a Topology
 // ---------------------------------------------------------------------------
@@ -422,7 +463,7 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
 /// molecule. Widening to true Horton candidates costs a BFS per
 /// (vertex, edge) pair; do it when a real structure fails, not before.
 /// Per-edge ring membership of `topo`: `true` for every edge index on an
-/// SSSR ring. The index-space query of the same search [`find_rings`] runs.
+/// SSSR ring. The index-space query of the same search [`perceive_rings`] runs.
 pub(crate) fn ring_bond_mask(topo: &Topology) -> Vec<bool> {
     sssr(topo).bond_ring_mask(topo.n_bonds())
 }
@@ -561,7 +602,7 @@ fn bfs_skip_edge(
 
 /// The SSSR of a [`Topology`] in its own index space: rings as ordered lists
 /// of atom indices forming closed paths, with membership by edge index.
-/// [`find_rings`] lifts it onto handles as a [`RingInfo`].
+/// [`perceive_rings`] lifts it onto handles as a [`RingInfo`].
 #[derive(Debug, Clone)]
 struct IndexRings {
     rings: Vec<Vec<usize>>,
@@ -943,7 +984,7 @@ mod tests {
     #[test]
     fn test_single_6ring() {
         let g = cycle(6);
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         assert_eq!(ri.num_rings(), 1);
         assert_eq!(ri.ring_sizes(), vec![6]);
     }
@@ -955,13 +996,13 @@ mod tests {
         for i in 0..5 {
             g.add_bond(ids[i], ids[i + 1]).expect("add chain bond");
         }
-        assert_eq!(find_rings(&g).num_rings(), 0);
+        assert_eq!(perceive_rings(&g).num_rings(), 0);
     }
 
     #[test]
     fn test_all_atoms_in_6ring() {
         let g = cycle(6);
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         for (id, _) in g.atoms() {
             assert!(ri.is_atom_in_ring(id));
         }
@@ -970,7 +1011,7 @@ mod tests {
     #[test]
     fn test_all_bonds_in_6ring() {
         let g = cycle(6);
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         for (bid, _) in g.bonds() {
             assert!(ri.is_bond_in_ring(bid));
         }
@@ -978,7 +1019,7 @@ mod tests {
 
     #[test]
     fn test_empty_mol() {
-        assert_eq!(find_rings(&Atomistic::new()).num_rings(), 0);
+        assert_eq!(perceive_rings(&Atomistic::new()).num_rings(), 0);
     }
 
     #[test]
@@ -997,24 +1038,23 @@ mod tests {
         g.add_bond(ids[8], ids[9]).expect("bond");
         g.add_bond(ids[9], ids[2]).expect("bond");
 
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         assert_eq!(ri.num_rings(), 2);
         let mut sizes = ri.ring_sizes();
         sizes.sort_unstable();
         assert_eq!(sizes, vec![6, 6]);
         // Fused system: 10 carbons, not a single 6-ring.
         assert_eq!(ri.max_ring_system_size(), 10);
-        assert_eq!(max_ring_system_size(&g), 10);
     }
 
     #[test]
     fn test_max_ring_system_size_benzene_and_acyclic() {
-        assert_eq!(find_rings(&cycle(6)).max_ring_system_size(), 6);
+        assert_eq!(perceive_rings(&cycle(6)).max_ring_system_size(), 6);
         let mut chain = Atomistic::new();
         let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
         chain.add_bond(ids[0], ids[1]).unwrap();
         chain.add_bond(ids[1], ids[2]).unwrap();
-        assert_eq!(find_rings(&chain).max_ring_system_size(), 0);
+        assert_eq!(perceive_rings(&chain).max_ring_system_size(), 0);
     }
 
     // -- ring systems -------------------------------------------------------
@@ -1040,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_ring_systems_benzene_is_one_system_of_six() {
-        let systems = find_rings(&cycle(6)).ring_systems();
+        let systems = perceive_rings(&cycle(6)).ring_systems();
         assert_eq!(systems.len(), 1);
         assert_eq!(systems[0].len(), 6);
     }
@@ -1048,7 +1088,7 @@ mod tests {
     #[test]
     fn test_ring_systems_fused_pair_is_one_system() {
         let (g, _) = joined_cycles(6, 2);
-        let systems = find_rings(&g).ring_systems();
+        let systems = perceive_rings(&g).ring_systems();
         assert_eq!(systems.len(), 1, "naphthalene is one system, not two");
         assert_eq!(systems[0].len(), 10);
     }
@@ -1059,7 +1099,7 @@ mod tests {
         // includeSpiro=False; for closure they are one, because the shared atom
         // sits in both rings and cannot be present without completing both.
         let (g, _) = joined_cycles(6, 1);
-        let systems = find_rings(&g).ring_systems();
+        let systems = perceive_rings(&g).ring_systems();
         assert_eq!(systems.len(), 1);
         assert_eq!(systems[0].len(), 11);
     }
@@ -1071,7 +1111,7 @@ mod tests {
         for i in 0..6 {
             g.add_bond(ids[i], ids[(i + 1) % 6]).expect("second ring");
         }
-        let systems = find_rings(&g).ring_systems();
+        let systems = perceive_rings(&g).ring_systems();
         assert_eq!(systems.len(), 2);
         assert!(systems.iter().all(|s| s.len() == 6));
     }
@@ -1082,13 +1122,13 @@ mod tests {
         let ids: Vec<NodeId> = (0..3).map(|_| chain.add_atom(Atom::new())).collect();
         chain.add_bond(ids[0], ids[1]).unwrap();
         chain.add_bond(ids[1], ids[2]).unwrap();
-        assert!(find_rings(&chain).ring_systems().is_empty());
+        assert!(perceive_rings(&chain).ring_systems().is_empty());
     }
 
     #[test]
     fn test_ring_systems_partition_every_ring_atom_exactly_once() {
         let (g, _) = joined_cycles(6, 2);
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         let mut seen: HashSet<NodeId> = HashSet::new();
         for system in ri.ring_systems() {
             for atom in system {
@@ -1117,7 +1157,7 @@ mod tests {
         let methyl = g.add_atom_bare("C");
         g.add_bond(ring_ids[0], methyl).expect("methyl bond");
 
-        let ri = find_rings(&g);
+        let ri = perceive_rings(&g);
         let plain = g.extract_subgraph(&[methyl], 2, false, &[]).unwrap();
         assert_eq!(plain.graph.n_atoms(), 4, "half the ring, plus the methyl");
 
@@ -1252,7 +1292,7 @@ mod tests {
         ] {
             let atoms: Vec<NodeId> = g.atoms().map(|(id, _)| id).collect();
             let local = small_ring_closure(&g, &[atoms[seed]], 0, 8);
-            let global: Vec<Vec<NodeId>> = find_rings(&g)
+            let global: Vec<Vec<NodeId>> = perceive_rings(&g)
                 .ring_systems()
                 .into_iter()
                 .filter(|system| system.contains(&atoms[seed]))

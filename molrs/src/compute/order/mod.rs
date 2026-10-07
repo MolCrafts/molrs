@@ -33,4 +33,4 @@ pub use rotational_autocorrelation::{
     RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
 };
 pub use solid_liquid::{SolidLiquid, SolidLiquidResult};
-pub use steinhardt::{Steinhardt, SteinhardtResult, compute_qlm};
+pub use steinhardt::{Steinhardt, SteinhardtResult, steinhardt_qlm};

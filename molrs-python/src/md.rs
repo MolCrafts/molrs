@@ -19,7 +19,7 @@ use molrs::core::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
-use molrs::op::types::{F, I};
+use molrs::op::{F, I};
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;

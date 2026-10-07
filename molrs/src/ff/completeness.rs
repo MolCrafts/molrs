@@ -1391,7 +1391,7 @@ fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
 
 fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::Array1;
     let mut frame = molrs::core::Frame::new();
     let mut atoms = Block::new();

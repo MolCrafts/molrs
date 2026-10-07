@@ -3,7 +3,7 @@ use ndarray::{Array2, ArrayView2};
 use molrs::core::VerletSkin;
 use molrs::core::Virial;
 use molrs::ff::potential::{Member, Potential};
-use molrs::op::types::{F, FNx3, FNx3View, I};
+use molrs::op::{F, FNx3, FNx3View, I};
 
 use super::error::MdError;
 use super::pairs::{BondedLists, Comm};
@@ -700,7 +700,7 @@ mod tests {
         use molrs::core::Block;
         use molrs::core::Frame;
         use molrs::ff::forcefield::{ForceField, Params};
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let l = 20.0_f64;
@@ -1139,7 +1139,7 @@ mod tests {
         use molrs::core::Topology;
         use molrs::ff::forcefield::{ForceField, Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         // Three beads, 0-1-2: (0,1) and (1,2) are 1-2, (0,2) is 1-3.

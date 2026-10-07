@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Why the registry, the expression engine, a compile or an engine codec
 /// refused a category, a style or a term (`ff-ir-02-protocol` §5). Python

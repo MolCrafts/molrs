@@ -39,7 +39,7 @@ use molrs::core::Frame;
 use molrs::core::MetaMap;
 use molrs::core::SimBox;
 use molrs::core::{Block, DType};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};

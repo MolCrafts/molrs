@@ -54,7 +54,7 @@ use molrs::core::TypeLabels;
 use molrs::core::constants::COULOMB_REAL;
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The terms compared, in print order.
 const TERMS: [&str; 10] = [

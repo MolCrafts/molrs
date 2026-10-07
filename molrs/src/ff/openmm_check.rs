@@ -58,7 +58,7 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 use crate::ff::equivalence_check::{self, TERMS};
 

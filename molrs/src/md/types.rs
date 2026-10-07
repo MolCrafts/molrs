@@ -21,7 +21,7 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::keys;
 use molrs::core::schema::block_names::ATOMS;
-use molrs::op::types::{F, FNx3, I};
+use molrs::op::{F, FNx3, I};
 
 use super::error::MdError;
 use molrs::core::Virial;

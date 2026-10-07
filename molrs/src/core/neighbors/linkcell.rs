@@ -22,7 +22,7 @@
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
 use crate::core::{CellGrid, Neighbors};
-use crate::op::types::{F, FNx3View};
+use crate::op::{F, FNx3View};
 use ndarray::array;
 
 /// Occupied-cell count from which materializing the pair table in parallel pays
@@ -907,7 +907,7 @@ mod equivalence {
     use crate::core::NeighborQuery;
     use crate::core::NeighborsStorage;
     use crate::core::SimBox;
-    use crate::op::types::FNx3;
+    use crate::op::FNx3;
     use ndarray::{Array2, array};
     use std::collections::{BTreeMap, BTreeSet};
 

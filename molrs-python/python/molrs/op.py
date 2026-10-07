@@ -9,13 +9,13 @@ module is a thin re-export of ``_lib.op``.
 from ._lib import op as _op
 
 DEFAULT_GAP_TOL = _op.DEFAULT_GAP_TOL
-Fit = _op.Fit
+Superposition = _op.Superposition
 superpose = _op.superpose
 centroid = _op.centroid
 
 __all__ = [
     "DEFAULT_GAP_TOL",
-    "Fit",
+    "Superposition",
     "centroid",
     "superpose",
 ]

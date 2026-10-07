@@ -14,7 +14,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The rows of a bonded category's block, each priced by one form of one
 /// coordinate.

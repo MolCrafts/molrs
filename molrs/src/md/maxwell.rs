@@ -4,8 +4,8 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 
-use crate::op::random::standard_normal;
-use molrs::op::types::{F, FNx3};
+use crate::op::standard_normal;
+use molrs::op::{F, FNx3};
 
 use super::error::MdError;
 

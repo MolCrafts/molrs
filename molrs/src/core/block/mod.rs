@@ -7,7 +7,7 @@
 //!
 //! ```
 //! use molrs::core::Block;
-//! use molrs::op::types::{F, Idx};
+//! use molrs::op::{F, Idx};
 //! use ndarray::Array1;
 //!
 //! let mut block = Block::new();
@@ -239,7 +239,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::{F, I, Idx};
+    /// use molrs::op::{F, I, Idx};
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -329,7 +329,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::I;
+    /// use molrs::op::I;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -765,7 +765,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -904,7 +904,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut block = Block::new();
@@ -962,7 +962,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut block1 = Block::new();
@@ -1035,7 +1035,7 @@ impl Block {
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut a = Block::new();
@@ -1138,23 +1138,23 @@ impl Block {
     ///
     /// [`BlockError::MissingColumn`] naming the first of `x`, `y`, `z` the
     /// block lacks, and [`BlockError::SchemaDtype`] for one not stored as
-    /// [`F`](crate::op::types::F).
+    /// [`F`](crate::op::F).
     ///
     /// # Examples
     ///
     /// ```
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::array;
     ///
     /// let mut block = Block::new();
     /// block.set_coords(array![[0.0 as F, 1.0, 2.0], [3.0, 4.0, 5.0]].view()).unwrap();
     /// assert_eq!(block.coords().unwrap(), array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]);
     /// ```
-    pub fn coords(&self) -> Result<crate::op::types::FNx3, BlockError> {
+    pub fn coords(&self) -> Result<crate::op::FNx3, BlockError> {
         use crate::core::keys::COORDS;
         let n = self.nrows.unwrap_or(0);
-        let mut out = crate::op::types::FNx3::zeros((n, 3));
+        let mut out = crate::op::FNx3::zeros((n, 3));
         for (axis, key) in COORDS.into_iter().enumerate() {
             let col = self.get(key).ok_or_else(|| BlockError::MissingColumn {
                 key: key.to_owned(),
@@ -1174,7 +1174,7 @@ impl Block {
 
     /// Write an `N × 3` array into the `x` / `y` / `z` columns.
     ///
-    /// Each column is replaced by a new [`F`](crate::op::types::F) column (any
+    /// Each column is replaced by a new [`F`](crate::op::F) column (any
     /// validity mask it had goes with it) and keeps its position among the
     /// columns; a missing one is appended. The row count must match the
     /// block's, unless the block has no columns yet.
@@ -1187,7 +1187,7 @@ impl Block {
     ///   row count from the block's.
     ///
     /// The block is unchanged on error.
-    pub fn set_coords(&mut self, coords: crate::op::types::FNx3View<'_>) -> Result<(), BlockError> {
+    pub fn set_coords(&mut self, coords: crate::op::FNx3View<'_>) -> Result<(), BlockError> {
         use crate::core::keys::COORDS;
         if coords.ncols() != 3 {
             return Err(BlockError::validation(format!(
@@ -1287,11 +1287,11 @@ fn sort_order(col: &Column, nrows: usize) -> Vec<usize> {
     let mut order: Vec<usize> = (0..nrows).collect();
     match col {
         Column::Float(h) => {
-            let v: Vec<crate::op::types::F> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::F> = h.array().iter().copied().collect();
             order.sort_by(|&i, &j| v[i].total_cmp(&v[j]));
         }
         Column::Int(h) => {
-            let v: Vec<crate::op::types::I> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::I> = h.array().iter().copied().collect();
             order.sort_by_key(|&i| v[i]);
         }
         Column::Int8(h) => {
@@ -1307,7 +1307,7 @@ fn sort_order(col: &Column, nrows: usize) -> Vec<usize> {
             order.sort_by_key(|&i| v[i]);
         }
         Column::UInt(h) => {
-            let v: Vec<crate::op::types::Idx> = h.array().iter().copied().collect();
+            let v: Vec<crate::op::Idx> = h.array().iter().copied().collect();
             order.sort_by_key(|&i| v[i]);
         }
         Column::U8(h) => {
@@ -1411,7 +1411,7 @@ fn concat_columns(key: &str, pieces: &[Column]) -> Result<Column, BlockError> {
 /// refuse a canonical identifier stored at another width before it reaches
 /// here, so a non-conforming store is reported rather than silently widened.
 fn promote_canonical_uint(key: &str, col: Column) -> Column {
-    use crate::op::types::Idx;
+    use crate::op::Idx;
     let Some(spec) = crate::core::schema::column(key) else {
         return col;
     };
@@ -1467,7 +1467,7 @@ fn check_schema(key: &str, dtype: DType, shape: &[usize]) -> Result<(), BlockErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, I, Idx};
+    use crate::op::{F, I, Idx};
     use ndarray::Array1;
 
     /// Block with float columns `c`, `a`, `b` inserted in that order, one row

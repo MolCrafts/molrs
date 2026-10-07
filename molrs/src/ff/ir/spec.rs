@@ -15,7 +15,7 @@ use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::ir::LammpsForm;
 use crate::ff::ir::{Dim, IrError};
 use crate::ff::ir::{ParamSource, SpecialClass};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// A parameter value: a number or a string.
 #[derive(Clone, Debug, PartialEq)]

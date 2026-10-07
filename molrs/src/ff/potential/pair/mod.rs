@@ -5,7 +5,7 @@ use ndarray::{Array2, ArrayView2};
 
 use molrs::core::Frame;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Pair kernel: already-reduced geometry in, energy / force on `j` out.
 pub trait PairPotential: Send + Sync {
@@ -251,7 +251,7 @@ pub use uff::{UffVdW, uff_lj_ctor};
 #[cfg(test)]
 pub(crate) mod testing {
     use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-    use molrs::op::types::F;
+    use molrs::op::F;
 
     /// A neighbour table over exactly `links`, with the displacements a
     /// neighbour engine would have computed for them.

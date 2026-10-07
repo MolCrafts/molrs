@@ -16,7 +16,7 @@ use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler};
 use crate::io::mrec::ForceFieldSection;
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::Array1;
 
 /// `scale · k (q − q0)²`, its derivative off by `wrong` (1 is right).

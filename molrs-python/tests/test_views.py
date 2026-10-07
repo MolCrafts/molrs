@@ -84,7 +84,7 @@ class TestOneClass:
             from_smiles,
             from_smiles.copy(),
             molrs.core.Atomistic.from_frame(from_smiles.to_frame()),
-            molrs.perceive.Perceive().find_rings(from_smiles),
+            molrs.perceive.assign_rings(from_smiles),
         ):
             assert type(graph) is molrs.core.Atomistic
             assert len(graph.atoms) == 2
@@ -106,7 +106,7 @@ class TestProps:
     def test_perception_output_keeps_props(self) -> None:
         graph = molrs.io.smiles.SmilesIR("CO").to_atomistic()
         graph.props["label"] = "methanol"
-        perceived = molrs.perceive.Perceive().find_rings(graph)
+        perceived = molrs.perceive.assign_rings(graph)
         assert perceived.props == {"label": "methanol"}
 
     def test_coarse_grain_copy_keeps_props(self) -> None:

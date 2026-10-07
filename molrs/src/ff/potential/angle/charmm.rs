@@ -22,7 +22,7 @@ use crate::ff::potential::geometry::{compute_angle, sub3, term_table, validate_c
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// One `angle charmm` type's numbers as the kernel holds them (`theta0` in
 /// radians).
@@ -208,7 +208,7 @@ mod tests {
     use crate::ff::forcefield::{ForceField, SpecialBonds};
     use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     const K: F = 33.43;

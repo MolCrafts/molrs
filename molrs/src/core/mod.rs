@@ -24,8 +24,8 @@
 //!   [`UnitPreset`];
 //! - the crate error, [`MolRsError`].
 //!
-//! Whole-graph transforms (`translate`, `rotate`, …) are `crate::op::geometry`;
-//! ring perception is `crate::perceive::rings`; the `*.mrec` record and its
+//! Whole-graph transforms (`translate`, `rotate`, …) are `crate::op`'s (`crate::op::translate`, …);
+//! ring perception is `crate::perceive::perceive_rings`; the `*.mrec` record and its
 //! force-field section are `crate::io::mrec`.
 //!
 //! # Examples

@@ -27,7 +27,7 @@ use indexmap::IndexMap;
 use slotmap::{Key, SlotMap};
 
 use crate::core::MolRsError;
-use crate::op::types::{F, I};
+use crate::op::{F, I};
 
 /// Per-column validity mask — one flag per row (`true` ⇒ the row holds a value).
 ///

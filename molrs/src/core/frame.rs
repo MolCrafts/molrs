@@ -10,7 +10,7 @@
 //! ```
 //! use molrs::core::Frame;
 //! use molrs::core::Block;
-//! use molrs::op::types::{F, Idx};
+//! use molrs::op::{F, Idx};
 //! use ndarray::Array1;
 //!
 //! let mut frame = Frame::new();
@@ -310,7 +310,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -346,7 +346,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -385,7 +385,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -436,7 +436,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::Array1;
     ///
     /// let mut frame = Frame::new();
@@ -502,7 +502,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::{F, Idx};
+    /// use molrs::op::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// // 4 atoms at x = 0..3, bonded as a chain (0,1), (1,2), (2,3).
@@ -609,7 +609,7 @@ impl Frame {
                         continue;
                     }
                     let new = new_row[*v as usize].expect("kept rows lie in the selection");
-                    *v = new as crate::op::types::Idx;
+                    *v = new as crate::op::Idx;
                 }
             }
             out.insert(name, cut);
@@ -658,7 +658,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::{F, Idx};
+    /// use molrs::op::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// // A diatomic: atoms 0-1 bonded.
@@ -719,7 +719,7 @@ impl Frame {
                         ))
                     })?;
                 for (i, v) in values.iter_mut().enumerate() {
-                    *v += ((i / rows) * span) as crate::op::types::Idx;
+                    *v += ((i / rows) * span) as crate::op::Idx;
                 }
             }
             out.insert(name, tiled);
@@ -763,7 +763,7 @@ impl Frame {
     /// ```
     /// use molrs::core::Frame;
     /// use molrs::core::Block;
-    /// use molrs::op::types::{F, Idx};
+    /// use molrs::op::{F, Idx};
     /// use ndarray::Array1;
     ///
     /// fn chain(n: usize) -> Frame {
@@ -823,7 +823,7 @@ impl Frame {
                             ))
                         })?;
                     if base > 0 {
-                        values.mapv_inplace(|v| v + base as crate::op::types::Idx);
+                        values.mapv_inplace(|v| v + base as crate::op::Idx);
                     }
                 }
                 parts.entry(name.to_owned()).or_default().push(part);
@@ -849,7 +849,7 @@ impl Frame {
     /// [`MolRsError::NotFound`] without an `atoms` block, and
     /// [`MolRsError::Block`] ([`BlockError::MissingColumn`](crate::core::BlockError::MissingColumn))
     /// when it lacks `x`, `y` or `z`.
-    pub fn coords(&self) -> Result<crate::op::types::FNx3, MolRsError> {
+    pub fn coords(&self) -> Result<crate::op::FNx3, MolRsError> {
         let atoms = self.get(ATOMS).ok_or_else(|| {
             MolRsError::not_found("block", format!("frame has no '{ATOMS}' block"))
         })?;
@@ -869,14 +869,14 @@ impl Frame {
     ///
     /// ```
     /// use molrs::core::Frame;
-    /// use molrs::op::types::F;
+    /// use molrs::op::F;
     /// use ndarray::array;
     ///
     /// let mut frame = Frame::new();
     /// frame.set_coords(array![[1.0 as F, 2.0, 3.0]].view()).unwrap();
     /// assert_eq!(frame.coords().unwrap(), array![[1.0, 2.0, 3.0]]);
     /// ```
-    pub fn set_coords(&mut self, coords: crate::op::types::FNx3View<'_>) -> Result<(), MolRsError> {
+    pub fn set_coords(&mut self, coords: crate::op::FNx3View<'_>) -> Result<(), MolRsError> {
         match self.get_mut(ATOMS) {
             Some(atoms) => atoms.set_coords(coords)?,
             None => {
@@ -947,7 +947,7 @@ impl IndexMut<&str> for Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, I};
+    use crate::op::{F, I};
     use ndarray::Array1;
 
     #[test]
@@ -1311,7 +1311,7 @@ mod tests {
     // ---- subset ----
 
     use crate::core::SimBox;
-    use crate::op::types::Idx;
+    use crate::op::Idx;
     use ndarray::array;
 
     fn float_col(values: &[F]) -> ndarray::ArrayD<F> {

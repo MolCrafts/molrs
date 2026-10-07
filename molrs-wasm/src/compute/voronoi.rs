@@ -4,7 +4,7 @@
 use super::js_value;
 use crate::core::frame::Frame;
 use crate::core::frame::positions_from_frame;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -145,7 +145,7 @@ impl VoronoiDomainAnalysis {
                 ));
             }
             let labels: Vec<i64> = labels.iter().map(|&v| i64::from(v)).collect();
-            let r = molrs::compute::DomainAnalysis
+            let r = molrs::compute::VoronoiDomainAnalysis
                 .analyze(&cells, &labels)
                 .map_err(|e| JsValue::from_str(&format!("VoronoiDomainAnalysis: {e}")))?;
             js_value(&Out {
@@ -194,7 +194,7 @@ impl VoronoiVoidAnalysis {
                 ));
             }
             let mask: Vec<bool> = is_void.iter().map(|&v| v != 0).collect();
-            let r = molrs::compute::VoidAnalysis
+            let r = molrs::compute::VoronoiVoidAnalysis
                 .analyze(&cells, &mask, self.box_volume.unwrap_or(frame_volume))
                 .map_err(|e| JsValue::from_str(&format!("VoronoiVoidAnalysis: {e}")))?;
             js_value(&Out {

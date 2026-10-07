@@ -88,7 +88,7 @@ pub use compile::{Binding, Compiled, Geometry, Input, compile, compile_parsed, i
 pub use error::ExprError;
 pub use parse::parse;
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Degrees → radians in an expression: the double nearest π/180, the factor
 /// [`f64::to_radians`] multiplies by. An expression converts an angle-valued

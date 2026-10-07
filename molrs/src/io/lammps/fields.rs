@@ -2,7 +2,7 @@
 //! references (a numeric type or a type label) with their label maps.
 
 use crate::io::invalid_data;
-use molrs::op::types::{F, I};
+use molrs::op::{F, I};
 use std::collections::HashMap;
 
 /// Split a line on whitespace. Token count is small (≤ ~20); float parsing

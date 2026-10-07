@@ -1785,7 +1785,7 @@ class op:
 
     DEFAULT_GAP_TOL: float
 
-    class Fit:
+    class Superposition:
         """Best-fit proper rigid motion ``target ≈ rotation @ reference +
         translation`` from :func:`molrs.op.superpose`. Frozen."""
 
@@ -1821,7 +1821,7 @@ class op:
         weights: ArrayF | None = None,
         *,
         gap_tol: float = ...,
-    ) -> Fit:
+    ) -> Superposition:
         """Best-fit proper rigid motion mapping ``reference`` onto ``target``
         (both shape ``(k, 3)``); ``weights`` shape ``(k,)``, uniform when
         omitted, zero-weight points dropped.
@@ -2006,39 +2006,40 @@ class Coarsener:
 # Chemical perception — the builder (graph in / graph out, non-mutating)
 # ---------------------------------------------------------------------------
 
-class Perceive:
-    """Chemical perception, as a builder.
-
-    Every ``find_*`` clones the molecule, writes the perceived facts onto the clone
-    as atom / bond props, and returns it — the input is never touched. Because the
-    output is a graph, the finders compose.
-
-    Props written: ``find_rings`` → ``is_in_ring`` / ``n_rings`` (atoms and bonds);
-    ``find_aromaticity`` → ``is_aromatic`` on atoms, ``bond_type`` /
-    ``bond_number`` on bonds; ``find_hydrogens`` → adds H atoms and bonds;
-    ``find_stereo`` → ``stereo``; ``find_rotatable`` → ``is_rotatable``;
-    ``find_bond_orders`` → ``bond_number`` / ``bond_type`` (antechamber's
-    Kekulé structure, judged from the connectivity);
-    ``find_bond_types`` → ``bcc_bond_type``; ``find_equivalence_classes`` →
-    ``equiv_class``."""
-
-    def __init__(self) -> None: ...
-    def find_rings(self, mol: Atomistic) -> Atomistic: ...
-    def find_aromaticity(self, mol: Atomistic) -> Atomistic: ...
-    def find_hydrogens(self, mol: Atomistic) -> Atomistic: ...
-    def find_stereo(self, mol: Atomistic) -> Atomistic: ...
-    def find_rotatable(
-        self,
-        mol: Atomistic,
-        *,
-        unknown_bond: Literal["not_rotatable", "single"] = "not_rotatable",
-    ) -> Atomistic:
-        """Flag ``is_rotatable`` (0/1) on every bond. ``unknown_bond`` says
-        what a bond with no ``bond_type`` counts as: ``"not_rotatable"``
-        (never guess) or ``"single"``."""
-    def find_bond_orders(self, mol: Atomistic) -> Atomistic: ...
-    def find_bond_types(self, mol: Atomistic) -> Atomistic: ...
-    def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
+def assign_rings(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` with ``is_in_ring`` / ``n_rings`` on every atom and bond."""
+def assign_aromaticity(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` in the standard aromatic representation:
+    ``is_aromatic`` on atoms, ``bond_type`` / ``bond_number`` on bonds."""
+def add_hydrogens(mol: Atomistic) -> Atomistic:
+    """New graph: ``mol`` plus the hydrogens its open valences imply."""
+def assign_stereo(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` with ``stereo`` on each perceived stereocentre / bond."""
+def assign_rotatable_bonds(
+    mol: Atomistic,
+    *,
+    unknown_bond: Literal["not_rotatable", "single"] = "not_rotatable",
+) -> Atomistic:
+    """Clone of ``mol`` with ``is_rotatable`` (0/1) on every bond.
+    ``unknown_bond`` says what a bond with no ``bond_type`` counts as:
+    ``"not_rotatable"`` (never guess) or ``"single"``."""
+def assign_bond_orders(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` carrying antechamber's Kekulé structure, judged from
+    the connectivity (``bond_number`` / ``bond_type``)."""
+def assign_kekule_bond_orders(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` whose aromatic bonds carry a legal localized
+    ``bond_number``."""
+def assign_bcc_bond_types(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` with ``bcc_bond_type`` on every bond, from the stated
+    bond orders."""
+def assign_bcc_bond_types_from_connectivity(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` with ``bcc_bond_type`` on every bond, from bond orders
+    judged from the connectivity (antechamber's ``bondtype -j full``)."""
+def assign_equivalence_classes(mol: Atomistic) -> Atomistic:
+    """Clone of ``mol`` with ``equiv_class`` on every atom (antechamber
+    ``-eq 1``)."""
+def perceive_rings(mol: Atomistic) -> RingInfo:
+    """The SSSR rings of ``mol`` as a :class:`RingInfo`; ``mol`` is untouched."""
 
 # ---------------------------------------------------------------------------
 # Frame vocabulary (molrs.core.keys / molrs.core.schema, mirrors
@@ -4027,7 +4028,7 @@ def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
 def read_mrec_forcefield(path: PathInput) -> mrec.ForceFieldSection | None: ...
 def read_mrec_meta(path: PathInput) -> dict[str, Any]: ...
 
-class RDFResult:
+class RdfResult:
     """Radial distribution function g(r). Accumulated across all input frames."""
 
     @property
@@ -4047,23 +4048,23 @@ class RDFResult:
     @property
     def n_frames(self) -> int: ...
 
-class RDF:
+class Rdf:
     def __init__(self, n_bins: int, r_max: float, r_min: float = 0.0) -> None: ...
     def compute(
         self,
         frames: Frame | Sequence[Frame],
         nlists: Neighbors | Sequence[Neighbors],
-    ) -> RDFResult: ...
+    ) -> RdfResult: ...
 
-class MSDResult:
-    """MSD at a single time point."""
+class MsdResult:
+    """Msd at a single time point."""
 
     @property
     def mean(self) -> float: ...
     @property
     def per_particle(self) -> ArrayF: ...
 
-class MSDTimeSeries:
+class MsdTimeSeries:
     """Time series of per-frame MSD values (frame 0 is the reference)."""
 
     @property
@@ -4071,11 +4072,11 @@ class MSDTimeSeries:
     @property
     def per_particle(self) -> ArrayF: ...
     def __len__(self) -> int: ...
-    def __getitem__(self, index: int) -> MSDResult: ...
+    def __getitem__(self, index: int) -> MsdResult: ...
 
-class MSD:
+class Msd:
     def __init__(self, method: str = "direct") -> None: ...
-    def compute(self, frames: Frame | Sequence[Frame]) -> MSDTimeSeries: ...
+    def compute(self, frames: Frame | Sequence[Frame]) -> MsdTimeSeries: ...
 
 class ClusterResult:
     @property
@@ -4174,7 +4175,7 @@ class PcaResult:
     @property
     def variance(self) -> tuple[float, float]: ...
 
-class Pca2:
+class Pca:
     """Two-component PCA."""
 
     def __init__(self) -> None: ...
@@ -4289,7 +4290,7 @@ class StaticStructureFactorDebye:
         self, frames: Frame | Sequence[Frame]
     ) -> list[tuple[ArrayF, ArrayF, int]]: ...
 
-class PMFTXY:
+class PmftXy:
     """2-D (x, y) Pair Mode Fourier Transform."""
 
     def __init__(self, x_max: float, y_max: float, n_x: int, n_y: int) -> None: ...
@@ -4327,43 +4328,25 @@ class DistributionResult:
     @property
     def angular(self) -> bool: ...
 
-class AngleDistribution:
-    """Angular distribution function (ADF) over `(i, j, k)` triplets.
+class DistributionFunction:
+    """One-dimensional distribution function of an internal coordinate over a
+    frame's topology groups (Rust ``DistributionFunction<O>``).
 
-    Bounds are **radians**. Omit both and the observable's own range ``[0, pi]``
-    is used. Supplying exactly one is a :class:`ValueError`.
-
-    The sin-theta correction divides by a vanishing quantity at both ends, so
-    the corrected density amplifies counting noise near 0 and pi.
+    ``observable`` is ``"distance"`` (pairs from ``bonds``; ``min``/``max``
+    required, in the coordinates' length unit), ``"angle"`` (triplets from
+    ``angles``, ADF; radians, natural range ``[0, pi]``) or ``"dihedral"``
+    (quadruplets from ``dihedrals``, DDF; radians, natural range
+    ``(-pi, pi]``, kept signed). Supplying exactly one bound is a
+    :class:`ValueError`.
     """
 
     def __init__(
-        self, n_bins: int, min: float | None = None, max: float | None = None
+        self,
+        observable: Literal["distance", "angle", "dihedral"],
+        n_bins: int,
+        min: float | None = None,
+        max: float | None = None,
     ) -> None: ...
-    def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
-
-class DihedralDistribution:
-    """Dihedral distribution function (DDF) over `(i, j, k, l)` quadruplets.
-
-    Bounds are **radians**. Omit both and the observable's own range
-    ``(-pi, pi]`` is used; the default stays signed, because folding to
-    ``abs(phi)`` collapses g+ onto g- and cannot be undone. Supplying exactly
-    one bound is a :class:`ValueError`.
-    """
-
-    def __init__(
-        self, n_bins: int, min: float | None = None, max: float | None = None
-    ) -> None: ...
-    def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
-
-class DistanceDistribution:
-    """Distance distribution function over `(i, j)` pairs.
-
-    Bounds are in the coordinates' length unit and are **required**: a distance
-    has no natural range to fall back on.
-    """
-
-    def __init__(self, n_bins: int, min: float, max: float) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> DistributionResult: ...
 
 class VanHoveResult:
@@ -4396,7 +4379,7 @@ class Acf:
     """Time-autocorrelation of a vector series, averaged over all time origins.
 
     ``C(t) = 1/(N*(T-t)) * sum_i sum_tau v_i(tau).v_i(tau+t)`` — unbiased,
-    Wiener-Khinchin (FFT). Not the same estimator as ``VACF``.
+    Wiener-Khinchin (FFT). Not the same estimator as ``Vacf``.
     """
 
     def __init__(self) -> None: ...
@@ -4507,10 +4490,19 @@ class RadicalVoronoi:
     def __init__(self) -> None: ...
     def build(self, positions: ArrayF, radii: ArrayF, box_: Box) -> VoronoiCells: ...
 
-def voronoi_domains(cells: VoronoiCells, labels: Sequence[int]) -> dict[str, Any]: ...
-def voronoi_voids(
-    cells: VoronoiCells, is_void: Sequence[bool], box_volume: float
-) -> dict[str, Any]: ...
+class VoronoiDomainAnalysis:
+    """Partition Voronoi cells into same-label face-adjacent domains."""
+
+    def __init__(self) -> None: ...
+    def analyze(self, cells: VoronoiCells, labels: Sequence[int]) -> dict[str, Any]: ...
+
+class VoronoiVoidAnalysis:
+    """Merge adjacent void-probe Voronoi cells into cavities."""
+
+    def __init__(self) -> None: ...
+    def analyze(
+        self, cells: VoronoiCells, is_void: Sequence[bool], box_volume: float
+    ) -> dict[str, Any]: ...
 
 class VcdSpectrum:
     """Vibrational circular dichroism (VCD) spectrum transform."""
@@ -5098,7 +5090,7 @@ class EinsteinConductivity:
 class EinsteinDiffusion:
     """
     Raw self-MSD for the Einstein diffusion route. Delegates to
-    `MSD::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
+    `Msd::windowed` — MSD math is NOT re-derived. `D = slope/(2d)` is then a
     [`LinearFit`](PyLinearFit) + scale step.
     """
     def __init__(self) -> None: ...
@@ -5130,7 +5122,7 @@ class GreenKuboConductivity:
 class GreenKuboDiffusion:
     """
     Raw velocity ACF for the Green–Kubo diffusion route (same raw curve as
-    [`VACF`](PyVACF)). `D = (1/d)·∫ VACF dt` is then a
+    [`Vacf`](PyVacf)). `D = (1/d)·∫ Vacf dt` is then a
     [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale step.
     """
     def __init__(self) -> None: ...
@@ -5149,7 +5141,7 @@ class GreenKuboSpectrum:
     ) -> None: ...
     def fit(self, /, acf): ...
 
-class IRSpectrum:
+class IrSpectrum:
     """
     Infrared absorption spectrum transform of a **raw dipole-flux ACF**
     (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
@@ -5199,21 +5191,21 @@ class RingInfo:
     """
     The ring facts of a molecule: SSSR rings and the systems they fuse into.
 
-    Perception runs once, in the constructor; every method reads the result.
+    Returned by :func:`perceive_rings`, which runs the perception once; every
+    method reads the result.
 
-    Not to be confused with :meth:`Perceive.find_rings`, which answers a
+    Not to be confused with :func:`assign_rings`, which answers a
     different question — it *decorates* a graph with ring flags and hands the
     graph back. This type *reports*, and never touches the molecule.
 
     Examples
     --------
-    >>> rings = molrs.perceive.RingInfo(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()
     [6]
     """
-    def __init__(self, mol) -> None: ...
     def is_atom_in_ring(self, /, atom): ...
     def max_ring_system_size(self) -> int:
         """Atom count of the largest fused / bridged ring system
@@ -5243,7 +5235,7 @@ class TRRTrajReader:
     def read_frames(self, /, indices): ...
     def read_range(self, /, start=0, stop=None, step=1): ...
 
-class VACF:
+class Vacf:
     """
     Raw unnormalized velocity autocorrelation function (the VDOS /
     Green–Kubo-diffusion input). Returns only the raw ACF curve — compose with
@@ -5270,29 +5262,39 @@ class XTCTrajReader:
     def read_frames(self, /, indices): ...
     def read_range(self, /, start=0, stop=None, step=1): ...
 
-def conductivity_sum_rule(
-    frequency, conductivity, current_sq_mean, volume: float, temperature: float
-): ...
-def kramers_kronig(frequency, eps_real, eps_imag, eps_inf): ...
-def route_agreement(results): ...
+class ConductivitySumRule:
+    """Conductivity sum rule check."""
 
-class Dielectric:
-    """Raw dielectric kernels (static methods)."""
+    def __init__(self, current_sq_mean: float, volume: float, temperature: float) -> None: ...
+    def check(self, frequency: ArrayF, conductivity: ArrayF) -> dict[str, Any]: ...
 
-    @staticmethod
-    def compute_dipole_moment(charges: ArrayF, positions: ArrayF) -> ArrayF: ...
-    @staticmethod
-    def compute_current_density(
-        dipole_moments: ArrayF, dt: float, volume: float
-    ) -> ArrayF: ...
-    @staticmethod
-    def static_dielectric_constant(
-        dipole_moments: ArrayF, volume: float, temperature: float, epsilon_inf: float
-    ) -> float: ...
-    @staticmethod
-    def decompose_current(
-        per_particle_current: ArrayF, water_mask: ArrayBool
-    ) -> tuple[ArrayF, ArrayF]: ...
+class KramersKronig:
+    """Kramers-Kronig consistency check of a dielectric spectrum."""
+
+    def __init__(self, eps_inf: float) -> None: ...
+    def check(self, frequency: ArrayF, eps_real: ArrayF, eps_imag: ArrayF) -> dict[str, Any]: ...
+
+class RouteAgreement:
+    """Pairwise RMS agreement of one spectrum computed by several routes."""
+
+    def __init__(self) -> None: ...
+    def check(self, results: dict[str, ArrayF]) -> dict[str, Any]: ...
+
+def dipole_moment(charges: ArrayF, positions: ArrayF) -> ArrayF:
+    """Total dipole moment ``sum q_i r_i`` (e*Angstrom) of one configuration."""
+
+def current_density(dipole_moments: ArrayF, dt: float, volume: float) -> ArrayF:
+    """Polarisation current density ``(dM/dt)/V``, ``(n_frames, 3)``; row 0 is NaN."""
+
+def static_dielectric_constant(
+    dipole_moments: ArrayF, volume: float, temperature: float, epsilon_inf: float
+) -> float:
+    """Neumann static dielectric constant from dipole fluctuations."""
+
+def decompose_current(
+    per_particle_current: ArrayF, water_mask: ArrayBool
+) -> tuple[ArrayF, ArrayF]:
+    """Split a per-particle current into the masked part and the rest."""
 
 def read_lammps_log_str(
     text: str, path: str = "<string>", style: str = "default"
@@ -5361,29 +5363,26 @@ def read_mol2(path: PathInput) -> Frame:
 def read_prep(path: PathInput):
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
 
-class Onsager:
-    """Onsager collective mean-displacement cross-correlation (static)."""
+class OnsagerCorrelation:
+    """Onsager collective mean-displacement cross-correlation."""
 
-    @staticmethod
-    def correlation(
-        p_i: ArrayF, p_j: ArrayF, dt: float, max_correlation_time: int
+    def __init__(self) -> None: ...
+    def compute(
+        self, p_i: ArrayF, p_j: ArrayF, dt: float, max_correlation_time: int
     ) -> dict[str, ArrayF]: ...
 
-class Persist:
-    """Pair-survival (persistence) time-correlation functions (static)."""
-
-    @staticmethod
-    def pair_survival_tcf(
-        coords_i: ArrayF,
-        coords_j: ArrayF,
-        box_lengths: ArrayF,
-        r0: float,
-        r1: float,
-        method: str,
-        dt: float,
-        max_correlation_time: int,
-        exclude_self: bool = False,
-    ) -> dict[str, ArrayF]: ...
+def pair_survival_tcf(
+    coords_i: ArrayF,
+    coords_j: ArrayF,
+    box_lengths: ArrayF,
+    r0: float,
+    r1: float,
+    method: str,
+    dt: float,
+    max_correlation_time: int,
+    exclude_self: bool = False,
+) -> dict[str, ArrayF]:
+    """Pair-survival time-correlation function."""
 
 def write_forcefield_xml(
     path: PathInput, forcefield: ForceField, precision: int | None = None

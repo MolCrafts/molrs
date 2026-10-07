@@ -12,8 +12,8 @@
 //!   kernels compute on. [`to_vec3`] and [`to_mat3`] are where ndarray meets
 //!   them.
 //!
-//! Every alias has exactly one path, this module (`molrs::op::types`); nothing
-//! re-exports them.
+//! Every alias has exactly one public path, `molrs::op::<Alias>`: this module
+//! is private and `op` re-exports it flat; nothing else re-exports them.
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 

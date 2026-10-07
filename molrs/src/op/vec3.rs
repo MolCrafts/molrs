@@ -4,7 +4,7 @@
 //! geometry code computes on. Plain free functions over plain values, by the
 //! operator ruling that scopes a functional style to `molrs::op`.
 
-use crate::op::types::{F, Vec3};
+use crate::op::{F, Vec3};
 
 /// Shortest length a vector must have to count as a direction.
 ///
@@ -92,7 +92,7 @@ pub fn perpendicular(axis: Vec3) -> Option<Vec3> {
 /// `a` divided by its length, or by `√ε` when it is shorter than that, so a
 /// zero vector comes back as zero instead of NaN. The internal-coordinate
 /// kernels below ([`angle`], [`dihedral`],
-/// [`nerf`](crate::op::rigid::nerf)) share it: a vanishing arm then gives a
+/// [`place_from_internal_coords`](crate::op::place_from_internal_coords)) share it: a vanishing arm then gives a
 /// finite (if meaningless) answer rather than poisoning the caller with NaN.
 #[inline]
 pub(crate) fn unit_or_zero(a: Vec3) -> Vec3 {
@@ -142,7 +142,7 @@ pub fn dihedral(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, Vec3};
+    use crate::op::{F, Vec3};
 
     const TOL: F = 1e-12;
 

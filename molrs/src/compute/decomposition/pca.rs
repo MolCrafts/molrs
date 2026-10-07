@@ -1,6 +1,6 @@
 //! 2-component Principal Component Analysis (PCA).
 //!
-//! [`Pca2`] is a [`Compute`] that consumes any upstream `Vec<T>` where
+//! [`Pca`] is a [`Compute`] that consumes any upstream `Vec<T>` where
 //! `T: DescriptorRow` — each descriptor row is one observation. PCA
 //! standardizes the columns, computes covariance, and projects onto the top
 //! two eigenvectors via power iteration with deflation. No external
@@ -20,7 +20,7 @@
 use std::marker::PhantomData;
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -40,14 +40,14 @@ impl ComputeResult for PcaResult {}
 /// Stateless PCA calculator with two components, generic over the descriptor
 /// row type.
 ///
-/// Construct with `Pca2::<T>::new()` where `T: DescriptorRow`. Each
+/// Construct with `Pca::<T>::new()` where `T: DescriptorRow`. Each
 /// [`compute`](Compute::compute) call expects an `&Vec<T>` of length ≥ 3.
 #[derive(Debug)]
-pub struct Pca2<T: DescriptorRow + Clone + Send + Sync + 'static> {
+pub struct Pca<T: DescriptorRow + Clone + Send + Sync + 'static> {
     _marker: PhantomData<fn() -> T>,
 }
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Pca2<T> {
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> Pca<T> {
     /// No parameters — fixed 2-component projection.
     pub fn new() -> Self {
         Self {
@@ -56,15 +56,15 @@ impl<T: DescriptorRow + Clone + Send + Sync + 'static> Pca2<T> {
     }
 }
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Clone for Pca2<T> {
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> Clone for Pca<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Copy for Pca2<T> {}
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> Copy for Pca<T> {}
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Default for Pca2<T> {
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> Default for Pca<T> {
     fn default() -> Self {
         Self::new()
     }
@@ -74,7 +74,7 @@ const POWER_ITER_TOL: F = 1e-12;
 const POWER_ITER_MAX: usize = 200;
 const STD_FLOOR: F = 1e-12;
 
-impl<T: DescriptorRow + Clone + Send + Sync + 'static> Compute for Pca2<T> {
+impl<T: DescriptorRow + Clone + Send + Sync + 'static> Compute for Pca<T> {
     type Args<'a> = &'a Vec<T>;
     type Output = PcaResult;
 
@@ -276,7 +276,7 @@ fn vec_norm(v: &[F]) -> F {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::random::standard_normal;
+    use crate::op::standard_normal;
     use molrs::core::Frame;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
@@ -311,7 +311,7 @@ mod tests {
     fn fit_transform_on_three_blobs() {
         let rows = three_blobs_rows(20, 42);
         let frame = Frame::new();
-        let result = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap();
+        let result = Pca::<Row>::new().compute(&[&frame], &rows).unwrap();
         assert_eq!(result.coords.len(), 2 * rows.len());
         assert!(result.variance[0] > 0.0);
         assert!(result.variance[1] > 0.0);
@@ -322,7 +322,7 @@ mod tests {
     fn err_on_too_few_rows() {
         let rows = vec![Row(vec![1.0, 2.0]), Row(vec![3.0, 4.0])];
         let frame = Frame::new();
-        let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
@@ -330,7 +330,7 @@ mod tests {
     fn err_on_too_few_cols() {
         let rows = vec![Row(vec![1.0]); 5];
         let frame = Frame::new();
-        let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
@@ -339,7 +339,7 @@ mod tests {
         let mut rows = vec![Row(vec![0.0; 4]); 5];
         rows[1].0[2] = F::NAN;
         let frame = Frame::new();
-        let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::NonFinite { .. }));
     }
 
@@ -348,7 +348,7 @@ mod tests {
         // column 1 constant across 5 rows
         let rows: Vec<Row> = (0..5).map(|i| Row(vec![i as F, 1.0])).collect();
         let frame = Frame::new();
-        let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
     }
 
@@ -356,7 +356,7 @@ mod tests {
     fn variance_sum_tracks_trace() {
         let rows = three_blobs_rows(40, 7);
         let frame = Frame::new();
-        let result = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap();
+        let result = Pca::<Row>::new().compute(&[&frame], &rows).unwrap();
         let sum = result.variance[0] + result.variance[1];
         assert!(
             (sum - 2.0).abs() < 1e-6,
@@ -368,7 +368,7 @@ mod tests {
     fn ragged_rows_error() {
         let rows = vec![Row(vec![1.0, 2.0]), Row(vec![3.0])];
         let frame = Frame::new();
-        let err = Pca2::<Row>::new().compute(&[&frame], &rows).unwrap_err();
+        let err = Pca::<Row>::new().compute(&[&frame], &rows).unwrap_err();
         assert!(matches!(err, ComputeError::BadShape { .. }));
     }
 }

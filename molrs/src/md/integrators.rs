@@ -37,8 +37,8 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use molrs::core::SimBox;
 
 use super::forces::ForceProvider;
-use crate::op::random::standard_normal;
-use molrs::op::types::{F, FNx3, I};
+use crate::op::standard_normal;
+use molrs::op::{F, FNx3, I};
 
 use super::error::MdError;
 use super::types::{ForceOutput, MDState};

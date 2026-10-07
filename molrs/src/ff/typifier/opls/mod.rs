@@ -13,7 +13,7 @@
 //!   molecule with explicit hydrogens.
 //! - **Aromaticity on a private copy.** The rules run on a clone brought to the
 //!   standard aromatic form by
-//!   [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity)
+//!   [`assign_aromaticity`](molrs::perceive::assign_aromaticity)
 //!   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
 //!   alike, while the caller's bond types and bond numbers are never changed.
 //!   Typifiers built by [`OPLSAATypifier::new`] over a caller's own file do

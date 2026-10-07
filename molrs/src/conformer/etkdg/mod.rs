@@ -32,7 +32,7 @@ use molrs::core::MolRsError;
 use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
-use molrs::perceive::hydrogens::add_hydrogens;
+use molrs::perceive::add_hydrogens;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
 const EMBED_DIM: usize = 4;

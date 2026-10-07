@@ -1,8 +1,8 @@
 """FFI seam of ``molrs.op`` (assembly-07, mirrors ``molrs/src/op/``).
 
 These prove that the numeric primitives cross: arrays arrive as float64 of the
-documented shape, ``Fit`` is a frozen record whose ``freedom`` crosses as its
-lowercase name, and ``SuperposeError`` maps to ``ValueError``. They re-derive
+documented shape, ``Superposition`` is a frozen record whose ``freedom`` crosses as its
+lowercase name, and ``SuperpositionError`` maps to ``ValueError``. They re-derive
 no numerics: superposition and the eigen-gap are proven by the unit tests in
 ``molrs/src/op/superpose.rs``. The one geometric value asserted (a pure
 translation) is hand-checkable.
@@ -28,7 +28,7 @@ class TestModule:
         assert molrs.op.superpose is not None
 
     def test_default_gap_tol(self):
-        # `op::superpose::DEFAULT_GAP_TOL`.
+        # `op::DEFAULT_GAP_TOL`.
         assert molrs.op.DEFAULT_GAP_TOL == 1e-4
 
 
@@ -36,7 +36,7 @@ class TestSuperpose:
     def test_returns_a_fit_with_float64_arrays_of_the_documented_shape(self):
         fit = molrs.op.superpose(TRIANGLE, TRIANGLE + [1.0, 2.0, 3.0])
 
-        assert isinstance(fit, molrs.op.Fit)
+        assert isinstance(fit, molrs.op.Superposition)
         assert fit.rotation.dtype == np.float64
         assert fit.rotation.shape == (3, 3)
         assert fit.translation.dtype == np.float64

@@ -40,10 +40,10 @@
 //! (`x·r ≤ off`). Equal radii reduce to the plain Voronoi bisector at `r/2`.
 
 use molrs::core::SimBox;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::ArrayView2;
 
-use super::cell::{BOUNDARY, Face, Poly, VoronoiCells};
+use super::cell::{Poly, VORONOI_BOUNDARY, VoronoiCells, VoronoiFace};
 use crate::compute::ComputeError;
 
 /// Builder for the periodic radical-Voronoi tessellation. Orthorhombic boxes
@@ -122,7 +122,7 @@ impl RadicalVoronoi {
         // buffer reuse) and `collect` preserves generator order, so the result is
         // bit-identical to the serial build — only the geometry algorithm's driver
         // loop is parallelized, never the geometry itself.
-        let build = |i: usize, cand: &mut Vec<(F, [F; 3], usize)>| -> (F, Vec<Face>) {
+        let build = |i: usize, cand: &mut Vec<(F, [F; 3], usize)>| -> (F, Vec<VoronoiFace>) {
             let gi = [positions[[i, 0]], positions[[i, 1]], positions[[i, 2]]];
             let ri2 = radii[i] * radii[i];
             match self.build_cell_fast(&grid, &gi, ri2, r_star2, radii, &l, r_cut, cand) {
@@ -132,7 +132,7 @@ impl RadicalVoronoi {
         };
 
         #[cfg(feature = "rayon")]
-        let cells: Vec<(F, Vec<Face>)> = {
+        let cells: Vec<(F, Vec<VoronoiFace>)> = {
             use rayon::prelude::*;
             (0..n)
                 .into_par_iter()
@@ -140,7 +140,7 @@ impl RadicalVoronoi {
                 .collect()
         };
         #[cfg(not(feature = "rayon"))]
-        let cells: Vec<(F, Vec<Face>)> = {
+        let cells: Vec<(F, Vec<VoronoiFace>)> = {
             let mut cand: Vec<(F, [F; 3], usize)> = Vec::new();
             (0..n).map(|i| build(i, &mut cand)).collect()
         };
@@ -169,7 +169,7 @@ impl RadicalVoronoi {
         l: &[F; 3],
         r_cut: F,
         cand: &mut Vec<(F, [F; 3], usize)>,
-    ) -> Option<(F, Vec<Face>)> {
+    ) -> Option<(F, Vec<VoronoiFace>)> {
         grid.collect(gi, r_cut, l, cand);
         cand.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
@@ -204,7 +204,7 @@ impl RadicalVoronoi {
         gi: &[F; 3],
         ri2: F,
         l: &[F; 3],
-    ) -> (F, Vec<Face>) {
+    ) -> (F, Vec<VoronoiFace>) {
         let n = positions.nrows();
         let (lx, ly, lz) = (l[0], l[1], l[2]);
         let mut shell = 1;
@@ -236,7 +236,7 @@ impl RadicalVoronoi {
             let cf = poly.cell_faces();
             let unbounded = cf
                 .iter()
-                .any(|f| f.neighbor == BOUNDARY && f.area > FACE_EPS);
+                .any(|f| f.neighbor == VORONOI_BOUNDARY && f.area > FACE_EPS);
             if !unbounded || shell >= MAX_SHELL {
                 return (poly.volume(), cf);
             }

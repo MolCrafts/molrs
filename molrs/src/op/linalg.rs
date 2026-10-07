@@ -31,7 +31,7 @@
 //! branch. (An absolute tolerance stops early on a small-scale matrix: at
 //! 1e-8 scale the former absolute 1e-14 returned a basis rotated by 0.93 rad.)
 
-use crate::op::types::{F, Mat3, Vec3};
+use crate::op::{F, Mat3, Vec3};
 
 /// Maximum Jacobi sweeps; 3×3 and 4×4 typically converge in ≤ 8.
 const MAX_SWEEPS: usize = 50;
@@ -97,7 +97,7 @@ pub fn eigh_sym_3x3(a: &Mat3) -> (Vec3, Mat3) {
 /// Same contract as [`eigh_sym_3x3`]: all four eigenvalues sorted descending,
 /// unit eigenvectors as the columns of `V`, upper triangle read. This is the
 /// solver behind Horn's quaternion superposition
-/// ([`superpose`](crate::op::superpose::superpose)), which needs the top two
+/// ([`superpose`](crate::op::superpose)), which needs the top two
 /// eigenpairs to tell a unique best-fit rotation from a family of equally good
 /// rotations about one axis (a "free spin").
 pub fn eigh_sym_4x4(a: &[[F; 4]; 4]) -> ([F; 4], [[F; 4]; 4]) {
@@ -220,7 +220,7 @@ fn jacobi<const N: usize>(a: &[[F; N]; N]) -> ([F; N], [[F; N]; N]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::{F, Mat3};
+    use crate::op::{F, Mat3};
 
     const TOL: F = 1e-10;
 

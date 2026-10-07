@@ -7,10 +7,12 @@ stereochemistry, rotatable bonds, SMARTS (SMILES Arbitrary Target
 Specification) substructure matching, and coarse-grained bead-pattern
 matching. Gasteiger charges are a charge model and live in :mod:`molrs.ff`.
 
-:class:`Perceive` is a builder — every ``find_*`` method is graph-in / graph-out
-and non-mutating, so a pipeline reads as a chain of graphs. :class:`RingInfo`
-answers the other question: it *reports* ring facts and never touches the
-molecule.
+Every perception is a free function with the Rust name, in two shapes:
+``perceive_<fact>(mol)`` *reports* a side table (:func:`perceive_rings` →
+:class:`RingInfo`) and never touches the molecule; ``assign_<fact>(mol)``
+writes the fact onto a *clone* as atom / bond props and returns it — graph in,
+graph out — so a pipeline reads as a chain of graphs. :func:`add_hydrogens` is
+a graph edit and keeps its verb.
 
 SMARTS lives here because a pattern is a query over a *perceived* graph —
 matching needs ring membership and aromaticity, not a text format. The SMILES
@@ -30,19 +32,39 @@ overlapping groups. Mapping matched groups onto the sites of a new
 """
 
 from ._lib import (
-    Perceive,
     Reaction,
     RingInfo,
     SmartsMatch,
     SmartsPattern,
     SubgraphMatcher,
+    add_hydrogens,
+    assign_aromaticity,
+    assign_bcc_bond_types,
+    assign_bcc_bond_types_from_connectivity,
+    assign_bond_orders,
+    assign_equivalence_classes,
+    assign_kekule_bond_orders,
+    assign_rings,
+    assign_rotatable_bonds,
+    assign_stereo,
+    perceive_rings,
 )
 
 __all__ = [
-    "Perceive",
     "Reaction",
     "RingInfo",
     "SmartsMatch",
     "SmartsPattern",
     "SubgraphMatcher",
+    "add_hydrogens",
+    "assign_aromaticity",
+    "assign_bcc_bond_types",
+    "assign_bcc_bond_types_from_connectivity",
+    "assign_bond_orders",
+    "assign_equivalence_classes",
+    "assign_kekule_bond_orders",
+    "assign_rings",
+    "assign_rotatable_bonds",
+    "assign_stereo",
+    "perceive_rings",
 ]

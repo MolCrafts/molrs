@@ -39,7 +39,7 @@ use molrs::core::MolRsError;
 use molrs::core::SimBox;
 use molrs::core::{Block, Column};
 use molrs::core::{MetaMap, MetaValue};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The attribute of a frame-shaped group that maps every key of its `meta`
 /// document to its tag ([`MetaValue::dtype`]). One leading underscore, as
@@ -340,7 +340,7 @@ where
 /// the record doors hold and the read-only one [`MrecReader`] holds share
 /// this one dtype dispatch.
 ///
-/// [`F`]: crate::op::types::F
+/// [`F`]: crate::op::F
 /// [`MrecReader`]: super::MrecReader
 pub(crate) fn read_column<S>(
     store: &Arc<S>,

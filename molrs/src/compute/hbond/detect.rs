@@ -10,9 +10,9 @@
 
 use molrs::core::FrameAccess;
 use molrs::core::NeighborQuery;
-use molrs::op::types::F;
+use molrs::op::F;
 
-use super::criterion::{DistKind, HBondCriterion};
+use super::criterion::{HBondCriterion, HBondDistanceKind};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
@@ -126,8 +126,8 @@ impl HBonds {
         );
         for &(don, hyd) in &self.donors {
             let src = match self.criterion.dist_kind {
-                DistKind::DonorAcceptor => don,
-                DistKind::HydrogenAcceptor => hyd,
+                HBondDistanceKind::DonorAcceptor => don,
+                HBondDistanceKind::HydrogenAcceptor => hyd,
             };
             let p = pos(src);
             q_x.push(p[0]);
@@ -162,9 +162,9 @@ impl HBonds {
             let r_da = norm(v_da);
             let dist_ok = match self.criterion.dist_kind {
                 // NeighborQuery already enforced r(D···A) ≤ cutoff.
-                DistKind::DonorAcceptor => true,
+                HBondDistanceKind::DonorAcceptor => true,
                 // NeighborQuery enforced r(H···A); still require r(D···A) finite.
-                DistKind::HydrogenAcceptor => r_da <= self.criterion.dist_cutoff + 1.05,
+                HBondDistanceKind::HydrogenAcceptor => r_da <= self.criterion.dist_cutoff + 1.05,
             };
 
             // D–H···A angle at the hydrogen: angle between H→D and H→A.

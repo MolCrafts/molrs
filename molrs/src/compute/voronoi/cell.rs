@@ -15,13 +15,13 @@
 //! - Aurenhammer, *SIAM J. Comput.* **1987**, 16, 78 (power diagrams).
 
 use crate::op::vec3::{cross, dot, norm, sub};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// One bounding face of a cell: its area and the index of the neighbour cell
 /// across it. `neighbor < 0` marks a residual initial-box face (should not
 /// survive a fully-bounded periodic tessellation).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Face {
+pub struct VoronoiFace {
     /// Face area (Å²).
     pub area: F,
     /// Index of the generator across this face (an atom/probe index), or a
@@ -30,7 +30,7 @@ pub struct Face {
 }
 
 /// Boundary sentinel for an initial-box face that was never clipped away.
-pub const BOUNDARY: i64 = -1;
+pub const VORONOI_BOUNDARY: i64 = -1;
 
 /// Result of a radical-Voronoi tessellation: one entry per generator.
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub struct VoronoiCells {
     /// Cell volume per generator (Å³).
     pub volumes: Vec<F>,
     /// Bounding faces per generator.
-    pub faces: Vec<Vec<Face>>,
+    pub faces: Vec<Vec<VoronoiFace>>,
 }
 
 impl VoronoiCells {
@@ -83,7 +83,7 @@ pub(crate) struct Poly {
 
 impl Poly {
     /// Axis-aligned box `[-hx,hx]×[-hy,hy]×[-hz,hz]` in cell-local coordinates
-    /// (origin at the generator). All six faces carry the [`BOUNDARY`] id.
+    /// (origin at the generator). All six faces carry the [`VORONOI_BOUNDARY`] id.
     pub(crate) fn box_cell(hx: F, hy: F, hz: F) -> Self {
         let verts = vec![
             [-hx, -hy, -hz], // 0
@@ -97,12 +97,12 @@ impl Poly {
         ];
         // Loops ordered so the right-hand normal points outward.
         let faces = vec![
-            (BOUNDARY, vec![0, 3, 2, 1]), // -z (normal -z)
-            (BOUNDARY, vec![4, 5, 6, 7]), // +z
-            (BOUNDARY, vec![0, 1, 5, 4]), // -y
-            (BOUNDARY, vec![2, 3, 7, 6]), // +y
-            (BOUNDARY, vec![0, 4, 7, 3]), // -x
-            (BOUNDARY, vec![1, 2, 6, 5]), // +x
+            (VORONOI_BOUNDARY, vec![0, 3, 2, 1]), // -z (normal -z)
+            (VORONOI_BOUNDARY, vec![4, 5, 6, 7]), // +z
+            (VORONOI_BOUNDARY, vec![0, 1, 5, 4]), // -y
+            (VORONOI_BOUNDARY, vec![2, 3, 7, 6]), // +y
+            (VORONOI_BOUNDARY, vec![0, 4, 7, 3]), // -x
+            (VORONOI_BOUNDARY, vec![1, 2, 6, 5]), // +x
         ];
         Poly { verts, faces }
     }
@@ -226,7 +226,7 @@ impl Poly {
     }
 
     /// Bounding faces with their areas and neighbour ids.
-    pub(crate) fn cell_faces(&self) -> Vec<Face> {
+    pub(crate) fn cell_faces(&self) -> Vec<VoronoiFace> {
         self.faces
             .iter()
             .map(|(nid, lp)| {
@@ -240,7 +240,7 @@ impl Poly {
                     an[1] += c[1];
                     an[2] += c[2];
                 }
-                Face {
+                VoronoiFace {
                     area: 0.5 * norm(an),
                     neighbor: *nid,
                 }

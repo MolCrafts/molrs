@@ -288,7 +288,7 @@ pub fn write_frame(path: impl AsRef<Path>, frame: &Frame, format: Option<&str>) 
 mod tests {
     use super::*;
     use molrs::core::Block;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::Array1;
 
     fn water() -> Frame {

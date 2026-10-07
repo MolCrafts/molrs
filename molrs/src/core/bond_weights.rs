@@ -7,7 +7,7 @@
 //! here until the tail is appended.
 
 use crate::core::MolRsError;
-use crate::op::types::F;
+use crate::op::F;
 
 /// Bond-distance scale weights: slot 0 is 1-2, last slot is the 1-N tail.
 ///

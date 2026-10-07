@@ -24,7 +24,7 @@ use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::ir::positional::{self, number, read_named, value};
 use crate::ff::ir::{Dim, StyleSpec};
 use crate::ff::ir::{Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale};
-use molrs::op::types::F;
+use molrs::op::F;
 
 type Codec = LazyLock<Arc<dyn LammpsCodec>>;
 

@@ -70,7 +70,7 @@ const FOUR_PI_OVER_3: f64 = 4.1887902047863905; // 4π/3
 /// # Errors
 /// * `DimensionMismatch` if `positions.shape() != (n_atoms, 3)`.
 /// * `NonFinite` if any charge is NaN/inf.
-pub fn compute_dipole_moment(
+pub fn dipole_moment(
     charges: &Array1<f64>,
     positions: &Array2<f64>,
 ) -> Result<Array1<f64>, ComputeError> {
@@ -119,7 +119,7 @@ pub fn compute_dipole_moment(
 /// # Errors
 /// * `DimensionMismatch` if shape is not `(_, 3)`.
 /// * `OutOfRange` if `dt ≤ 0` or `volume ≤ 0`.
-pub fn compute_current_density(
+pub fn current_density(
     dipole_moments: &Array2<f64>,
     dt: f64,
     volume: f64,
@@ -442,7 +442,7 @@ mod tests {
     fn test_dipole_moment_two_charges() {
         let charges = arr1(&[1.0, -1.0]);
         let positions = ndarray::arr2(&[[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
-        let m = compute_dipole_moment(&charges, &positions).unwrap();
+        let m = dipole_moment(&charges, &positions).unwrap();
         assert!((m[0] - 2.0).abs() < 1e-10);
         assert!((m[1] - 0.0).abs() < 1e-10);
         assert!((m[2] - 0.0).abs() < 1e-10);
@@ -452,7 +452,7 @@ mod tests {
     fn test_dipole_moment_zero_charge() {
         let charges = arr1(&[0.0, 0.0, 0.0]);
         let positions = ndarray::Array2::zeros((3, 3));
-        let m = compute_dipole_moment(&charges, &positions).unwrap();
+        let m = dipole_moment(&charges, &positions).unwrap();
         assert!((m[0].abs() + m[1].abs() + m[2].abs()) < 1e-10);
     }
 
@@ -460,13 +460,13 @@ mod tests {
     fn test_dipole_moment_wrong_shape() {
         let charges = arr1(&[1.0, 2.0]);
         let positions = ndarray::Array2::zeros((3, 3));
-        assert!(compute_dipole_moment(&charges, &positions).is_err());
+        assert!(dipole_moment(&charges, &positions).is_err());
     }
 
     #[test]
     fn test_current_density_constant_dipole() {
         let dm = ndarray::Array2::from_elem((3, 3), 1.0);
-        let j = compute_current_density(&dm, 1.0, 1.0).unwrap();
+        let j = current_density(&dm, 1.0, 1.0).unwrap();
         assert_eq!(j.shape(), &[3, 3]);
         assert!(j[[0, 0]].is_nan());
         assert!((j[[1, 0]]).abs() < 1e-10);
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_current_density_linear() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
-        let j = compute_current_density(&dm, 1.0, 1.0).unwrap();
+        let j = current_density(&dm, 1.0, 1.0).unwrap();
         assert!(j[[0, 0]].is_nan());
         assert!((j[[1, 0]] - 1.0).abs() < 1e-10);
         assert!((j[[2, 0]] - 1.0).abs() < 1e-10);
@@ -485,8 +485,8 @@ mod tests {
     #[test]
     fn test_current_density_dt_scaling() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
-        let j1 = compute_current_density(&dm, 1.0, 1.0).unwrap();
-        let j2 = compute_current_density(&dm, 2.0, 1.0).unwrap();
+        let j1 = current_density(&dm, 1.0, 1.0).unwrap();
+        let j2 = current_density(&dm, 2.0, 1.0).unwrap();
         assert!((j2[[1, 0]] * 2.0 - j1[[1, 0]]).abs() < 1e-10);
     }
 
@@ -550,7 +550,7 @@ mod tests {
         let charges = arr1(&[1.0, -1.0]);
         let positions = ndarray::arr2(&[[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]]);
         let pos_copy = positions.clone();
-        compute_dipole_moment(&charges, &positions).unwrap();
+        dipole_moment(&charges, &positions).unwrap();
         assert_eq!(positions, pos_copy);
     }
 
@@ -558,7 +558,7 @@ mod tests {
     fn test_immutability_current_density() {
         let dm = ndarray::arr2(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]);
         let dm_copy = dm.clone();
-        compute_current_density(&dm, 1.0, 1.0).unwrap();
+        current_density(&dm, 1.0, 1.0).unwrap();
         assert_eq!(dm, dm_copy);
     }
 

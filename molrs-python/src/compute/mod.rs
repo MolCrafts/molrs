@@ -5,7 +5,10 @@
 //! This file holds what every domain binding shares: how a `compute(...)`
 //! call takes its frames and neighbour tables (one or a list of them).
 
+mod analysis_contract;
 mod cluster;
+mod clustering;
+mod decomposition;
 mod density;
 mod dielectric;
 mod diffraction;
@@ -14,12 +17,10 @@ mod dynamics;
 mod environment;
 mod fitting;
 mod hbond;
-mod ml;
 mod msd;
 mod order;
 mod pmft;
 mod rdf;
-mod result;
 mod shape;
 mod spectroscopy;
 mod transport;
@@ -71,7 +72,10 @@ pub(crate) fn collect_neighbors(arg: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::c
 
 /// Register every compute domain on the native module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    analysis_contract::register(m)?;
     cluster::register(m)?;
+    clustering::register(m)?;
+    decomposition::register(m)?;
     density::register(m)?;
     dielectric::register(m)?;
     diffraction::register(m)?;
@@ -80,12 +84,10 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     environment::register(m)?;
     fitting::register(m)?;
     hbond::register(m)?;
-    ml::register(m)?;
     msd::register(m)?;
     order::register(m)?;
     pmft::register(m)?;
     rdf::register(m)?;
-    result::register(m)?;
     shape::register(m)?;
     spectroscopy::register(m)?;
     transport::register(m)?;

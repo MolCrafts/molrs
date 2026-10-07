@@ -13,11 +13,11 @@ use crate::compute::Fit;
 /// Identical window+FFT pipeline as [`PowerSpectrum`](super::PowerSpectrum);
 /// the difference between IR and the power spectrum is entirely in *which* ACF
 /// is supplied (dipole flux vs velocity), computed upstream by the
-/// [`IRFlux`](super::IRFlux) raw compute.
+/// [`IrFlux`](super::IrFlux) raw compute.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IRSpectrum;
+pub struct IrSpectrum;
 
-impl Fit for IRSpectrum {
+impl Fit for IrSpectrum {
     /// `(acf, dt_fs)` — the raw dipole-flux ACF (1D) and timestep (fs, > 0).
     type Input<'a> = (&'a Array1<f64>, f64);
     type Output = SpectrumResult;
@@ -52,7 +52,7 @@ impl Fit for IRSpectrum {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ir_flux::IRFlux;
+    use super::super::ir_flux::IrFlux;
     use super::*;
     use crate::compute::Compute;
     use molrs::core::Frame;
@@ -98,11 +98,11 @@ mod tests {
         let max_lag = res.min(flux_len - 1);
         let acf = ir_acf(&dm, dt, max_lag);
 
-        let raw = IRFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
+        let raw = IrFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
         assert_eq!(raw.acf, acf); // IRFlux returns the raw unwindowed ACF.
 
-        let from_raw = IRSpectrum.fit((&raw.acf, dt)).unwrap();
-        let from_manual = IRSpectrum.fit((&acf, dt)).unwrap();
+        let from_raw = IrSpectrum.fit((&raw.acf, dt)).unwrap();
+        let from_manual = IrSpectrum.fit((&acf, dt)).unwrap();
         assert_eq!(from_raw.frequencies_cm1, from_manual.frequencies_cm1);
         assert_eq!(from_raw.intensities, from_manual.intensities);
     }

@@ -25,7 +25,7 @@ use molrs::core::Neighbors;
 use molrs::core::SimBox;
 use molrs::core::{GhostError, GhostSet};
 use molrs::ff::potential::Member;
-use molrs::op::types::{F, FNx3, FNx3View, I};
+use molrs::op::{F, FNx3, FNx3View, I};
 
 use molrs::core::Virial;
 
@@ -741,7 +741,7 @@ mod owned_potential_tests {
     use molrs::core::SimBox;
     use molrs::ff::forcefield::{ForceField, Params};
     use molrs::ff::potential::PotentialCompiler;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::{Array1, array};
 
     /// Two atoms bonded across a face, drifting until the halo rebuilds.
@@ -952,7 +952,7 @@ mod bonded_tests {
     use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::bond::BondHarmonic;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::Array2;
     use ndarray::array;
 
@@ -1083,7 +1083,7 @@ mod force_path_tests {
     use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::LJCut;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::Array2;
     use ndarray::array;
 
@@ -1183,7 +1183,7 @@ mod virial_tests {
     use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::LJCut;
-    use molrs::op::types::F;
+    use molrs::op::F;
     use ndarray::{Array2, array};
 
     fn lj(cutoff: F) -> LJCut {

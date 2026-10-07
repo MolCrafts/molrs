@@ -12,7 +12,7 @@ use molrs::core::Frame;
 use molrs::core::TypeName;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::{Block, BlockDtype};
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.

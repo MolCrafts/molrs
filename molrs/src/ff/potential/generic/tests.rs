@@ -20,7 +20,7 @@ use crate::ff::potential::pair::testing::{assert_virial_matches_forces, table_ov
 use crate::ff::potential::{Member, Potential, PotentialCompiler, Potentials};
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 const DEG: F = PI / 180.0;
 

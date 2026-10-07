@@ -10,7 +10,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::SimBox;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use ndarray::{Array1, IxDyn, array};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;

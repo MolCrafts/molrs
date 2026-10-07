@@ -12,7 +12,7 @@
 //! tables (BCC, ABCG2) `atomtype` perceives rings with the indole rule on.
 //!
 //! The ring facts (`RG*`, `NR`, `AR1` … `AR5`) are antechamber's rings and ring
-//! classes ([`ring_classes`]): every chordless ring of up to ten
+//! classes ([`perceive_ring_classes`]): every chordless ring of up to ten
 //! ring-capable atoms, not a smallest set, classed from connection counts and
 //! the perceived bond types — so anthracene's middle ring is AR1 whichever
 //! Kekulé structure it holds, and a ring through selenium is no ring.
@@ -23,7 +23,7 @@ use molrs::core::PropValue;
 use molrs::core::keys;
 use molrs::core::keys::BCC_BOND_TYPE;
 use molrs::core::{Atomistic, Element, NodeId, Relation, RelationId};
-use molrs::perceive::ring_class::ring_classes;
+use molrs::perceive::perceive_ring_classes;
 
 use crate::ff::params::AtomProp;
 
@@ -115,7 +115,7 @@ impl MolFacts {
             .iter()
             .map(|nbs| nbs.iter().map(|(nb, _, _)| index[nb]).collect())
             .collect();
-        let rings = ring_classes(&atomic_number, &con, &bonds, bcc);
+        let rings = perceive_ring_classes(&atomic_number, &con, &bonds, bcc);
         let mut props: Vec<AtomPropertyFacts> = rings
             .atoms
             .iter()
@@ -183,7 +183,7 @@ impl MolFacts {
 #[derive(Debug, Clone, Default)]
 pub(super) struct AtomPropertyFacts {
     /// `rg[0]` = rings of any size; `rg[n]` = rings of size `n` (antechamber's
-    /// rings, see [`ring_classes`]).
+    /// rings, see [`perceive_ring_classes`]).
     rg: [i32; 11],
     /// `NR` — in no ring.
     nr: i32,
@@ -289,7 +289,7 @@ impl AtomPropertyFacts {
 ///
 /// Read from [`BCC_BOND_TYPE`] — the key bond-type perception
 /// (`find_bond_types_from_connectivity`,
-/// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)) writes
+/// [`assign_bcc_bond_types`](molrs::perceive::assign_bcc_bond_types)) writes
 /// it to — and **never** from the bond's `type`, which is the caller's and holds
 /// their force-field bond-type *name*.
 ///

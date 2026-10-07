@@ -11,7 +11,7 @@ use crate::core::Topology;
 
 /// Connected-component summary of one frame's hydrogen-bond graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NetworkResult {
+pub struct HBondNetworkResult {
     /// Component sizes (node counts), sorted descending.
     pub component_sizes: Vec<usize>,
     /// Number of connected components (including isolated single nodes).
@@ -23,7 +23,7 @@ pub struct NetworkResult {
 ///
 /// Self-loops (`a == b`) and out-of-range endpoints are ignored. Isolated nodes
 /// each count as a component of size 1.
-pub fn hbond_components(n_nodes: usize, edges: &[(usize, usize)]) -> NetworkResult {
+pub fn hbond_components(n_nodes: usize, edges: &[(usize, usize)]) -> HBondNetworkResult {
     let mut topo = Topology::with_atoms(n_nodes);
     for &(a, b) in edges {
         if a != b && a < n_nodes && b < n_nodes {
@@ -44,7 +44,7 @@ pub fn hbond_components(n_nodes: usize, edges: &[(usize, usize)]) -> NetworkResu
         sizes[l as usize] += 1;
     }
     sizes.sort_unstable_by(|a, b| b.cmp(a));
-    NetworkResult {
+    HBondNetworkResult {
         num_components: sizes.len(),
         component_sizes: sizes,
     }

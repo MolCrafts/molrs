@@ -41,7 +41,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::TypeLabels;
 use molrs::core::keys;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::Array1;
 
 use crate::io::data::lammps_data::write_lammps_data_with_masses;

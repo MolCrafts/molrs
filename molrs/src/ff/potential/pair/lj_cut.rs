@@ -23,7 +23,7 @@ use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
 use molrs::core::Frame;
 use molrs::core::Virial;
 use molrs::core::{Neighbors, VerletSkin};
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array2, ArrayView2};
 
 const MIN_R2: F = 1e-24;
@@ -1318,7 +1318,7 @@ mod tests {
     /// Two atoms, types `A` and `B`, joined by one pair row.
     fn ab_frame() -> Frame {
         use molrs::core::Block;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
         let mut atoms = Block::new();
         atoms

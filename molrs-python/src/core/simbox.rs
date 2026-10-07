@@ -12,7 +12,7 @@ use crate::core::frame::PyFrame;
 use molrs::core::keys;
 use molrs::core::schema::block_names;
 use molrs::core::{BoxError, SimBox};
-use molrs::op::types::{F, I};
+use molrs::op::{F, I};
 use ndarray::{Array1, Array2, Axis, array};
 use numpy::{
     AllowTypeChange, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArrayLikeDyn, PyReadonlyArray1,

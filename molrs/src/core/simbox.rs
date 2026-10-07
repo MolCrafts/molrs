@@ -5,10 +5,10 @@
 //! - frac = H^{-1} * (cart - origin)
 //! - Lattice vectors are the columns of H.
 
-use crate::op::linalg::{det3, inv3};
-use crate::op::types::{F, F3, F3View, FNx3, FNx3View, I, Pbc3};
-use crate::op::types::{Vec3, to_mat3, to_vec3};
 use crate::op::vec3::{cross, dot, norm};
+use crate::op::{F, F3, F3View, FNx3, FNx3View, I, Pbc3};
+use crate::op::{Vec3, to_mat3, to_vec3};
+use crate::op::{det3, inv3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
 
 /// Box geometry kind, detected once at construction.
@@ -1184,7 +1184,7 @@ fn detect_box_kind(h: &FNx3) -> BoxKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::I;
+    use crate::op::I;
 
     fn assert_close(a: F, b: F) {
         assert!((a - b).abs() < 1e-6 as F, "{} != {}", a, b);

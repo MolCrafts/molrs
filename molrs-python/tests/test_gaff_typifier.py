@@ -270,6 +270,6 @@ def test_bond_orders_is_checked_and_reported() -> None:
 
 def test_find_bond_orders_judges_from_connectivity() -> None:
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
-    out = molrs.perceive.Perceive().find_bond_orders(cot)
+    out = molrs.perceive.assign_bond_orders(cot)
     numbers = [int(n) for n in out.to_frame()["bonds"]["bond_number"]]
     assert numbers[:8] == [1, 2, 1, 2, 1, 2, 1, 2]

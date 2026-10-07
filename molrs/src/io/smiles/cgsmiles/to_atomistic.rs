@@ -26,8 +26,8 @@ use crate::io::smiles::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEn
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use molrs::core::Atomistic;
 use molrs::core::NodeId;
-use molrs::op::rigid::Rigid;
-use molrs::op::types::I;
+use molrs::op::I;
+use molrs::op::Rigid;
 
 /// The lowest level of an IR, with the fragment table that defines its
 /// nodes and its resolved pairs, as [`CGSmilesIR::lowest_level`] reads them.

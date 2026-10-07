@@ -21,8 +21,8 @@ use std::fmt;
 use crate::core::MolRsError;
 use crate::core::keys;
 use crate::core::{MolGraph, NodeId};
-use crate::op::rigid::{self, apply, axis_angle};
-use crate::op::superpose::centroid;
+use crate::op::centroid;
+use crate::op::{axis_angle, rotation_about, transform_point};
 
 /// Translate every node that has coordinates by `delta` (Å; nodes without a
 /// full coordinate set are left untouched).
@@ -90,7 +90,7 @@ pub fn rotate(
             message: format!("rotation angle {angle} is not finite"),
         });
     }
-    let motion = rigid::about(rotation, about.unwrap_or([0.0, 0.0, 0.0]));
+    let motion = rotation_about(rotation, about.unwrap_or([0.0, 0.0, 0.0]));
 
     let table = mol.node_table_mut();
 
@@ -118,7 +118,7 @@ pub fn rotate(
             if !(vx.get(row) && vy.get(row) && vz.get(row)) {
                 continue;
             }
-            [nx[row], ny[row], nz[row]] = apply(&motion, [x[row], y[row], z[row]]);
+            [nx[row], ny[row], nz[row]] = transform_point(&motion, [x[row], y[row], z[row]]);
         }
         (nx, ny, nz)
     };
@@ -244,7 +244,7 @@ impl std::error::Error for CenterError {}
 ///
 /// ```
 /// use molrs::core::MolGraph;
-/// use molrs::op::geometry::center;
+/// use molrs::op::center;
 /// use molrs::core::keys;
 ///
 /// let mut mol = MolGraph::new();

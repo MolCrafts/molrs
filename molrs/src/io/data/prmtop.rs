@@ -100,7 +100,7 @@ use molrs::core::SimBox;
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::schema::block_names;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 use super::prmtop_tables;
 use crate::core::constants::AMBER_CHARGE_FACTOR;

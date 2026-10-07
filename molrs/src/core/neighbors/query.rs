@@ -26,7 +26,7 @@ use super::Backend;
 use crate::core::LinkCell;
 use crate::core::SimBox;
 use crate::core::{Neighbors, NeighborsStorage, QueryMode};
-use crate::op::types::{F, FNx3, FNx3View};
+use crate::op::{F, FNx3, FNx3View};
 
 /// Cross-query search over a fixed set of reference points.
 ///

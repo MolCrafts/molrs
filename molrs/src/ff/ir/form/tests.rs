@@ -16,7 +16,7 @@ use crate::ff::ir::{FormCodec, Metric, Refusal, TypeParams};
 use crate::ff::potential::PotentialCompiler;
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::Array1;
 
 const SEED: u64 = 0x0070_1510_0009;

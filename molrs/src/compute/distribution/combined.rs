@@ -26,7 +26,7 @@
 //! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -130,13 +130,13 @@ impl AxisSpec {
 /// This enum is the object-safe stand-in for the spec's "boxed observables":
 /// it carries any of the link-01 concretes and dispatches statically.
 #[derive(Debug, Clone)]
-pub enum AnyObservable {
+pub enum InternalCoordinate {
     Distance(DistanceObservable),
     Angle(AngleObservable),
     Dihedral(DihedralObservable),
 }
 
-impl AnyObservable {
+impl InternalCoordinate {
     /// Parse an observable-kind string into the variant and its arity:
     /// `"distance"` → 2, `"angle"` → 3, `"dihedral"` → 4.
     pub fn from_kind(kind: &str) -> Result<(Self, usize), ComputeError> {
@@ -146,7 +146,7 @@ impl AnyObservable {
             "dihedral" => Self::Dihedral(DihedralObservable),
             other => {
                 return Err(ComputeError::OutOfRange {
-                    field: "AnyObservable::kind",
+                    field: "InternalCoordinate::kind",
                     value: other.to_string(),
                 });
             }
@@ -186,17 +186,17 @@ impl AnyObservable {
     }
 }
 
-impl From<DistanceObservable> for AnyObservable {
+impl From<DistanceObservable> for InternalCoordinate {
     fn from(o: DistanceObservable) -> Self {
         Self::Distance(o)
     }
 }
-impl From<AngleObservable> for AnyObservable {
+impl From<AngleObservable> for InternalCoordinate {
     fn from(o: AngleObservable) -> Self {
         Self::Angle(o)
     }
 }
-impl From<DihedralObservable> for AnyObservable {
+impl From<DihedralObservable> for InternalCoordinate {
     fn from(o: DihedralObservable) -> Self {
         Self::Dihedral(o)
     }
@@ -212,13 +212,16 @@ impl From<DihedralObservable> for AnyObservable {
 /// silent zip-truncation.
 #[derive(Debug, Clone)]
 pub struct CombinedDistribution {
-    observables: Vec<AnyObservable>,
+    observables: Vec<InternalCoordinate>,
     axes: Vec<AxisSpec>,
 }
 
 impl CombinedDistribution {
     /// Build from N observables and N axis specs (N ∈ {2, 3}).
-    pub fn new(observables: Vec<AnyObservable>, axes: Vec<AxisSpec>) -> Result<Self, ComputeError> {
+    pub fn new(
+        observables: Vec<InternalCoordinate>,
+        axes: Vec<AxisSpec>,
+    ) -> Result<Self, ComputeError> {
         let n = observables.len();
         if !(2..=3).contains(&n) {
             return Err(ComputeError::OutOfRange {

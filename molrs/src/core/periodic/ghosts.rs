@@ -11,7 +11,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 use super::images::{GhostError, ImageRange};
 use crate::core::SimBox;
 use crate::core::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
-use crate::op::types::{F, FNx3, FNx3View, I};
+use crate::op::{F, FNx3, FNx3View, I};
 
 /// The periodic copies of one owned point set.
 ///

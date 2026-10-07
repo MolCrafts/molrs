@@ -14,7 +14,7 @@ use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, Reader};
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 use ndarray::{Array1, IxDyn};
 use std::io::BufRead;
 

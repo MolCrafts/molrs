@@ -6,10 +6,10 @@
 //!
 //! | Method | Bins pair vectors in |
 //! |--------|----------------------|
-//! | [`PMFTR12`] | `(r, θ₁, θ₂)` — distance + the two body-frame angles (2-D systems) |
-//! | [`PMFTXY`] | `(x, y)` — the reference particle's body frame (2-D) |
-//! | [`PMFTXYT`] | `(x, y, θ)` — body frame + relative orientation (2-D) |
-//! | [`PMFTXYZ`] | `(x, y, z)` — the reference particle's body frame (3-D) |
+//! | [`PmftR12`] | `(r, θ₁, θ₂)` — distance + the two body-frame angles (2-D systems) |
+//! | [`PmftXy`] | `(x, y)` — the reference particle's body frame (2-D) |
+//! | [`PmftXyt`] | `(x, y, θ)` — body frame + relative orientation (2-D) |
+//! | [`PmftXyz`] | `(x, y, z)` — the reference particle's body frame (3-D) |
 //!
 //! Each takes per-frame neighbor lists plus per-particle orientations via its
 //! `Args` struct and produces a binned free-energy surface
@@ -20,7 +20,7 @@ mod xy;
 mod xyt;
 mod xyz;
 
-pub use r12::{PMFTR12, PMFTR12Args, PMFTR12Result};
-pub use xy::{PMFTXY, PMFTXYArgs, PMFTXYResult};
-pub use xyt::{PMFTXYT, PMFTXYTArgs, PMFTXYTResult};
-pub use xyz::{PMFTXYZ, PMFTXYZArgs, PMFTXYZResult};
+pub use r12::{PmftR12, PmftR12Args, PmftR12Result};
+pub use xy::{PmftXy, PmftXyArgs, PmftXyResult};
+pub use xyt::{PmftXyt, PmftXytArgs, PmftXytResult};
+pub use xyz::{PmftXyz, PmftXyzArgs, PmftXyzResult};

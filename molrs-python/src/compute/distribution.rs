@@ -4,9 +4,9 @@
 use super::collect_frames;
 use crate::error::py_value_err;
 use molrs::compute::{
-    AngleObservable, AnyObservable, AtomGroups, AxisSpec, CombinedDistribution,
-    CombinedDistributionResult, Compute, DihedralObservable, DistanceObservable,
-    DistributionFunction, DistributionResult,
+    AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
+    Compute, DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult,
+    InternalCoordinate,
 };
 use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1};
@@ -71,130 +71,119 @@ impl PyDistributionResult {
     }
 }
 
-/// Angular distribution function (ADF) over atom triplets (angle at the middle
-/// atom). Ported from the reference implementation; the sin θ correction is exposed separately.
+/// The three instantiations of the generic Rust `DistributionFunction<O>`.
+enum DistributionKernel {
+    Distance(DistributionFunction<DistanceObservable>),
+    Angle(DistributionFunction<AngleObservable>),
+    Dihedral(DistributionFunction<DihedralObservable>),
+}
+
+/// One-dimensional distribution function of an internal coordinate over the
+/// atom groups of a frame's topology — Rust `DistributionFunction<O>` with the
+/// observable named by ``observable``:
 ///
-/// Bounds are **radians**. Omit both and the observable's own range `[0, π]` is
-/// used — an unsigned angle between two vectors cannot exceed π.
+/// * ``"distance"`` — pairs from the ``bonds`` block; ``min`` and ``max`` (in
+///   the coordinates' length unit) are **required**, a distance has no natural
+///   range.
+/// * ``"angle"`` — triplets from the ``angles`` block, angle at the middle atom
+///   (ADF). Bounds in **radians**; omit both for the natural range ``[0, π]``.
+///   The sin θ correction divides by a vanishing quantity at both ends, so the
+///   corrected density amplifies counting noise near θ = 0 and θ = π.
+/// * ``"dihedral"`` — quadruplets from the ``dihedrals`` block (DDF). Bounds in
+///   **radians**; omit both for the natural range ``(−π, π]``. The default stays
+///   **signed**: folding to ``|φ|`` would collapse g+ onto g− and cannot be
+///   undone.
 ///
-/// The sin θ correction divides by a vanishing quantity at both ends, so the
-/// corrected density amplifies counting noise near θ = 0 and θ = π: at
-/// `n_bins=180` the first bin divides by `sin(0.5°) = 0.0087`, a 115× gain.
-#[pyclass(module = "molrs.compute", name = "AngleDistribution")]
-pub struct PyAngleDistribution {
-    inner: DistributionFunction<AngleObservable>,
+/// Supplying exactly one bound is a ``ValueError``.
+#[pyclass(module = "molrs.compute", name = "DistributionFunction")]
+pub struct PyDistributionFunction {
+    kernel: DistributionKernel,
+}
+
+/// Build a kernel over `min..max`, or over the observable's natural range when
+/// both are omitted.
+fn ranged<O: molrs::compute::Observable>(
+    observable: O,
+    n_bins: usize,
+    min: Option<f64>,
+    max: Option<f64>,
+    name: &str,
+) -> PyResult<DistributionFunction<O>> {
+    match (min, max) {
+        (None, None) => DistributionFunction::over_natural_range(observable, n_bins),
+        (Some(min), Some(max)) => DistributionFunction::new(observable, n_bins, min, max),
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "DistributionFunction({name:?}): supply both `min` and `max` (radians), \
+                 or neither to use the observable's natural range"
+            )));
+        }
+    }
+    .map_err(py_value_err)
 }
 
 #[pymethods]
-impl PyAngleDistribution {
+impl PyDistributionFunction {
     #[new]
-    #[pyo3(signature = (n_bins, min=None, max=None))]
-    fn new(n_bins: usize, min: Option<f64>, max: Option<f64>) -> PyResult<Self> {
-        let inner = match (min, max) {
-            (None, None) => DistributionFunction::over_natural_range(AngleObservable, n_bins),
-            (Some(min), Some(max)) => DistributionFunction::new(AngleObservable, n_bins, min, max),
-            _ => {
-                return Err(PyValueError::new_err(
-                    "AngleDistribution: supply both `min` and `max` (radians), or neither \
-                     to use the observable's natural range [0, pi]",
-                ));
+    #[pyo3(signature = (observable, n_bins, min=None, max=None))]
+    fn new(observable: &str, n_bins: usize, min: Option<f64>, max: Option<f64>) -> PyResult<Self> {
+        let kernel = match observable {
+            "distance" => {
+                let (Some(min), Some(max)) = (min, max) else {
+                    return Err(PyValueError::new_err(
+                        "DistributionFunction(\"distance\"): `min` and `max` are required; \
+                         a distance has no natural range",
+                    ));
+                };
+                DistributionKernel::Distance(
+                    DistributionFunction::new(DistanceObservable, n_bins, min, max)
+                        .map_err(py_value_err)?,
+                )
+            }
+            "angle" => {
+                DistributionKernel::Angle(ranged(AngleObservable, n_bins, min, max, observable)?)
+            }
+            "dihedral" => DistributionKernel::Dihedral(ranged(
+                DihedralObservable,
+                n_bins,
+                min,
+                max,
+                observable,
+            )?),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "DistributionFunction: unknown observable {other:?} \
+                     (expected \"distance\", \"angle\" or \"dihedral\")"
+                )));
+            }
+        };
+        Ok(Self { kernel })
+    }
+
+    /// The atom groups are read from the first frame's topology block
+    /// (``bonds`` / ``angles`` / ``dihedrals``).
+    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
+        let owned = collect_frames(frames)?;
+        let refs: Vec<&CoreFrame> = owned.iter().collect();
+        let first = refs
+            .first()
+            .copied()
+            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
+        let inner = match &self.kernel {
+            DistributionKernel::Distance(k) => {
+                let groups = AtomGroups::from_frame(first, "bonds", 2).map_err(py_value_err)?;
+                k.compute(&refs, &groups)
+            }
+            DistributionKernel::Angle(k) => {
+                let groups = AtomGroups::from_frame(first, "angles", 3).map_err(py_value_err)?;
+                k.compute(&refs, &groups)
+            }
+            DistributionKernel::Dihedral(k) => {
+                let groups = AtomGroups::from_frame(first, "dihedrals", 4).map_err(py_value_err)?;
+                k.compute(&refs, &groups)
             }
         }
         .map_err(py_value_err)?;
-        Ok(Self { inner })
-    }
-
-    /// Atom triplets (angle vertex in the middle) are read from the `angles`
-    /// topology block of the first frame.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let groups = AtomGroups::from_frame(first, "angles", 3).map_err(py_value_err)?;
-        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
-        Ok(PyDistributionResult { inner })
-    }
-}
-
-/// Dihedral distribution function (DDF) over atom quadruplets.
-///
-/// Bounds are **radians**. Omit both and the observable's own range `(−π, π]`
-/// is used. The default stays **signed**: folding to `|φ|` would collapse g+
-/// onto g− and destroy chirality-sensitive conformer populations, and the fold
-/// cannot be undone.
-///
-/// No sin correction applies — at fixed bond geometry the residual freedom is
-/// SO(2), whose invariant measure is `dφ`.
-#[pyclass(module = "molrs.compute", name = "DihedralDistribution")]
-pub struct PyDihedralDistribution {
-    inner: DistributionFunction<DihedralObservable>,
-}
-
-#[pymethods]
-impl PyDihedralDistribution {
-    #[new]
-    #[pyo3(signature = (n_bins, min=None, max=None))]
-    fn new(n_bins: usize, min: Option<f64>, max: Option<f64>) -> PyResult<Self> {
-        let inner = match (min, max) {
-            (None, None) => DistributionFunction::over_natural_range(DihedralObservable, n_bins),
-            (Some(min), Some(max)) => {
-                DistributionFunction::new(DihedralObservable, n_bins, min, max)
-            }
-            _ => {
-                return Err(PyValueError::new_err(
-                    "DihedralDistribution: supply both `min` and `max` (radians), or neither \
-                     to use the observable's natural range (-pi, pi]",
-                ));
-            }
-        }
-        .map_err(py_value_err)?;
-        Ok(Self { inner })
-    }
-
-    /// Atom quadruplets are read from the `dihedrals` topology block of the
-    /// first frame.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let groups = AtomGroups::from_frame(first, "dihedrals", 4).map_err(py_value_err)?;
-        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
-        Ok(PyDistributionResult { inner })
-    }
-}
-
-/// Distance distribution function over atom pairs.
-#[pyclass(module = "molrs.compute", name = "DistanceDistribution")]
-pub struct PyDistanceDistribution {
-    inner: DistributionFunction<DistanceObservable>,
-}
-
-#[pymethods]
-impl PyDistanceDistribution {
-    #[new]
-    #[pyo3(signature = (n_bins, min, max))]
-    fn new(n_bins: usize, min: f64, max: f64) -> PyResult<Self> {
-        let inner = DistributionFunction::new(DistanceObservable, n_bins, min, max)
-            .map_err(py_value_err)?;
-        Ok(Self { inner })
-    }
-
-    /// Atom pairs are read from the `bonds` topology block of the first frame.
-    fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PyDistributionResult> {
-        let owned = collect_frames(frames)?;
-        let refs: Vec<&CoreFrame> = owned.iter().collect();
-        let first = refs
-            .first()
-            .copied()
-            .ok_or_else(|| PyValueError::new_err("no frames provided"))?;
-        let groups = AtomGroups::from_frame(first, "bonds", 2).map_err(py_value_err)?;
-        let inner = self.inner.compute(&refs, &groups).map_err(py_value_err)?;
         Ok(PyDistributionResult { inner })
     }
 }
@@ -203,7 +192,7 @@ impl PyDistanceDistribution {
 // Combined (multi-axis) distribution
 // ---------------------------------------------------------------------------
 
-/// Map an observable-kind string to its `AnyObservable` variant + arity.
+/// Map an observable-kind string to its `InternalCoordinate` variant + arity.
 #[pyclass(module = "molrs.compute", name = "CombinedDistributionResult")]
 
 pub struct PyCombinedDistributionResult {
@@ -284,7 +273,7 @@ impl PyCombinedDistribution {
         let mut specs = Vec::with_capacity(axes.len());
         let mut arities = Vec::with_capacity(axes.len());
         for (kind, bins, min, max, sin_weight) in &axes {
-            let (obs, arity) = AnyObservable::from_kind(kind).map_err(py_value_err)?;
+            let (obs, arity) = InternalCoordinate::from_kind(kind).map_err(py_value_err)?;
             observables.push(obs);
             arities.push(arity);
             specs.push(
@@ -334,9 +323,7 @@ impl PyCombinedDistribution {
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDistributionResult>()?;
-    m.add_class::<PyAngleDistribution>()?;
-    m.add_class::<PyDihedralDistribution>()?;
-    m.add_class::<PyDistanceDistribution>()?;
+    m.add_class::<PyDistributionFunction>()?;
     m.add_class::<PyCombinedDistributionResult>()?;
     m.add_class::<PyCombinedDistribution>()?;
     Ok(())

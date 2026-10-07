@@ -110,7 +110,7 @@ impl PyAcfResult {
 /// exist for each lag. Computed by the Wiener–Khinchin (FFT) route in
 /// O(T log T); see ``molrs::compute::dynamics::acf`` for the references.
 ///
-/// Not the same estimator as :class:`VACF`, which mean-subtracts each degree of
+/// Not the same estimator as :class:`Vacf`, which mean-subtracts each degree of
 /// freedom, averages over degrees of freedom, and uses the biased
 /// normalisation because it feeds the VDOS spectrum.
 ///
@@ -136,7 +136,8 @@ impl PyAcf {
     /// Compute ``C(t)`` for a ``(n_frames, n_entities, n_components)`` series.
     fn compute(&self, series: PyReadonlyArray3<'_, f64>, max_lag: usize) -> PyResult<PyAcfResult> {
         let owned = series.as_array().to_owned();
-        let inner = molrs::compute::autocorrelation(&owned, max_lag).map_err(py_value_err)?;
+        let inner =
+            molrs::compute::autocorrelation(owned.view(), max_lag, false).map_err(py_value_err)?;
         Ok(PyAcfResult { inner })
     }
 
@@ -145,48 +146,43 @@ impl PyAcf {
     }
 }
 
-/// Pair-survival (persistence) time-correlation functions.
-#[pyclass(module = "molrs.compute", name = "Persist", frozen)]
-pub struct PyPersist;
-
-#[pymethods]
-impl PyPersist {
-    #[staticmethod]
-    #[pyo3(signature = (coords_i, coords_j, box_lengths, r0, r1, method, dt, max_correlation_time, exclude_self=false))]
-    #[allow(clippy::too_many_arguments)]
-    fn pair_survival_tcf<'py>(
-        py: Python<'py>,
-        coords_i: PyReadonlyArray3<'py, f64>,
-        coords_j: PyReadonlyArray3<'py, f64>,
-        box_lengths: PyReadonlyArray2<'py, f64>,
-        r0: f64,
-        r1: f64,
-        method: &str,
-        dt: f64,
-        max_correlation_time: usize,
-        exclude_self: bool,
-    ) -> PyResult<Py<PyAny>> {
-        let ci = coords_i.as_array().to_owned();
-        let cj = coords_j.as_array().to_owned();
-        let bl = box_lengths.as_array().to_owned();
-        let m = SurvivalMethod::parse(method).map_err(py_value_err)?;
-        let result = pair_survival_tcf(
-            &ci,
-            &cj,
-            &bl,
-            r0,
-            r1,
-            m,
-            dt,
-            max_correlation_time,
-            exclude_self,
-        )
-        .map_err(py_value_err)?;
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("lag_times", result.lag_times.into_pyarray(py))?;
-        dict.set_item("correlation", result.correlation.into_pyarray(py))?;
-        Ok(dict.into())
-    }
+/// Pair-survival time-correlation function of the `(i, j)` pairs that start
+/// within `[r0, r1]`; returns ``{"lag_times", "correlation"}``.
+#[pyfunction(name = "pair_survival_tcf")]
+#[pyo3(signature = (coords_i, coords_j, box_lengths, r0, r1, method, dt, max_correlation_time, exclude_self=false))]
+#[allow(clippy::too_many_arguments)]
+fn pair_survival_tcf_py<'py>(
+    py: Python<'py>,
+    coords_i: PyReadonlyArray3<'py, f64>,
+    coords_j: PyReadonlyArray3<'py, f64>,
+    box_lengths: PyReadonlyArray2<'py, f64>,
+    r0: f64,
+    r1: f64,
+    method: &str,
+    dt: f64,
+    max_correlation_time: usize,
+    exclude_self: bool,
+) -> PyResult<Py<PyAny>> {
+    let ci = coords_i.as_array().to_owned();
+    let cj = coords_j.as_array().to_owned();
+    let bl = box_lengths.as_array().to_owned();
+    let m = SurvivalMethod::parse(method).map_err(py_value_err)?;
+    let result = pair_survival_tcf(
+        &ci,
+        &cj,
+        &bl,
+        r0,
+        r1,
+        m,
+        dt,
+        max_correlation_time,
+        exclude_self,
+    )
+    .map_err(py_value_err)?;
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("lag_times", result.lag_times.into_pyarray(py))?;
+    dict.set_item("correlation", result.correlation.into_pyarray(py))?;
+    Ok(dict.into())
 }
 
 /// Register this domain's classes and functions.
@@ -195,6 +191,10 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVanHove>()?;
     m.add_class::<PyAcfResult>()?;
     m.add_class::<PyAcf>()?;
-    m.add_class::<PyPersist>()?;
+    crate::add_function(
+        m,
+        "molrs.compute",
+        wrap_pyfunction!(pair_survival_tcf_py, m)?,
+    )?;
     Ok(())
 }

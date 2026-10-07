@@ -13,7 +13,7 @@ use crate::compute::Fit;
 /// Applies the CosineSq window + zero-padded forward FFT (the
 /// `window_and_fft` pipeline) to a raw, unnormalized
 /// velocity ACF — the [`VacfResult`](crate::compute::VacfResult) of
-/// the [`VACF`](crate::compute::VACF) compute.
+/// the [`Vacf`](crate::compute::Vacf) compute.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PowerSpectrum;
 
@@ -54,7 +54,7 @@ impl Fit for PowerSpectrum {
 mod tests {
     use super::*;
     use crate::compute::Compute;
-    use crate::compute::VACF;
+    use crate::compute::Vacf;
     use molrs::core::Frame;
     use molrs::signal as sig;
     use ndarray::Array2;
@@ -111,7 +111,7 @@ mod tests {
         let max_lag = res.min(n - 1);
         let acf = power_acf(&v, max_lag);
 
-        let raw = VACF.compute(&no_frames(), (&v, dt, res)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, dt, res)).unwrap();
         assert_eq!(raw.acf, acf); // VACF returns unbiased unwindowed ACF.
 
         let from_raw = PowerSpectrum.fit((&raw.acf, dt)).unwrap();
@@ -127,7 +127,7 @@ mod tests {
         let n = 4096;
         let dt = 0.5;
         let v = sine_velocities(n, dt, 10.0);
-        let raw = VACF.compute(&no_frames(), (&v, dt, 200)).unwrap();
+        let raw = Vacf.compute(&no_frames(), (&v, dt, 200)).unwrap();
         let spec = PowerSpectrum.fit((&raw.acf, dt)).unwrap();
         let n_bins = spec.intensities.len();
         let search_end = n_bins.saturating_sub(3);

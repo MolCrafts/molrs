@@ -40,7 +40,7 @@ use crate::core::keys;
 
 use crate::core::EntityTable;
 use crate::core::{Atom, KindId, MolGraph, NodeId, Relation, RelationId};
-use crate::op::types::Idx;
+use crate::op::Idx;
 
 /// Result of [`CoarseGrain::extract_subgraph`].
 #[derive(Debug, Clone)]
@@ -638,8 +638,8 @@ impl CoarseGrain {
     pub fn replicate(
         &mut self,
         template: &CoarseGrain,
-        transforms: &[crate::op::rigid::Rigid],
-        frag_ids: &[crate::op::types::I],
+        transforms: &[crate::op::Rigid],
+        frag_ids: &[crate::op::I],
     ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
@@ -899,7 +899,7 @@ mod tests {
             let mut sys = CoarseGrain::new();
             let id = sys.add_bead("W", 1.0, 2.0, 3.0);
             let fixed = sys.add_bead("W", 1.0, 1.0, 1.0);
-            crate::op::geometry::scale(sys.as_molgraph_mut(), factor, about);
+            crate::op::scale(sys.as_molgraph_mut(), factor, about);
             let moved = sys.get_bead(id).expect("live handle");
             for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
                 let got = moved.get_f64(key).expect("coordinate kept");
@@ -1214,7 +1214,7 @@ mod tests {
     /// bead carries none even when its template bead does.
     #[test]
     fn replicate_copies_no_bead_membership() {
-        use crate::op::rigid::Rigid;
+        use crate::op::Rigid;
 
         let mut template = CoarseGrain::new();
         let w = template.add_bead("W", 0.0, 0.0, 0.0);
@@ -1260,7 +1260,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            crate::op::geometry::center(cg.as_molgraph(), &[light, heavy]),
+            crate::op::center(cg.as_molgraph(), &[light, heavy]),
             Ok([3.0, 0.0, 0.0])
         );
     }

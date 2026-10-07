@@ -19,7 +19,7 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// OPLS 4-cosine proper dihedral with pre-resolved flat arrays.
 pub struct DihedralOPLS {

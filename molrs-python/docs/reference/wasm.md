@@ -24,8 +24,8 @@ The generated `pkg/` directory is not committed.
 | File formats | whole-content readers of the formats with no stream: `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CubeReader`, `CHGCARReader`, `AmberInpcrdReader`, `AcReader`; `writeFrame` / `writeFrameBytes` |
 | Chunk-fed streams (the one reader of their format) | `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream` (`FrameIndexEntry`) |
 | Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
-| Topology and perception | `Topology` (`fromFrame`), `Perceive` (`findRings`, `findAromaticity`, `findHydrogens`, …) |
-| Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `RDF`, `MSD`, `Cluster`, `VACF`, `Steinhardt`, `PMFTXY`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
+| Topology and perception | `Topology` (`fromFrame`), perception functions (`assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders`) |
+| Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
 | Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` (pairs from a `NeighborList`'s `Neighbors`) |
 | Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
 

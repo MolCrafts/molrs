@@ -34,7 +34,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::MetaMap;
 use molrs::core::SimBox;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};

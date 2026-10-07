@@ -25,12 +25,9 @@
 //!   Einstein–Helfand conductivity slope).
 //! - `running_trapezoid` — cumulative trapezoidal integral (the Green–Kubo
 //!   conductivity integral).
-//! - `forward_fft_onesided` — the genuinely-shared "resize to `n_pad`,
-//!   forward FFT, take `n_pad/2 + 1` bins" complex core. Each caller keeps its
-//!   own scaling/units wrapper: the spectral path
-//!   ([`spectroscopy::window_and_fft`](crate::compute::spectroscopy)) scales by
-//!   `1/n_pad` and emits cm⁻¹ frequencies; the dielectric path scales by `·dt`
-//!   and emits a `(freq_rad, re, im)` triple.
+//!
+//! The one-sided forward FFT the spectra share is a signal primitive:
+//! [`crate::signal::forward_fft_onesided`].
 
 mod cumulative_trapezoid;
 mod linear_fit;
@@ -39,10 +36,6 @@ mod plateau;
 pub use cumulative_trapezoid::{CumulativeTrapezoid, CumulativeTrapezoidResult};
 pub use linear_fit::{LinearFit, LinearFitResult};
 pub use plateau::{Plateau, PlateauResult};
-
-use rustfft::FftPlanner;
-use rustfft::num_complex::Complex64;
-use rustfft::num_traits::Zero;
 
 /// Ordinary least-squares fit of `y = slope·x + intercept` over the inclusive
 /// index range `[start, end]`.
@@ -123,31 +116,6 @@ pub(crate) fn running_trapezoid(y: &[f64], dt: f64) -> Vec<f64> {
         out[k] = integral;
     }
     out
-}
-
-/// Shared one-sided forward-FFT core: zero-pad a real signal to `n_pad`,
-/// forward-FFT, and return the first `n_pad/2 + 1` complex bins **unscaled**.
-///
-/// This is the only genuinely-shared step between the spectra path and the
-/// dielectric path. The two callers diverge purely in scaling/units:
-///
-/// - spectra: `intensity[j] = bin[j].re / n_pad`, frequency grid in cm⁻¹.
-/// - dielectric: `re[j] = bin[j].re·dt`, `im[j] = bin[j].im·dt`, frequency grid
-///   in rad·(time)⁻¹.
-///
-/// Each caller keeps its own scaling wrapper; this helper does no scaling.
-pub(crate) fn forward_fft_onesided(
-    planner: &mut FftPlanner<f64>,
-    signal: &[f64],
-    n_pad: usize,
-) -> Vec<Complex64> {
-    let fwd = planner.plan_fft_forward(n_pad);
-    let mut complex_data: Vec<Complex64> = signal.iter().map(|&x| Complex64::new(x, 0.0)).collect();
-    complex_data.resize(n_pad, Complex64::zero());
-    fwd.process(&mut complex_data);
-    let n_freq = n_pad / 2 + 1;
-    complex_data.truncate(n_freq);
-    complex_data
 }
 
 #[cfg(test)]

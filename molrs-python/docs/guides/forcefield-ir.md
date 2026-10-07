@@ -917,7 +917,7 @@ from a connectivity-only file, it is), and a molecule no valence state closes
 drawn. `bond_orders="input"` keeps the graph's own orders instead (aromatic
 bonds kekulized): a cyclooctatetraene drawn `C1=CC=CC=CC=C1` then types `cc
 cd cd cc …`, the structure it was drawn with, where antechamber answers `cc cc
-cd cd …`. `Perceive.find_bond_orders` writes the judged structure onto a
+cd cd …`. `assign_bond_orders` writes the judged structure onto a
 molecule.
 
 The rest follows `antechamber` as well: rings and ring classes (`AR1` …

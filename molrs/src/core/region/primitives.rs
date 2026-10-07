@@ -17,9 +17,9 @@
 //! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`, Å.
 //! - Bounds: 3×2 [`FNx3`], col 0 = min, col 1 = max, rows = x/y/z.
 
-use crate::op::linalg::{det3, inv3};
-use crate::op::types::to_mat3;
-use crate::op::types::{F, F3, FNx3};
+use crate::op::to_mat3;
+use crate::op::{F, F3, FNx3};
+use crate::op::{det3, inv3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
 

@@ -1,12 +1,13 @@
 //! Green–Kubo conductivity raw compute — the current-ACF route to σ.
 
 use molrs::core::FrameAccess;
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::{lag_times, unbiased_cartesian_acf};
+use super::correlation::lag_times;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::autocorrelation;
 
 /// Raw current autocorrelation function — the raw portion of the legacy
 /// `JacfResult`, with **no** fitted sigma.
@@ -63,7 +64,7 @@ impl Compute for GreenKuboConductivity {
 
         // ⟨J(0)·J(τ)⟩: Cartesian sum of component ACFs, no mean subtraction
         // (current is already a flux; shared unbiased helper).
-        let jacf = unbiased_cartesian_acf(current, max_lag, false)?;
+        let jacf = autocorrelation(current.view().insert_axis(Axis(1)), max_lag, false)?.acf;
         Ok(GreenKuboConductivityResult {
             lag_times: lag_times(max_lag, dt),
             jacf,

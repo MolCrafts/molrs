@@ -3,11 +3,11 @@
 //! Reads `atoms.{x,y,z}` (Å) from each frame; takes one
 //! [`ClusterResult`] per frame as
 //! `Args` (run [`Cluster`](crate::compute::Cluster) first). Output:
-//! one [`COMResult`] per frame — per-cluster COM (Å) + total mass.
+//! one [`CenterOfMassResult`] per frame — per-cluster COM (Å) + total mass.
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::ClusterResult;
 use crate::compute::Compute;
@@ -42,7 +42,7 @@ impl CenterOfMass {
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-    ) -> Result<COMResult, ComputeError> {
+    ) -> Result<CenterOfMassResult, ComputeError> {
         let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
         let xs = xs_p.slice();
         let ys = ys_p.slice();
@@ -98,7 +98,7 @@ impl CenterOfMass {
             }
         }
 
-        Ok(COMResult {
+        Ok(CenterOfMassResult {
             centers_of_mass,
             cluster_masses: total_mass,
         })
@@ -107,13 +107,13 @@ impl CenterOfMass {
 
 impl Compute for CenterOfMass {
     type Args<'a> = &'a Vec<ClusterResult>;
-    type Output = Vec<COMResult>;
+    type Output = Vec<CenterOfMassResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         clusters: &'a Vec<ClusterResult>,
-    ) -> Result<Vec<COMResult>, ComputeError> {
+    ) -> Result<Vec<CenterOfMassResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -147,14 +147,14 @@ impl Compute for CenterOfMass {
 
 /// Per-cluster center of mass and total mass for one frame.
 #[derive(Debug, Clone, Default)]
-pub struct COMResult {
+pub struct CenterOfMassResult {
     /// Mass-weighted center per cluster.
     pub centers_of_mass: Vec<[F; 3]>,
     /// Total mass per cluster.
     pub cluster_masses: Vec<F>,
 }
 
-impl ComputeResult for COMResult {}
+impl ComputeResult for CenterOfMassResult {}
 
 #[cfg(test)]
 mod tests {
@@ -195,7 +195,7 @@ mod tests {
         }
     }
 
-    fn com_single(frame: &Frame, cl: ClusterResult, com: CenterOfMass) -> COMResult {
+    fn com_single(frame: &Frame, cl: ClusterResult, com: CenterOfMass) -> CenterOfMassResult {
         let out = com.compute(&[frame], &vec![cl]).unwrap();
         out.into_iter().next().unwrap()
     }

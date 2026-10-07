@@ -6,33 +6,33 @@ use js_sys::Int32Array;
 use molrs::compute::Compute;
 use molrs::compute::ComputeResult;
 use molrs::compute::DescriptorRow;
-use molrs::compute::{KMeans as RsKMeans, Pca2 as RsPca2, PcaResult as RsPcaResult};
-use molrs::op::types::F;
+use molrs::compute::{KMeans as RsKMeans, Pca as RsPca, PcaResult as RsPcaResult};
+use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
-/// Stateless wrapper for [`molrs::compute::Pca2`].
+/// Stateless wrapper for [`molrs::compute::Pca`].
 ///
 /// All configuration lives on [`fitTransform`](Self::fit_transform).
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const pca = new Pca2();
+/// const pca = new Pca();
 /// const result = pca.fitTransform(matrix, nRows, nCols);
 /// const coords   = result.coords();    // Float64Array, length 2 * nRows
 /// const variance = result.variance();  // Float64Array, length 2
 /// ```
 #[wasm_bindgen]
-pub struct Pca2;
+pub struct Pca;
 
 #[allow(clippy::new_without_default)]
-#[wasm_bindgen(js_class = Pca2)]
-impl Pca2 {
+#[wasm_bindgen(js_class = Pca)]
+impl Pca {
     /// Create a new PCA calculator. The struct carries no state — all
     /// parameters are supplied on [`fitTransform`](Self::fit_transform).
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Pca2 {
-        Pca2
+    pub fn new() -> Pca {
+        Pca
     }
 
     /// Fit 2-component PCA on a row-major observation matrix and return the
@@ -68,14 +68,14 @@ impl Pca2 {
             .map(|i| PcaRow(matrix[i * n_cols..(i + 1) * n_cols].to_vec()))
             .collect();
         let dummy = molrs::core::Frame::new();
-        RsPca2::<PcaRow>::new()
+        RsPca::<PcaRow>::new()
             .compute(&[&dummy], &rows)
             .map(|inner| PcaResult { inner })
             .map_err(|e| JsValue::from_str(&format!("PCA: {e}")))
     }
 }
 
-/// Row adapter so the stateless `Pca2` can consume caller matrices without
+/// Row adapter so the stateless `Pca` can consume caller matrices without
 /// requiring a downstream molrs-compute type.
 #[derive(Clone)]
 struct PcaRow(Vec<F>);
@@ -88,7 +88,7 @@ impl DescriptorRow for PcaRow {
 
 impl ComputeResult for PcaRow {}
 
-/// Result of a [`Pca2::fit_transform`] call.
+/// Result of a [`Pca::fit_transform`] call.
 ///
 /// Each accessor returns an **owned** `Float64Array` (copy of the underlying
 /// `Vec`) so JS is free to let this wrapper be GC'd without dangling views.

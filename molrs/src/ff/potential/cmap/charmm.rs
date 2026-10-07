@@ -65,7 +65,7 @@ use crate::op::vec3::{cross, dot, scale};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
 use molrs::core::schema::block_names::CMAPS;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// The array param a `cmap` type keeps its map under.
 pub const GRID: &str = "grid";
@@ -476,7 +476,7 @@ pub(crate) mod tests {
     use crate::ff::potential::geometry::compute_dihedral;
     use crate::io::forcefield::readers::lammps::read_lammps_cmap_str;
     use molrs::core::Block;
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     /// The CHARMM36 alanine map (LAMMPS `potentials/charmm36.cmap`, type 1).

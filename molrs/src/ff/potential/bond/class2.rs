@@ -14,7 +14,7 @@ use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Class2 quartic bond potential with pre-resolved flat arrays.
 pub struct BondClass2 {

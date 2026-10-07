@@ -6,7 +6,7 @@
 //! than truncates when it cannot.
 
 use crate::core::SimBox;
-use crate::op::types::F;
+use crate::op::F;
 
 /// Why an image enumeration could not be produced.
 ///

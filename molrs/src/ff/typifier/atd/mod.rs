@@ -57,7 +57,7 @@ use std::sync::OnceLock;
 use molrs::core::PropValue;
 use molrs::core::keys;
 use molrs::core::{Atomistic, NodeId};
-use molrs::perceive::Perceive;
+use molrs::perceive::{assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity};
 
 use self::facts::MolFacts;
 use crate::ff::forcefield::ForceField;
@@ -172,7 +172,7 @@ pub enum AtdBondOrders {
     #[default]
     Perceive,
     /// The graph's own bond orders; aromatic bonds without a Kekulé number are
-    /// kekulized ([`Perceive::find_bond_types`]).
+    /// kekulized ([`assign_bcc_bond_types`]).
     Input,
 }
 
@@ -221,8 +221,8 @@ impl AtdTypifier {
     /// [`types_of`](Self::types_of) wants.
     pub(crate) fn perceive_bond_types(&self, mol: &Atomistic) -> Atomistic {
         match self.bond_orders {
-            AtdBondOrders::Perceive => Perceive::new().find_bond_types_from_connectivity(mol),
-            AtdBondOrders::Input => Perceive::new().find_bond_types(mol),
+            AtdBondOrders::Perceive => assign_bcc_bond_types_from_connectivity(mol),
+            AtdBondOrders::Input => assign_bcc_bond_types(mol),
         }
     }
 

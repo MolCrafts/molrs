@@ -55,7 +55,7 @@ use crate::io::smiles::{
     CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin, FragmentBody,
 };
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use crate::op::types::F;
+use crate::op::F;
 
 /// One fragment table: the names one block defines, in name order.
 type FragmentTable = BTreeMap<String, CGFragmentDef>;

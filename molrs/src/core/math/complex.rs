@@ -6,7 +6,7 @@
 //! `num_complex::Complex<F>` (two contiguous `F`s) so a downstream crate that
 //! does depend on `num-complex` can transmute slices if profiling warrants.
 
-use crate::op::types::F;
+use crate::op::F;
 
 /// Complex number with `f64` real and imaginary parts.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]

@@ -33,7 +33,7 @@ use ndarray::{Array1, IxDyn};
 
 use molrs::core::Block;
 use molrs::core::Frame;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::io::data::vasp_header::{
     AtomRow, CoordMode, expand_symbols, parse_atom_row, read_coords, read_header,

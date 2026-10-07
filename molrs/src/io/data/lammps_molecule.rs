@@ -24,7 +24,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::MetaValue;
 use molrs::core::keys;
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 
 /// The LAMMPS molecule JSON field naming the unit style. It is the file's
 /// vocabulary, not the frame's: the frame meta key is [`keys::UNITS`].

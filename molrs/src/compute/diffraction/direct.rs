@@ -24,7 +24,7 @@
 use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array1;
 
 use crate::compute::Compute;

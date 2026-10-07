@@ -15,7 +15,7 @@
 //! assert!((GAS_CONSTANT - 8.314_462_618_153_24).abs() < 1e-12);
 //! ```
 
-use crate::op::types::F;
+use crate::op::F;
 
 /// Avogadro constant `N_A` (exact, SI-2019), in mol⁻¹.
 pub const AVOGADRO: F = 6.022_140_76e23;

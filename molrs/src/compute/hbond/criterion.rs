@@ -14,11 +14,11 @@
 //! the same near-linear-bond intent; molrs uses the angle-at-H form because that
 //! is the quantity the spec and the downstream lifetime TCFs reference.
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Which interatomic distance the cutoff applies to when pairing candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DistKind {
+pub enum HBondDistanceKind {
     /// Cutoff on the donor–acceptor distance r(D···A) (reference implementation `m_frAD`).
     DonorAcceptor,
     /// Cutoff on the hydrogen–acceptor distance r(H···A) (reference implementation `m_frAH`).
@@ -34,7 +34,7 @@ pub struct HBondCriterion {
     /// Distance cutoff in ångström (applies to `dist_kind`).
     pub dist_cutoff: F,
     /// Which distance the cutoff gates.
-    pub dist_kind: DistKind,
+    pub dist_kind: HBondDistanceKind,
     /// Minimum D–H···A angle in **degrees** (measured at the hydrogen).
     pub angle_cutoff: F,
 }
@@ -43,7 +43,7 @@ impl Default for HBondCriterion {
     fn default() -> Self {
         Self {
             dist_cutoff: 3.5,
-            dist_kind: DistKind::DonorAcceptor,
+            dist_kind: HBondDistanceKind::DonorAcceptor,
             angle_cutoff: 150.0,
         }
     }
@@ -51,7 +51,7 @@ impl Default for HBondCriterion {
 
 impl HBondCriterion {
     /// Construct an explicit criterion.
-    pub fn new(dist_cutoff: F, dist_kind: DistKind, angle_cutoff: F) -> Self {
+    pub fn new(dist_cutoff: F, dist_kind: HBondDistanceKind, angle_cutoff: F) -> Self {
         Self {
             dist_cutoff,
             dist_kind,

@@ -10,7 +10,7 @@ use crate::core::BondDistanceWeights;
 use crate::core::MolRsError;
 use crate::core::schema::block_names::{ATOMS, BONDS};
 use crate::core::{Frame, keys};
-use crate::op::types::F;
+use crate::op::F;
 
 /// Why [`Topology::from_frame`] could not read a frame's bond graph.
 ///

@@ -28,7 +28,7 @@ pub(crate) fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef> {
         [0.0; 3]
     };
     RegionRef::wrap(std::sync::Arc::new(molrs::core::Sphere::new(
-        molrs::op::types::F3::from_vec(c.to_vec()),
+        molrs::op::F3::from_vec(c.to_vec()),
         radius,
     )))
 }
@@ -46,8 +46,8 @@ pub(crate) fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef> {
         [0.0; 3]
     };
     RegionRef::wrap(std::sync::Arc::new(molrs::core::Cuboid::new(
-        molrs::op::types::F3::from_vec(o.to_vec()),
-        molrs::op::types::F3::from_vec(l.to_vec()),
+        molrs::op::F3::from_vec(o.to_vec()),
+        molrs::op::F3::from_vec(l.to_vec()),
     )))
 }
 

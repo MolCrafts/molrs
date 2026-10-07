@@ -41,7 +41,7 @@ use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::keys;
 use molrs::core::{Block, BlockAccess, BlockDtype, ColumnView, DType};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};

@@ -6,15 +6,15 @@
 //! `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
 //! Returns the domain size distribution, count, and largest-domain fraction.
 
-use molrs::op::types::F;
+use molrs::op::F;
 
 use super::cell::VoronoiCells;
 use crate::compute::ComputeError;
 use crate::core::Topology;
 
-/// Outcome of a [`DomainAnalysis`].
+/// Outcome of a [`VoronoiDomainAnalysis`].
 #[derive(Debug, Clone)]
-pub struct DomainResult {
+pub struct VoronoiDomainResult {
     /// Domain sizes (atoms per domain), descending.
     pub sizes: Vec<usize>,
     /// Number of domains.
@@ -27,16 +27,16 @@ pub struct DomainResult {
 
 /// Partition cells into same-label face-adjacent domains.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DomainAnalysis;
+pub struct VoronoiDomainAnalysis;
 
-impl DomainAnalysis {
+impl VoronoiDomainAnalysis {
     /// Merge face-adjacent cells sharing the same `labels[i]` into domains.
     /// `labels` length must equal the cell count.
     pub fn analyze(
         &self,
         cells: &VoronoiCells,
         labels: &[i64],
-    ) -> Result<DomainResult, ComputeError> {
+    ) -> Result<VoronoiDomainResult, ComputeError> {
         let n = cells.len();
         if labels.len() != n {
             return Err(ComputeError::DimensionMismatch {
@@ -83,7 +83,7 @@ impl DomainAnalysis {
             sizes.first().copied().unwrap_or(0) as F / n as F
         };
 
-        Ok(DomainResult {
+        Ok(VoronoiDomainResult {
             sizes,
             count,
             largest_fraction,

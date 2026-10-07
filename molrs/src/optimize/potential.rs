@@ -14,7 +14,7 @@ use crate::core::Frame;
 use crate::core::keys::FREE;
 use crate::core::schema::block_names::ATOMS;
 use crate::ff::potential::Potential;
-use crate::op::types::F;
+use crate::op::F;
 
 /// Limited-memory BFGS over a molecule-bound [`Potential`].
 ///

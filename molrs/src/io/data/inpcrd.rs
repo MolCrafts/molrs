@@ -27,7 +27,7 @@ use ndarray::{Array1, Array2, IxDyn, array};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 // ---------------------------------------------------------------------------
 // Helpers

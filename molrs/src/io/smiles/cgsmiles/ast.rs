@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 
 use crate::io::smiles::{BondKind, BondingDescriptor, SmilesIR, Span};
-use crate::op::types::F;
+use crate::op::F;
 
 /// A parsed `CGsmiles` string: the blocks that were written, and the levels
 /// they denote.

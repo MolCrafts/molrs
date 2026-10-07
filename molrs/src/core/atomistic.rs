@@ -691,8 +691,8 @@ impl Atomistic {
     pub fn replicate(
         &mut self,
         template: &Atomistic,
-        transforms: &[crate::op::rigid::Rigid],
-        frag_ids: &[crate::op::types::I],
+        transforms: &[crate::op::Rigid],
+        frag_ids: &[crate::op::I],
     ) -> Result<Vec<NodeId>, MolRsError> {
         self.graph.replicate(&template.graph, transforms, frag_ids)
     }
@@ -786,7 +786,7 @@ impl Atomistic {
         crate::core::is_isomorphic(&self.graph, &other.graph)
     }
 
-    // Aromaticity perception belongs to `crate::perceive::Perceive`
+    // Aromaticity perception belongs to `crate::perceive::assign_aromaticity`
     // (`find_aromaticity`). No algorithm method here.
 }
 
@@ -826,7 +826,7 @@ mod tests {
     use super::*;
     use crate::core::Atom;
     use crate::core::Block;
-    use crate::op::types::{I, Idx};
+    use crate::op::{I, Idx};
     use ndarray::Array1;
     use std::collections::HashSet;
 
@@ -1517,7 +1517,7 @@ mod tests {
             let mut sys = Atomistic::new();
             let id = sys.add_atom_xyz("C", 1.0, 2.0, 3.0);
             let fixed = sys.add_atom_xyz("C", 1.0, 1.0, 1.0);
-            crate::op::geometry::scale(sys.as_molgraph_mut(), factor, about);
+            crate::op::scale(sys.as_molgraph_mut(), factor, about);
             let moved = sys.get_atom(id).expect("live handle");
             for (key, want) in ["x", "y", "z"].into_iter().zip(expected) {
                 let got = moved.get_f64(key).expect("coordinate kept");
@@ -1550,13 +1550,13 @@ mod tests {
         mol.set_atom(heavy, crate::core::keys::MASS, 3.0).unwrap();
         let all: Vec<_> = mol.node_ids().collect();
         assert_eq!(
-            crate::op::geometry::center(mol.as_molgraph(), &all),
+            crate::op::center(mol.as_molgraph(), &all),
             Ok([3.0, 0.0, 0.0])
         );
 
         assert_eq!(
-            crate::op::geometry::center(Atomistic::new().as_molgraph(), &[]),
-            Err(crate::op::geometry::CenterError::Empty)
+            crate::op::center(Atomistic::new().as_molgraph(), &[]),
+            Err(crate::op::CenterError::Empty)
         );
     }
 }

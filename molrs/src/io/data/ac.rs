@@ -10,7 +10,7 @@ use ndarray::{Array1, IxDyn};
 use molrs::core::Block;
 use molrs::core::Element;
 use molrs::core::Frame;
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// Read an Antechamber `.ac` file into a Frame.
 ///

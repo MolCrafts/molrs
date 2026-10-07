@@ -22,7 +22,7 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::{Member, Potential};
 use molrs::core::Frame;
 use molrs::core::Mic;
-use molrs::op::types::F;
+use molrs::op::F;
 
 // ---------------------------------------------------------------------------
 // Math helpers

@@ -7,7 +7,7 @@
 //!
 //! This module gathers the perception RDKit would have computed: aromaticity,
 //! and RDKit's own hybridization and conjugation from
-//! [`molrs::perceive::hybridizations`] / [`molrs::perceive::conjugated_atoms`]. It is
+//! [`molrs::perceive::perceive_hybridizations`] / [`molrs::perceive::perceive_conjugated_atoms`]. It is
 //! intentionally scoped to the organic main group (the molecules this port is
 //! validated against); it is **not** a general aromaticity model and will not
 //! reproduce RDKit on exotic ring systems (documented in `mod.rs`).
@@ -17,8 +17,8 @@ use std::collections::HashMap;
 use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::NodeId;
-use molrs::perceive::rings::{RingInfo, find_rings};
-use molrs::perceive::{Hybridization, conjugated_atoms, hybridizations};
+use molrs::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
+use molrs::perceive::{RingInfo, perceive_rings};
 
 /// Per-atom perceived properties consumed by the bounds builder.
 #[derive(Clone, Debug)]
@@ -102,7 +102,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
         adj[i] = nbrs;
     }
 
-    let rings = find_rings(mol);
+    let rings = perceive_rings(mol);
     let ring_idx: Vec<Vec<usize>> = rings
         .rings()
         .iter()
@@ -114,7 +114,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
         .collect();
 
     // Aromaticity: delegate to the shared RDKit-aligned model in molrs-core
-    // (`molrs::perceive::aromaticity::perceive_aromaticity`, a port of
+    // (`molrs::perceive::mark_aromaticity`, a port of
     // `setAromaticity(AROMATICITY_RDKIT)`) instead of re-deriving it here. It
     // annotates a *clone* of the graph with an `is_aromatic = 1` flag per
     // aromatic atom; we read those flags back, index-aligned.
@@ -126,7 +126,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
     let mut aromatic_atom = vec![false; n];
     {
         let mut probe = mol.clone();
-        molrs::perceive::aromaticity::perceive_aromaticity(&mut probe);
+        molrs::perceive::mark_aromaticity(&mut probe);
         for (i, (_, atom)) in probe.atoms().enumerate().take(n) {
             if atom.get_int("is_aromatic") == Some(1) {
                 aromatic_atom[i] = true;
@@ -136,8 +136,8 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
 
     // Hybridization and conjugation are RDKit's (`perceive`), which is what
     // its bounds builder keys on.
-    let hybridization = hybridizations(mol);
-    let conjugated = conjugated_atoms(mol);
+    let hybridization = perceive_hybridizations(mol);
+    let conjugated = perceive_conjugated_atoms(mol);
     let atoms: Vec<PerceivedAtom> = atom_ids
         .iter()
         .enumerate()

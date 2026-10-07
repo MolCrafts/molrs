@@ -2,7 +2,7 @@
 //!
 //! The graph a frame's `bonds` block spells out, with the angles, dihedrals,
 //! impropers and connected components derived from it. Ring perception is not
-//! here: it is chemistry, and belongs to `Perceive.findRings`.
+//! here: it is chemistry, and belongs to `assignRings`.
 
 use molrs::core::Topology as RsTopology;
 use wasm_bindgen::prelude::*;
@@ -186,7 +186,7 @@ impl Topology {
 mod tests {
     use super::*;
     use molrs::core::{Block, keys};
-    use molrs::op::types::Idx;
+    use molrs::op::Idx;
     use ndarray::Array1;
     use wasm_bindgen_test::*;
 

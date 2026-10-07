@@ -47,7 +47,7 @@
 //! instead.
 
 use crate::core::Neighbors;
-use crate::op::types::F;
+use crate::op::F;
 
 /// SANN filter: keep the smallest set of nearest neighbors whose solid
 /// angles sum to `4π`.

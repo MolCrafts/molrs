@@ -16,7 +16,7 @@
 //! orthogonal field runs (see the test). For a linear response
 //! `μ(E) = μ₀ + α E`, the central difference is exact.
 
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array2;
 
 use super::integrate::MolecularMoments;

@@ -39,7 +39,7 @@
 //!   high throughput analysis of particle simulation data. *Computer
 //!   Physics Communications*, 254, 107275.
 
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::{Array1, Array2};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -209,7 +209,7 @@ mod tests {
         let frame = make_frame(&positions, 10.0);
 
         // Streaming path: no NeighborList materialization.
-        let rdf = RDF::new(20, 4.0, None, None).unwrap();
+        let rdf = Rdf::new(20, 4.0, None, None).unwrap();
         let result = rdf.compute(&frame).unwrap();
 
         assert_eq!(result.bin_centers().length(), 20);
@@ -224,7 +224,7 @@ mod tests {
         let ref_frame = make_frame(&ref_pos, 20.0);
         let cur_frame = make_frame(&cur_pos, 20.0);
 
-        let mut msd = MSD::new();
+        let mut msd = Msd::new();
         msd.feed(&ref_frame).unwrap();
         msd.feed(&cur_frame).unwrap();
 

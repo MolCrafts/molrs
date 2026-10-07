@@ -20,7 +20,7 @@ use crate::ff::potential::{Member, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Where a pair's class2 `(ε, σ)` comes from.
 enum Source {
@@ -519,7 +519,7 @@ mod tests {
         use crate::ff::forcefield::{ForceField, Params};
         use crate::ff::potential::PotentialCompiler;
         use molrs::core::Block;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let mut ff = ForceField::new("t");

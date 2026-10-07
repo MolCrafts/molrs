@@ -6,8 +6,8 @@
 
 //! 2-D `(r, t1, t2)` Pair Mode Fourier Transform.
 //!
-//! Mirrors `freud.pmft.PMFTR12`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PMFTR12.cc)).
+//! Mirrors `freud.pmft.PmftR12`
+//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/pmft/PmftR12.cc)).
 //!
 //! 2-D pair distribution function on polar bond coordinates plus the
 //! relative angle each particle makes with the bond. For a neighbor pair
@@ -29,7 +29,7 @@ use crate::compute::ComputeResult;
 use molrs::core::BoxKind;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array3;
 
 use crate::compute::Compute;
@@ -38,27 +38,27 @@ use crate::compute::require_disp;
 
 const TWO_PI: F = 2.0 * std::f64::consts::PI;
 
-/// `PMFTR12` analyzer.
+/// `PmftR12` analyzer.
 #[derive(Debug, Clone, Copy)]
-pub struct PMFTR12 {
+pub struct PmftR12 {
     r_max: F,
     n_r: usize,
     n_t1: usize,
     n_t2: usize,
 }
 
-impl PMFTR12 {
+impl PmftR12 {
     /// Radial range `r_max` (Å); `n_r × n_t1 × n_t2` (r, θ₁, θ₂) bins.
     pub fn new(r_max: F, n_r: usize, n_t1: usize, n_t2: usize) -> Result<Self, ComputeError> {
         if r_max.is_nan() || r_max <= 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTR12::r_max",
+                field: "PmftR12::r_max",
                 value: r_max.to_string(),
             });
         }
         if n_r == 0 || n_t1 == 0 || n_t2 == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "PMFTR12 bin counts",
+                field: "PmftR12 bin counts",
                 value: format!("n_r={n_r}, n_t1={n_t1}, n_t2={n_t2}"),
             });
         }
@@ -73,7 +73,7 @@ impl PMFTR12 {
 
 /// Per-frame args for PMFTR12: parallel `&[Neighbors]` and
 /// per-particle 2-D orientations (radians).
-pub struct PMFTR12Args<'a> {
+pub struct PmftR12Args<'a> {
     pub nlists: &'a [Neighbors],
     pub orientations: &'a [Vec<F>],
 }
@@ -84,19 +84,19 @@ fn wrap_2pi(a: F) -> F {
     if v < 0.0 { v + TWO_PI } else { v }
 }
 
-impl PMFTR12 {
+impl PmftR12 {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         nlist: &Neighbors,
         orientations: &[F],
-    ) -> Result<PMFTR12Result, ComputeError> {
+    ) -> Result<PmftR12Result, ComputeError> {
         let simbox = frame.simbox_ref().ok_or(ComputeError::MissingSimBox)?;
         let (lx, ly) = match simbox.kind() {
             BoxKind::Ortho { len, .. } => (len[0], len[1]),
             BoxKind::Triclinic => {
                 return Err(ComputeError::OutOfRange {
-                    field: "PMFTR12::simbox",
+                    field: "PmftR12::simbox",
                     value: "triclinic boxes not supported".into(),
                 });
             }
@@ -128,7 +128,7 @@ impl PMFTR12 {
                 return Err(ComputeError::DimensionMismatch {
                     expected: i.max(j) + 1,
                     got: orientations.len(),
-                    what: "PMFTR12 orientations length",
+                    what: "PmftR12 orientations length",
                 });
             }
             let theta_lab = vy.atan2(vx);
@@ -187,7 +187,7 @@ impl PMFTR12 {
         let t1_edges: Vec<F> = (0..=self.n_t1).map(|i| i as F * dt1).collect();
         let t2_edges: Vec<F> = (0..=self.n_t2).map(|i| i as F * dt2).collect();
 
-        Ok(PMFTR12Result {
+        Ok(PmftR12Result {
             density,
             raw_counts: counts,
             pmf,
@@ -198,15 +198,15 @@ impl PMFTR12 {
     }
 }
 
-impl Compute for PMFTR12 {
-    type Args<'a> = PMFTR12Args<'a>;
-    type Output = Vec<PMFTR12Result>;
+impl Compute for PmftR12 {
+    type Args<'a> = PmftR12Args<'a>;
+    type Output = Vec<PmftR12Result>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
-        args: PMFTR12Args<'a>,
-    ) -> Result<Vec<PMFTR12Result>, ComputeError> {
+        args: PmftR12Args<'a>,
+    ) -> Result<Vec<PmftR12Result>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -215,7 +215,7 @@ impl Compute for PMFTR12 {
             return Err(ComputeError::DimensionMismatch {
                 expected: nf,
                 got: args.nlists.len().min(args.orientations.len()),
-                what: "PMFTR12 frame-aligned inputs",
+                what: "PmftR12 frame-aligned inputs",
             });
         }
         #[cfg(feature = "rayon")]
@@ -240,7 +240,7 @@ impl Compute for PMFTR12 {
 
 /// Per-frame PMFTR12 result.
 #[derive(Debug, Clone, Default)]
-pub struct PMFTR12Result {
+pub struct PmftR12Result {
     pub density: Array3<F>,
     pub raw_counts: Array3<u64>,
     pub pmf: Array3<F>,
@@ -249,12 +249,12 @@ pub struct PMFTR12Result {
     pub t2_edges: Vec<F>,
 }
 
-impl ComputeResult for PMFTR12Result {}
+impl ComputeResult for PmftR12Result {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -292,11 +292,11 @@ mod tests {
         // a second count at t1 = π, t2 = 0.
         let frame = frame_with(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], 10.0);
         let nl = build_nlist(&frame, 1.5);
-        let r = &PMFTR12::new(2.0, 4, 4, 4)
+        let r = &PmftR12::new(2.0, 4, 4, 4)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTR12Args {
+                PmftR12Args {
                     nlists: std::slice::from_ref(&nl),
                     orientations: std::slice::from_ref(&vec![0.0_f64, 0.0]),
                 },
@@ -310,11 +310,11 @@ mod tests {
     fn out_of_range_dropped() {
         let frame = frame_with(&[[0.0, 0.0, 0.0], [3.0, 0.0, 0.0]], 10.0);
         let nl = build_nlist(&frame, 5.0);
-        let r = &PMFTR12::new(1.0, 4, 4, 4)
+        let r = &PmftR12::new(1.0, 4, 4, 4)
             .unwrap()
             .compute(
                 &[&frame],
-                PMFTR12Args {
+                PmftR12Args {
                     nlists: std::slice::from_ref(&nl),
                     orientations: std::slice::from_ref(&vec![0.0_f64, 0.0]),
                 },
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn invalid_args_error() {
-        assert!(PMFTR12::new(0.0, 4, 4, 4).is_err());
-        assert!(PMFTR12::new(1.0, 0, 4, 4).is_err());
+        assert!(PmftR12::new(0.0, 4, 4, 4).is_err());
+        assert!(PmftR12::new(1.0, 0, 4, 4).is_err());
     }
 }

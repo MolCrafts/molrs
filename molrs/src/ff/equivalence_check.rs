@@ -85,7 +85,7 @@ use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
-use molrs::op::types::{F, Idx};
+use molrs::op::{F, Idx};
 
 /// The terms compared, in print order.
 pub(crate) const TERMS: [&str; 8] = [

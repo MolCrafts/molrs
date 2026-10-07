@@ -64,7 +64,7 @@ use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOML};
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::core::schema::block_names::{ATOMS, BONDS, DIHEDRALS, PAIRS};
-use molrs::op::types::F;
+use molrs::op::F;
 
 const MIN_R2: F = 1e-24;
 

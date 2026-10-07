@@ -122,7 +122,7 @@ impl std::fmt::Debug for FrameView<'_> {
 mod tests {
     use super::*;
     use crate::core::Block;
-    use crate::op::types::{F, I, Idx};
+    use crate::op::{F, I, Idx};
     use ndarray::Array1;
 
     fn make_frame() -> Frame {

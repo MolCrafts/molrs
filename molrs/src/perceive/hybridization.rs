@@ -44,14 +44,14 @@ pub enum Hybridization {
 }
 
 /// The hybridization of every atom of `mol`, in its atom order.
-pub fn hybridizations(mol: &Atomistic) -> Vec<Hybridization> {
+pub fn perceive_hybridizations(mol: &Atomistic) -> Vec<Hybridization> {
     let g = Snapshot::new(mol);
     (0..g.atno.len()).map(|i| g.hybridization(i)).collect()
 }
 
 /// Whether each atom of `mol`, in its atom order, carries a conjugated bond
 /// (RDKit `MolOps::atomHasConjugatedBond` after `setConjugation`).
-pub fn conjugated_atoms(mol: &Atomistic) -> Vec<bool> {
+pub fn perceive_conjugated_atoms(mol: &Atomistic) -> Vec<bool> {
     let g = Snapshot::new(mol);
     (0..g.atno.len())
         .map(|i| g.has_conjugated_bond(i))
@@ -271,7 +271,7 @@ mod tests {
     use molrs::core::BondOrder;
 
     fn by_element(mol: &Atomistic, sym: &str) -> Vec<Hybridization> {
-        let hyb = hybridizations(mol);
+        let hyb = perceive_hybridizations(mol);
         mol.atoms()
             .zip(hyb)
             .filter(|((_, a), _)| a.get_str("element") == Some(sym))
@@ -309,8 +309,8 @@ mod tests {
         mol.set_bond_type(co, BondOrder::Double).unwrap();
         mol.add_bond(c, n).unwrap();
         mol.add_bond(n, me).unwrap();
-        let hyb = hybridizations(&mol);
-        let conj = conjugated_atoms(&mol);
+        let hyb = perceive_hybridizations(&mol);
+        let conj = perceive_conjugated_atoms(&mol);
         assert_eq!(hyb, vec![Sp2, Sp2, Sp2, Sp3]);
         assert_eq!(conj, vec![true, true, true, false]);
     }
@@ -574,8 +574,8 @@ mod tests {
                     .filter(|(_, (_, a))| a.get_str("element") != Some("H"))
                     .map(|(i, _)| i)
                     .collect();
-                let hyb = hybridizations(&mol);
-                let conj = conjugated_atoms(&mol);
+                let hyb = perceive_hybridizations(&mol);
+                let conj = perceive_conjugated_atoms(&mol);
                 let got_h: Vec<_> = heavy.iter().map(|&i| hyb[i]).collect();
                 let got_c: Vec<_> = heavy.iter().map(|&i| conj[i]).collect();
                 assert_eq!(
@@ -601,6 +601,6 @@ mod tests {
         let h1 = mol.add_atom_bare("H");
         let h2 = mol.add_atom_bare("H");
         mol.add_bond(h1, h2).unwrap();
-        assert_eq!(hybridizations(&mol), vec![S, S, S]);
+        assert_eq!(perceive_hybridizations(&mol), vec![S, S, S]);
     }
 }

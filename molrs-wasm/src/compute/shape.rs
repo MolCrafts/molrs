@@ -6,11 +6,11 @@ use crate::core::frame::Frame;
 use crate::core::types::JsFloatArray;
 use molrs::compute::Compute;
 use molrs::compute::{
-    COMResult as RsCOMResult, CenterOfMass as RsCenterOfMass, ClusterCenters as RsClusterCenters,
-    GyrationTensor as RsGyrationTensor, InertiaTensor as RsInertiaTensor,
-    RadiusOfGyration as RsRadiusOfGyration,
+    CenterOfMass as RsCenterOfMass, CenterOfMassResult as RsCenterOfMassResult,
+    ClusterCenters as RsClusterCenters, GyrationTensor as RsGyrationTensor,
+    InertiaTensor as RsInertiaTensor, RadiusOfGyration as RsRadiusOfGyration,
 };
-use molrs::op::types::F;
+use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
 /// Geometric cluster centers with minimum image convention.
@@ -75,7 +75,7 @@ impl ClusterCenters {
 /// ```
 #[wasm_bindgen(js_name = CenterOfMassResult)]
 pub struct CenterOfMassResult {
-    inner: RsCOMResult,
+    inner: RsCenterOfMassResult,
 }
 
 #[wasm_bindgen(js_class = CenterOfMassResult)]

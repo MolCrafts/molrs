@@ -28,13 +28,13 @@
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 use ndarray::Array2;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
-use crate::op::rigid::{quat_dot, quat_norm};
-use crate::op::types::Quat;
+use crate::op::Quat;
+use crate::op::{quat_dot, quat_norm};
 
 /// Angular distance between two unit quaternions, in radians.
 ///

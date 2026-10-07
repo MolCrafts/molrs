@@ -1,10 +1,10 @@
-//! Mean squared displacement — WASM face of `molrs::compute::MSD`.
+//! Mean squared displacement — WASM face of `molrs::compute::Msd`.
 
 use crate::core::frame::Frame;
 use crate::core::types::JsFloatArray;
 use molrs::compute::Compute;
-use molrs::compute::{MSD as RsMSD, MSDResult as RsMSDResult};
-use molrs::op::types::F;
+use molrs::compute::{Msd as RsMsd, MsdResult as RsMsdResult};
+use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
 /// Mean squared displacement (MSD) analysis.
@@ -29,14 +29,14 @@ use wasm_bindgen::prelude::*;
 /// # References
 ///
 /// - Einstein, A. (1905). *Annalen der Physik*, 322(8), 549-560.
-#[wasm_bindgen(js_name = MSD)]
-pub struct MSD {
+#[wasm_bindgen(js_name = Msd)]
+pub struct Msd {
     frames: Vec<molrs::core::Frame>,
 }
 
 #[allow(clippy::new_without_default)]
-#[wasm_bindgen(js_class = MSD)]
-impl MSD {
+#[wasm_bindgen(js_class = Msd)]
+impl Msd {
     /// Create an empty MSD analysis.
     ///
     /// The first frame passed to [`feed`] becomes the reference
@@ -79,7 +79,7 @@ impl MSD {
         })
     }
 
-    /// Run the stateless [`molrs::compute::MSD`] over every fed frame and
+    /// Run the stateless [`molrs::compute::Msd`] over every fed frame and
     /// return the per-frame time series.
     ///
     /// The first frame is always the reference, so `results()[0].mean ≈ 0`.
@@ -88,20 +88,20 @@ impl MSD {
     ///
     /// ```js
     /// const results = msd.results();
-    /// results.forEach((r, t) => console.log(`t=${t}: MSD=${r.mean}`));
+    /// results.forEach((r, t) => console.log(`t=${t}: Msd=${r.mean}`));
     /// ```
-    pub fn results(&self) -> Result<Vec<MSDResult>, JsValue> {
+    pub fn results(&self) -> Result<Vec<MsdResult>, JsValue> {
         if self.frames.is_empty() {
             return Ok(Vec::new());
         }
         let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
-        let series = RsMSD::new()
+        let series = RsMsd::new()
             .compute(&refs, ())
-            .map_err(|e| JsValue::from_str(&format!("MSD results: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("Msd results: {e}")))?;
         Ok(series
             .data
             .iter()
-            .map(|r| MSDResult { inner: r.clone() })
+            .map(|r| MsdResult { inner: r.clone() })
             .collect())
     }
 
@@ -126,13 +126,13 @@ impl MSD {
 /// console.log(result.mean);              // number (A^2)
 /// console.log(result.perParticle());     // Float64Array (A^2)
 /// ```
-#[wasm_bindgen(js_name = MSDResult)]
-pub struct MSDResult {
-    inner: RsMSDResult,
+#[wasm_bindgen(js_name = MsdResult)]
+pub struct MsdResult {
+    inner: RsMsdResult,
 }
 
-#[wasm_bindgen(js_class = MSDResult)]
-impl MSDResult {
+#[wasm_bindgen(js_class = MsdResult)]
+impl MsdResult {
     /// System-average mean squared displacement in A^2.
     ///
     /// This is the arithmetic mean of all per-particle squared

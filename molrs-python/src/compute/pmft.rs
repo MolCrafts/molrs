@@ -1,13 +1,13 @@
-//! Potentials of mean force and torque (`molrs::compute::pmft`): `PMFTXY`.
+//! Potentials of mean force and torque (`molrs::compute::pmft`): `PmftXy`.
 
 #![allow(clippy::type_complexity)]
 
 use super::order::orientation_pairs;
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{Compute, PMFTXY, PMFTXYArgs};
+use molrs::compute::{Compute, PmftXy, PmftXyArgs};
 use molrs::core::{Frame as CoreFrame, FrameAccess};
-use molrs::op::types::F;
+use molrs::op::F;
 use numpy::{IntoPyArray, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -17,17 +17,17 @@ use pyo3::types::PyAny;
 // PMFTXY
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs.compute", name = "PMFTXY")]
-pub struct PyPMFTXY {
-    inner: PMFTXY,
+#[pyclass(module = "molrs.compute", name = "PmftXy")]
+pub struct PyPmftXy {
+    inner: PmftXy,
 }
 
 #[pymethods]
-impl PyPMFTXY {
+impl PyPmftXy {
     #[new]
     fn new(x_max: f64, y_max: f64, n_x: usize, n_y: usize) -> PyResult<Self> {
         Ok(Self {
-            inner: PMFTXY::new(x_max, y_max, n_x, n_y).map_err(py_value_err)?,
+            inner: PmftXy::new(x_max, y_max, n_x, n_y).map_err(py_value_err)?,
         })
     }
 
@@ -81,7 +81,7 @@ impl PyPMFTXY {
         } else {
             None
         };
-        let args = PMFTXYArgs {
+        let args = PmftXyArgs {
             nlists: &neighbors,
             query_orientations: orient_angles.as_deref(),
         };
@@ -101,6 +101,6 @@ impl PyPMFTXY {
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyPMFTXY>()?;
+    m.add_class::<PyPmftXy>()?;
     Ok(())
 }

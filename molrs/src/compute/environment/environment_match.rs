@@ -5,8 +5,8 @@
 //! Environment matching by neighbor-bond fingerprint, with optional
 //! rotation-invariant registration.
 //!
-//! Mirrors `freud.environment.EnvironmentCluster` / `MatchEnv`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/MatchEnv.cc)).
+//! Mirrors `freud.environment.EnvironmentCluster` / `EnvironmentMatch`
+//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/EnvironmentMatch.cc)).
 //! Two modes:
 //!
 //! - **No-rotation** (`with_registration(false)`, the default): two
@@ -36,22 +36,22 @@
 //! comparison is intrinsic to environment matching (freud does the same)
 //! and is the dominant cost at scale. In registration mode each
 //! comparison additionally enumerates up to `n!` permutations, bounded by
-//! [`MatchEnv::with_max_neighbors_for_registration`].
+//! [`EnvironmentMatch::with_max_neighbors_for_registration`].
 
 use crate::compute::ComputeResult;
 use std::collections::HashMap;
 
-use crate::op::superpose::{DEFAULT_GAP_TOL, SuperposeError, superpose};
+use crate::op::{DEFAULT_GAP_TOL, SuperpositionError, superpose};
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
 
-/// `MatchEnv` analyzer.
+/// `EnvironmentMatch` analyzer.
 ///
 /// See below for the two matching modes and
 /// their complexity (linear fingerprint build; quadratic per-bucket
@@ -59,7 +59,7 @@ use crate::compute::require_disp;
 ///
 /// Environment matching / clustering by neighbor-vector geometry.
 #[derive(Debug, Clone, Copy)]
-pub struct MatchEnv {
+pub struct EnvironmentMatch {
     rmsd_threshold: F,
     registration: bool,
     /// Hard cap on `n_neighbors` accepted in registration mode — guards
@@ -68,12 +68,12 @@ pub struct MatchEnv {
     max_neighbors_for_registration: usize,
 }
 
-impl MatchEnv {
+impl EnvironmentMatch {
     /// Environments match when their best-fit RMSD ≤ `rmsd_threshold` (Å).
     pub fn new(rmsd_threshold: F) -> Result<Self, ComputeError> {
         if rmsd_threshold.is_nan() || rmsd_threshold < 0.0 {
             return Err(ComputeError::OutOfRange {
-                field: "MatchEnv::rmsd_threshold",
+                field: "EnvironmentMatch::rmsd_threshold",
                 value: rmsd_threshold.to_string(),
             });
         }
@@ -192,7 +192,7 @@ fn rmsd_horn(a: &[[F; 3]], b: &[[F; 3]]) -> F {
     match superpose(&reference, &target, &weights, DEFAULT_GAP_TOL) {
         Ok(fit) => fit.rmsd,
         // No bonds: two empty environments coincide.
-        Err(SuperposeError::NoPoints) => 0.0,
+        Err(SuperpositionError::NoPoints) => 0.0,
         // A non-finite bond vector never matches.
         Err(_) => F::INFINITY,
     }
@@ -277,12 +277,12 @@ impl Dsu {
     }
 }
 
-impl MatchEnv {
+impl EnvironmentMatch {
     fn one_frame<FA: FrameAccess>(
         &self,
         frame: &FA,
         nlist: &Neighbors,
-    ) -> Result<MatchEnvResult, ComputeError> {
+    ) -> Result<EnvironmentMatchResult, ComputeError> {
         let (xs_p, _, _) = get_positions_ref(frame)?;
         let n = xs_p.slice().len();
 
@@ -346,7 +346,7 @@ impl MatchEnv {
         // before; bond-vector fingerprints are internal-only).
         let fingerprints: Vec<Vec<F>> = bonds.iter().map(|b| magnitudes_sorted(b)).collect();
 
-        Ok(MatchEnvResult {
+        Ok(EnvironmentMatchResult {
             cluster_idx,
             n_clusters,
             fingerprints,
@@ -354,15 +354,15 @@ impl MatchEnv {
     }
 }
 
-impl Compute for MatchEnv {
+impl Compute for EnvironmentMatch {
     type Args<'a> = &'a [Neighbors];
-    type Output = Vec<MatchEnvResult>;
+    type Output = Vec<EnvironmentMatchResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         nlists: &'a [Neighbors],
-    ) -> Result<Vec<MatchEnvResult>, ComputeError> {
+    ) -> Result<Vec<EnvironmentMatchResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -383,7 +383,7 @@ impl Compute for MatchEnv {
 
 /// Per-frame environment-matching result.
 #[derive(Debug, Clone, Default)]
-pub struct MatchEnvResult {
+pub struct EnvironmentMatchResult {
     /// Particle → environment-class label (`0..n_clusters`).
     pub cluster_idx: Vec<u32>,
     /// Number of distinct environment classes.
@@ -392,12 +392,12 @@ pub struct MatchEnvResult {
     pub fingerprints: Vec<Vec<F>>,
 }
 
-impl ComputeResult for MatchEnvResult {}
+impl ComputeResult for EnvironmentMatchResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;
@@ -443,7 +443,7 @@ mod tests {
     fn two_octahedra_centres_share_a_class() {
         let frame = paired_octahedra();
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &MatchEnv::new(1e-9)
+        let r = &EnvironmentMatch::new(1e-9)
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
@@ -468,7 +468,7 @@ mod tests {
             10.0,
         );
         let nl = nlist_from_frame(&frame, 1.5);
-        let r = &MatchEnv::new(1e-9)
+        let r = &EnvironmentMatch::new(1e-9)
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
@@ -497,13 +497,13 @@ mod tests {
         }
         let frame = frame_with(&p, 20.0);
         let nl = nlist_from_frame(&frame, 1.5);
-        let merged = &MatchEnv::new(0.05)
+        let merged = &EnvironmentMatch::new(0.05)
             .unwrap()
             .compute(&[&frame], std::slice::from_ref(&nl))
             .unwrap()[0];
         assert_eq!(merged.cluster_idx[0], merged.cluster_idx[5]);
 
-        let split = &MatchEnv::new(0.001)
+        let split = &EnvironmentMatch::new(0.001)
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
@@ -528,7 +528,7 @@ mod tests {
             10.0,
         );
         let nl = nlist_from_frame(&frame, 1.6);
-        let r = &MatchEnv::new(1e-9)
+        let r = &EnvironmentMatch::new(1e-9)
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
@@ -555,13 +555,13 @@ mod tests {
 
     #[test]
     fn invalid_threshold_errors() {
-        assert!(MatchEnv::new(-1.0).is_err());
+        assert!(EnvironmentMatch::new(-1.0).is_err());
     }
 
     #[test]
     fn empty_frames_error() {
         let frames: Vec<&Frame> = Vec::new();
-        let err = MatchEnv::new(0.1)
+        let err = EnvironmentMatch::new(0.1)
             .unwrap()
             .compute(&frames, &Vec::<Neighbors>::new())
             .unwrap_err();
@@ -602,7 +602,7 @@ mod tests {
         }
         let frame = frame_with(&p, 30.0);
         let nl = nlist_from_frame(&frame, 1.2);
-        let r = &MatchEnv::new(1e-6)
+        let r = &EnvironmentMatch::new(1e-6)
             .unwrap()
             .with_registration(true)
             .compute(&[&frame], &[nl])

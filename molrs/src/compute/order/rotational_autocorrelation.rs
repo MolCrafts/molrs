@@ -26,12 +26,12 @@
 
 use crate::compute::ComputeResult;
 use molrs::core::FrameAccess;
-use molrs::op::types::F;
+use molrs::op::F;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
-use crate::op::rigid::{quat_conj, quat_mul, quat_norm};
-use crate::op::types::Quat;
+use crate::op::Quat;
+use crate::op::{quat_conj, quat_mul, quat_norm};
 
 /// Rotational autocorrelation calculator.
 #[derive(Debug, Clone, Copy)]

@@ -50,7 +50,7 @@ use crate::ff::ir::{
     StyleSpec, Value,
 };
 use crate::io::forcefield::writers::WriteError;
-use molrs::op::types::F;
+use molrs::op::F;
 
 fn refuse(style: &Style, why: impl Into<String>) -> WriteError {
     Engine::OpenmmXml

@@ -27,9 +27,9 @@ use crate::compute::ComputeResult;
 use molrs::core::Complex;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
-use molrs::op::types::F;
+use molrs::op::F;
 
-use super::steinhardt::compute_qlm;
+use super::steinhardt::steinhardt_qlm;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
@@ -78,7 +78,7 @@ impl ContinuousCoordination {
         let mut coord_per_l: Vec<Vec<F>> = Vec::with_capacity(self.l.len());
         for &l in &self.l {
             let m_count = (2 * l + 1) as usize;
-            let qlm = compute_qlm(frame, nlist, l)?;
+            let qlm = steinhardt_qlm(frame, nlist, l)?;
             // Per-particle |qℓm| for cosine-similarity normalisation.
             let mut norms = vec![0.0_f64; n];
             for i in 0..n {
@@ -172,7 +172,7 @@ impl ComputeResult for ContinuousCoordinationResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
+    use crate::compute::fixtures::nlist_from_frame;
     use molrs::core::Block;
     use molrs::core::Frame;
     use molrs::core::SimBox;

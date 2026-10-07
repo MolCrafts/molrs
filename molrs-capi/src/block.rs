@@ -21,7 +21,7 @@
 //! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
 
 use molrs::core::{Column, DType};
-use molrs::op::types::{F, I, Idx};
+use molrs::op::{F, I, Idx};
 use ndarray::ArrayD;
 
 use crate::error::{self, MolrsDType, MolrsStatus, ffi_err_to_status};

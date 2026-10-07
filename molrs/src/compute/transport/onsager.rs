@@ -106,7 +106,7 @@ fn collective_cross_correlation(
     p_j: &ndarray::Array2<f64>,
     dt: f64,
     max_correlation_time: usize,
-) -> Result<OnsagerResult, ComputeError> {
+) -> Result<OnsagerCorrelationResult, ComputeError> {
     let n_i = validate_series(p_i, "onsager p_i (expected (n_frames, 3))")?;
     let n_j = validate_series(p_j, "onsager p_j (expected (n_frames, 3))")?;
     if n_i != n_j {
@@ -145,7 +145,7 @@ fn collective_cross_correlation(
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
 
-    Ok(OnsagerResult {
+    Ok(OnsagerCorrelationResult {
         lag_times,
         correlation,
     })
@@ -155,7 +155,7 @@ impl Compute for OnsagerCorrelation {
     /// `(p_i, p_j, dt, max_correlation_time)`. The `frames` slice is unused (the
     /// collective coordinates are pre-assembled by the caller).
     type Args<'a> = OnsagerCorrelationArgs<'a>;
-    type Output = OnsagerResult;
+    type Output = OnsagerCorrelationResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
@@ -169,7 +169,7 @@ impl Compute for OnsagerCorrelation {
 
 /// Result of an Onsager collective-displacement cross-correlation.
 #[derive(Debug, Clone)]
-pub struct OnsagerResult {
+pub struct OnsagerCorrelationResult {
     /// Lag times τ = i·dt, length `max_lag + 1` (same units as `dt`).
     pub lag_times: Array1<f64>,
     /// Cross-correlation `L_ij(τ) = ⟨ΔP_i(τ)·ΔP_j(τ)⟩_t`, averaged over time
@@ -177,7 +177,7 @@ pub struct OnsagerResult {
     pub correlation: Array1<f64>,
 }
 
-impl ComputeResult for OnsagerResult {}
+impl ComputeResult for OnsagerCorrelationResult {}
 
 #[cfg(test)]
 mod tests {

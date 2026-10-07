@@ -10,7 +10,7 @@
 
 use molrs::core::FrameAccess;
 use molrs::core::{NeighborList, Neighbors, NeighborsStorage};
-use molrs::op::types::F;
+use molrs::op::F;
 
 use super::positions::get_positions_ref;
 

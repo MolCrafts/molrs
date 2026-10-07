@@ -5,7 +5,7 @@
 use crate::error::py_value_err;
 use molrs::compute::{
     Check, ConductivitySumRule, DipoleAutocorrelationSpectrum, DipoleRateCrossSpectrum,
-    EinsteinHelfandSpectrum, Fit, GreenKuboSpectrum, IRSpectrum, KramersKronig, PowerSpectrum,
+    EinsteinHelfandSpectrum, Fit, GreenKuboSpectrum, IrSpectrum, KramersKronig, PowerSpectrum,
     RamanSpectrum, ResonanceRamanSpectrum, RoaSpectrum, RouteAgreement, VcdSpectrum,
 };
 use ndarray::Array1;
@@ -70,11 +70,11 @@ impl PyPowerSpectrum {
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**
 /// (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
 /// supplied ACF differs). Reproduces the legacy `ir_spectrum` bit-for-bit.
-#[pyclass(module = "molrs.compute", name = "IRSpectrum")]
-pub struct PyIRSpectrum;
+#[pyclass(module = "molrs.compute", name = "IrSpectrum")]
+pub struct PyIrSpectrum;
 
 #[pymethods]
-impl PyIRSpectrum {
+impl PyIrSpectrum {
     #[new]
     fn new() -> Self {
         Self
@@ -90,7 +90,7 @@ impl PyIRSpectrum {
         dt_fs: f64,
     ) -> PyResult<Bound<'py, PyDict>> {
         let a = acf.as_array().to_owned();
-        let r = IRSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
+        let r = IrSpectrum.fit((&a, dt_fs)).map_err(py_value_err)?;
         spectrum_dict(
             py,
             r.frequencies_cm1,
@@ -397,7 +397,7 @@ fn raman_dict<'py>(
 }
 
 /// Vibrational circular dichroism (VCD) transform of a **raw electric/magnetic
-/// dipole cross-flux ACF** (same window+FFT pipeline as `IRSpectrum`; the signed
+/// dipole cross-flux ACF** (same window+FFT pipeline as `IrSpectrum`; the signed
 /// cross-flux ACF differs).
 #[pyclass(module = "molrs.compute", name = "VcdSpectrum")]
 pub struct PyVcdSpectrum;
@@ -516,89 +516,129 @@ impl PyResonanceRamanSpectrum {
     }
 }
 
-#[pyfunction]
-pub(crate) fn kramers_kronig<'py>(
-    py: Python<'py>,
-    frequency: PyReadonlyArray1<'py, f64>,
-    eps_real: PyReadonlyArray1<'py, f64>,
-    eps_imag: PyReadonlyArray1<'py, f64>,
-    eps_inf: f64,
-) -> PyResult<Py<PyAny>> {
-    let out = KramersKronig { eps_inf }
-        .check((
-            &frequency.as_array().to_owned(),
-            &eps_real.as_array().to_owned(),
-            &eps_imag.as_array().to_owned(),
-        ))
-        .map_err(py_value_err)?;
-
-    let dict = PyDict::new(py);
-    dict.set_item("passed", out.passed)?;
-    dict.set_item("mae", out.mae)?;
-    dict.set_item("eps_real_recovered", out.recovered.into_pyarray(py))?;
-    Ok(dict.into())
+/// Kramers–Kronig consistency check of a dielectric spectrum: rebuilds
+/// ``eps_real`` from ``eps_imag`` and compares.
+#[pyclass(module = "molrs.compute", name = "KramersKronig", frozen)]
+pub struct PyKramersKronig {
+    inner: KramersKronig,
 }
 
-#[pyfunction]
-pub(crate) fn conductivity_sum_rule<'py>(
-    py: Python<'py>,
-    frequency: PyReadonlyArray1<'py, f64>,
-    conductivity: PyReadonlyArray1<'py, f64>,
-    current_sq_mean: f64,
-    volume: f64,
-    temperature: f64,
-) -> PyResult<Py<PyAny>> {
-    let out = ConductivitySumRule {
-        current_sq_mean,
-        volume,
-        temperature,
+#[pymethods]
+impl PyKramersKronig {
+    #[new]
+    fn new(eps_inf: f64) -> Self {
+        Self {
+            inner: KramersKronig { eps_inf },
+        }
     }
-    .check((
-        &frequency.as_array().to_owned(),
-        &conductivity.as_array().to_owned(),
-    ))
-    .map_err(py_value_err)?;
 
-    let dict = PyDict::new(py);
-    dict.set_item("passed", out.passed)?;
-    dict.set_item("relative_error", out.relative_error)?;
-    dict.set_item("integral", out.integral)?;
-    dict.set_item("expected", out.expected)?;
-    Ok(dict.into())
-}
-
-#[pyfunction]
-pub(crate) fn route_agreement<'py>(
-    py: Python<'py>,
-    results: &Bound<'py, PyDict>,
-) -> PyResult<Py<PyAny>> {
-    let mut entries = Vec::with_capacity(results.len());
-    for (key, value) in results.iter() {
-        let name: String = key.extract()?;
-        let arr: PyReadonlyArray1<f64> = value.extract().map_err(|_| {
-            PyValueError::new_err(format!(
-                "route_agreement: value for '{name}' must be a 1-D float64 array"
+    /// Returns ``{"passed", "mae", "eps_real_recovered"}``.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        frequency: PyReadonlyArray1<'py, f64>,
+        eps_real: PyReadonlyArray1<'py, f64>,
+        eps_imag: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Py<PyAny>> {
+        let out = self
+            .inner
+            .check((
+                &frequency.as_array().to_owned(),
+                &eps_real.as_array().to_owned(),
+                &eps_imag.as_array().to_owned(),
             ))
-        })?;
-        entries.push((name, arr.as_array().to_owned()));
+            .map_err(py_value_err)?;
+        let dict = PyDict::new(py);
+        dict.set_item("passed", out.passed)?;
+        dict.set_item("mae", out.mae)?;
+        dict.set_item("eps_real_recovered", out.recovered.into_pyarray(py))?;
+        Ok(dict.into())
+    }
+}
+
+/// Conductivity sum rule: the integral of Re σ(ω) against the equal-time
+/// current fluctuation.
+#[pyclass(module = "molrs.compute", name = "ConductivitySumRule", frozen)]
+pub struct PyConductivitySumRule {
+    inner: ConductivitySumRule,
+}
+
+#[pymethods]
+impl PyConductivitySumRule {
+    #[new]
+    fn new(current_sq_mean: f64, volume: f64, temperature: f64) -> Self {
+        Self {
+            inner: ConductivitySumRule {
+                current_sq_mean,
+                volume,
+                temperature,
+            },
+        }
     }
 
-    let out = RouteAgreement.check(&entries).map_err(py_value_err)?;
-
-    let pairwise = PyDict::new(py);
-    for (label, rms) in &out.pairwise {
-        pairwise.set_item(label, rms)?;
+    /// Returns ``{"passed", "relative_error", "integral", "expected"}``.
+    fn check<'py>(
+        &self,
+        py: Python<'py>,
+        frequency: PyReadonlyArray1<'py, f64>,
+        conductivity: PyReadonlyArray1<'py, f64>,
+    ) -> PyResult<Py<PyAny>> {
+        let out = self
+            .inner
+            .check((
+                &frequency.as_array().to_owned(),
+                &conductivity.as_array().to_owned(),
+            ))
+            .map_err(py_value_err)?;
+        let dict = PyDict::new(py);
+        dict.set_item("passed", out.passed)?;
+        dict.set_item("relative_error", out.relative_error)?;
+        dict.set_item("integral", out.integral)?;
+        dict.set_item("expected", out.expected)?;
+        Ok(dict.into())
     }
-    let dict = PyDict::new(py);
-    dict.set_item("passed", out.passed)?;
-    dict.set_item("pairwise_rms", pairwise)?;
-    Ok(dict.into())
+}
+
+/// Agreement of the same spectrum computed by several routes (pairwise RMS).
+#[pyclass(module = "molrs.compute", name = "RouteAgreement", frozen)]
+pub struct PyRouteAgreement;
+
+#[pymethods]
+impl PyRouteAgreement {
+    #[new]
+    fn new() -> Self {
+        Self
+    }
+
+    /// ``results`` maps a route name to its 1-D float64 curve. Returns
+    /// ``{"passed", "pairwise_rms"}``.
+    fn check<'py>(&self, py: Python<'py>, results: &Bound<'py, PyDict>) -> PyResult<Py<PyAny>> {
+        let mut entries = Vec::with_capacity(results.len());
+        for (key, value) in results.iter() {
+            let name: String = key.extract()?;
+            let arr: PyReadonlyArray1<f64> = value.extract().map_err(|_| {
+                PyValueError::new_err(format!(
+                    "RouteAgreement: value for '{name}' must be a 1-D float64 array"
+                ))
+            })?;
+            entries.push((name, arr.as_array().to_owned()));
+        }
+        let out = RouteAgreement.check(&entries).map_err(py_value_err)?;
+        let pairwise = PyDict::new(py);
+        for (label, rms) in &out.pairwise {
+            pairwise.set_item(label, rms)?;
+        }
+        let dict = PyDict::new(py);
+        dict.set_item("passed", out.passed)?;
+        dict.set_item("pairwise_rms", pairwise)?;
+        Ok(dict.into())
+    }
 }
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPowerSpectrum>()?;
-    m.add_class::<PyIRSpectrum>()?;
+    m.add_class::<PyIrSpectrum>()?;
     m.add_class::<PyRamanSpectrum>()?;
     m.add_class::<PyEinsteinHelfandSpectrum>()?;
     m.add_class::<PyGreenKuboSpectrum>()?;
@@ -607,12 +647,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVcdSpectrum>()?;
     m.add_class::<PyRoaSpectrum>()?;
     m.add_class::<PyResonanceRamanSpectrum>()?;
-    crate::add_function(m, "molrs.compute", wrap_pyfunction!(kramers_kronig, m)?)?;
-    crate::add_function(
-        m,
-        "molrs.compute",
-        wrap_pyfunction!(conductivity_sum_rule, m)?,
-    )?;
-    crate::add_function(m, "molrs.compute", wrap_pyfunction!(route_agreement, m)?)?;
+    m.add_class::<PyKramersKronig>()?;
+    m.add_class::<PyConductivitySumRule>()?;
+    m.add_class::<PyRouteAgreement>()?;
     Ok(())
 }

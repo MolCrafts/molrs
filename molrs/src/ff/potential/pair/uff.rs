@@ -15,7 +15,7 @@ use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// Where a pair's `(xᵢⱼ, Dᵢⱼ)` comes from.
 enum Source {

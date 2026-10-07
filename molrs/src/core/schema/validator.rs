@@ -232,7 +232,7 @@ mod tests {
     use super::*;
     use crate::core::Block;
     use crate::core::Frame;
-    use crate::op::types::{F, Idx};
+    use crate::op::{F, Idx};
     use ndarray::Array1;
 
     /// An `atoms` block of `n` rows carrying only `x`.

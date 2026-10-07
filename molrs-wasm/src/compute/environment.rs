@@ -6,7 +6,7 @@ use crate::core::frame::Frame;
 use crate::core::neighbors::Neighbors;
 use crate::core::types::JsFloatArray;
 use molrs::compute::Compute;
-use molrs::op::types::F;
+use molrs::op::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -169,21 +169,21 @@ impl AngularSeparation {
     }
 }
 
-#[wasm_bindgen(js_name = MatchEnv)]
-pub struct MatchEnv {
-    inner: molrs::compute::MatchEnv,
+#[wasm_bindgen(js_name = EnvironmentMatch)]
+pub struct EnvironmentMatch {
+    inner: molrs::compute::EnvironmentMatch,
 }
 
-#[wasm_bindgen(js_class = MatchEnv)]
-impl MatchEnv {
+#[wasm_bindgen(js_class = EnvironmentMatch)]
+impl EnvironmentMatch {
     #[wasm_bindgen(constructor)]
     pub fn new(
         rmsd_threshold: F,
         registration: Option<bool>,
         max_neighbors_for_registration: Option<usize>,
     ) -> Result<Self, JsValue> {
-        let mut inner = molrs::compute::MatchEnv::new(rmsd_threshold)
-            .map_err(|e| JsValue::from_str(&format!("MatchEnv: {e}")))?;
+        let mut inner = molrs::compute::EnvironmentMatch::new(rmsd_threshold)
+            .map_err(|e| JsValue::from_str(&format!("EnvironmentMatch: {e}")))?;
         inner = inner.with_registration(registration.unwrap_or(false));
         if let Some(n) = max_neighbors_for_registration {
             inner = inner.with_max_neighbors_for_registration(n);
@@ -204,10 +204,10 @@ impl MatchEnv {
             let mut out = self
                 .inner
                 .compute(&[rs_frame], nlists)
-                .map_err(|e| JsValue::from_str(&format!("MatchEnv compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("EnvironmentMatch compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("MatchEnv: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("EnvironmentMatch: empty result"))?;
             js_value(&Out {
                 cluster_idx: r.cluster_idx,
                 n_clusters: r.n_clusters,

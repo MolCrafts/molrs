@@ -12,7 +12,7 @@ use ndarray::ArrayD;
 use crate::ff::forcefield::Params;
 use crate::ff::ir::IrError;
 use molrs::core::Block;
-use molrs::op::types::F;
+use molrs::op::F;
 
 /// `style` lacks `param`: in the type row `type_`, or (`type_` empty) among
 /// its style params or its per-instance columns.
@@ -134,7 +134,7 @@ mod tests {
     use crate::ff::forcefield::Params;
     use crate::ff::ir::IrError;
     use crate::ff::potential::{CompileError, Instances, Potentials};
-    use molrs::op::types::F;
+    use molrs::op::F;
 
     const XYZ: [F; 12] = [
         1.2, -0.4, 0.3, 0.0, 0.0, 0.0, -0.2, 1.5, 0.1, 0.9, 2.1, -0.8,

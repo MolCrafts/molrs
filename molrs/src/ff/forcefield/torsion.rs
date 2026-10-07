@@ -2267,7 +2267,7 @@ mod tests {
         use crate::ff::potential::geometry::compute_dihedral;
         use molrs::core::Block;
         use molrs::core::Frame;
-        use molrs::op::types::Idx;
+        use molrs::op::Idx;
         use ndarray::Array1;
 
         let mut rng = StdRng::seed_from_u64(SEED + 5);
