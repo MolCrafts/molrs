@@ -358,12 +358,13 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
     Ok(frame)
 }
 
-/// Public single-frame helper for callers that just want the first molecule.
+/// Read the first molecule of the `.mol2` file at `path`, checked as
+/// [`Mol2Reader`] checks every frame it reads.
 pub fn read_mol2<P: AsRef<Path>>(path: P) -> Result<Frame> {
     let file = std::fs::File::open(path.as_ref())?;
     let mut reader = std::io::BufReader::new(file);
     let mut pending = None;
-    read_one_record(&mut reader, &mut pending)?
+    crate::io::reader::check_read_frame(read_one_record(&mut reader, &mut pending)?)?
         .ok_or_else(|| invalid_data("MOL2 file has no MOLECULE block"))
 }
 
@@ -379,7 +380,7 @@ pub fn read_mol2_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
 pub fn read_mol2_str(text: &str) -> Result<Frame> {
     let mut reader = text.as_bytes();
     let mut pending = None;
-    read_one_record(&mut reader, &mut pending)?
+    crate::io::reader::check_read_frame(read_one_record(&mut reader, &mut pending)?)?
         .ok_or_else(|| invalid_data("MOL2 text has no MOLECULE block"))
 }
 

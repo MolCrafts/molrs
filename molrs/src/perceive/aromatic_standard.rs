@@ -100,7 +100,7 @@ fn parse(smiles: &str) -> Atomistic {
 /// Parse and standardize.
 ///
 /// §9 makes perception responsible for the whole answer — aromatic atoms,
-/// aromatic bond type, *and* a legal localized integer — so `find_aromaticity`
+/// aromatic bond type, *and* a legal localized integer — so `assign_aromaticity`
 /// is the one entry point the standard's acceptance runs through.
 ///
 /// Hydrogens are **not** added: perception reads implicit hydrogens off each

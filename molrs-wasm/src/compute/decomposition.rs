@@ -75,7 +75,7 @@ impl Pca {
 }
 
 /// Row adapter so the stateless `Pca` can consume caller matrices without
-/// requiring a downstream molrs-compute type.
+/// requiring a downstream `molrs::compute` type.
 #[derive(Clone)]
 struct PcaRow(Vec<F>);
 

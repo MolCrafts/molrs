@@ -64,7 +64,7 @@ mod tests {
         Vec::new()
     }
 
-    /// Rebuild the raw dipole-flux ACF the IRFlux compute / IRSpectrum consume.
+    /// Rebuild the raw dipole-flux ACF the IrFlux compute / IrSpectrum consume.
     fn ir_acf(dm: &Array2<f64>, dt_fs: f64, max_lag: usize) -> Array1<f64> {
         let n_frames = dm.shape()[0];
         let inv_2dt = 0.5 / dt_fs;
@@ -84,8 +84,8 @@ mod tests {
 
     #[test]
     fn irflux_plus_ir_transform_matches_manual_acf_path() {
-        // ac-003/ac-007 (IR): IRFlux returns the unwindowed dipole-flux ACF the
-        // IRSpectrum transform consumes; IRFlux + IRSpectrum == manual path.
+        // ac-003/ac-007 (IR): IrFlux returns the unwindowed dipole-flux ACF the
+        // IrSpectrum transform consumes; IrFlux + IrSpectrum == manual path.
         let n = 1024;
         let dt = 0.5;
         let res = 200;
@@ -104,7 +104,7 @@ mod tests {
         let acf = ir_acf(&dm, dt, max_lag);
 
         let raw = IrFlux.compute(&no_frames(), (&dm, dt, res)).unwrap();
-        assert_eq!(raw.acf, acf); // IRFlux returns the raw unwindowed ACF.
+        assert_eq!(raw.acf, acf); // IrFlux returns the raw unwindowed ACF.
 
         let from_raw = IrSpectrum.fit((&raw.acf, dt)).unwrap();
         let from_manual = IrSpectrum.fit((&acf, dt)).unwrap();

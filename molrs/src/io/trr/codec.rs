@@ -98,29 +98,29 @@ fn detect_double(
 /// Read one TRR frame header. Leaves the reader positioned at the first data
 /// block. Propagates `UnexpectedEof` so the index scanner can stop cleanly.
 fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
-    let magic = xdr::read_i32(r)?;
+    let magic = xdr::decode_i32(r)?;
     if magic != TRR_MAGIC {
         return Err(invalid_data(format!(
             "bad TRR magic {magic} (expected {TRR_MAGIC})"
         )));
     }
     // Version: a strlen+1 allocation hint, then the XDR string itself.
-    let _ver_len = xdr::read_i32(r)?;
-    let _version = xdr::read_string(r)?;
+    let _ver_len = xdr::decode_i32(r)?;
+    let _version = xdr::decode_string(r)?;
 
-    let ir_size = xdr::read_i32(r)?;
-    let e_size = xdr::read_i32(r)?;
-    let box_size = xdr::read_i32(r)?;
-    let vir_size = xdr::read_i32(r)?;
-    let pres_size = xdr::read_i32(r)?;
-    let top_size = xdr::read_i32(r)?;
-    let sym_size = xdr::read_i32(r)?;
-    let x_size = xdr::read_i32(r)?;
-    let v_size = xdr::read_i32(r)?;
-    let f_size = xdr::read_i32(r)?;
-    let natoms = xdr::read_i32(r)?;
-    let step = xdr::read_i32(r)?;
-    let _nre = xdr::read_i32(r)?;
+    let ir_size = xdr::decode_i32(r)?;
+    let e_size = xdr::decode_i32(r)?;
+    let box_size = xdr::decode_i32(r)?;
+    let vir_size = xdr::decode_i32(r)?;
+    let pres_size = xdr::decode_i32(r)?;
+    let top_size = xdr::decode_i32(r)?;
+    let sym_size = xdr::decode_i32(r)?;
+    let x_size = xdr::decode_i32(r)?;
+    let v_size = xdr::decode_i32(r)?;
+    let f_size = xdr::decode_i32(r)?;
+    let natoms = xdr::decode_i32(r)?;
+    let step = xdr::decode_i32(r)?;
+    let _nre = xdr::decode_i32(r)?;
 
     if ir_size != 0 || e_size != 0 || top_size != 0 || sym_size != 0 {
         return Err(unsupported(
@@ -145,8 +145,8 @@ fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
     }
 
     let is_double = detect_double(box_size, x_size, v_size, f_size, natoms)?;
-    let t = xdr::read_real(r, is_double)?;
-    let lambda = xdr::read_real(r, is_double)?;
+    let t = xdr::decode_real(r, is_double)?;
+    let lambda = xdr::decode_real(r, is_double)?;
 
     Ok(TrrHeader {
         is_double,
@@ -171,7 +171,7 @@ fn read_header<R: Read>(r: &mut R) -> Result<TrrHeader> {
 fn read_reals<R: Read>(r: &mut R, count: usize, is_double: bool) -> Result<Vec<f64>> {
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
-        out.push(xdr::read_real(r, is_double)?);
+        out.push(xdr::decode_real(r, is_double)?);
     }
     Ok(out)
 }
@@ -497,9 +497,9 @@ fn axis<FA: FrameAccess>(frame: &FA, key: &str) -> Option<Vec<f64>> {
 
 fn write_rvecs<W: Write>(w: &mut W, x: &[f64], y: &[f64], z: &[f64], scale: F) -> Result<()> {
     for i in 0..x.len() {
-        xdr::write_f32(w, (x[i] * scale) as f32)?;
-        xdr::write_f32(w, (y[i] * scale) as f32)?;
-        xdr::write_f32(w, (z[i] * scale) as f32)?;
+        xdr::encode_f32(w, (x[i] * scale) as f32)?;
+        xdr::encode_f32(w, (y[i] * scale) as f32)?;
+        xdr::encode_f32(w, (z[i] * scale) as f32)?;
     }
     Ok(())
 }
@@ -555,12 +555,12 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
     const RSIZE: usize = 4; // single precision
     let rvec_bytes = (natoms * DIM * RSIZE) as i32;
 
-    xdr::write_i32(w, TRR_MAGIC)?;
-    xdr::write_i32(w, (TRR_VERSION.len() + 1) as i32)?;
-    xdr::write_string(w, TRR_VERSION)?;
-    xdr::write_i32(w, 0)?; // ir_size
-    xdr::write_i32(w, 0)?; // e_size
-    xdr::write_i32(
+    xdr::encode_i32(w, TRR_MAGIC)?;
+    xdr::encode_i32(w, (TRR_VERSION.len() + 1) as i32)?;
+    xdr::encode_string(w, TRR_VERSION)?;
+    xdr::encode_i32(w, 0)?; // ir_size
+    xdr::encode_i32(w, 0)?; // e_size
+    xdr::encode_i32(
         w,
         if has_box {
             (DIM * DIM * RSIZE) as i32
@@ -568,18 +568,18 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
             0
         },
     )?;
-    xdr::write_i32(w, 0)?; // vir_size
-    xdr::write_i32(w, 0)?; // pres_size
-    xdr::write_i32(w, 0)?; // top_size
-    xdr::write_i32(w, 0)?; // sym_size
-    xdr::write_i32(w, rvec_bytes)?; // x_size
-    xdr::write_i32(w, if vel.is_some() { rvec_bytes } else { 0 })?;
-    xdr::write_i32(w, if force.is_some() { rvec_bytes } else { 0 })?;
-    xdr::write_i32(w, natoms as i32)?;
-    xdr::write_i32(w, step)?;
-    xdr::write_i32(w, 0)?; // nre
-    xdr::write_f32(w, time)?;
-    xdr::write_f32(w, lambda)?;
+    xdr::encode_i32(w, 0)?; // vir_size
+    xdr::encode_i32(w, 0)?; // pres_size
+    xdr::encode_i32(w, 0)?; // top_size
+    xdr::encode_i32(w, 0)?; // sym_size
+    xdr::encode_i32(w, rvec_bytes)?; // x_size
+    xdr::encode_i32(w, if vel.is_some() { rvec_bytes } else { 0 })?;
+    xdr::encode_i32(w, if force.is_some() { rvec_bytes } else { 0 })?;
+    xdr::encode_i32(w, natoms as i32)?;
+    xdr::encode_i32(w, step)?;
+    xdr::encode_i32(w, 0)?; // nre
+    xdr::encode_f32(w, time)?;
+    xdr::encode_f32(w, lambda)?;
 
     if has_box {
         let sb = frame.simbox_ref().expect("box present");
@@ -587,7 +587,7 @@ fn write_trr_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         // GROMACS row-stored: box[i][j] = component j of lattice vector i = H[j][i].
         for i in 0..DIM {
             for j in 0..DIM {
-                xdr::write_f32(w, h[(j, i)] as f32)?;
+                xdr::encode_f32(w, h[(j, i)] as f32)?;
             }
         }
     }

@@ -191,7 +191,7 @@ impl<'a> ColumnView<'a> {
         }
     }
 
-    /// Returns a view of the `u16` data, or `None` if not `UInt16`.
+    /// Returns a view of the `u16` data, or `None` if not `U16`.
     pub fn as_u16(&self) -> Option<ArrayViewD<'a, u16>> {
         match self {
             ColumnView::U16(a) => Some(a.clone()),
@@ -199,7 +199,7 @@ impl<'a> ColumnView<'a> {
         }
     }
 
-    /// Returns a view of the `u32` data, or `None` if not `UInt32`.
+    /// Returns a view of the `u32` data, or `None` if not `U32`.
     pub fn as_u32(&self) -> Option<ArrayViewD<'a, u32>> {
         match self {
             ColumnView::U32(a) => Some(a.clone()),

@@ -3,7 +3,7 @@
 Each test exercises the Python wrapper end-to-end: construct, build a
 NeighborList where required, call compute, and sanity-check the shape
 and a known value. Numerical correctness is covered by the Rust unit
-tests in molrs-compute — these are wiring-level checks.
+tests in `molrs::compute` — these are wiring-level checks.
 """
 
 import molrs

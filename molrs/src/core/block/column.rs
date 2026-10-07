@@ -683,7 +683,7 @@ impl Column {
         }
     }
 
-    /// Returns a reference to the `u16` data, or `None` if not `UInt16`.
+    /// Returns a reference to the `u16` data, or `None` if not `U16`.
     pub fn as_u16(&self) -> Option<&ArrayD<u16>> {
         match self {
             Column::U16(a) => Some(a.array()),
@@ -691,7 +691,7 @@ impl Column {
         }
     }
 
-    /// Returns a mutable reference to the `u16` data, or `None` if not `UInt16`.
+    /// Returns a mutable reference to the `u16` data, or `None` if not `U16`.
     pub fn as_u16_mut(&mut self) -> Option<&mut ArrayD<u16>> {
         match self {
             Column::U16(a) => Some(realize_owned_mut(a)),
@@ -699,7 +699,7 @@ impl Column {
         }
     }
 
-    /// Returns a reference to the `u32` data, or `None` if not `UInt32`.
+    /// Returns a reference to the `u32` data, or `None` if not `U32`.
     pub fn as_u32(&self) -> Option<&ArrayD<u32>> {
         match self {
             Column::U32(a) => Some(a.array()),
@@ -707,7 +707,7 @@ impl Column {
         }
     }
 
-    /// Returns a mutable reference to the `u32` data, or `None` if not `UInt32`.
+    /// Returns a mutable reference to the `u32` data, or `None` if not `U32`.
     pub fn as_u32_mut(&mut self) -> Option<&mut ArrayD<u32>> {
         match self {
             Column::U32(a) => Some(realize_owned_mut(a)),

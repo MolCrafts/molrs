@@ -978,7 +978,7 @@ impl<R: BufRead + Seek> TrajectoryReader for DcdReader<R> {
 // Writer
 // ============================================================================
 
-const WRITER_TITLE_DEFAULT: &str = "Created by molcrafts-molrs-io";
+const WRITER_TITLE_DEFAULT: &str = "Created by molcrafts-molrs";
 
 struct WriterMeta {
     natoms: u32,
@@ -1003,7 +1003,7 @@ pub struct DcdWriter<W: Write + Seek> {
 
 impl<W: Write + Seek> DcdWriter<W> {
     /// Create a new DCD writer. The header is emitted on the first
-    /// `write_frame` call so it can match the frame's atom count and box
+    /// [`FrameWriter::write`](crate::io::writer::FrameWriter::write) call so it can match the frame's atom count and box
     /// presence.
     pub fn new(writer: W) -> Self {
         Self {

@@ -588,7 +588,7 @@ TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
     const char* ar[] = {"Ar"};
     ASSERT_MOLRS_OK(molrs_forcefield_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
 
-    // serialize: the core forcefield section (ForceField::to_section) as JSON
+    // serialize: the core forcefield section (ForceFieldSection::from_forcefield) as JSON
     char* json = nullptr;
     size_t json_len = 0;
     ASSERT_MOLRS_OK(molrs_forcefield_to_json(ff, &json, &json_len));

@@ -169,7 +169,7 @@ fn rmsd_no_rotation(a: &[F], b: &[F]) -> F {
 /// Optimal-rotation RMSD between two bond-vector sets `a[i] ↔ b[i]`,
 /// `√(min_R Σ |R aᵢ − bᵢ|² / n)` over proper rotations `R` only (no
 /// translation: the vectors are relative to the centre particle, as in freud's
-/// MatchEnv registration). Assumes `a.len() == b.len()`.
+/// `MatchEnv` registration). Assumes `a.len() == b.len()`.
 ///
 /// [`superpose`] centres both sets, which would add a translation degree of
 /// freedom. It is fed the point-reflection-symmetric sets `{aᵢ} ∪ {−aᵢ}` and

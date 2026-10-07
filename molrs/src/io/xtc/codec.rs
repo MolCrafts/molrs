@@ -640,9 +640,9 @@ struct XtcHeader {
 /// `i32`).
 fn read_nbytes<R: Read>(r: &mut R, wide: bool) -> Result<usize> {
     let nbytes = if wide {
-        xdr::read_i64(r)?
+        xdr::decode_i64(r)?
     } else {
-        xdr::read_i32(r)? as i64
+        xdr::decode_i32(r)? as i64
     };
     if nbytes < 0 {
         return Err(invalid_data(format!("negative XTC nbytes {nbytes}")));
@@ -651,21 +651,21 @@ fn read_nbytes<R: Read>(r: &mut R, wide: bool) -> Result<usize> {
 }
 
 fn read_header<R: Read>(r: &mut R) -> Result<XtcHeader> {
-    let magic = xdr::read_i32(r)?;
+    let magic = xdr::decode_i32(r)?;
     if magic != XTC_MAGIC && magic != XTC_MAGIC_2023 {
         return Err(invalid_data(format!(
             "bad XTC magic {magic} (expected {XTC_MAGIC} or {XTC_MAGIC_2023})"
         )));
     }
-    let natoms = xdr::read_i32(r)?;
+    let natoms = xdr::decode_i32(r)?;
     if natoms <= 0 {
         return Err(invalid_data(format!("invalid_data XTC natoms {natoms}")));
     }
-    let step = xdr::read_i32(r)?;
-    let time = xdr::read_f32(r)?;
+    let step = xdr::decode_i32(r)?;
+    let time = xdr::decode_f32(r)?;
     let mut boxv = [0f32; 9];
     for b in boxv.iter_mut() {
-        *b = xdr::read_f32(r)?;
+        *b = xdr::decode_f32(r)?;
     }
     Ok(XtcHeader {
         natoms: natoms as usize,
@@ -678,7 +678,7 @@ fn read_header<R: Read>(r: &mut R) -> Result<XtcHeader> {
 
 /// Read and decompress the coordinate block. Returns `(coords, precision)`.
 fn read_coords<R: Read>(r: &mut R, natoms: usize, wide_nbytes: bool) -> Result<(Vec<f64>, f32)> {
-    let size = xdr::read_i32(r)?;
+    let size = xdr::decode_i32(r)?;
     if size as usize != natoms {
         return Err(invalid_data(format!(
             "XTC coord size {size} disagrees with header natoms {natoms}"
@@ -687,22 +687,22 @@ fn read_coords<R: Read>(r: &mut R, natoms: usize, wide_nbytes: bool) -> Result<(
     if natoms <= 9 {
         let mut out = Vec::with_capacity(natoms * DIM);
         for _ in 0..natoms * DIM {
-            out.push(xdr::read_f32(r)? as f64);
+            out.push(xdr::decode_f32(r)? as f64);
         }
         return Ok((out, 0.0));
     }
-    let precision = xdr::read_f32(r)?;
+    let precision = xdr::decode_f32(r)?;
     let mut minint = [0i32; 3];
     for m in minint.iter_mut() {
-        *m = xdr::read_i32(r)?;
+        *m = xdr::decode_i32(r)?;
     }
     let mut maxint = [0i32; 3];
     for m in maxint.iter_mut() {
-        *m = xdr::read_i32(r)?;
+        *m = xdr::decode_i32(r)?;
     }
-    let smallidx = xdr::read_i32(r)?;
+    let smallidx = xdr::decode_i32(r)?;
     let nbytes = read_nbytes(r, wide_nbytes)?;
-    let buf = xdr::read_opaque(r, nbytes)?;
+    let buf = xdr::decode_opaque(r, nbytes)?;
     let coords = decompress_coords(&buf, natoms, precision, minint, maxint, smallidx)?;
     Ok((coords, precision))
 }
@@ -798,7 +798,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
                 )));
             }
         };
-        let size = xdr::read_i32(r)?;
+        let size = xdr::decode_i32(r)?;
         if size as usize != hdr.natoms {
             return Err(invalid_data("XTC coord size mismatch during scan"));
         }
@@ -990,30 +990,30 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         .map(|p| p as f32)
         .unwrap_or(DEFAULT_PRECISION);
 
-    xdr::write_i32(w, XTC_MAGIC)?;
-    xdr::write_i32(w, natoms as i32)?;
-    xdr::write_i32(w, step)?;
-    xdr::write_f32(w, time)?;
+    xdr::encode_i32(w, XTC_MAGIC)?;
+    xdr::encode_i32(w, natoms as i32)?;
+    xdr::encode_i32(w, step)?;
+    xdr::encode_f32(w, time)?;
     if let Some(sb) = frame.simbox_ref() {
         // Å → nm on the way out, mirroring the reader.
         let h = sb.h_view().to_owned() / NM_TO_ANGSTROM.get();
         for i in 0..DIM {
             for j in 0..DIM {
-                xdr::write_f32(w, h[(j, i)] as f32)?;
+                xdr::encode_f32(w, h[(j, i)] as f32)?;
             }
         }
     } else {
         for _ in 0..9 {
-            xdr::write_f32(w, 0.0)?;
+            xdr::encode_f32(w, 0.0)?;
         }
     }
 
-    xdr::write_i32(w, natoms as i32)?;
+    xdr::encode_i32(w, natoms as i32)?;
     if natoms <= 9 {
         for a in 0..natoms {
-            xdr::write_f32(w, (xs[a] / NM_TO_ANGSTROM.get()) as f32)?;
-            xdr::write_f32(w, (ys[a] / NM_TO_ANGSTROM.get()) as f32)?;
-            xdr::write_f32(w, (zs[a] / NM_TO_ANGSTROM.get()) as f32)?;
+            xdr::encode_f32(w, (xs[a] / NM_TO_ANGSTROM.get()) as f32)?;
+            xdr::encode_f32(w, (ys[a] / NM_TO_ANGSTROM.get()) as f32)?;
+            xdr::encode_f32(w, (zs[a] / NM_TO_ANGSTROM.get()) as f32)?;
         }
         return Ok(());
     }
@@ -1025,16 +1025,16 @@ fn write_xtc_frame<W: Write, FA: FrameAccess>(w: &mut W, frame: &FA) -> Result<(
         coords.push(zs[a] / NM_TO_ANGSTROM.get());
     }
     let (minint, maxint, smallidx, buf) = compress_coords(&coords, natoms, precision)?;
-    xdr::write_f32(w, precision)?;
+    xdr::encode_f32(w, precision)?;
     for v in minint {
-        xdr::write_i32(w, v)?;
+        xdr::encode_i32(w, v)?;
     }
     for v in maxint {
-        xdr::write_i32(w, v)?;
+        xdr::encode_i32(w, v)?;
     }
-    xdr::write_i32(w, smallidx)?;
-    xdr::write_i32(w, buf.len() as i32)?;
-    xdr::write_opaque(w, &buf)?;
+    xdr::encode_i32(w, smallidx)?;
+    xdr::encode_i32(w, buf.len() as i32)?;
+    xdr::encode_opaque(w, &buf)?;
     Ok(())
 }
 

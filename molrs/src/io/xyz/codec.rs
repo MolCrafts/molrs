@@ -1768,7 +1768,7 @@ mod tests {
         for entry in &one_shot {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            read_xyz_bytes(&bytes[lo..hi]).expect("parse_frame_bytes");
+            read_xyz_bytes(&bytes[lo..hi]).expect("read_xyz_bytes");
         }
     }
 

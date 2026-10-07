@@ -234,7 +234,7 @@ impl Compute for PmftXyt {
     }
 }
 
-/// Per-frame PMFTXYT result.
+/// Per-frame PmftXyt result.
 #[derive(Debug, Clone, Default)]
 pub struct PmftXytResult {
     pub density: Array3<F>,

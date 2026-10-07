@@ -394,7 +394,7 @@ impl SmilesErrorKind {
                 format!("bond order {k:?} cannot annotate a bonding descriptor")
             }
             SmilesErrorKind::MultipleComponents(n) => format!(
-                "read_smiles reads one molecule and this string names {n} \
+                "read_smiles_str reads one molecule and this string names {n} \
                  '.'-separated components; take them apart with \
                  SmilesIr(s).components()"
             ),

@@ -950,7 +950,7 @@ mod tests {
     fn fragment_to_mol(input: &str) -> (Atomistic, Vec<(NodeId, BondingDescriptor)>) {
         let ir = SmilesIr::from_fragment(input).unwrap();
         ir.to_atomistic_with_descriptors()
-            .unwrap_or_else(|e| panic!("fragment_to_atomistic({input:?}) failed: {e}"))
+            .unwrap_or_else(|e| panic!("to_atomistic_with_descriptors({input:?}) failed: {e}"))
     }
 
     /// Atom ids in the order the walker created them.

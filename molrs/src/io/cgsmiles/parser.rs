@@ -212,7 +212,7 @@ impl<'a> CgParser<'a> {
         }
         let levels = Self::build_levels(base, &fragments, input)?;
         // One empty pair list per level: this parser reads syntax, and
-        // pairing descriptors is `resolve`'s step, run by `parse_cgsmiles`
+        // pairing descriptors is `resolve`'s step, run by `CgSmilesIr::parse`
         // once the levels exist.
         let pairs = vec![Vec::new(); levels.len()];
         let ir = CgSmilesIr {

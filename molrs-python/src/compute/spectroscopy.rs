@@ -65,7 +65,7 @@ impl PyPowerSpectrum {
     }
 }
 
-// ── IRSpectrum ───────────────────────────────────────────────────────────────
+// ── IrSpectrum ───────────────────────────────────────────────────────────────
 
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**
 /// (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the

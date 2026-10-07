@@ -208,7 +208,7 @@ pub fn write_gro_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 ///
 /// Examples
 /// --------
-/// >>> frame = molrs.io.read_chgcar("CHGCAR")
+/// >>> frame = molrs.io.read_vasp_chgcar("CHGCAR")
 /// >>> grid = frame["chgcar"]
 /// >>> total = grid["total"]          # shape (nx, ny, nz)
 /// >>> density = total / frame.box.volume()

@@ -270,7 +270,7 @@ impl Compute for PmftXy {
     }
 }
 
-/// Per-frame PMFTXY result.
+/// Per-frame PmftXy result.
 #[derive(Debug, Clone, Default)]
 pub struct PmftXyResult {
     /// Number-density histogram, `(n_x, n_y)`, normalised to the bin area

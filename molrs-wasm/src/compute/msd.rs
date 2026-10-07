@@ -22,7 +22,7 @@ use wasm_bindgen::prelude::*;
 /// for (const frame of trajectory) {
 ///   msd.feed(frame);         // first frame = reference
 /// }
-/// const results = msd.results();  // MSDResult[] per frame
+/// const results = msd.results();  // MsdResult[] per frame
 /// console.log(results[10].mean);  // MSD at frame 10 in A^2
 /// ```
 ///

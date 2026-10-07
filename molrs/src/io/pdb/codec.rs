@@ -708,8 +708,8 @@ fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::
 
 /// Write `ATOM` records (PDB v3.3 column layout) plus `CONECT` records derived
 /// from the `bonds` block. Emits neither `CRYST1` nor a frame terminator
-/// (`END`/`ENDMDL`) — callers wrap as needed (see [`write_pdb_frame`] and
-/// [`write_pdb_traj`]).
+/// (`END`/`ENDMDL`) — callers wrap as needed (see [`write_pdb`](crate::io::write_pdb) and
+/// [`PdbWriter`]).
 fn write_atom_conect_records<W: Write>(
     writer: &mut W,
     frame: &impl FrameAccess,

@@ -445,7 +445,8 @@ impl NodeClass {
 
 /// The class of a relation view.
 pub(crate) enum RelationClass {
-    Generic,
+    /// A kind with no dedicated view class: a plain `RelationRef`.
+    RelationRef,
     Bond,
     Angle,
     Dihedral,
@@ -463,7 +464,7 @@ impl RelationClass {
             (Leaf::Atomistic(_), "impropers") => Self::Improper,
             (Leaf::Atomistic(_), "ports") => Self::Port,
             (Leaf::CoarseGrain(_), "bonds") => Self::CgBond,
-            _ => Self::Generic,
+            _ => Self::RelationRef,
         }
     }
 
@@ -485,7 +486,7 @@ impl RelationClass {
 
     fn type_object<'py>(&self, py: Python<'py>) -> Bound<'py, PyType> {
         match self {
-            Self::Generic => py.get_type::<PyRelationRef>(),
+            Self::RelationRef => py.get_type::<PyRelationRef>(),
             Self::Bond => py.get_type::<PyBond>(),
             Self::Angle => py.get_type::<PyAngle>(),
             Self::Dihedral => py.get_type::<PyDihedral>(),
@@ -498,7 +499,7 @@ impl RelationClass {
     fn instantiate(self, py: Python<'_>, base: PyRelationRef) -> PyResult<Py<PyAny>> {
         let init = PyClassInitializer::from(base);
         Ok(match self {
-            Self::Generic => Py::new(py, init)?.into_any(),
+            Self::RelationRef => Py::new(py, init)?.into_any(),
             Self::Bond => Py::new(py, init.add_subclass(PyBond {}))?.into_any(),
             Self::Angle => Py::new(py, init.add_subclass(PyAngle {}))?.into_any(),
             Self::Dihedral => Py::new(py, init.add_subclass(PyDihedral {}))?.into_any(),

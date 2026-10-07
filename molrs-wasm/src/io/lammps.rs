@@ -73,7 +73,7 @@ mod tests {
     use crate::io::test_fixtures::float_col;
     use wasm_bindgen_test::*;
 
-    /// Two-frame LAMMPS dump (matches the smallest fixture in molrs-io tests).
+    /// Two-frame LAMMPS dump (matches the smallest fixture in `molrs::io` tests).
     const LAMMPS_DUMP: &str = "ITEM: TIMESTEP\n0\n\
 ITEM: NUMBER OF ATOMS\n2\n\
 ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n\

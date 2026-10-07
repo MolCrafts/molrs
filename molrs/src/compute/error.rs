@@ -40,7 +40,7 @@ pub enum ComputeError {
     /// `frames` slice is empty but the compute needs at least one frame.
     EmptyInput,
 
-    /// Forwarded from molrs-core.
+    /// Forwarded from `molrs::core`.
     MolRs(MolRsError),
 }
 

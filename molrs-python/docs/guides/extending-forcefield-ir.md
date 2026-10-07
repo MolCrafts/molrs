@@ -298,7 +298,7 @@ from a record has no `ParamDimension`s until it is registered again.
 - **GROMACS, AMBER prmtop and frcmod** hold the built-in styles only.
 
 Every engine refusal is `IrError::NoEngineForm { engine, category, style,
-reason }`; a writer returns it typed (`WriteError::ir()` in Rust, the
+reason }`; a writer returns it typed (`ForceFieldWriteError::ir()` in Rust, the
 `molrs.ff.ir.NoEngineFormError` class in Python). See
 [Engine codecs](forcefield-ir.md#engine-codecs).
 

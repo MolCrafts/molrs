@@ -210,7 +210,7 @@ fn notation_name(notation: molrs::io::smiles::Notation) -> &'static str {
     }
 }
 
-/// Convert any `Display` error (typically a `molrs-compute` / `molrs-signal`
+/// Convert any `Display` error (typically a `molrs::compute` / `molrs::signal`
 /// analysis error) to a Python `ValueError`. Shared by the analysis bindings.
 pub fn py_value_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyValueError::new_err(e.to_string())

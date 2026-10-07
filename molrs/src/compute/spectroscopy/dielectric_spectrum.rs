@@ -700,12 +700,12 @@ impl Check for KramersKronig {
         let (omega, eps_real, eps_imag) = input;
         let eps_inf = self.eps_inf;
         require_same_len(
-            "kramers_kronig eps_real vs frequency",
+            "KramersKronig eps_real vs frequency",
             omega.len(),
             eps_real.len(),
         )?;
         require_same_len(
-            "kramers_kronig eps_imag vs frequency",
+            "KramersKronig eps_imag vs frequency",
             omega.len(),
             eps_imag.len(),
         )?;
@@ -713,7 +713,7 @@ impl Check for KramersKronig {
             return Err(ComputeError::DimensionMismatch {
                 expected: 3,
                 got: omega.len(),
-                what: "kramers_kronig needs at least 3 frequency points",
+                what: "KramersKronig needs at least 3 frequency points",
             });
         }
 
@@ -848,7 +848,7 @@ impl Check for RouteAgreement {
         }
         let expected_len = entries[0].1.len();
         for (_name, arr) in entries {
-            require_same_len("route_agreement array lengths", expected_len, arr.len())?;
+            require_same_len("RouteAgreement array lengths", expected_len, arr.len())?;
         }
 
         let mut pairwise = Vec::new();

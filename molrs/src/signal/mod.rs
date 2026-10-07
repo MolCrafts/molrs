@@ -16,7 +16,7 @@
 //! returned ω accordingly (`rad / [time]` where `[time]` matches dt).
 //!
 //! Higher-level dielectric / MSD / VACF analyses live in
-//! `molrs-compute` and compose these primitives.
+//! `molrs::compute` and compose these primitives.
 
 mod acf;
 mod fft;

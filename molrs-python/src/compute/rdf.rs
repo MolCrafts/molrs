@@ -103,7 +103,7 @@ impl PyRdf {
     ///
     /// Returns
     /// -------
-    /// RDFResult
+    /// RdfResult
     fn compute(
         &self,
         frames: &Bound<'_, PyAny>,

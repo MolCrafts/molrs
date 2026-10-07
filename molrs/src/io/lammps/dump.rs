@@ -878,7 +878,7 @@ impl<R: BufRead + Seek> TrajectoryReader for LammpsDumpReader<R> {
 
 /// LAMMPS dump trajectory writer.
 ///
-/// Writes frames in LAMMPS dump format. Call `write_frame` for each timestep.
+/// Writes frames in LAMMPS dump format. Call [`FrameWriter::write`](crate::io::writer::FrameWriter::write) for each timestep.
 ///
 /// # Examples
 ///
@@ -2158,7 +2158,7 @@ ITEM: ATOMS id type x y z
         for entry in &entries {
             let lo = entry.byte_offset as usize;
             let hi = lo + entry.byte_len as usize;
-            let frame = read_lammps_dump_bytes(&bytes[lo..hi]).expect("parse_frame_bytes");
+            let frame = read_lammps_dump_bytes(&bytes[lo..hi]).expect("read_lammps_dump_bytes");
             assert!(frame.get("atoms").is_some());
         }
     }

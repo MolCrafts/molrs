@@ -787,7 +787,7 @@ impl Atomistic {
     }
 
     // Aromaticity perception belongs to `crate::perceive::assign_aromaticity`
-    // (`find_aromaticity`). No algorithm method here.
+    // (`assign_aromaticity`). No algorithm method here.
 }
 
 /// Canonical (orientation-independent) key for an angle/dihedral endpoint

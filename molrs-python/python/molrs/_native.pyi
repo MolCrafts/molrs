@@ -30,7 +30,7 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 
-# Type aliases — `F = f64` is invariant in molrs-core; Python side must match.
+# Type aliases — `F = f64` is invariant in molrs; Python side must match.
 type ArrayF = npt.NDArray[np.float64]
 type ArrayI32 = npt.NDArray[np.int32]
 type ArrayBool = npt.NDArray[np.bool_]

@@ -471,7 +471,7 @@ pub(super) type ConvertedBody = (Atomistic, Vec<(NodeId, BondingDescriptor)>);
 /// converted once however many instances name it.
 ///
 /// It is also the **only** route from this module to
-/// [`fragment_to_atomistic`](crate::io::smiles::fragment_to_atomistic): no
+/// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors): no
 /// other code under `cgsmiles/` calls the converter, so there is one walker
 /// over a fragment body and one place a converted body can come from.
 ///
@@ -503,7 +503,7 @@ impl FragmentCache {
     /// # Errors
     ///
     /// Whatever
-    /// [`fragment_to_atomistic`](crate::io::smiles::fragment_to_atomistic)
+    /// [`SmilesIr::to_atomistic_with_descriptors`](crate::io::smiles::SmilesIr::to_atomistic_with_descriptors)
     /// returns for `body` — an unmatched ring closure inside it, say. The
     /// error is the converter's own, carrying a span into the whole
     /// `CGsmiles` string; callers holding that string re-stamp it into
@@ -542,7 +542,7 @@ mod tests {
     // free compatible pair wins), R4.13 (both descriptors consumed), R4.14
     // (explicit symbol > written-aromatic pair > single), R4.15 (an
     // unmatchable edge is an error) and R4.16 (edges in parse order) — and
-    // from the port lists the one walker `fragment_to_atomistic` returns. No
+    // from the port lists the one walker `to_atomistic_with_descriptors` returns. No
     // external program produced any value here.
 
     // -- helpers ------------------------------------------------------------
@@ -1010,7 +1010,7 @@ mod tests {
 
     // -- the port order is the walker's order -------------------------------
 
-    /// A port index is a position in the map `fragment_to_atomistic` returns,
+    /// A port index is a position in the map `to_atomistic_with_descriptors` returns,
     /// and that map is in **visit** order, not text order: in `C([$]O)[>]` the
     /// `$` written inside the branch is visited before the `>` written after
     /// it, and both are anchored on the same atom — the carbon the branch

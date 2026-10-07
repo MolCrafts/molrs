@@ -113,7 +113,7 @@ pub fn perceive_dg_features(mol: &Atomistic) -> DgFeatures {
         })
         .collect();
 
-    // Aromaticity: delegate to the shared RDKit-aligned model in molrs-core
+    // Aromaticity: delegate to the shared RDKit-aligned model in `perceive`
     // (`molrs::perceive::mark_aromaticity`, a port of
     // `setAromaticity(AROMATICITY_RDKIT)`) instead of re-deriving it here. It
     // annotates a *clone* of the graph with an `is_aromatic = 1` flag per

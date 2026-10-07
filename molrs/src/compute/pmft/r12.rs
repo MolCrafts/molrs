@@ -69,7 +69,7 @@ impl PmftR12 {
     }
 }
 
-/// Per-frame args for PMFTR12: parallel `&[Neighbors]` and
+/// Per-frame args for PmftR12: parallel `&[Neighbors]` and
 /// per-particle 2-D orientations (radians).
 pub struct PmftR12Args<'a> {
     pub nlists: &'a [Neighbors],
@@ -230,7 +230,7 @@ impl Compute for PmftR12 {
     }
 }
 
-/// Per-frame PMFTR12 result.
+/// Per-frame PmftR12 result.
 #[derive(Debug, Clone, Default)]
 pub struct PmftR12Result {
     pub density: Array3<F>,
