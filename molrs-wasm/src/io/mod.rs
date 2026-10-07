@@ -8,7 +8,7 @@
 //! | [`reader`] | `CifReader`, `CubeReader`, `VaspChgcarReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `AmberInpcrdReader`, `AmberAcReader`, `readMsgpackFrameBytes`, `readJsonFrameStr` | Whole-content readers for the formats without a stream: CIF, Cube, CHGCAR, GRO, MOL2, POSCAR, XSF, AMBER inpcrd, AC; the `molrs::stream` wire encodings |
 //! | [`streaming`] | `LammpsDumpStream`, `XyzStream`, `PdbStream`, `LammpsDataStream`, `SdfStream`, `DcdStream`, `XtcStream`, `TrrStream` | The one reader of XYZ/ExtXYZ, PDB, LAMMPS data/dump, SDF, DCD, XTC, TRR: chunk-fed `FrameIndexBuilder` + per-range parse |
 //! | [`writer`] | `writeXyzStr`, `writePdbStr`, …, `writeDcdBytes`, …, `writeMsgpackFrameBytes`, `writeJsonFrameStr` | One writer per format — no export picks a format from a string |
-//! | [`log`] | `readLammpsLogStr`, `isLammpsLog` | LAMMPS run logs (`LammpsLog`) |
+//! | [`lammps_log`] | `readLammpsLogStr`, `isLammpsLog` | LAMMPS run logs (`LammpsLog`) |
 //! | `smiles` | `readSmilesStr`, `SmilesIr.parse` | SMILES strings (`smiles` feature) |
 //! | [`mrec`] | `MrecReader`, `readMrecFrame`, `sectionNames` | `*.mrec` scientific records (Zarr V3) |
 //! | [`mesh`] | `readStlBytes(bytes)` | STL surface meshes (ASCII or binary) — produces a `TriMesh`, not a `Frame` |
@@ -18,7 +18,7 @@
 //! chunks the host copies into its input buffer. Each format has exactly one
 //! of the two.
 
-pub mod log;
+pub mod lammps_log;
 pub mod mesh;
 pub mod mrec;
 pub mod reader;
@@ -27,7 +27,7 @@ pub mod smiles;
 pub mod streaming;
 pub mod writer;
 
-pub use log::*;
+pub use lammps_log::*;
 pub use mesh::*;
 pub use mrec::*;
 pub use reader::*;

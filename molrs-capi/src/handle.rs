@@ -14,17 +14,17 @@ use slotmap::{Key, new_key_type};
 // --- SlotMap keys for SimBox and ForceField ---
 
 new_key_type! {
-    /// Key for SimBox entries in the CStore.
+    /// Key for SimBox entries in the HandleRegistry.
     pub struct BoxKey;
 }
 
 new_key_type! {
-    /// Key for ForceField entries in the CStore.
+    /// Key for ForceField entries in the HandleRegistry.
     pub struct ForceFieldKey;
 }
 
 new_key_type! {
-    /// Key for Region entries in the CStore.
+    /// Key for Region entries in the HandleRegistry.
     pub struct RegionKey;
 }
 
@@ -206,7 +206,7 @@ pub(crate) fn handle_to_forcefield_key(h: MolrsForceFieldHandle) -> ForceFieldKe
 
 /// Convert a Rust `BlockHandle` to a C `MolrsBlockHandle`.
 ///
-/// Requires the CStore to look up the interned key_id.
+/// Requires the HandleRegistry to look up the interned key_id.
 pub(crate) fn block_handle_to_c(
     bh: &BlockHandle,
     key_to_id: &std::collections::HashMap<String, u32>,
@@ -221,7 +221,7 @@ pub(crate) fn block_handle_to_c(
 
 /// Convert a C `MolrsBlockHandle` to a Rust `BlockHandle`.
 ///
-/// Requires the CStore to look up the key string from key_id.
+/// Requires the HandleRegistry to look up the key string from key_id.
 pub(crate) fn c_to_block_handle(
     ch: &MolrsBlockHandle,
     interned_keys: &[std::ffi::CString],

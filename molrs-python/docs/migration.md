@@ -36,7 +36,7 @@ never published, so coming from 0.15.0 read
   `molrs.Box` or a `molrs.Element` does not unpickle in 0.16. `Frame`,
   `Block`, `Atomistic` and `CoarseGrain` pickled as `molrs._lib.*` and still
   load.
-- **Force-field JSON is not converted.** `molrs_ff_from_json` reads a
+- **Force-field JSON is not converted.** `molrs_forcefield_from_json` reads a
   0.15 `molrs_ff_to_json` document as written, ½k harmonic `k`, radians,
   `D`, `a_thole` and `fourier` included: convert it as
   [the force-field IR](#the-force-field-ir-adopts-the-lammps-standard)
@@ -394,9 +394,9 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   nested list / tuple of numbers and store float64, so a list value that
   raised `TypeError` in 0.15 is now stored. `params` and `t[key]` return
   arrays as float64 numpy arrays; pickles carry them.
-- **C API.** `molrs_ff_to_json` writes an optional `array_params` object (on
+- **C API.** `molrs_forcefield_to_json` writes an optional `array_params` object (on
   a style or a type, only when it holds an array param: nested lists, one
-  level per axis), and `molrs_ff_from_json` reads it and refuses a ragged or
+  level per axis), and `molrs_forcefield_from_json` reads it and refuses a ragged or
   non-numeric one.
 - **Records.** An array parameter is a `f64[T, S…]` column (see
   [Records](#records-molrec_version-2)); it round-trips through
@@ -943,7 +943,7 @@ changes for code written against 0.15:
     and returns a `RelationType`. `ForceField.styles`, `get_styles` and
     `get_types` include these styles (0.15 dropped them silently);
     `get_styles(RelationStyle)` / `get_types(RelationType)` select them all.
-  - **C API.** `molrs_ff_def_style` and `molrs_ff_def_type` accept the same
+  - **C API.** `molrs_forcefield_def_style` and `molrs_forcefield_def_type` accept the same
     categories as `ForceField::def_style`.
 - **Custom styles persist.** A custom style or category is stored in a
   `*.mrec` record as its molrec style entry, and a process that registered
@@ -1206,7 +1206,7 @@ column.
 | JS `writeFrame(frame, fmt)` | one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr` (CIF, GRO and MOL2 now check the Frame schema first, as every writer class does) |
 | JS `writeFrameBytes(frame, fmt)`, `readFrameBytes(data, fmt)` | `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`, `writeMsgpackFrameBytes` / `readMsgpackFrameBytes`, `writeJsonFrameStr` / `readJsonFrameStr` |
 | JS `MrecReader.fromStore` | `MrecReader.fromStorage` |
-| C `molrs_frame_from_smiles`, C++ `xyz_read_first_frame`, `read_first_frame`, `write_frame_xyz_typed` | unchanged names, over `molrs::io::read_smiles_str`, `read_xyz`, `read_mrec_frame` and `XyzWriter` (the C++ XYZ writer now checks the Frame schema first) |
+| C `molrs_frame_from_smiles`, C++ `xyz_read_first_frame`, `read_first_frame`, `write_frame_xyz_typed` | over `molrs::io::read_smiles_str`, `read_xyz`, `read_mrec_frame` and `XyzWriter` (the C++ XYZ writer now checks the Frame schema first); renamed in [Wave S5](#wave-s5-bindings) |
 
 **Acronyms are cased as words** here too, as in `ff` (`PdbReader`, `Mmff`):
 the SMILES / CGsmiles IR and record types are `SmilesIr`, `CgSmilesIr`,
@@ -1907,21 +1907,24 @@ with the `builder` feature (on by default).
 `molrs-wasm`'s `io::reader` holds only the formats with no stream (CIF, Cube,
 CHGCAR, GRO, MOL2, POSCAR, XSF, inpcrd, AC).
 
-C API (`molrs.h`): `molrs_ff_to_json` / `molrs_ff_from_json` read and write
+C API (`molrs.h`): `molrs_forcefield_to_json` / `molrs_forcefield_from_json` (0.15
+`molrs_ff_to_json` / `molrs_ff_from_json`) read and write
 the core `forcefield` record section as JSON, `{"document": {…}, "tables":
 {<block>: Block}}` — the serde form (`serde` feature, `molrs/src/serialize.rs`)
 of `molrs::io::mrec::ForceFieldSection`, i.e.
 `ForceFieldSection::from_forcefield` / `to_forcefield`, the section an `*.mrec` record stores. The C-API-only
 document (`name` / `units` / `special_bonds` / `styles[]` with `params` /
 `str_params` / `array_params` / `types`) is gone and refused on read; a force
-field `to_section` refuses is `InvalidArgument` from `molrs_ff_to_json`.
+field `ForceFieldSection::from_forcefield` refuses is `InvalidArgument` from
+`molrs_forcefield_to_json`.
 capi's `F` is `molrs::op::F` (the header keeps `typedef double F;`).
 molrs-capi and molrs-cxxapi link molrs with `full,filesystem,rayon,serde`.
 
 C++ (`molrs-cxxapi`):
 
-- **`write_frame_xyz` is removed**: it was `write_frame_xyz_typed` with no
-  metadata. Pass an empty `rust::Vec<MetaEntry>`.
+- **`write_frame_xyz` is removed**: it was `write_frame_xyz_typed` (now
+  `write_xyz_frame`) with no metadata. Pass an empty
+  `rust::Vec<KeyedMetaValue>`.
 - **The `zarr` cargo feature is removed.** It was on by default and the crate
   did not build without it; the `*.mrec` writers and readers are always
   present.
@@ -2189,6 +2192,109 @@ are kept).
 | `op::{FNx3, FNx3View}` | `op::{Fnx3, Fnx3View}` |
 | `SmartsPattern::num_query_atoms` (Python `SmartsPattern.num_query_atoms`) | `n_query_atoms` |
 | Python `RingInfo.num_rings()` | `RingInfo.n_rings()` |
+
+#### Wave S5: bindings
+
+The WASM, C, C++ and FFI bindings follow the same rules as the core: a
+binding's name is its molrs owner's name, cased for the language
+(camelCase / PascalCase in JS, acronyms as words, `snake_case` in C and
+C++); the cell is `Box` (Rust alone says `SimBox`) and its matrix is `h`;
+counts are `n_*`; dtype strings are core `DType::name()` (`float`, `int`,
+`uint`, `i8`, …, `c128`); frame metadata is `get_meta` / `set_meta` /
+`meta_keys` on every surface. No old name is kept as an alias. Builds of
+the 0.16 line before this change spelled the names in the left column.
+
+**molrs-ffi** (Rust; molrs-python, molrs-wasm, molrs-capi and molrs-cxxapi
+build on it):
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `molrs_ffi::Store` (`store.rs`) | `molrs_ffi::FrameArena` |
+| `molrs_ffi::SharedStore`, `new_shared()` | `molrs_ffi::FrameArenaCell` (`Rc<RefCell<FrameArena>>`), `FrameArenaCell::default()` |
+| `FrameRef.store`, `BlockRef.store` | `FrameRef.arena`, `BlockRef.arena` |
+| `Store::{copy,view,borrow}_col_{F,I,U}` | removed: `BlockRef::{copy,borrow}_{f,i,u}` are the one column accessor set |
+| `OwnedColumn` (unreachable) | `molrs_ffi::OwnedColumn` |
+
+**WASM (JS)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `Block.dtype`, `schemaColumnDtype`, `NDArray.dtype` → `"f64"`, `"i32"`, `"u64"` | `"float"`, `"int"`, `"uint"` (core `DType::name()`) |
+| `Frame.metaNames` | `Frame.metaKeys` (beside `getMeta` / `setMeta`) |
+| `Box.hMatrix()`, `Box.getCorners()`, `Box.to_frac`, `Box.to_cart` | `Box.h()`, `Box.corners()` (Rust `SimBox::corners`, was `get_corners`), `Box.toFrac`, `Box.toCart` |
+| `NDArray.is_empty`, `NDArray.write_from` | `NDArray.isEmpty`, `NDArray.writeFrom` |
+| `Mesh` | `TriMesh` |
+| `schemaJson` | removed: `schemaDocument` |
+| `mrecSections(files)` | `sectionNames(source)` |
+| `readMrecFrame(files)`, `readMrecFrameFromZip(bytes)` | `readMrecFrame(source)`: `source` is a file map or a packed zip's bytes |
+| `MrecReader.countFrames`, `countAtomsAtFirstFrame` | `MrecReader.nFrames`, `nAtomsAtFirstFrame` |
+| `readLammpsLogThermo(text)` → `ThermoTable` | `readLammpsLogStr(text, style?)` → the core `LammpsLog` record |
+| `isLammpsLog` (a WASM-only check) | `isLammpsLog`, over core `molrs::io::lammps::is_lammps_log` (Python `molrs.io.lammps.is_lammps_log`) |
+| `DistanceDistribution`, `AngleDistribution`, `DihedralDistribution` | `DistributionFunction(observable, nBins, min?, max?)` |
+| `StaticDielectric` | `staticDielectricConstant`, `staticDielectricConstantComponents` |
+| `HBondLifetime`, `HBondNetwork`, `PairSurvival` (classes) | `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf` (functions, as in Rust and Python) |
+| `AngularSeparation` (`computeGlobal` / `computeNeighbor`) | `AngularSeparationGlobal`, `AngularSeparationNeighbor` (each `.compute`) |
+| `GreenKuboDielectricSpectrum`, `EinsteinHelfandDielectricSpectrum` | `GreenKuboSpectrum`, `EinsteinHelfandSpectrum` |
+| `generate3D(frame, speed, seed)` | `new Conformer(speed?, addHydrogens?, seed?).generate(frame)` |
+| `Potentials.energyForces` | `Potentials.calcEnergyForces` |
+
+A molrs analysis that is a type stays a JS class under the Rust name; one
+that is a free function in Rust and Python is a free function in JS. The
+compute catalog (`molrsComputeCatalog().version` 6) marks those entries
+`inputKind: "function"`. Regions hold `molrs_ffi::RegionRef`, coordinates
+cross through `Frame::coords` / `set_coords`, and `SphereUnion.nSpheres`
+now counts spheres (it returned 3). The crate's modules mirror molrs:
+`core/nd_array.rs` (was `core/types.rs`), `io/lammps_log.rs` (was
+`io/log.rs`), `io/mrec.rs`.
+
+**C (`molrs.h`)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `molrs_frame_from_smiles` | `molrs_read_smiles_str` (core `io::read_smiles_str`; atoms `element`, `mass`, …; bonds `atomi`, `atomj`, `bond_type`, `bond_number`; no coordinates) |
+| `molrs_ff_new`, `_drop`, `_def_style`, `_def_type`, `_to_json`, `_from_json` | `molrs_forcefield_new`, `_drop`, `_def_style`, `_def_type`, `_to_json`, `_from_json` |
+| `molrs_ff_style_count`, `molrs_ff_get_style_name` | `molrs_forcefield_n_styles`, `molrs_forcefield_style_name` |
+| `molrs_frame_put_meta`, `molrs_frame_read_meta`, `molrs_frame_meta_count` | `molrs_frame_set_meta`, `molrs_frame_get_meta`, `molrs_frame_n_meta` (with `molrs_frame_meta_key(i)`) |
+| `molrs_schema_column_count`, `molrs_schema_block_count` | `molrs_schema_n_columns`, `molrs_schema_n_blocks` |
+| `molrs_block_set_F`, `_I`, `_U` | `molrs_block_set_f64`, `_i32`, `_u64` |
+| `molrs_sizeof_F`, `_I`, `_U` | removed (the widths are fixed: 8, 4, 8) |
+| `molrs_block_col_commit` | removed (a no-op) |
+| `MOLRS_D_TYPE_U_INT`, `INT8`, `INT16`, `INT64`, `U_INT16`, `U_INT32`, `COMPLEX64`, `COMPLEX128` | `MOLRS_D_TYPE_UINT`, `I8`, `I16`, `I64`, `U16`, `U32`, `C64`, `C128`: `MOLRS_D_TYPE_` + the upper-cased `DType::name()` (values unchanged) |
+| a box handle argument named `h` | `box_handle`; `h` is only the cell matrix (`molrs_box_h`) |
+
+`molrs_shutdown` now drops regions too: a region handle from before it is
+`MOLRS_STATUS_INVALID_REGION_HANDLE` (it stayed alive). In Rust,
+`molrs-capi`'s modules are private and every C item is at the crate root.
+
+**C++ (`molrs-cxxapi`)**:
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `MetaEntry` | `KeyedMetaValue` |
+| `frame_meta_entries`, `frame_set_meta_entry` | `frame_meta_keys` + `frame_get_meta(fref, key)` (a missing key throws), `frame_set_meta` |
+| `frame_box`, `frame_set_box` | `frame_box_h`, `frame_set_box_h` |
+| `frame_column_u32`, `frame_set_column_u32` (they moved u64) | `frame_column_u64`, `frame_set_column_u64` |
+| `xyz_read_first_frame` | `read_xyz_frame` |
+| `write_frame_xyz_typed` | `write_xyz_frame` |
+| `write_frame`, `read_first_frame` (a one-frame `*.mrec`) | `write_mrec_frame`, `read_mrec_frame` (core `io::write_mrec_frame` / `read_mrec_frame`: the record's `frame` section) |
+| — | `read_mrec_trajectory_frame(path, index)`: a frame of what an `MrecWriterRef` wrote |
+| `TrajectoryWriterRef`, `trajectory_writer_*`, `CXX_CAP_TRAJECTORY_WRITER` | `MrecWriterRef`, `mrec_writer_*`, `CXX_CAP_MREC_WRITER` (same bit) |
+| `MsdCompute` / `msd_compute_new`, `RdfCompute` / `rdf_compute_new`, `VacfCompute` / `vacf_compute_new`, `DiffusionCompute` / `diffusion_compute_new` | `Msd` / `msd_new`, `Rdf` / `rdf_new`, `Vacf` / `vacf_new`, `EinsteinDiffusion` / `einstein_diffusion_new` |
+
+Malformed input is an error, not a guess: a region centre, lengths or
+axis that is not 3 values, a ragged point list, unequal coordinate
+columns, a field block of the wrong size and a malformed or singular `h`
+all throw (the region constructors fell back to the origin or zero, and
+the XYZ / element frame builders dropped a box `SimBox::new` refused).
+Atomiverse (`compat/molrs-016`) moves with these names, and its
+`MolrsContract.cmake` probes read the committed `src/bridge.rs`
+(`ATV_MOLRS_HAS_MREC_WRITER`).
+
+**Scripts**: the engine checks share `scripts/engine_check_tables.py`
+(`read_energy_tsv`, `element_of_mass` over `molrs.core.Element`,
+`molecule_ids`, `lammps_thermo` over `molrs.io.read_lammps_log`), and take
+`4.184`, `332.06371` and the nm ↔ Å factor from `molrs.core.constants`
+(`KJ_PER_KCAL`, `COULOMB_REAL`, `ANGSTROM_PER_NM`).
 
 ### Python: kernels live in `molrs.ff.potential`
 

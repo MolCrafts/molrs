@@ -318,6 +318,35 @@ lists each one.
   `orthonormal_frame`, `place_from_internal_coords`). `Box.contains` and
   `NeighborQuery.unbounded` replace `isin` and `free`.
 
+### Bindings
+
+- **One name per concept, on every surface.** The WASM, C and C++ bindings
+  name each export after its molrs owner, cased for the language: JS
+  `TriMesh`, `Box.h()`, `Box.corners()`, `MrecReader.nFrames`,
+  `readLammpsLogStr` → `LammpsLog`; C `molrs_read_smiles_str`,
+  `molrs_forcefield_*`, `molrs_block_set_f64` / `_i32` / `_u64`; C++
+  `read_xyz_frame`, `write_mrec_frame`, `read_mrec_frame`, `MrecWriterRef`,
+  `Msd`, `Rdf`, `Vacf`, `EinsteinDiffusion`, `frame_column_u64`. Frame
+  metadata is `get_meta` / `set_meta` / `meta_keys`, the cell matrix is `h`,
+  and dtype strings are the core's (`float`, `int`, `uint`) in every binding.
+- **WASM analyses have the Rust and Python shape.** `DistributionFunction`
+  replaces the three `*Distribution` classes, and the analyses that are
+  functions in molrs are functions in JS (`staticDielectricConstant`,
+  `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`); `Conformer`
+  replaces `generate3D`. `isLammpsLog` is core
+  `molrs::io::lammps::is_lammps_log` (Python
+  `molrs.io.lammps.is_lammps_log`).
+- **Malformed input is an error.** The C++ region constructors and frame
+  builders throw on a wrong-length vector or a refused box instead of
+  falling back to the origin or dropping the box.
+- **Fixes.** `molrs_shutdown` now releases regions; JS
+  `SphereUnion.nSpheres` counts spheres (it returned 3).
+- **molrs-ffi** names what it holds: `FrameArena` owns the frames and
+  `FrameArenaCell` shares them (`Store`, `SharedStore` and `new_shared` are
+  gone), with one column accessor set on `BlockRef`.
+
+See [Wave S5](migration.md#wave-s5-bindings) for every rename.
+
 ### Packaging
 
 - FFI capsules move to the `0.16` ABI line (`molrs.FrameRef/0.16`, …):

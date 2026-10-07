@@ -713,7 +713,7 @@ pub fn check_pair_restatements(table: &Block) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 // serde: `{ document: { … }, tables: { <name>: Block } }` — the document
 // verbatim, in its key order, and every table. The force field's one
-// serialization; the C API's `molrs_ff_to_json` / `molrs_ff_from_json` are
+// serialization; the C API's `molrs_forcefield_to_json` / `molrs_forcefield_from_json` are
 // its JSON form.
 // ---------------------------------------------------------------------------
 
