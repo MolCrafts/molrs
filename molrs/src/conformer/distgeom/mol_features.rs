@@ -32,9 +32,9 @@ pub struct PerceivedAtom {
     pub total_valence: f64,
 }
 
-/// Perceived view of a molecule: index-aligned atoms, neighbour lists, bond
+/// DgFeatures view of a molecule: index-aligned atoms, neighbour lists, bond
 /// orders, ring info, and aromatic bond flags.
-pub struct Perceived {
+pub struct DgFeatures {
     pub atom_ids: Vec<NodeId>,
     pub atoms: Vec<PerceivedAtom>,
     /// `adj[i]` = sorted neighbour indices of atom `i`.
@@ -48,7 +48,7 @@ pub struct Perceived {
     pub ring_idx: Vec<Vec<usize>>,
 }
 
-impl Perceived {
+impl DgFeatures {
     /// Bond order between atom indices `i` and `j`, or `0.0` if not bonded.
     pub fn bond_order(&self, i: usize, j: usize) -> f64 {
         let key = if i < j { (i, j) } else { (j, i) };
@@ -70,7 +70,7 @@ fn element_of(mol: &Atomistic, id: NodeId) -> Element {
 }
 
 /// Perceive hybridization, aromaticity and conjugation for `mol`.
-pub fn perceive(mol: &Atomistic) -> Perceived {
+pub fn perceive_dg_features(mol: &Atomistic) -> DgFeatures {
     let atom_ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
     let id_to_idx: HashMap<NodeId, usize> = atom_ids
         .iter()
@@ -167,7 +167,7 @@ pub fn perceive(mol: &Atomistic) -> Perceived {
         }
     }
 
-    Perceived {
+    DgFeatures {
         atom_ids,
         atoms,
         adj,

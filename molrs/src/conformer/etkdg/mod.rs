@@ -24,7 +24,7 @@ mod retry;
 
 use rand::{SeedableRng, random, rngs::StdRng};
 
-use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
+use crate::conformer::distgeom::{self, ChiralSign, DgConstraints};
 use crate::conformer::{ConformerOptions, ForceFieldKind};
 use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
 use molrs::core::Atomistic;
@@ -79,8 +79,7 @@ pub(crate) fn generate_3d_impl(
     // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
     // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
-    let version = EtkdgVersion::Etkdgv3;
-    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
+    let constraints = distgeom::DgConstraints::from_graph(&work)?;
 
     let mut embedding = run_embedding(&constraints, n, seed, opts, &mut report);
     let mut coords3d = match embedding.best.take() {
@@ -376,7 +375,10 @@ fn try_embed<R: rand::Rng + ?Sized>(
     // minimizeWithExpTorsions / construct3DForceField).
     let field2 = etmin::ExpTorsionField::build(
         bounds,
-        &constraints.experimental_torsions,
+        constraints
+            .experimental_torsions
+            .iter()
+            .chain(&constraints.flat_ring_torsions),
         &constraints.improper,
     );
     let stage2 = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));

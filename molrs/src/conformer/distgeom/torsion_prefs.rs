@@ -40,7 +40,7 @@ use molrs::core::NodeId;
 use molrs::core::PropValue;
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
 
-use super::mol_features::Perceived;
+use super::mol_features::DgFeatures;
 use super::torsion_tables::{self, TorsionRow};
 
 /// One assigned experimental torsion: four atoms + the M6 `(signs, V)` set.
@@ -52,33 +52,17 @@ pub struct TorsionConstraint {
     pub signs: [i8; 6],
     /// Per-order force constants `V1..V6`.
     pub force_constants: [f64; 6],
-    /// The originating pattern SMARTS (for diagnostics / spec traceability).
-    pub pattern: &'static str,
-}
-
-/// Which source table a pattern came from (for diagnostics + `tests`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TorsionTable {
-    /// `torsionPreferences_v2` — acyclic / general bonds.
-    V2,
-    /// `torsionPreferences_smallrings` — small-ring bonds.
-    SmallRings,
-    /// `torsionPreferences_macrocycles` — ring bonds of size ≥ 9.
-    Macrocycles,
 }
 
 // ---------------------------------------------------------------------------
 // Pattern compilation
 // ---------------------------------------------------------------------------
 
-/// A compiled table entry: the engine pattern, the M6 parameters, and
-/// provenance.
+/// A compiled table entry: the engine pattern and the M6 parameters.
 struct CompiledPattern {
-    smarts: &'static str,
     pattern: SmartsPattern,
     signs: [i8; 6],
     v: [f64; 6],
-    table: TorsionTable,
 }
 
 /// Compile one `(smarts, signs, V)` row into a [`CompiledPattern`].
@@ -86,16 +70,10 @@ struct CompiledPattern {
 /// The SMARTS is parsed verbatim by the core engine, which natively supports
 /// every primitive these tables use (including `r{lo-hi}` ring-size ranges and
 /// `x<n>` ring connectivity).
-fn compile_row(row: &TorsionRow, table: TorsionTable) -> Option<CompiledPattern> {
+fn compile_row(row: &TorsionRow) -> Option<CompiledPattern> {
     let (smarts, signs, v) = (row.0, row.1, row.2);
     let pattern = SmartsPattern::parse(smarts).ok()?;
-    Some(CompiledPattern {
-        smarts,
-        pattern,
-        signs,
-        v,
-        table,
-    })
+    Some(CompiledPattern { pattern, signs, v })
 }
 
 /// Compile the tables for ETKDGv3 in RDKit concatenation order.
@@ -108,12 +86,12 @@ fn compile_row(row: &TorsionRow, table: TorsionTable) -> Option<CompiledPattern>
 fn compile_all() -> Vec<CompiledPattern> {
     let mut out = Vec::new();
     for row in torsion_tables::V2 {
-        if let Some(p) = compile_row(row, TorsionTable::V2) {
+        if let Some(p) = compile_row(row) {
             out.push(p);
         }
     }
     for row in torsion_tables::MACROCYCLES {
-        if let Some(p) = compile_row(row, TorsionTable::Macrocycles) {
+        if let Some(p) = compile_row(row) {
             out.push(p);
         }
     }
@@ -128,7 +106,7 @@ fn compile_all() -> Vec<CompiledPattern> {
 /// flag from the project perception, so the SMARTS engine's `a` / `c` / `:`
 /// queries agree with RDKit (the engine reads `is_aromatic`, see
 /// `molrs::perceive::smarts` aromaticity convention).
-fn aromatic_working_copy(mol: &Atomistic, p: &Perceived) -> Atomistic {
+fn aromatic_working_copy(mol: &Atomistic, p: &DgFeatures) -> Atomistic {
     let mut g = mol.clone();
     for (i, &aid) in p.atom_ids.iter().enumerate() {
         if p.atoms[i].aromatic {
@@ -161,13 +139,6 @@ fn aromatic_working_copy(mol: &Atomistic, p: &Perceived) -> Atomistic {
 // Assignment
 // ---------------------------------------------------------------------------
 
-/// A single assigned torsion with its provenance, for diagnostics / tests.
-#[derive(Clone, Debug)]
-pub struct AssignedTorsion {
-    pub constraint: TorsionConstraint,
-    pub table: TorsionTable,
-}
-
 /// Assign experimental torsions to `mol` by matching the full ETKDGv3 tables
 /// (v2 ++ small-rings ++ macrocycles) through the SMARTS engine, reproducing
 /// RDKit `getExperimentalTorsions`: the first matching pattern (global table
@@ -176,7 +147,7 @@ pub struct AssignedTorsion {
 /// `p` is the perception of `mol` (aromaticity / hybridization / rings); it is
 /// reused to transplant aromatic flags onto the matching copy. The `r{…}` /
 /// `x<n>` ring primitives are evaluated by the core SMARTS engine directly.
-pub(crate) fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<AssignedTorsion> {
+pub fn assign_experimental_torsions(mol: &Atomistic, p: &DgFeatures) -> Vec<TorsionConstraint> {
     let work = aromatic_working_copy(mol, p);
     let patterns = compile_all();
 
@@ -190,7 +161,7 @@ pub(crate) fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<Assi
     // RDKit keys "done" by central-bond index; we key by the unordered central
     // atom-index pair, which is equivalent for a simple molecular graph.
     let mut done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-    let mut out: Vec<AssignedTorsion> = Vec::new();
+    let mut out: Vec<TorsionConstraint> = Vec::new();
 
     for cp in &patterns {
         for m in cp.pattern.find(&work, MatchOptions::default()) {
@@ -224,25 +195,12 @@ pub(crate) fn assign_with_provenance(mol: &Atomistic, p: &Perceived) -> Vec<Assi
                 continue;
             }
             done.insert(key);
-            out.push(AssignedTorsion {
-                constraint: TorsionConstraint {
-                    atoms: idx,
-                    signs: cp.signs,
-                    force_constants: cp.v,
-                    pattern: cp.smarts,
-                },
-                table: cp.table,
+            out.push(TorsionConstraint {
+                atoms: idx,
+                signs: cp.signs,
+                force_constants: cp.v,
             });
         }
     }
     out
-}
-
-/// Public entry point used by [`super::build_constraints`]: the bare
-/// [`TorsionConstraint`] list (provenance dropped).
-pub fn assign_experimental_torsions(mol: &Atomistic, p: &Perceived) -> Vec<TorsionConstraint> {
-    assign_with_provenance(mol, p)
-        .into_iter()
-        .map(|a| a.constraint)
-        .collect()
 }

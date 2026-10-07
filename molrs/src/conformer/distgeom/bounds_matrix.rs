@@ -34,11 +34,6 @@ impl BoundsMatrix {
         self.n
     }
 
-    /// Whether the matrix has no points.
-    pub fn is_empty(&self) -> bool {
-        self.n == 0
-    }
-
     #[inline]
     fn idx(&self, i: usize, j: usize) -> usize {
         i * self.n + j
@@ -96,27 +91,6 @@ impl BoundsMatrix {
             self.set_raw(i, j, v);
         }
     }
-
-    /// `true` if every lower bound is ≤ the corresponding upper bound (RDKit
-    /// `checkValid`).
-    pub fn check_valid(&self) -> bool {
-        for i in 1..self.n {
-            for j in 0..i {
-                if self.upper(i, j) < self.lower(i, j) {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Emit a fully-symmetric `n×n` matrix where `m[i][j]` is the upper bound
-    /// for `i<j` and the lower bound for `i>j` — exactly RDKit's numpy layout.
-    pub fn to_dense(&self) -> Vec<Vec<f64>> {
-        (0..self.n)
-            .map(|i| (0..self.n).map(|j| self.raw(i, j)).collect())
-            .collect()
-    }
 }
 
 #[cfg(test)]
@@ -132,26 +106,5 @@ mod tests {
         assert_eq!(b.raw(2, 0), 1.0);
         assert_eq!(b.upper(0, 2), b.upper(2, 0));
         assert_eq!(b.lower(0, 2), b.lower(2, 0));
-    }
-
-    #[test]
-    fn check_valid_sees_a_crossed_pair() {
-        let mut b = BoundsMatrix::new(2, 0.0);
-        b.set_upper(0, 1, 1.0);
-        b.set_lower(0, 1, 0.5);
-        assert!(b.check_valid());
-        b.set_lower(0, 1, 2.0);
-        assert!(!b.check_valid());
-    }
-
-    #[test]
-    fn to_dense_is_the_raw_square() {
-        let mut b = BoundsMatrix::new(2, 7.0);
-        b.set_upper(0, 1, 2.0);
-        b.set_lower(0, 1, 1.0);
-        assert_eq!(b.to_dense(), vec![vec![7.0, 2.0], vec![1.0, 7.0]]);
-        assert_eq!(b.len(), 2);
-        assert!(!b.is_empty());
-        assert!(BoundsMatrix::new(0, 0.0).is_empty());
     }
 }

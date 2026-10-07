@@ -14,7 +14,7 @@
 
 use molrs::core::MolRsError;
 
-use super::matrix::BoundsMatrix;
+use super::bounds_matrix::BoundsMatrix;
 
 /// Triangle-smooth `bounds` in place (RDKit `triangleSmoothBounds`, `tol`).
 ///

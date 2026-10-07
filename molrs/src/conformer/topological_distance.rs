@@ -1,15 +1,12 @@
-//! Small graph helpers shared by the distance-geometry paths.
+//! Topological (bond-count) distances between atoms, for the
+//! distance-geometry bounds.
 
 use std::collections::VecDeque;
 
 /// All-pairs topological distance matrix (number of bonds between atoms) over a
 /// plain adjacency list, computed by a BFS from each node. Unreachable pairs
 /// are left as [`usize::MAX`].
-///
-/// Both the legacy first-principles bounds (`distance_geometry`) and the
-/// RDKit-aligned bounds (`distgeom::bounds`) need this matrix; keeping one
-/// implementation avoids the two copies drifting apart.
-pub(crate) fn bfs_distance_matrix(adjacency: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(crate) fn topological_distances(adjacency: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let n = adjacency.len();
     let mut dist = vec![vec![usize::MAX; n]; n];
     for start in 0..n {

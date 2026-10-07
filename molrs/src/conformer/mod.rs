@@ -30,11 +30,11 @@
 //! # }
 //! ```
 
-pub mod distgeom;
+mod distgeom;
 mod element_graph;
-mod graph;
 mod options;
 mod report;
+mod topological_distance;
 
 /// ETKDGv3 conformer-embedding pipeline (the active [`Conformer`] backend);
 /// reached only through [`Conformer::generate`].

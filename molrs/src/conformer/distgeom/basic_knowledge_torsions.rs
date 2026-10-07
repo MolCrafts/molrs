@@ -18,33 +18,21 @@
 //! through `set13Bounds`, not a separate term), so this module only owns the
 //! flat-ring proper torsions.
 
-use super::mol_features::Perceived;
+use super::mol_features::DgFeatures;
+use super::torsion_prefs::TorsionConstraint;
 use molrs::perceive::Hybridization;
 
-/// A knowledge-based proper torsion term over four atoms.
-///
-/// The potential is the CrystalFF M6 form
-/// `V = Σ_m Vm·(1 + sm·cos(m·x))`; here only the m=2 component is populated
-/// (flat-ring planarisation), matching RDKit's basic-knowledge emission.
-#[derive(Clone, Debug)]
-pub struct KnowledgeTorsion {
-    /// Ordered atom indices `i-j-k-l`.
-    pub atoms: [usize; 4],
-    /// Per-order signs `s1..s6`.
-    pub signs: [i8; 6],
-    /// Per-order force constants `V1..V6`.
-    pub force_constants: [f64; 6],
-}
-
-impl Perceived {
+impl DgFeatures {
     /// The flat sp2-ring planarising torsions (RDKit basic-knowledge ring
-    /// loop). Rings smaller than 4 or larger than 6 are skipped, exactly as RDKit.
-    pub fn flat_ring_torsions(&self) -> Vec<KnowledgeTorsion> {
+    /// loop), as M6 terms with only the `m = 2` component populated
+    /// (`V = V2·(1 − cos 2x)`). Rings smaller than 4 or larger than 6 are
+    /// skipped, exactly as RDKit.
+    pub fn flat_ring_torsions(&self) -> Vec<TorsionConstraint> {
         flat_ring_torsions(self)
     }
 }
 
-fn flat_ring_torsions(p: &Perceived) -> Vec<KnowledgeTorsion> {
+fn flat_ring_torsions(p: &DgFeatures) -> Vec<TorsionConstraint> {
     let mut out = Vec::new();
     let mut done_bonds: std::collections::HashSet<(usize, usize)> =
         std::collections::HashSet::new();
@@ -73,7 +61,7 @@ fn flat_ring_torsions(p: &Perceived) -> Vec<KnowledgeTorsion> {
                 signs[1] = -1; // MMFF sign for m = 2
                 let mut fconsts = [0.0; 6];
                 fconsts[1] = 100.0; // strong flat-ring planarisation
-                out.push(KnowledgeTorsion {
+                out.push(TorsionConstraint {
                     atoms: [aid1, aid2, aid3, aid4],
                     signs,
                     force_constants: fconsts,

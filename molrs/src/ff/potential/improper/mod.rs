@@ -1,12 +1,14 @@
 //! Improper (out-of-plane) potential kernels.
 
 pub(crate) mod cvff;
+mod distance;
 pub(crate) mod harmonic;
 pub(crate) mod mmff;
 pub(crate) mod periodic;
 pub(crate) mod uff;
 
 pub use cvff::{ImproperCvff, improper_cvff_ctor};
+pub use distance::ImproperDistance;
 pub use harmonic::{ImproperHarmonic, improper_harmonic_ctor};
 pub use mmff::{MMFFOutOfPlane, mmff_oop_ctor};
 pub use periodic::{ImproperPeriodic, improper_periodic_ctor};

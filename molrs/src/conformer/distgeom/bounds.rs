@@ -24,8 +24,8 @@
 
 use std::collections::HashMap;
 
-use super::matrix::BoundsMatrix;
-use super::mol_features::{Perceived, PerceivedAtom};
+use super::bounds_matrix::BoundsMatrix;
+use super::mol_features::{DgFeatures, PerceivedAtom};
 use crate::ff::typifier::uff::{atom_label, bond_rest_length as uff_rest_length};
 use molrs::perceive::Hybridization;
 
@@ -115,7 +115,7 @@ struct BondIndex {
     pair_to_bond: HashMap<(usize, usize), usize>,
 }
 
-fn build_bond_index(p: &Perceived) -> BondIndex {
+fn build_bond_index(p: &DgFeatures) -> BondIndex {
     let n = p.atoms.len();
     let mut bonds = Vec::new();
     let mut atom_bonds = vec![Vec::new(); n];
@@ -148,8 +148,8 @@ fn build_bond_index(p: &Perceived) -> BondIndex {
 
 /// Breadth-first topological distance matrix (number of bonds between atoms),
 /// as `f64` with [`f64::INFINITY`] for unreachable pairs.
-fn topo_distances(p: &Perceived) -> Vec<Vec<f64>> {
-    crate::conformer::graph::bfs_distance_matrix(&p.adj)
+fn topo_distances(p: &DgFeatures) -> Vec<Vec<f64>> {
+    crate::conformer::topological_distance::topological_distances(&p.adj)
         .into_iter()
         .map(|row| {
             row.into_iter()
@@ -240,7 +240,7 @@ fn check_and_set_bounds(mmat: &mut BoundsMatrix, i: usize, j: usize, lb: f64, ub
     }
 }
 
-fn is_larger_sp2(p: &Perceived, i: usize) -> bool {
+fn is_larger_sp2(p: &DgFeatures, i: usize) -> bool {
     let a = &p.atoms[i];
     a.element.z() > 13
         && a.hybridization == Hybridization::Sp2
@@ -297,7 +297,7 @@ fn rvdw(z: u8) -> f64 {
     }
 }
 
-fn set_12_bounds(p: &Perceived, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
+fn set_12_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
     for (bid, b) in bi.bonds.iter().enumerate() {
         let eff = effective_bond_order(b.order, b.aromatic);
         let bl = bond_rest_length(&p.atoms[b.a], &p.atoms[b.b], eff);
@@ -324,7 +324,7 @@ fn ring_angle(hyb: Hybridization, ring_size: usize) -> f64 {
 }
 
 fn set_13_helper(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &Computed,
     mmat: &mut BoundsMatrix,
@@ -355,7 +355,7 @@ fn pair(i: usize, j: usize) -> (usize, usize) {
     if i < j { (i, j) } else { (j, i) }
 }
 
-fn set_13_bounds(p: &Perceived, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
+fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut BoundsMatrix) {
     let n = p.atoms.len();
     let mut visited = vec![0usize; n];
     let mut angle_taken = vec![0.0_f64; n];
@@ -467,7 +467,7 @@ fn other_atom(b: &BondRec, a: usize) -> usize {
     if b.a == a { b.b } else { b.a }
 }
 
-fn atom_in_ring_of_size(p: &Perceived, idx: usize, size: usize) -> bool {
+fn atom_in_ring_of_size(p: &DgFeatures, idx: usize, size: usize) -> bool {
     p.ring_idx
         .iter()
         .any(|r| r.len() == size && r.contains(&idx))
@@ -476,7 +476,7 @@ fn atom_in_ring_of_size(p: &Perceived, idx: usize, size: usize) -> bool {
 // ── 1-4 bounds ──────────────────────────────────────────────────────────────
 
 /// RDKit `_isCarbonyl`: a C with degree > 2 double-bonded to an O or N.
-fn is_carbonyl(p: &Perceived, at: usize) -> bool {
+fn is_carbonyl(p: &DgFeatures, at: usize) -> bool {
     if p.atoms[at].element.symbol() != "C" || p.atoms[at].degree <= 2 {
         return false;
     }
@@ -489,7 +489,7 @@ fn is_carbonyl(p: &Perceived, at: usize) -> bool {
 
 /// Implicit-H count proxy for an atom (degree minus heavy-neighbour count is
 /// not available; with explicit Hs we count bonded H atoms).
-fn num_hs(p: &Perceived, at: usize) -> usize {
+fn num_hs(p: &DgFeatures, at: usize) -> usize {
     p.adj[at]
         .iter()
         .filter(|&&nb| p.atoms[nb].element.z() == 1)
@@ -501,7 +501,7 @@ fn num_hs(p: &Perceived, at: usize) -> usize {
 /// N. Returns true if the ordered path (atm1,atm2,atm3,atm4 / bnd1,bnd3)
 /// matches.
 fn check_amide_ester_14(
-    p: &Perceived,
+    p: &DgFeatures,
     bond1_order: f64,
     bond3_order: f64,
     atm2: usize,
@@ -521,7 +521,7 @@ fn check_amide_ester_14(
 /// RDKit `_checkAmideEster15`: pattern where atm2 is O (or NH1), bnd1 single,
 /// atm3 is a carbonyl C with bnd3 single.
 fn check_amide_ester_15(
-    p: &Perceived,
+    p: &DgFeatures,
     bond1_order: f64,
     bond3_order: f64,
     atm2: usize,
@@ -539,7 +539,7 @@ fn check_amide_ester_15(
 /// Set a single 1-4 bound from three consecutive bonds, recording the path.
 #[allow(clippy::too_many_arguments)]
 fn set_one_14(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
     mmat: &mut BoundsMatrix,
@@ -735,7 +735,7 @@ fn compute14_dist_3d(d1: f64, d2: f64, d3: f64, a12: f64, a23: f64, tor: f64) ->
 
 #[allow(clippy::too_many_arguments)]
 fn set_14_bounds(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
     mmat: &mut BoundsMatrix,
@@ -820,7 +820,7 @@ fn set_14_bounds(
     }
 }
 
-fn num_bond_rings(p: &Perceived, bi: &BondIndex, bid: usize) -> usize {
+fn num_bond_rings(p: &DgFeatures, bi: &BondIndex, bid: usize) -> usize {
     let b = &bi.bonds[bid];
     // count rings whose consecutive atoms include this bond
     p.ring_idx
@@ -838,7 +838,7 @@ fn num_bond_rings(p: &Perceived, bi: &BondIndex, bid: usize) -> usize {
 
 #[allow(clippy::too_many_arguments)]
 fn set_two_in_same_ring_14(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
     mmat: &mut BoundsMatrix,
@@ -911,7 +911,7 @@ fn set_two_in_same_ring_14(
 
 fn record_14_path(
     comp: &mut Computed,
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     bid1: usize,
     bid2: usize,
@@ -946,7 +946,7 @@ fn record_14_path(
 // ── 1-5 bounds ──────────────────────────────────────────────────────────────
 
 fn set_15_helper(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
     mmat: &mut BoundsMatrix,
@@ -1054,7 +1054,7 @@ fn set_15_helper(
 }
 
 fn set_15_bounds(
-    p: &Perceived,
+    p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
     mmat: &mut BoundsMatrix,
@@ -1073,7 +1073,7 @@ fn set_15_bounds(
 
 // ── vdW lower bounds ─────────────────────────────────────────────────────────
 
-fn set_lower_bound_vdw(p: &Perceived, mmat: &mut BoundsMatrix, topo: &[Vec<f64>]) {
+fn set_lower_bound_vdw(p: &DgFeatures, mmat: &mut BoundsMatrix, topo: &[Vec<f64>]) {
     let n = p.atoms.len();
     for i in 1..n {
         let vw1 = rvdw(p.atoms[i].element.z());
@@ -1096,7 +1096,7 @@ fn set_lower_bound_vdw(p: &Perceived, mmat: &mut BoundsMatrix, topo: &[Vec<f64>]
 
 /// Build the full topological bounds matrix for `p` (RDKit `setTopolBounds`
 /// with `set15bounds=true, scaleVDW=false`).
-pub fn set_topol_bounds(p: &Perceived) -> BoundsMatrix {
+pub fn set_topol_bounds(p: &DgFeatures) -> BoundsMatrix {
     let n = p.atoms.len();
     let mut mmat = BoundsMatrix::new(n, 0.0);
     // initBoundsMat(min=0, max=1000)
