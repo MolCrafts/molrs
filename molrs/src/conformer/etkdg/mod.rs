@@ -12,15 +12,15 @@
 //! 2. `BuildInitial`  — `build_constraints` → metrization sample → 4D
 //!    eigenvalue embedding (`embed4d`).
 //! 3. `CoarseOptimize`— first-stage 4D distance/chiral/fourth-dim minimization
-//!    then 3D experimental-torsion refinement (`etmin`).
+//!    then 3D experimental-torsion refinement (`torsion_refinement`).
 //! 4. `FinalOptimize` — second-stage MMFF94 energy minimization (`molrs::ff`).
 //! 5. `StereoCheck`   — chiral-volume sign verification (no inversion).
 //!
 //! The maxIterations retry loop + `useRandomCoords` fallback live in `retry`.
 
 mod embed4d;
-mod etmin;
 mod retry;
+mod torsion_refinement;
 
 use rand::{SeedableRng, random, rngs::StdRng};
 
@@ -39,6 +39,10 @@ const EMBED_DIM: usize = 4;
 /// Fraction below which a chiral volume is treated as inverted (RDKit
 /// `checkChiralCenters` 0.8 threshold).
 const CHIRAL_RATIO_TOL: f64 = 0.8;
+
+/// Per-atom energy threshold above which the first minimization is rejected
+/// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
+const MAX_MINIMIZED_E_PER_ATOM: f64 = 0.05;
 
 /// Run the ETKDGv3 embedding pipeline and return the molecule with 3D
 /// coordinates plus a stage report.
@@ -297,7 +301,7 @@ fn run_stereo_check(constraints: &DgConstraints, coords3d: &[f64], report: &mut 
         if c.sign == ChiralSign::Unknown {
             continue;
         }
-        let vol = etmin::calc_chiral_volume(coords3d, c.neighbors, 3);
+        let vol = distgeom::chiral_volume(coords3d, c.neighbors, 3);
         let target_positive = matches!(c.sign, ChiralSign::Positive);
         let got_positive = vol > 0.0;
         if target_positive != got_positive
@@ -349,18 +353,18 @@ fn try_embed<R: rand::Rng + ?Sized>(
 
     // First minimization: distance + chiral + 4th-dimension (RDKit
     // firstMinimization, weightChiral=1.0, weightFourthDim=0.1).
-    let field1 = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
+    let field1 = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
     let stage1 = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
     let (e1, s1) = (stage1.final_energy, stage1.n_steps);
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
-    if !use_random_coords && e1 / (n as f64) >= etmin::MAX_MINIMIZED_E_PER_ATOM {
+    if !use_random_coords && e1 / (n as f64) >= MAX_MINIMIZED_E_PER_ATOM {
         return (None, s1, e1, 0, false, false);
     }
 
     // Fourth-dimension squeeze (RDKit minimizeFourthDimension, weightChiral=0.2,
     // weightFourthDim=1.0) to collapse 4D → 3D.
-    let field1b = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
+    let field1b = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
     let _ = minimize(&mut coords4d, 200, |p, g| field1b.energy_grad(p, g));
 
     // Project to 3D (drop the 4th component).
@@ -373,7 +377,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
 
     // Second stage: 3D experimental-torsion refinement (RDKit
     // minimizeWithExpTorsions / construct3DForceField).
-    let field2 = etmin::ExpTorsionField::build(
+    let field2 = torsion_refinement::TorsionRefinement::build(
         bounds,
         constraints
             .experimental_torsions
@@ -387,7 +391,7 @@ fn try_embed<R: rand::Rng + ?Sized>(
     // Chiral check.
     let mut chiral_pass = true;
     for c in &constraints.chiral {
-        let vol = etmin::calc_chiral_volume(&coords3d, c.neighbors, 3);
+        let vol = distgeom::chiral_volume(&coords3d, c.neighbors, 3);
         let lb = c.volume_lower;
         let ub = c.volume_upper;
         if (lb > 0.0 && vol < lb && (vol / lb < CHIRAL_RATIO_TOL || have_opposite_sign(vol, lb)))
