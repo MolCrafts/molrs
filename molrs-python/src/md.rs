@@ -6,15 +6,15 @@
 //! ```
 //!
 //! MD defines no potential. What it integrates is any member
-//! [`take_potential`](crate::ff::potential::take_potential) accepts: `molrs.ff.potential.LJCut`, the force-field
-//! `Potentials` collection (e.g. from `molrs.ff.potential.kernel`), or a
+//! [`take_potential`](crate::ff::potential::take_potential) accepts: `molrs.ff.potential.PairLjCut`, the force-field
+//! `Potentials` collection (e.g. from `molrs.ff.potential.compile_explicit_terms`), or a
 //! duck-typed Python object with
 //! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
 //! optional `VerletSkin`.
 
 use crate::core::neighborlist::PyVerletSkin;
 use crate::core::simbox::PyBox;
-use crate::ff::potential::{ErrSlot, Members, PyLJCut, check_nx3, take_err, take_members};
+use crate::ff::potential::{ErrSlot, Members, PyPairLjCut, check_nx3, take_err, take_members};
 use molrs::core::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
@@ -237,9 +237,9 @@ impl PyVelocityVerlet {
         mass: Bound<'_, PyAny>,
         simbox: Option<PyBox>,
     ) -> PyResult<Self> {
-        if potential.cast::<PyLJCut>().is_ok() && neighbors.is_none() {
+        if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
-                "an LJCut pair kernel needs neighbors= (a VerletSkin)",
+                "an PairLjCut pair kernel needs neighbors= (a VerletSkin)",
             ));
         }
         // Validate mass before moving the potential / neighbour state in.
@@ -343,9 +343,9 @@ impl PyLangevin {
         seed: u64,
         simbox: Option<PyBox>,
     ) -> PyResult<Self> {
-        if potential.cast::<PyLJCut>().is_ok() && neighbors.is_none() {
+        if potential.cast::<PyPairLjCut>().is_ok() && neighbors.is_none() {
             return Err(PyValueError::new_err(
-                "an LJCut pair kernel needs neighbors= (a VerletSkin)",
+                "an PairLjCut pair kernel needs neighbors= (a VerletSkin)",
             ));
         }
         // Validate the scheme knobs and mass before moving anything in.

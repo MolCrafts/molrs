@@ -37,7 +37,7 @@ def test_a_cmap_style_takes_five_endpoints_and_a_grid() -> None:
     ff = _cmap_ff()
     style = ff.get_style("cmap", "charmm")
     assert isinstance(style, molrs.ff.forcefield.CmapStyle)
-    (cmap,) = style.types
+    (cmap,) = style.get_types()
     assert isinstance(cmap, molrs.ff.forcefield.CmapType)
     assert cmap.category == "cmap"
     assert [t.name for t in cmap.endpoints] == list(ENDS)
@@ -66,7 +66,7 @@ def test_an_array_param_is_taken_from_any_numeric_array_or_nested_list() -> None
 def test_a_restatement_compares_its_arrays_exactly() -> None:
     ff = _cmap_ff()
     style = ff.get_style("cmap", "charmm")
-    ends = ff.get_style("atom", "full").types
+    ends = ff.get_style("atom", "full").get_types()
     name = "-".join(ENDS)
     style.def_type(name, *ends, grid=_grid())
     nudged = _grid()

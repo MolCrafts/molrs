@@ -28,16 +28,16 @@ def _ethane() -> "molrs.core.Atomistic":
 
 
 def test_opls_typifier_is_exposed():
-    """OPLSAATypifier exists and constructs from embedded OPLS-AA."""
-    assert "OPLSAATypifier" in molrs.ff.typifier.__all__
-    assert molrs.ff.typifier.OPLSAATypifier is molrs.ff.typifier.OPLSAATypifier
-    typifier = molrs.ff.typifier.OPLSAATypifier()
+    """OplsAaTypifier exists and constructs from embedded OPLS-AA."""
+    assert "OplsAaTypifier" in molrs.ff.typifier.__all__
+    assert molrs.ff.typifier.OplsAaTypifier is molrs.ff.typifier.OplsAaTypifier
+    typifier = molrs.ff.typifier.OplsAaTypifier()
     assert isinstance(typifier, molrs.ff.typifier.Typifier)
 
 
 def test_typify_assigns_atom_types():
     """typify() returns a typed Atomistic graph."""
-    typifier = molrs.ff.typifier.OPLSAATypifier()
+    typifier = molrs.ff.typifier.OplsAaTypifier()
     typed = typifier.typify(_ethane())
     assert isinstance(typed, molrs.core.Atomistic)
     frame = typed.to_frame()
@@ -50,7 +50,7 @@ def test_typify_assigns_atom_types():
 
 def test_typify_and_compose_potentials():
     """typify() adds bonded blocks; compose path yields finite energy (no build())."""
-    typifier = molrs.ff.typifier.OPLSAATypifier()
+    typifier = molrs.ff.typifier.OplsAaTypifier()
     mol = _ethane()
     typed = typifier.typify(mol)
     frame = typed.to_frame()
@@ -68,7 +68,7 @@ def test_typify_and_compose_potentials():
 
 def test_opls_has_no_build_facade():
     """0.12: OPLS matches MMFF — no typifier.build()."""
-    assert not hasattr(molrs.ff.typifier.OPLSAATypifier(), "build")
+    assert not hasattr(molrs.ff.typifier.OplsAaTypifier(), "build")
 
 
 def test_xml_source_constructs():
@@ -80,18 +80,18 @@ def test_xml_source_constructs():
         '<Type name="opls_135" class="CT" element="C" mass="12.011"/>'
         "</AtomTypes></ForceField>"
     )
-    typifier = molrs.ff.typifier.OPLSAATypifier(xml)
+    typifier = molrs.ff.typifier.OplsAaTypifier(xml)
     assert typifier is not None
 
 
 def test_invalid_xml_raises_not_panics():
     """Malformed input raises a Python exception rather than aborting."""
     with pytest.raises((ValueError, RuntimeError)):
-        molrs.ff.typifier.OPLSAATypifier("<not valid xml <<<")
+        molrs.ff.typifier.OplsAaTypifier("<not valid xml <<<")
 
 
 def test_oplsaa_rejects_coarse_grain():
-    typifier = molrs.ff.typifier.OPLSAATypifier()
+    typifier = molrs.ff.typifier.OplsAaTypifier()
     cg = molrs.core.CoarseGrain()
     with pytest.raises(TypeError):
         typifier.typify(cg)

@@ -10,8 +10,8 @@
 //!
 //! | Type | Parameter set | Delocalised trivalent N |
 //! |---|---|---|
-//! | [`MMFF94Typifier`] | `MMFF94` | pyramidal (dynamic / time-averaged picture) |
-//! | [`MMFF94STypifier`] | `MMFF94s` | **planar** (static, Halgren 1999) |
+//! | [`Mmff94Typifier`] | `MMFF94` | pyramidal (dynamic / time-averaged picture) |
+//! | [`Mmff94sTypifier`] | `MMFF94s` | **planar** (static, Halgren 1999) |
 //!
 //! There is **one** engine behind both; the variant is its private field. Users
 //! choose a parameter set by choosing a type, never by passing a flag.
@@ -22,7 +22,7 @@
 //! (`NC=O`, amide N) or 40 (`NC=C`, enamine-type N). MMFF94s ("s" = *static*)
 //! raises the out-of-plane force constant `koop` on those centres to a flat
 //! `+0.015` (type 10) / `+0.030` (type 40) md·Å·rad⁻², which — see
-//! [`MMFF94STypifier`] — makes the planar nitrogen an energy *minimum*.
+//! [`Mmff94sTypifier`] — makes the planar nitrogen an energy *minimum*.
 //!
 //! # Example — the one route
 //!
@@ -30,10 +30,10 @@
 //! use molrs::core::Atomistic;
 //! use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 //! use molrs::ff::typifier::Typing;
-//! use molrs::ff::typifier::mmff::MMFF94Typifier;
+//! use molrs::ff::typifier::mmff::Mmff94Typifier;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mol = Atomistic::new();                             // build or load your molecule
-//! let mut typing = Typing::new(MMFF94Typifier::new());
+//! let mut typing = Typing::new(Mmff94Typifier::new());
 //!
 //! let mut frame = typing.typify(&mol)?.to_frame().map_err(|e| e.to_string())?;
 //! let ff = typing.forcefield();                           // exactly the types assigned
@@ -53,28 +53,26 @@
 #![allow(clippy::type_complexity)]
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::typifier::{Match, Typifier};
+use crate::ff::typifier::{TypeAssignment, Typifier};
 use molrs::core::Atomistic;
 use properties::MmffVariant;
 
 use engine::MmffEngine;
 
-mod aromaticity;
+mod assignment;
+mod atom_properties;
 mod atomtype;
 mod charges;
-mod embedded;
 mod engine;
-mod frame_builder;
-mod params;
 mod properties;
 mod resolve;
-mod topo;
+mod shipped_forcefield;
 
 #[cfg(test)]
 mod tests;
 
 // Re-exports
-pub use params::{MMFFAtomProp, MMFFParams};
+pub use atom_properties::MmffAtomProperties;
 
 /// Declare a front door: a newtype over the one [`MmffEngine`], with its variant
 /// and its force-field name pinned by the type itself.
@@ -97,7 +95,7 @@ macro_rules! mmff_front_door {
             /// ([`ff::params::mmff`](crate::ff::params::mmff)), assembled once
             /// per process and shared by every typifier of this door.
             pub fn new() -> Self {
-                Self(MmffEngine::embedded($variant))
+                Self(MmffEngine::shipped($variant))
             }
 
             #[doc = concat!("Create a typifier over a caller's own `", $set, "` parameter set.")]
@@ -108,18 +106,18 @@ macro_rules! mmff_front_door {
             /// and
             /// [`read_mmff_xml_forcefield_str`](crate::io::read_mmff_xml_forcefield_str).
             /// The variant is pinned by *this type* — it is never an argument.
-            pub fn from_parts(params: MMFFParams, ff: ForceField) -> Self {
+            pub fn from_parts(params: MmffAtomProperties, ff: ForceField) -> Self {
                 Self(MmffEngine::from_parts($variant, params, ff))
             }
 
             /// The MMFF typing metadata (atom-type properties, equivalences).
-            pub fn params(&self) -> &MMFFParams {
+            pub fn params(&self) -> &MmffAtomProperties {
                 self.0.params()
             }
         }
 
         impl Typifier for $name {
-            #[doc = concat!("Match an all-atom graph against `", $set, "`.")]
+            #[doc = concat!("Type an all-atom graph against `", $set, "`.")]
             ///
             /// Atoms get their MMFF numeric `type` and partial `charge`; bonds,
             /// angles, dihedrals and impropers get their type labels **and** the
@@ -135,13 +133,13 @@ macro_rules! mmff_front_door {
             /// and compile it with
             /// `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — see
             /// the module example.
-            fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
-                self.0.r#match(graph)
+            fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+                self.0.assign(graph)
             }
 
             #[doc = concat!("The `", $set, "` force field this door matches against.")]
-            fn library(&self) -> &ForceField {
-                self.0.library()
+            fn source_forcefield(&self) -> &ForceField {
+                self.0.source_forcefield()
             }
         }
 
@@ -160,25 +158,25 @@ mmff_front_door! {
     /// the compiled table [`crate::ff::params::mmff`].
     ///
     /// ```no_run
-    /// use molrs::ff::typifier::mmff::MMFF94Typifier;
+    /// use molrs::ff::typifier::mmff::Mmff94Typifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
     /// # let mol = molrs::core::Atomistic::new();
-    /// let typifier = MMFF94Typifier::new();
-    /// assert_eq!(typifier.library().name, "MMFF94");
+    /// let typifier = Mmff94Typifier::new();
+    /// assert_eq!(typifier.source_forcefield().name, "MMFF94");
     /// let typed = Typing::new(typifier).typify(&mol)?;
     /// # let _ = typed;
     /// # Ok(())
     /// # }
     /// ```
-    MMFF94Typifier, MmffVariant::Mmff94, "MMFF94"
+    Mmff94Typifier, MmffVariant::Mmff94, "MMFF94"
 }
 
 mmff_front_door! {
     /// MMFF94s typifier (Halgren 1999) — the **static** variant, for energy
     /// minimization.
     ///
-    /// Identical to [`MMFF94Typifier`] except on delocalised trivalent nitrogen
+    /// Identical to [`Mmff94Typifier`] except on delocalised trivalent nitrogen
     /// (MMFF numeric types 10 `NC=O` and 40 `NC=C`), where it re-parameterises 11
     /// out-of-plane rows and 42 torsion rows so that the nitrogen minimises to a
     /// **planar** geometry — the picture seen in crystal structures, rather than
@@ -198,7 +196,7 @@ mmff_front_door! {
     /// (type 10) / `+0.030` (type 40); under MMFF94 those rows range over
     /// `−0.033 … +0.004`.
     ///
-    /// Parameters come from the same compiled table as [`MMFF94Typifier`]
+    /// Parameters come from the same compiled table as [`Mmff94Typifier`]
     /// ([`crate::ff::params::mmff`]) — the two front doors differ by this
     /// force field's **name** and by the variant, which selects
     /// [`MMFF_OOP_S`](crate::ff::params::mmff::MMFF_OOP_S) /
@@ -206,12 +204,12 @@ mmff_front_door! {
     /// per-instance `koop` / `(v1, v2, v3)` baked onto the typed graph.
     ///
     /// ```no_run
-    /// use molrs::ff::typifier::mmff::MMFF94STypifier;
+    /// use molrs::ff::typifier::mmff::Mmff94sTypifier;
     /// use molrs::ff::typifier::{Typifier, Typing};
     /// # fn main() -> Result<(), String> {
     /// # let mol = molrs::core::Atomistic::new();
-    /// let typifier = MMFF94STypifier::new();
-    /// assert_eq!(typifier.library().name, "MMFF94s");
+    /// let typifier = Mmff94sTypifier::new();
+    /// assert_eq!(typifier.source_forcefield().name, "MMFF94s");
     /// let typed = Typing::new(typifier).typify(&mol)?;
     /// # let _ = typed;
     /// # Ok(())
@@ -222,5 +220,5 @@ mmff_front_door! {
     ///
     /// - T. A. Halgren, *MMFF VI. MMFF94s option for energy minimization studies*,
     ///   J. Comput. Chem. **20**, 720–729 (1999).
-    MMFF94STypifier, MmffVariant::Mmff94s, "MMFF94s"
+    Mmff94sTypifier, MmffVariant::Mmff94s, "MMFF94s"
 }

@@ -95,10 +95,10 @@ use roxmltree::Node;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL, OPENMM_COULOMB};
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
-use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::ir::torsion::rb_polynomial;
 use crate::io::reader::ForceFieldReader;
 use molrs::core::TypeName;
 
@@ -385,7 +385,7 @@ fn build_nonbonded(
         if raw.nonbonded_scales.is_none() {
             return Ok(());
         }
-        let rule = combining_rule.map_or(Ok(Mixing::Arithmetic), foyer_rule)?;
+        let rule = combining_rule.map_or(Ok(CombiningRule::Arithmetic), foyer_rule)?;
         let mut lj_params = Params::new();
         lj_params.set_str("mixing", rule.name());
         let lj = ff
@@ -418,7 +418,7 @@ fn build_nonbonded(
         ));
     }
     if let Some(rule) = combining_rule
-        && foyer_rule(rule)? != Mixing::Arithmetic
+        && foyer_rule(rule)? != CombiningRule::Arithmetic
     {
         return Err(format!(
             "<ForceField combining_rule=\"{rule}\">: <LennardJonesForce> mixes \
@@ -1182,11 +1182,13 @@ fn opt_f64(node: &Node, attr: &str) -> Result<Option<f64>, String> {
 }
 
 /// foyer's `<ForceField combining_rule>`: `lorentz` (Lorentz-Berthelot,
-/// [`Mixing::Arithmetic`]) or a canonical rule name.
-fn foyer_rule(rule: &str) -> Result<Mixing, String> {
+/// [`CombiningRule::Arithmetic`]) or a canonical rule name.
+fn foyer_rule(rule: &str) -> Result<CombiningRule, String> {
     match rule {
-        "lorentz" => Ok(Mixing::Arithmetic),
-        other => Mixing::parse(other).map_err(|e| format!("<ForceField combining_rule>: {e}")),
+        "lorentz" => Ok(CombiningRule::Arithmetic),
+        other => {
+            CombiningRule::parse(other).map_err(|e| format!("<ForceField combining_rule>: {e}"))
+        }
     }
 }
 
@@ -1276,7 +1278,7 @@ mod tests {
     /// The RB series equals OpenMM's formula at any φ.
     #[test]
     fn rb_multi_harmonic_prices_openmm_formula() {
-        use crate::ff::forcefield::torsion::MultiHarmonic;
+        use crate::ff::ir::torsion::MultiHarmonic;
         let c = [1.3, -0.7, 2.1, 0.4, -1.9, 0.0];
         let strs = c.map(|v| v.to_string());
         let xml = rb_row(strs.each_ref().map(|v| v.as_str()));

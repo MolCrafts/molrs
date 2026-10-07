@@ -36,7 +36,7 @@ pub(crate) enum Category {
 
 /// Which categories a ``get_styles`` / ``get_types`` selector names.
 pub(crate) enum Selection {
-    /// Every category (``Style`` / ``Type``).
+    /// Every category (``Style`` / ``ForceFieldType``).
     Every,
     /// Every category beyond the seven (``RelationStyle`` / ``RelationType``).
     Relations,
@@ -75,7 +75,7 @@ impl Category {
         if let Some(builtin) = Self::BUILTIN.into_iter().find(|c| c.name() == name) {
             return Ok(builtin);
         }
-        let declared = molrs::ff::ir::with_global(|r| r.category(name).is_some())
+        let declared = molrs::ff::ir::with_global_registry(|r| r.category(name).is_some())
             || ff.styles().iter().any(|s| s.category() == name);
         if declared {
             Ok(Self::Relation(Arc::from(name)))
@@ -137,7 +137,7 @@ impl Category {
     /// The categories `selector` names in `ff`: a category name its own; a
     /// style or type class its category (``RelationStyle`` /
     /// ``RelationType`` every category beyond the seven); the base
-    /// ``Style`` / ``Type`` every one.
+    /// ``Style`` / ``ForceFieldType`` every one.
     ///
     /// # Errors
     ///
@@ -164,7 +164,7 @@ impl Category {
             .map(Selection::Only)
             .ok_or_else(|| {
                 PyTypeError::new_err(format!(
-                    "expected a category name or a Style / Type class, got {}",
+                    "expected a category name or a Style / ForceFieldType class, got {}",
                     selector.repr().map(|r| r.to_string()).unwrap_or_default()
                 ))
             })
@@ -333,14 +333,8 @@ impl PyStyle {
         self.category.name()
     }
 
-    /// Every type of this style, in definition order.
-    #[getter(types)]
-    fn every_type(&self, py: Python<'_>) -> PyResult<Vec<Py<PyAny>>> {
-        self.type_handles(py)
-    }
-
-    /// The types of this style that are instances of `type_cls` (every type
-    /// when it is ``None``).
+    /// The types of this style that are instances of `type_cls` (every type,
+    /// in definition order, when it is ``None``).
     #[pyo3(signature = (type_cls = None))]
     fn get_types(
         &self,
@@ -701,7 +695,12 @@ impl PyRelationStyle {
 /// ``endpoints`` are the ``AtomType`` handles it is defined on. Two handles
 /// are equal when they name the same category, style and type of the same
 /// force field.
-#[pyclass(module = "molrs.ff.forcefield", name = "Type", frozen, subclass)]
+#[pyclass(
+    module = "molrs.ff.forcefield",
+    name = "ForceFieldType",
+    frozen,
+    subclass
+)]
 pub struct PyFfType {
     ff: Py<PyForceField>,
     category: Category,

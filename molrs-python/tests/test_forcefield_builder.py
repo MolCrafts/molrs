@@ -25,7 +25,7 @@ HANDLE_CLASSES = (
     "DihedralStyle",
     "ImproperStyle",
     "PairStyle",
-    "Type",
+    "ForceFieldType",
     "AtomType",
     "BondType",
     "AngleType",
@@ -37,7 +37,7 @@ HANDLE_CLASSES = (
 
 def _rows(style) -> list[tuple[str, dict]]:
     """``(name, params)`` of every type of ``style``, in definition order."""
-    return [(t.name, t.params) for t in style.types]
+    return [(t.name, t.params) for t in style.get_types()]
 
 
 @pytest.mark.parametrize("name", HANDLE_CLASSES)
@@ -310,7 +310,7 @@ def test_get_styles_and_get_types_select_by_category_or_class():
     assert len(ff.get_styles(molrs.ff.forcefield.Style)) == 3
     assert [t.name for t in ff.get_types("atom")] == ["CT", "OH"]
     assert len(ff.get_types(molrs.ff.forcefield.BondType)) == 2
-    assert len(ff.get_types(molrs.ff.forcefield.Type)) == 4
+    assert len(ff.get_types(molrs.ff.forcefield.ForceFieldType)) == 4
 
 
 def test_type_equality_includes_the_style():
@@ -374,10 +374,10 @@ def test_a_force_field_pickles_with_its_whole_definition():
     ]
     assert [
         (t.name, t.params, [e.name for e in t.endpoints])
-        for t in back.get_types(molrs.ff.forcefield.Type)
+        for t in back.get_types(molrs.ff.forcefield.ForceFieldType)
     ] == [
         (t.name, t.params, [e.name for e in t.endpoints])
-        for t in ff.get_types(molrs.ff.forcefield.Type)
+        for t in ff.get_types(molrs.ff.forcefield.ForceFieldType)
     ]
     # The special bonds survive: merging the original into the copy agrees.
     assert back.merge(ff) is back
@@ -439,10 +439,10 @@ def test_defer_returns_empty_potentials_that_bind_on_evaluation():
 
 
 def test_compile_typed_returns_typed_potentials():
-    from molrs._lib import TypedPotentials
+    from molrs._lib import WeightedTerms
 
     typed = molrs.ff.potential.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
-    assert isinstance(typed, TypedPotentials)
+    assert isinstance(typed, WeightedTerms)
     assert len(typed) == 1
 
 
@@ -502,7 +502,7 @@ def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
     a, b = _atoms(ff, "A", "B")
     restated = lj.def_type("B-A", b, a, epsilon=0.9, sigma=2.0, desc="restated")
     assert restated.name == "A-B"
-    assert len(ff.get_style("pair", "lj/cut").types) == 3
+    assert len(ff.get_style("pair", "lj/cut").get_types()) == 3
     with pytest.raises(ValueError, match="restates the pair"):
         lj.def_type("nbfix", a, b, epsilon=0.8, sigma=2.0)
     assert _lj_pair_energy(ff, 2.5) == pytest.approx(_lj(0.9, 2.0, 2.5), rel=1e-12)

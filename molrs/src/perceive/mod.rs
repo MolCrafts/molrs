@@ -45,6 +45,7 @@ mod builder;
 pub mod equivalence;
 mod hybridization;
 pub mod hydrogens;
+pub(crate) mod mmff_aromaticity;
 pub mod ring_class;
 pub mod rings;
 pub mod rotatable;

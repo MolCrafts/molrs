@@ -13,7 +13,7 @@ use molrs::core::Element;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::params::{EmpiricalTable, ParmchkTable};
 
-use super::opls::meta::OplsTypingMeta;
+use super::opls::typing_metadata::OplsTypingMetadata;
 
 use candidate::CandidateSet;
 pub(crate) use cascade::DEFAULT_IMPROPER;
@@ -44,12 +44,12 @@ pub trait ParameterInterpolator {
 /// type-to-element map for the empirical fallbacks. Keeping them here is what lets
 /// a non-OPLS typifier build the same estimator without pretending to be OPLS.
 #[derive(Debug, Clone, Default)]
-pub struct TypifierParameterContext {
+pub struct EstimationInputs {
     type_to_class: HashMap<String, String>,
     type_to_element: HashMap<String, String>,
 }
 
-impl TypifierParameterContext {
+impl EstimationInputs {
     /// Create an empty interpolation context.
     pub fn new() -> Self {
         Self::default()
@@ -181,7 +181,7 @@ impl TypifierParameterContext {
 /// It reaches its callers as an interpolation seam: it implements
 /// [`ParameterInterpolator`] for [`BondedTerm`] and is injected into the OPLS
 /// bonded matcher via
-/// [`OPLSAATypifier::with_estimator`](super::opls::OPLSAATypifier::with_estimator). Exact matches
+/// [`OplsAaTypifier::with_estimator`](super::opls::OplsAaTypifier::with_estimator). Exact matches
 /// always win first; with `strict=true` the interpolator is never consulted; with
 /// none attached the assign path is byte-identical to pre-interpolator behaviour.
 /// [`Parmchk2Estimator::estimate`] keeps the [`Covered`](Estimate::Covered) /
@@ -222,7 +222,7 @@ pub struct Parmchk2Estimator {
     /// The rows the cascade scans, by arity.
     candidates: CandidateSet,
     /// Typifier-side type metadata (class + element).
-    context: TypifierParameterContext,
+    context: EstimationInputs,
     /// `PARMCHK.DAT`: equivalences, correspondences, penalty weights, and the
     /// improper-centre column.
     substitutions: ParmchkTable,
@@ -235,8 +235,8 @@ impl Parmchk2Estimator {
     ///
     /// The `type → class` map comes from `meta`; the `type → element` map is
     /// inferred from each atom type's tabulated mass.
-    pub fn new(ff: &ForceField, meta: &OplsTypingMeta) -> Self {
-        let context = TypifierParameterContext::from_type_classes(
+    pub fn new(ff: &ForceField, meta: &OplsTypingMetadata) -> Self {
+        let context = EstimationInputs::from_type_classes(
             meta.iter()
                 .map(|(name, row)| (name.clone(), row.class.clone())),
         )
@@ -255,7 +255,7 @@ impl Parmchk2Estimator {
     /// declares, by style **kind** and never by style *name*: GAFF's dihedral style
     /// is `periodic` and OPLS's is `opls`, and an extractor that asks for one by
     /// name is an extractor with an empty table for the other.
-    pub fn with_context(ff: &ForceField, context: TypifierParameterContext) -> Self {
+    pub fn with_context(ff: &ForceField, context: EstimationInputs) -> Self {
         Self {
             candidates: CandidateSet::from_forcefield(ff),
             context,
@@ -479,8 +479,8 @@ mod tests {
         };
         cell.get_or_init(|| {
             let gaff = GaffTypifier::new(set);
-            let candidates = gaff.library();
-            let context = TypifierParameterContext::new().with_forcefield_elements(candidates);
+            let candidates = gaff.source_forcefield();
+            let context = EstimationInputs::new().with_forcefield_elements(candidates);
             Parmchk2Estimator::with_context(candidates, context).with_empirical(empirical)
         })
     }
@@ -649,7 +649,7 @@ mod tests {
                 Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
             )
             .unwrap();
-        let mut context = TypifierParameterContext::from_type_classes([
+        let mut context = EstimationInputs::from_type_classes([
             ("ta", "CZ"),
             ("tb", "CT"),
             ("tc", "CT"),
@@ -791,7 +791,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let context = TypifierParameterContext::from_type_classes(
+        let context = EstimationInputs::from_type_classes(
             atom_types.iter().map(|(name, class, _)| (*name, *class)),
         )
         .with_forcefield_elements(&ff);

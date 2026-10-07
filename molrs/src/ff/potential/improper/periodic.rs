@@ -21,17 +21,17 @@
 //! OpenMM's XML lists the centre first and evaluates `(c2, c3, c1, c4)`; its
 //! reader and writer map between the two.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
@@ -129,11 +129,11 @@ impl IndexedTerms for ImproperPeriodic {
 /// Construct an [`ImproperPeriodic`] from per-type params (`k`,
 /// `periodicity`, `phase` in degrees) and a Frame's `"impropers"` block
 /// (`atomi/atomj/atomk/atoml/type`, in AMBER order — see the module docs).
-pub fn improper_periodic_ctor(
+pub fn improper_periodic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(IMPROPERS)
@@ -180,12 +180,17 @@ pub fn improper_periodic_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(need::type_num("periodic", &tc[idx], p, "k")?);
-        nn.push(need::type_num("periodic", &tc[idx], p, "periodicity")?);
+        kk.push(param_reads::type_num("periodic", &tc[idx], p, "k")?);
+        nn.push(param_reads::type_num(
+            "periodic",
+            &tc[idx],
+            p,
+            "periodicity",
+        )?);
         // degrees → radians
-        dd.push(need::type_num("periodic", &tc[idx], p, "phase")?.to_radians());
+        dd.push(param_reads::type_num("periodic", &tc[idx], p, "phase")?.to_radians());
     }
-    Ok(Member::indexed(ImproperPeriodic {
+    Ok(ForceTerm::indexed(ImproperPeriodic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

@@ -134,9 +134,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
-use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::torsion::nharmonic_coefficients;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
+use crate::ff::ir::torsion::nharmonic_coefficients;
 use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
@@ -232,15 +232,17 @@ impl GromacsTopForcefieldWriter {
                 charmm_mixing(style.params()).map_err(|e| e.to_string())?
             }
             Some(style) => match style.params().get_str("mixing") {
-                Some(name) => Mixing::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?,
-                None => Mixing::UNDECLARED,
+                Some(name) => {
+                    CombiningRule::parse(name).map_err(|e| format!("pair/lj/cut: {e}"))?
+                }
+                None => CombiningRule::UNDECLARED,
             },
-            None => Mixing::UNDECLARED,
+            None => CombiningRule::UNDECLARED,
         };
         let comb = match mixing {
-            Mixing::Arithmetic => 2,
-            Mixing::Geometric => 3,
-            Mixing::SixthPower => {
+            CombiningRule::Arithmetic => 2,
+            CombiningRule::Geometric => 3,
+            CombiningRule::SixthPower => {
                 return Err(format!(
                     "Lennard-Jones mixing '{}' has no GROMACS comb-rule (2 is arithmetic, 3 \
                      geometric)",
@@ -1483,7 +1485,7 @@ mod tests {
         assert_eq!(section_rows(&text, "defaults")[0][..3], ["1", "2", "yes"]);
     }
 
-    /// No declared rule is `Mixing::UNDECLARED`, Lorentz-Berthelot: comb-rule 2.
+    /// No declared rule is `CombiningRule::UNDECLARED`, Lorentz-Berthelot: comb-rule 2.
     #[test]
     fn undeclared_mixing_writes_comb_rule_2() {
         let text = write(&opls_ff(None));

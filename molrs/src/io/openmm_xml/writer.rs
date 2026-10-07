@@ -79,12 +79,12 @@ use std::sync::Arc;
 
 mod custom;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
-use crate::ff::forcefield::torsion::{
+use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
+use crate::ff::ir::torsion::{
     Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
 };
-use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::ir::{Registry, RegistryRef};
 use crate::ff::potential::cmap::charmm::GRID;
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
@@ -284,7 +284,7 @@ impl OpenmmXmlWriter {
                     matches!(name, "periodic" | "charmm" | "harmonic" | "class2")
                         || reg
                             .form("dihedral", name)
-                            .is_some_and(|f| f.family == crate::ff::forcefield::torsion::FAMILY)
+                            .is_some_and(|f| f.family == crate::ff::ir::torsion::FAMILY)
                 }
                 ("improper", name) => matches!(name, "periodic" | "harmonic"),
                 ("cmap", name) => name == "charmm",
@@ -491,7 +491,7 @@ impl OpenmmXmlWriter {
         out: &mut Out,
     ) -> Result<(), ForceFieldWriteError> {
         let what = format!("dihedral {} {name}", style.name());
-        let refused = |e: crate::ff::forcefield::torsion::TorsionRefusal| format!("{what}: {e}");
+        let refused = |e: crate::ff::ir::torsion::TorsionRefusal| format!("{what}: {e}");
         let terms: Option<Vec<(f64, f64, f64)>> = match style.name() {
             "periodic" => Some(
                 Periodic::from_params(p)
@@ -673,16 +673,16 @@ impl OpenmmXmlWriter {
                 }
             }
         }
-        let mixing = |style: &Style| -> Result<Mixing, ForceFieldWriteError> {
+        let mixing = |style: &Style| -> Result<CombiningRule, ForceFieldWriteError> {
             match style.params().get_str("mixing") {
-                Some(m) => Ok(Mixing::parse(m)?),
-                None => Ok(Mixing::UNDECLARED),
+                Some(m) => Ok(CombiningRule::parse(m)?),
+                None => Ok(CombiningRule::UNDECLARED),
             }
         };
         let (use_lj_force, combining_rule) = match lj_style {
             None => (false, None),
             Some(style) if style.name() == "lj/charmm" => {
-                if mixing(style)? != Mixing::Arithmetic {
+                if mixing(style)? != CombiningRule::Arithmetic {
                     return Err(refuse(style, "OpenMM's LennardJonesForce mixes arithmetic"));
                 }
                 if OneFour::of(style.params())? == OneFour::Regular
@@ -699,9 +699,9 @@ impl OpenmmXmlWriter {
                 (true, None)
             }
             Some(style) => match (mixing(style)?, cross.is_empty()) {
-                (Mixing::Arithmetic, true) => (false, None),
-                (Mixing::Arithmetic, false) => (true, None),
-                (Mixing::Geometric, true) => (false, Some("geometric")),
+                (CombiningRule::Arithmetic, true) => (false, None),
+                (CombiningRule::Arithmetic, false) => (true, None),
+                (CombiningRule::Geometric, true) => (false, Some("geometric")),
                 (rule, _) => {
                     return Err(refuse(
                         style,
@@ -1019,7 +1019,7 @@ mod tests {
     }
 
     /// The torsion series of the only dihedral type of `ff`.
-    fn series(ff: &ForceField) -> crate::ff::forcefield::torsion::FourierSeries {
+    fn series(ff: &ForceField) -> crate::ff::ir::torsion::FourierSeries {
         let s = style(ff, "dihedral");
         let p = &s.defs().collect_type_params()[0].1;
         torsion_series("dihedral", s.name(), s.params(), p).unwrap()

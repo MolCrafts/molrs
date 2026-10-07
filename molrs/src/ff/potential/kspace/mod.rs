@@ -6,4 +6,4 @@
 
 pub(crate) mod pme;
 
-pub use pme::{PmeParams, PmePotential, pme_ctor};
+pub use pme::{PairCoulLongPme, PairCoulLongPmeParams, pair_coul_long_pme_constructor};

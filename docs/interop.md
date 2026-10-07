@@ -34,11 +34,11 @@ evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follo
 use molrs::core::Atomistic;
 use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
-use molrs::ff::typifier::mmff::MMFF94Typifier;
-// UFF: use molrs::ff::typifier::UFFTypifier  (same composition)
+use molrs::ff::typifier::mmff::Mmff94Typifier;
+// UFF: use molrs::ff::typifier::UffTypifier  (same composition)
 
 let mol = Atomistic::new();                              // build or load your molecule
-let mut typing = Typing::new(MMFF94Typifier::new());
+let mut typing = Typing::new(Mmff94Typifier::new());
 
 let mut frame = typing
     .typify(&mol)?
@@ -68,7 +68,7 @@ not guess. (WASM `LBFGS` may install a topology pair list when no neighbor list
 is supplied — that still lives on the optimizer, not as a free-floating
 `optimizeGeometry`.)
 
-(A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
+(A `Mmff94Typifier::build(&mol)` convenience used to fold all three into one call.
 It was deleted — it had, for its whole life, compiled potentials with **no
 electrostatic style at all**, because no `ForceField` ever defined
 `pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed, because
@@ -78,14 +78,14 @@ This is the pattern the molpack relaxer follows.)
 This exact snippet is compile-checked as the module doctest on
 `molrs::ff::typifier::mmff`.
 
-MMFF ships **two** named front doors — `MMFF94Typifier` and `MMFF94STypifier` —
+MMFF ships **two** named front doors — `Mmff94Typifier` and `Mmff94sTypifier` —
 over one engine. Swap the type to swap the parameter set; there is no variant flag.
 MMFF94s (Halgren 1999, the "static" set) re-parameterises 11 out-of-plane rows and
 42 torsion rows so that delocalised trivalent nitrogen (MMFF types 10 `NC=O` /
 40 `NC=C`) minimizes planar; everything else is shared, so a molecule without such
 a nitrogen gets bit-for-bit identical potentials from both.
 
-`UFFTypifier` is the third named front door (RDKit-aligned Universal Force
+`UffTypifier` is the third named front door (RDKit-aligned Universal Force
 Field). Same composition; no electrostatics.
 
 ## Path B — Python / WASM via the `molrs-ffi` handle API

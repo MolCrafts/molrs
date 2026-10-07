@@ -4,7 +4,7 @@
 //! * [`every_appendix_a_expression_agrees_with_its_kernel`] — every built-in
 //!   with an Appendix-A expression prices identically by its native kernel
 //!   and by the expression (registered as a style of its own and built into
-//!   the generic kernels), on 64 seeded configurations × parameter sets per
+//!   the form kernels), on 64 seeded configurations × parameter sets per
 //!   style: energy to 1e-10 relative, forces too unless the style's force is
 //!   not the gradient (`coul/charmm`); a pair style at both compile doors,
 //!   its cutoff straddling the pairs, and `compile` = `compile_typed` to
@@ -31,7 +31,7 @@ use ndarray::Array1;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::conformance::{Rng, SEED};
 use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
-use crate::ff::potential::{Member, PotentialCompiler};
+use crate::ff::potential::{ForceTerm, PotentialCompiler};
 use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
 use crate::io::reader::ForceFieldReader;
 use crate::io::writer::ForceFieldWriter;
@@ -132,7 +132,7 @@ fn price(ff: &ForceField, r: &Registry, frame: &Frame, x: &[F], typed: bool) -> 
         .unwrap_or_else(|e| panic!("{} (typed): {e}", ff.name))
     {
         e += match &member {
-            Member::Pair(p) => p.accumulate_pairs(x, &table(x), &[], &mut out).0,
+            ForceTerm::Pair(p) => p.accumulate_pairs(x, &table(x), &[], &mut out).0,
             other => other.as_potential().accumulate(x, &mut out),
         };
     }
@@ -639,7 +639,7 @@ fn every_param_source_is_what_its_constructor_reads() {
     let mut rng = Rng(SEED);
     let mut checked = Vec::new();
     for (spec, kernel) in builtin.styles(None) {
-        let Some(Kernel::Ctor { .. }) = kernel else {
+        let Some(Kernel::Constructor { .. }) = kernel else {
             continue;
         };
         if spec.params.iter().any(|d| d.kind != ParamKind::Scalar) {

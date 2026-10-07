@@ -34,11 +34,12 @@ use molrs::core::{Block, Frame};
 use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use molrs::ff::ir::{
-    Arity, CategorySpec, Coordinate, Dim, EndpointOrder, Engine, FormCodec, IrError, Kernel,
-    LammpsForm, ParamSpec, Refusal, Registry, Sample, StyleSpec, Value,
+    Arity, CategorySpec, ConformanceSample, Coordinate, EndpointOrder, Engine, FormCodec,
+    FormRefusal, IrError, Kernel, LammpsForm, ParamDimension, ParamSpec, ParamValue, Registry,
+    StyleSpec,
 };
-use molrs::ff::potential::generic::{ParamCols, ScalarForm};
-use molrs::ff::potential::{CompileError, Member, PotentialCompiler, intramolecular_pairs};
+use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
+use molrs::ff::potential::{CompileError, ForceTerm, PotentialCompiler, intramolecular_pairs};
 use molrs::io::gromacs::GromacsTopForcefieldWriter;
 use molrs::io::lammps::{LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
 use molrs::io::mrec::ForceFieldSection;
@@ -558,7 +559,7 @@ fn pair_style_matches_lammps() {
             .unwrap();
         assert_eq!(members.len(), 1, "one pair member");
         for (member, weights) in members {
-            let (Member::Pair(p), Some(w)) = (&member, weights) else {
+            let (ForceTerm::Pair(p), Some(w)) = (&member, weights) else {
                 panic!("a weighted pair member");
             };
             let special = w.special_weights(&topo);
@@ -756,7 +757,7 @@ struct Bent {
 }
 
 impl ScalarForm for Bent {
-    fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de: &mut [f64]) {
+    fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de: &mut [f64]) {
         let (k, r0) = (p.get("k").unwrap(), p.get("r0").unwrap());
         for t in 0..r.len() {
             e[t] = self.scale * k[t] * (r[t] - r0[t]).powi(2);
@@ -769,12 +770,12 @@ fn quadratic(name: &'static str) -> StyleSpec {
     StyleSpec::new("bond", name)
         .params(vec![
             ParamSpec::new("k", "E/L^2".parse().unwrap()),
-            ParamSpec::new("r0", Dim::LENGTH),
+            ParamSpec::new("r0", ParamDimension::LENGTH),
         ])
-        .sample(Sample {
+        .sample(ConformanceSample {
             params: vec![
-                ("k".into(), Value::Num(300.0)),
-                ("r0".into(), Value::Num(1.5)),
+                ("k".into(), ParamValue::Num(300.0)),
+                ("r0".into(), ParamValue::Num(1.5)),
             ],
             q: (1.2, 1.8),
         })
@@ -789,7 +790,7 @@ fn quadratic(name: &'static str) -> StyleSpec {
 fn nonconforming_refused() {
     let mut r = ext::registry();
     let s = |name: &'static str| StyleSpec::new("bond", name);
-    let p = |name: &'static str| ParamSpec::new(name, Dim::ENERGY);
+    let p = |name: &'static str| ParamSpec::new(name, ParamDimension::ENERGY);
     let expr = |name: &'static str, e: &str| s(name).params(vec![p("k")]).expression(e);
 
     // ---- categories
@@ -887,7 +888,7 @@ fn nonconforming_refused() {
         )
         .unwrap_err();
     assert!(
-        matches!(&err, IrError::Dim { param, .. } if param == "k"),
+        matches!(&err, IrError::Dimension { param, .. } if param == "k"),
         "{err:?}"
     );
 
@@ -964,12 +965,12 @@ fn nonconforming_refused() {
     );
     let lopsided = StyleSpec::new("pair", "lopsided")
         .params(vec![p("a")])
-        .style_params(vec![ParamSpec::new("cutoff", Dim::LENGTH)])
+        .style_params(vec![ParamSpec::new("cutoff", ParamDimension::LENGTH)])
         .expression("a1*exp(-r)")
-        .sample(Sample {
+        .sample(ConformanceSample {
             params: vec![
-                ("a".into(), Value::Num(1.0)),
-                ("cutoff".into(), Value::Num(9.0)),
+                ("a".into(), ParamValue::Num(1.0)),
+                ("cutoff".into(), ParamValue::Num(9.0)),
             ],
             q: (1.0, 5.0),
         });
@@ -1024,7 +1025,7 @@ fn nonconforming_refused() {
     r.register_style(
         StyleSpec::new("pair", "soft")
             .params(vec![p("a")])
-            .style_params(vec![ParamSpec::new("cutoff", Dim::LENGTH)])
+            .style_params(vec![ParamSpec::new("cutoff", ParamDimension::LENGTH)])
             .expression("a*exp(-r)"),
         None,
     )
@@ -1132,7 +1133,7 @@ fn nonconforming_refused() {
     );
 
     // ---- forms
-    let same = |tp: &molrs::ff::ir::TypeParams| -> Result<_, Refusal> { Ok(tp.clone()) };
+    let same = |tp: &molrs::ff::ir::TypeParams| -> Result<_, FormRefusal> { Ok(tp.clone()) };
     let err = r
         .register_form(
             "bond",

@@ -442,9 +442,9 @@ value cell — the same numbers but for float ties on a cell edge).
   equal a cmap row's `itom … mtom` **forward** — never reversed, since
   reading the five atoms backwards swaps φ and ψ.
 - A LAMMPS `fix cmap` file reads (`read_lammps_cmap`,
-  `LammpsFfReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
+  `LammpsForcefieldReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
   is crossterm type `t` — and writes (`write_lammps_cmap`,
-  `LammpsFfWriter::write_cmap_str`) the `cmaps` labels' grids in label id
+  `LammpsForcefieldWriter::write_cmap_str`) the `cmaps` labels' grids in label id
   order, in CHARMM's layout: CHARMM's own file comes back line for line.
 - The data file's `N crossterms` header line and `CMAP` section
   (`index type a1 … a5`) are the frame's `cmaps` block (`type_id` = map
@@ -485,7 +485,7 @@ every molrs kernel and LAMMPS compute:
     E(φ) = Σₙ₌₀ aₙ cos nφ + bₙ sin nφ
 
 That series is the intermediate of every conversion between forms
-(`molrs::ff::forcefield::torsion`). Each form **embeds** exactly (the series
+(`molrs::ff::ir::torsion`). Each form **embeds** exactly (the series
 is the same function of φ, constant included) and **projects** back exactly
 — every coefficient, a₀ included — or refuses, naming the condition that
 prevents it. Rows of several styles on one quadruple are one torsion: their
@@ -554,7 +554,7 @@ The familiar chains are instances:
 In Rust:
 
 ```rust
-use molrs::ff::forcefield::torsion::{
+use molrs::ff::ir::torsion::{
     FourierSeries, MultiHarmonic, Opls, TorsionRefusal, torsion_series,
 };
 
@@ -775,10 +775,10 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 ## GROMACS topologies
 
-`GromacsTopFfReader` reads a topology's directives into a force field
+`GromacsTopForcefieldReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
 (`read_system`; Python `molrs.io.read_gromacs_system`); the writer
-(`GromacsTopFfWriter`) is the inverse of the directive map
+(`GromacsTopForcefieldWriter`) is the inverse of the directive map
 (`write_str`) and of `read_system` (`write_system_str`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
 degrees stay degrees. Every Coulomb style states GROMACS's own constant
@@ -1038,7 +1038,7 @@ A `StyleSpec` carries `lammps: LammpsForm`:
   for another LAMMPS name) is derived from the spec: `<category>_style
   <name>` (`pair_style <name> <cutoff>`), `<category>_coeff <type> v₁ … vₙ`
   in `params` order, `mixing` as `pair_modify mix`. Each value is converted
-  by its `Dim` from the force field's units to the file's — `E/L^2` by
+  by its `ParamDimension` from the force field's units to the file's — `E/L^2` by
   energy/length², `E*L^6` by energy·length⁶, an angle value (exactly `A`)
   and a per-radian constant not at all — and a dimensionless integral value
   is written as an integer (LAMMPS reads multiplicities and signs with
@@ -1078,14 +1078,14 @@ registry, or the one `with_registry` gives them.
 Registering a LAMMPS form:
 
 ```rust
-use molrs::ff::ir::{Dim, LammpsForm, ParamSpec, StyleSpec, register_style};
+use molrs::ff::ir::{ParamDimension, LammpsForm, ParamSpec, StyleSpec, register_style};
 
 let fene = StyleSpec::new("bond", "fene")
     .params(vec![
         ParamSpec::new("k", "E/L^2".parse().unwrap()),
-        ParamSpec::new("r0", Dim::LENGTH),
-        ParamSpec::new("epsilon", Dim::ENERGY),
-        ParamSpec::new("sigma", Dim::LENGTH),
+        ParamSpec::new("r0", ParamDimension::LENGTH),
+        ParamSpec::new("epsilon", ParamDimension::ENERGY),
+        ParamSpec::new("sigma", ParamDimension::LENGTH),
     ])
     .expression("-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
     .lammps(LammpsForm::positional());
@@ -1406,7 +1406,7 @@ reader refuses `ordering="smirnoff"`).
   1, every `w` = ½ with one dihedral listed twice, and `special_bonds` ½ /
   ⅚ with `w` = 0. Every `evdwl`, `ecoul`, `ebond`, `eangle`, `edihed`, `pe`
   matches molrs to ≤ 2.3e-15 relative (`evdwl` and `ecoul` bit for bit), and
-  every force component to 1e-10 (`ff::one_four`). `special_bonds` ½ equals
+  every force component to 1e-10 (`ff::one_four_lammps_check`). `special_bonds` ½ equals
   per-pair scales ½ equals per-pair parameters ε/2, qᵢqⱼ/2; `w` = 1 equals
   per-pair rows of ε₁₄, σ₁₄; `compile` equals `compile_typed`. Two more
   LAMMPS cases cut short of the 1-4 pairs: `lj/charmm/coul/charmm 2.0 2.4`

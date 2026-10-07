@@ -1922,6 +1922,107 @@ C++ (`molrs-cxxapi`):
   CMake reads it from the source tree (`corrosion_add_cxxbridge`, and
   `MolrsContract.cmake`'s feature probes) before any cargo build.
 
+#### Wave S3: force field
+
+Every `ff` name now states what it is, with one pattern per kind of thing
+and acronyms cased as words (`Mmff`, `Uff`, `OplsAa`, `Bcc`, `LjCut`).
+Where a name in this table appears elsewhere in this 0.15 → 0.16 guide, the
+right-hand column here is the 0.16 name. No old name is kept as an alias.
+
+**Kernels** (`molrs::ff::potential`) are `<Category><Style>`; every
+constructor is `<category>_<style>_constructor` (`bond_harmonic_ctor` →
+`bond_harmonic_constructor`, …). The registered style strings (`mmff_stbn`,
+`uff_lj`, …) are data and do not change.
+
+| 0.16 before S3 | 0.16 |
+|---|---|
+| `bond::MMFFBondStretch`, `bond::UffBond` | `bond::BondMmff`, `bond::BondUff` |
+| `angle::MMFFAngleBend`, `angle::MMFFStretchBend`, `angle::UffAngle` | `angle::AngleMmff`, `angle::AngleMmffStretchBend`, `angle::AngleUff` |
+| `angle::CharmmAngleParams` | `angle::AngleCharmmParams` |
+| `dihedral::MMFFTorsion`, `dihedral::UffTorsion`, `dihedral::DihedralOPLS` | `dihedral::DihedralMmff`, `dihedral::DihedralUff`, `dihedral::DihedralOpls` |
+| `improper::MMFFOutOfPlane`, `improper::UffInversion` | `improper::ImproperMmff`, `improper::ImproperUff` |
+| `pair::LJCut`, `pair::PairLJCharmm`, `pair::PairLJClass2` | `pair::PairLjCut`, `pair::PairLjCharmm`, `pair::PairLjClass2` |
+| `pair::MMFFVdW`, `pair::VdwAtomParams`, `pair::VdwStyleParams`, `pair::UffVdW` | `pair::PairMmffVdw`, `pair::PairMmffVdwAtomParams`, `pair::PairMmffVdwStyleParams`, `pair::PairUffVdw` |
+| `kspace::PmePotential`, `kspace::PmeParams`, `pme_ctor` | `kspace::PairCoulLongPme`, `kspace::PairCoulLongPmeParams`, `pair_coul_long_pme_constructor` |
+| `mmff_stbn_ctor`, `mmff_oop_ctor`, `uff_inversion_ctor`, `uff_lj_ctor` | `angle_mmff_stretch_bend_constructor`, `improper_mmff_constructor`, `improper_uff_constructor`, `pair_uff_vdw_constructor` |
+| `PairPotential::{pair_eval, eval_pairs, eval_table}`, `LJCut::eval` | `pair_energy_force`, `energy_forces_pairs`, `energy_forces_table`, `PairLjCut::energy_forces_skin` |
+| `Member`, `TypedKernel`, `TypedMember` | `ForceTerm`, `ScaledTerm`, `WeightedTerm` |
+| `Instances` | `ExplicitTerms` |
+| `generic::{ScalarForm, CompoundForm, ParamCols, …}` | `form_kernel::{ScalarForm, CompoundForm, ParamColumns, …}` |
+| `geometry::*` (flat-array adapters over `op::vec3`) | crate-private; use `molrs::op::vec3` |
+| `KernelRegistry` | crate-private; `ff::ir::Registry` is the one registry |
+| `ir::Kernel::Ctor`, `Kernel::ctor` | `Kernel::Constructor`, `Kernel::constructor` |
+
+**The force-field IR** (`molrs::ff::ir`):
+
+| 0.16 before S3 | 0.16 |
+|---|---|
+| `Dim`, `IrError::Dim` | `ParamDimension`, `IrError::Dimension` |
+| `Mix`; `forcefield::mixing::{Mixing, MIXING_RULES}` | `ParamCombination`; `forcefield::combining_rule::{CombiningRule, COMBINING_RULES}` |
+| `Value`, `Sample`, `Refusal`, `Metric`, `Residual` | `ParamValue`, `ConformanceSample`, `FormRefusal`, `FitMetric`, `FitResidual` |
+| `with_global` | `with_global_registry` |
+| `ir::expr::*`, `ExprError` | `ir::expression::*`, `ExpressionError` |
+| `positional::no_extra` | `positional::refuse_undeclared_params` |
+| `ff::forcefield::torsion` | `ff::ir::torsion` |
+
+`core::schema::ColumnDim` is `ColumnDimension`. The three dimension types
+stay three, each named for what it is: `core::Dimension` is the SI
+base-dimension exponent vector of the unit algebra; `ff::ir::ParamDimension`
+is a force-field parameter's exponents over energy, length, angle, charge
+and mass, where angle is a base dimension (an angle *value* is stored in
+degrees, a per-radian constant never converts), which SI cannot state;
+`ColumnDimension` is what a Frame column measures in a unit preset,
+including "not a quantity".
+
+**Typifiers** (`molrs::ff::typifier`):
+
+| 0.16 before S3 | 0.16 |
+|---|---|
+| `Typifier::r#match(graph) -> Match` | `Typifier::assign(graph) -> TypeAssignment` |
+| `Typifier::library()` | `Typifier::source_forcefield()` (`forcefield()` stays the typed output) |
+| `Typing::library()` | `typing.typifier().source_forcefield()` |
+| `BCCAtomChargeTypifier`, `OPLSAATypifier`, `UFFTypifier` | `BccAtomChargeTypifier`, `OplsAaTypifier`, `UffTypifier` |
+| `mmff::{MMFF94Typifier, MMFF94STypifier}` | `mmff::{Mmff94Typifier, Mmff94sTypifier}` |
+| `mmff::{MMFFAtomProp, MMFFParams}` | `ff::params::mmff::MmffProp` (the one row type), `mmff::MmffAtomProperties` (`get_prop` → `get`) |
+| `OplsTypingMeta` | `OplsTypingMetadata` |
+| `TypifierParameterContext` | `EstimationInputs` |
+
+MMFF aromaticity perception now lives with the other perception, in
+`molrs::perceive` (crate-private, beside the MMFF topology snapshot it runs
+on).
+
+**Charges and tables**:
+
+| 0.16 before S3 | 0.16 |
+|---|---|
+| (the C++ and Python bindings' own name tables) | `BccParameterSet::{ALL, name, from_name}` |
+| `ff::params` `gaff_equiv` | `ff::params` `parmchk` (same items) |
+| `ff::scale_lj::{scale_lj, compute_k_ij, FragmentScaling, …}` | `ff::clpol_scaling::{…}` |
+| `ff::scale_lj::builtin_fragment_scaling()` | `ff::params::clpol_fragment_scaling()` |
+
+**Python**:
+
+| 0.16 before S3 | 0.16 |
+|---|---|
+| `molrs.ff.potential.LJCut` (`eval`, `eval_table`, `eval_pairs`, `pair_eval`) | `PairLjCut` (`energy_forces_skin`, `energy_forces_table`, `energy_forces_pairs`, `pair_energy_force`) |
+| `molrs.ff.potential.kernel(category, style, atoms, **params)` | `molrs.ff.potential.compile_explicit_terms(…)` |
+| `molrs.ff.potential.TypedPotentials` | `WeightedTerms` |
+| `molrs.ff.ir.Param`, `CategoryInfo`, `StyleInfo` | `ParamSpec`, `CategorySpec`, `StyleSpec` (as in Rust) |
+| `molrs.ff.ir.StyleSpec` (the declarative subclass helper) | `StyleDeclaration` |
+| `molrs.ff.ir.unregister` | `unregister_style` |
+| `molrs.ff.ir.<Variant>` exceptions (`Arity`, `Dim`, `Sealed`, …) | `<Variant>Error` (`ArityError`, `DimensionError`, `SealedError`, …), all still `IrError` subclasses |
+| `molrs.ff.forcefield.Type` | `ForceFieldType` |
+| `Style.types` (property) | `Style.get_types()` |
+| `molrs.ff.typifier.Match`; a subclass's `match(graph)` and `library()` | `TypeAssignment`; `assign(graph)` and `source_forcefield()` |
+| `OPLSAATypifier`, `MMFF94Typifier`, `MMFF94STypifier` | `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` |
+| `molrs.ff.scale_lj` (`scale_lj(..., frag_data=)`, `fragment_scaling_data()`) | `molrs.ff.clpol_scaling` (`scale_lj(..., fragment_table=)`); the table is `molrs.ff.params.clpol_fragment_scaling()` |
+
+**WASM**: the JS classes `UFFTypifier`, `MMFF94Typifier` and `MMFF94STypifier`
+are `UffTypifier`, `Mmff94Typifier` and `Mmff94sTypifier`. **C++**:
+`am1_bcc_assign_frame_from_base` names its correction family exactly as
+`BccParameterSet::from_name` does (`"bcc"`, `"abcg2"`; no longer trimmed or
+case-folded).
+
 ### Python: kernels live in `molrs.ff.potential`
 
 `LJCut` moved from `molrs.md` to `molrs.ff.potential` (molpy: `molpy.md.LJCut`

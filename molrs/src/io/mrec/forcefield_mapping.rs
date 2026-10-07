@@ -463,7 +463,7 @@ impl ForceFieldSection {
     /// assert_eq!(back.get_bondtypes()[0].params.get("k"), Some(300.0));
     /// ```
     pub fn from_forcefield(ff: &ForceField) -> Result<ForceFieldSection, String> {
-        crate::ff::ir::with_global(|registry| Self::from_forcefield_in(ff, registry))
+        crate::ff::ir::with_global_registry(|registry| Self::from_forcefield_in(ff, registry))
     }
 
     /// [`Self::from_forcefield`] against `registry` instead of the
@@ -677,15 +677,18 @@ mod tests {
 
     #[test]
     fn the_built_in_libraries_round_trip() {
-        use crate::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
+        use crate::ff::typifier::mmff::{Mmff94Typifier, Mmff94sTypifier};
         use crate::ff::typifier::{
             AtdParameterSet, AtdTypifier, ElementTypifier, GaffParameterSet, GaffTypifier,
-            OPLSAATypifier, UFFTypifier,
+            OplsAaTypifier, UffTypifier,
         };
-        round_trips(OPLSAATypifier::oplsaa().library(), "OPLS-AA");
-        round_trips(GaffTypifier::new(GaffParameterSet::Gaff).library(), "GAFF");
+        round_trips(OplsAaTypifier::oplsaa().source_forcefield(), "OPLS-AA");
         round_trips(
-            GaffTypifier::new(GaffParameterSet::Gaff2).library(),
+            GaffTypifier::new(GaffParameterSet::Gaff).source_forcefield(),
+            "GAFF",
+        );
+        round_trips(
+            GaffTypifier::new(GaffParameterSet::Gaff2).source_forcefield(),
             "GAFF2",
         );
         for set in [
@@ -694,12 +697,15 @@ mod tests {
             AtdParameterSet::Gas,
             AtdParameterSet::Gff,
         ] {
-            round_trips(AtdTypifier::new(set).library(), &format!("ATD {set:?}"));
+            round_trips(
+                AtdTypifier::new(set).source_forcefield(),
+                &format!("ATD {set:?}"),
+            );
         }
-        round_trips(MMFF94Typifier::new().library(), "MMFF94");
-        round_trips(MMFF94STypifier::new().library(), "MMFF94s");
-        round_trips(UFFTypifier::new().library(), "UFF");
-        round_trips(ElementTypifier::new().library(), "element");
+        round_trips(Mmff94Typifier::new().source_forcefield(), "MMFF94");
+        round_trips(Mmff94sTypifier::new().source_forcefield(), "MMFF94s");
+        round_trips(UffTypifier::new().source_forcefield(), "UFF");
+        round_trips(ElementTypifier::new().source_forcefield(), "element");
     }
 
     #[test]

@@ -1065,7 +1065,7 @@ fn lammps_clamps(ff: &ForceField, frame: &Frame, x: &[F]) -> bool {
         .iter()
         .filter(|(_, t)| names.contains(t.as_str()))
         .any(|(a, _)| {
-            crate::ff::potential::geometry::compute_dihedral(x, a[0], a[1], a[2], a[3])
+            crate::ff::potential::flat_coords::compute_dihedral(x, a[0], a[1], a[2], a[3])
                 .sin()
                 .abs()
                 < 0.001

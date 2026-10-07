@@ -1205,13 +1205,13 @@ class FragmentScaling:
     def polarizable(self) -> bool: ...
 
 def compute_k_ij(fr_i: FragmentScaling, fr_j: FragmentScaling, r: float) -> float: ...
-def fragment_scaling_data() -> dict[str, FragmentScaling]: ...
+def clpol_fragment_scaling() -> dict[str, FragmentScaling]: ...
 def scale_lj(
     ff: ForceField,
     fragments: dict[
         str, tuple[list[str], list[tuple[float, float, float]], list[float]]
     ],
-    frag_data: dict[str, FragmentScaling] | None = None,
+    fragment_table: dict[str, FragmentScaling] | None = None,
     scale_sigma: bool = False,
 ) -> ForceField: ...
 
@@ -2987,7 +2987,7 @@ class Assembler:
     Raises
     ------
     TypeError
-        If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
+        If ``source_forcefield`` is not a mapping of ``str`` to graphs, ``placer`` is
         not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
         is not an :class:`AxisOrienter`.
     """
@@ -3102,10 +3102,10 @@ class ForceField:
 
         Raises
         ------
-        molrs.ff.ir.OutOfImage
+        molrs.ff.ir.OutOfImageError
             A row the canonical style cannot hold (charmm ``w ≠ 0``, class2
             ``k3 ≠ 0``), naming the type and the condition.
-        molrs.ff.ir.FormConflict
+        molrs.ff.ir.FormConflictError
             A form family without exactly one canonical style."""
     def to_form(self, category: str, style: str) -> ForceField:
         """Every style of ``category`` in ``style``'s form family converted
@@ -3113,9 +3113,9 @@ class ForceField:
 
         Raises
         ------
-        molrs.ff.ir.NoForm
+        molrs.ff.ir.NoFormError
             ``style`` has no form codec.
-        molrs.ff.ir.OutOfImage
+        molrs.ff.ir.OutOfImageError
             A row is outside its image (``sin(2φ) coefficient … ≠ 0``, ``the
             constant term …``)."""
     def fit_form(
@@ -3164,7 +3164,7 @@ class ForceField:
     def styles(self) -> list[Style]: ...
     def get_style(self, category: str, name: str) -> Style | None: ...
     def get_styles(self, category: str | type[Style]) -> list[Style]: ...
-    def get_types(self, category: str | type[Type]) -> list[Type]: ...
+    def get_types(self, category: str | type[ForceFieldType]) -> list[ForceFieldType]: ...
     def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
     def __setstate__(self, state: tuple[Any, ...]) -> None: ...
 
@@ -3176,10 +3176,8 @@ class Style:
     def name(self) -> str: ...
     @property
     def category(self) -> str: ...
-    @property
-    def types(self) -> list[Type]: ...
-    def get_types(self, type_cls: type[Type] | None = None) -> list[Type]: ...
-    def get_type_by_name(self, name: str) -> Type | None: ...
+    def get_types(self, type_cls: type[ForceFieldType] | None = None) -> list[ForceFieldType]: ...
+    def get_type_by_name(self, name: str) -> ForceFieldType | None: ...
     @property
     def params(self) -> dict[str, ParamValue]: ...
     def __getitem__(self, key: str) -> ParamValue | None: ...
@@ -3259,7 +3257,7 @@ class RelationStyle(Style):
         """Define the type ``name`` on exactly ``arity`` endpoints, in
         order; another count raises ``ValueError``."""
 
-class Type:
+class ForceFieldType:
     """Handle of one type of a :class:`ForceField`; equal handles name the
     same category, style and type of one force field."""
 
@@ -3278,33 +3276,23 @@ class Type:
     @property
     def endpoints(self) -> tuple[AtomType, ...]: ...
 
-class AtomType(Type): ...
+class AtomType(ForceFieldType): ...
 
-class BondType(Type):
+class BondType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
 
-class AngleType(Type):
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-
-class DihedralType(Type):
+class AngleType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
     @property
     def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
 
-class ImproperType(Type):
+class DihedralType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
@@ -3314,13 +3302,23 @@ class ImproperType(Type):
     @property
     def ltom(self) -> AtomType: ...
 
-class PairType(Type):
+class ImproperType(ForceFieldType):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+    @property
+    def ltom(self) -> AtomType: ...
+
+class PairType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
 
-class CmapType(Type):
+class CmapType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
@@ -3332,7 +3330,7 @@ class CmapType(Type):
     @property
     def mtom(self) -> AtomType: ...
 
-class RelationType(Type):
+class RelationType(ForceFieldType):
     """A type of a category beyond the seven; ``endpoints`` holds as many
     atom types as the category's arity."""
 
@@ -3553,7 +3551,7 @@ class OptReport:
     @property
     def final_fmax(self) -> float: ...
 
-class TypedPotentials:
+class WeightedTerms:
     """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
 
 
@@ -3570,15 +3568,15 @@ class TypedPotentials:
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
-    ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
-    another ``Potentials`` such as one ``kernel`` built, or an object with
+    ``Potentials()`` is empty; ``push`` **moves** members in (an ``PairLjCut``,
+    another ``Potentials`` such as one ``compile_explicit_terms`` built, or an object with
     ``calc_energy_forces``). The engine is unit-agnostic: nothing scales the
     energy or forces implicitly.
     """
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: LJCut | Potentials | Any) -> None: ...
+    def push(self, potential: PairLjCut | Potentials | Any) -> None: ...
     def calc_energy_forces(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]: ...
     def calc_energy(self, arg: Frame | ArrayF) -> float: ...
     def calc_forces(self, arg: Frame | ArrayF) -> ArrayF: ...
@@ -3597,7 +3595,7 @@ class PotentialCompiler:
     def __init__(self, forcefield: ForceField) -> None: ...
     def compile(self, frame: Frame) -> Potentials: ...
     def defer(self) -> Potentials: ...
-    def compile_typed(self, frame: Frame) -> TypedPotentials: ...
+    def compile_typed(self, frame: Frame) -> WeightedTerms: ...
 
 class LBFGS:
     """L-BFGS geometry optimizer over a force-field Potential.
@@ -3625,18 +3623,18 @@ class LBFGS:
 
 #: A param value of a type annotation or style: numbers to the numeric side,
 #: strings to the string side.
-type MatchParamValue = float | int | str
+type AssignmentParamValue = float | int | str
 
-#: What a ``Match`` writes under one key of one graph element: a scalar is
+#: What a ``TypeAssignment`` writes under one key of one graph element: a scalar is
 #: stamped and defines nothing; ``(style, name, endpoints, params)`` stamps
 #: ``name`` and every param and defines the type ``name`` on ``endpoints``
 #: (atom-type names; empty for an atom type) under the style.
 type Annotation = (
-    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, MatchParamValue]]
+    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
 )
 
-class Match:
-    """What a typifier's ``match`` assigns to one graph.
+class TypeAssignment:
+    """What a typifier's ``assign`` assigns to one graph.
 
     ``nodes`` is positional against ``graph.atoms``; ``links`` maps a relation
     kind to rows positional against that kind's own rows, so an improper never
@@ -3656,25 +3654,25 @@ class Match:
         links: _AbcMapping[type | str, Sequence[_AbcMapping[str, Annotation]]]
         | None = None,
         *,
-        styles: Sequence[tuple[str, str, dict[str, MatchParamValue]]] = (),
-        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, MatchParamValue]]] = (),
+        styles: Sequence[tuple[str, str, dict[str, AssignmentParamValue]]] = (),
+        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]] = (),
     ) -> None: ...
 
 class Typifier[TGraph: MolGraph]:
-    """The base of every graph typifier: one ``match`` hook plus the output
+    """The base of every graph typifier: one ``assign`` hook plus the output
     force field its typing accumulates.
 
-    A subclass implements ``match`` (and optionally ``library``) and nothing
+    A subclass implements ``assign`` (and optionally ``source_forcefield``) and nothing
     else; defining ``typify`` on a subclass raises ``TypeError`` at class
     creation. The native classes extend this base and only construct; they
-    are subclassable, but a subclass of one that defines ``match`` or
-    ``library`` raises ``TypeError`` (they run in Rust)."""
+    are subclassable, but a subclass of one that defines ``assign`` or
+    ``source_forcefield`` raises ``TypeError`` (they run in Rust)."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-    def match(self, graph: _TGraph) -> Match:
-        """Match ``graph`` and return what it assigns.
+    def assign(self, graph: _TGraph) -> TypeAssignment:
+        """Type ``graph`` and return what it assigns.
 
-        ``match`` may write intermediate results (generated topology, perceived
+        ``assign`` may write intermediate results (generated topology, perceived
         bond types) onto the graph it is given; ``typify`` always gives it a
         private copy. The base raises ``NotImplementedError``; a native class
         runs its Rust matcher."""
@@ -3682,10 +3680,10 @@ class Typifier[TGraph: MolGraph]:
     def typify(self, mol: _TGraph) -> _TGraph:
         """Do not override; the only writer of ``forcefield()``.
 
-        Copies ``mol``, calls ``match`` on the copy, and writes the match onto
+        Copies ``mol``, calls ``assign`` on the copy, and writes the match onto
         the copy and the output. Returns the typed copy; ``mol`` is untouched.
         ``mol`` must be an ``Atomistic`` (anything else raises ``TypeError``).
-        Raises ``NotImplementedError`` without a ``match`` and ``ValueError``
+        Raises ``NotImplementedError`` without an ``assign`` and ``ValueError``
         when the match does not fit the graph or contradicts the output (which
         is then unchanged)."""
     def forcefield(self) -> ForceField:
@@ -3694,7 +3692,7 @@ class Typifier[TGraph: MolGraph]:
 
         Edits to the copy do not reach the typifier; ``typify`` is the only
         writer. Before the first ``typify`` it is the seeded empty output."""
-    def library(self) -> ForceField:
+    def source_forcefield(self) -> ForceField:
         """The force field this typifier matches against, returned as a copy.
 
         The output starts as its empty likeness (name, declared units and
@@ -3702,10 +3700,10 @@ class Typifier[TGraph: MolGraph]:
         ``NotImplementedError``, and its output starts as an empty force field
         named after the class."""
 
-class MMFF94Typifier(Typifier[Atomistic]):
+class Mmff94Typifier(Typifier[Atomistic]):
     """MMFF94 (Halgren 1996) atom types, charges and bonded parameters.
 
-    The variant is the class, never a flag. See ``MMFF94STypifier`` for the
+    The variant is the class, never a flag. See ``Mmff94sTypifier`` for the
     "static" parameter set.
 
     ``typify`` labels the graph; ``PotentialCompiler(forcefield()).compile(frame)``
@@ -3714,10 +3712,10 @@ class MMFF94Typifier(Typifier[Atomistic]):
 
     def __init__(self) -> None: ...
 
-class MMFF94STypifier(Typifier[Atomistic]):
+class Mmff94sTypifier(Typifier[Atomistic]):
     """MMFF94s (Halgren 1999) — the "static" set, for energy minimization.
 
-    Differs from ``MMFF94Typifier`` only on delocalised trivalent nitrogen (MMFF
+    Differs from ``Mmff94Typifier`` only on delocalised trivalent nitrogen (MMFF
     numeric types 10 ``NC=O`` / 40 ``NC=C``): 11 out-of-plane rows and 42 torsion
     rows are re-parameterised so the nitrogen minimizes planar. ``typify`` bakes
     ``koop = +0.015`` (type 10) / ``+0.030`` (type 40) md*A*rad^-2 on those
@@ -3728,7 +3726,7 @@ class MMFF94STypifier(Typifier[Atomistic]):
 
     def __init__(self) -> None: ...
 
-class OPLSAATypifier(Typifier[Atomistic]):
+class OplsAaTypifier(Typifier[Atomistic]):
     def __init__(self, source: Any = None, *, strict: bool = True) -> None: ...
 
 type AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
@@ -4792,7 +4790,7 @@ def polarizability_finite_field(
 # molrs.ff.potential — hand-built kernels (mirrors molrs-python/src/ff/potential.rs)
 # ---------------------------------------------------------------------------
 
-def kernel(
+def compile_explicit_terms(
     category: str,
     style: str,
     atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
@@ -4808,11 +4806,11 @@ def kernel(
     one type per term; works for every registered style, built-in or
     custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
 
-class LJCut:
+class PairLjCut:
     """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
     kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
     kernel). A pair list with a row per pair is
-    ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+    ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
 
     def __init__(
         self,
@@ -4843,15 +4841,15 @@ class LJCut:
     def pair_force(
         self, r2: float, disp: Sequence[float]
     ) -> list[float] | None: ...
-    def pair_eval(
+    def pair_energy_force(
         self, r2: float, disp: Sequence[float]
     ) -> tuple[float, list[float]] | None: ...
     def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval_table(
+    def energy_forces_skin(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+    def energy_forces_table(
         self, n_atoms: int, neighbors: Neighbors
     ) -> tuple[float, ArrayF]: ...
-    def eval_pairs(
+    def energy_forces_pairs(
         self,
         n_atoms: int,
         i: ArrayU32,
@@ -4867,7 +4865,7 @@ class LJCut:
 
 class md:
     """The ``_lib.md`` submodule (``molrs.md``): NVE/Langevin integrators.
-    MD defines no potential; it integrates an ``LJCut``, a ``Potentials``
+    MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
     collection, or any object with ``calc_energy_forces``.
 
     The engine is unit-agnostic — supply consistent units yourself; take
@@ -4916,17 +4914,17 @@ class md:
         def energy(self, value: float) -> None: ...
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``LJCut`` /
+        """NVE velocity-Verlet. ``potential`` (a ``PairLjCut`` /
         ``Potentials`` / an object with ``calc_energy_forces``) and
         ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
-        rebuild. ``LJCut`` requires ``neighbors=``."""
+        rebuild. ``PairLjCut`` requires ``neighbors=``."""
 
         def __init__(
             self,
             dt: float,
             *,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4958,7 +4956,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,
@@ -5021,42 +5019,42 @@ class ir:
         """A refusal of the force-field IR; the variant's fields are
         attributes (``category``, ``style``, ``param``, …)."""
 
-    class UnknownCategory(IrError): ...
-    class BadName(IrError): ...
-    class Arity(IrError): ...
-    class BlockName(IrError): ...
-    class ReservedParam(IrError): ...
-    class DuplicateParam(IrError): ...
-    class Dim(IrError): ...
-    class Parse(IrError): ...
-    class UnboundVariable(IrError): ...
-    class UnknownFunction(IrError): ...
-    class FunctionArity(IrError): ...
-    class Point(IrError): ...
-    class CoordinateMismatch(IrError): ...
-    class Derivative(IrError): ...
-    class Disagree(IrError): ...
-    class Asymmetric(IrError): ...
-    class Sealed(IrError): ...
-    class Conflict(IrError): ...
-    class NoKernel(IrError): ...
-    class NoMixing(IrError): ...
-    class MissingParam(IrError): ...
-    class BadValue(IrError): ...
-    class KernelShape(IrError):
+    class UnknownCategoryError(IrError): ...
+    class BadNameError(IrError): ...
+    class ArityError(IrError): ...
+    class BlockNameError(IrError): ...
+    class ReservedParamError(IrError): ...
+    class DuplicateParamError(IrError): ...
+    class DimensionError(IrError): ...
+    class ParseError(IrError): ...
+    class UnboundVariableError(IrError): ...
+    class UnknownFunctionError(IrError): ...
+    class FunctionArityError(IrError): ...
+    class PointError(IrError): ...
+    class CoordinateMismatchError(IrError): ...
+    class DerivativeError(IrError): ...
+    class DisagreeError(IrError): ...
+    class AsymmetricError(IrError): ...
+    class SealedError(IrError): ...
+    class ConflictError(IrError): ...
+    class NoKernelError(IrError): ...
+    class NoMixingError(IrError): ...
+    class MissingParamError(IrError): ...
+    class BadValueError(IrError): ...
+    class KernelShapeError(IrError):
         """A kernel output of the wrong shape or dtype, or a Python kernel
         that raised (the original exception is ``__cause__``)."""
 
-    class NoEngineForm(IrError): ...
-    class FormConflict(IrError): ...
-    class NoForm(IrError): ...
-    class OutOfImage(IrError):
+    class NoEngineFormError(IrError): ...
+    class FormConflictError(IrError): ...
+    class NoFormError(IrError): ...
+    class OutOfImageError(IrError):
         """An exact form conversion refused; ``from_``, ``to``, ``type`` and
         ``reason`` name the row and the condition."""
 
-    class Malformed(IrError): ...
+    class MalformedError(IrError): ...
 
-    class Param:
+    class ParamSpec:
         """One parameter of a style: name, dimension (``"E/L^2"``), kind,
         default, mixing rule (pair styles), indexed family."""
 
@@ -5089,7 +5087,7 @@ class ir:
         @property
         def indexed(self) -> bool: ...
 
-    class StyleInfo:
+    class StyleSpec:
         """A registered style, as ``styles()`` lists it."""
 
         @property
@@ -5097,9 +5095,9 @@ class ir:
         @property
         def name(self) -> str: ...
         @property
-        def params(self) -> list[ir.Param]: ...
+        def params(self) -> list[ir.ParamSpec]: ...
         @property
-        def style_params(self) -> list[ir.Param]: ...
+        def style_params(self) -> list[ir.ParamSpec]: ...
         @property
         def expression(self) -> str | None: ...
         @property
@@ -5115,7 +5113,7 @@ class ir:
         @property
         def lammps(self) -> str | None: ...
 
-    class CategoryInfo:
+    class CategorySpec:
         """A registered category, as ``categories()`` lists it."""
 
         @property
@@ -5148,8 +5146,8 @@ class ir:
         category: str,
         name: str,
         *,
-        params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
-        style_params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
+        params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
+        style_params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
         expression: str | None = None,
         kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
         compound: bool = False,
@@ -5161,11 +5159,11 @@ class ir:
     @staticmethod
     def register_engine_form(engine: str, category: str, name: str, form: str) -> None: ...
     @staticmethod
-    def unregister(category: str, name: str) -> None: ...
+    def unregister_style(category: str, name: str) -> None: ...
     @staticmethod
-    def styles(category: str | None = None) -> list[ir.StyleInfo]: ...
+    def styles(category: str | None = None) -> list[ir.StyleSpec]: ...
     @staticmethod
-    def categories() -> list[ir.CategoryInfo]: ...
+    def categories() -> list[ir.CategorySpec]: ...
     @staticmethod
     def evaluate(
         category: str,

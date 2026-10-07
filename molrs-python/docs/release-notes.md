@@ -65,7 +65,7 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   writes a field's 1-4 pairs as override rows.
 - **Torsions**: `dihedral nharmonic`, a `dihedral harmonic` kernel, and the
   exact algebra between every torsion form and a Fourier series
-  (`molrs::ff::forcefield::torsion`).
+  (`molrs::ff::ir::torsion`).
 - **Array parameters**: any type parameter may be an `f64` array, stored in
   a record as a `f64[T, S…]` column.
 
@@ -118,14 +118,15 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   are data — a category's arity, block and coordinate; a style's ordered
   parameters, each with a dimension, and its energy. Built-ins are sealed
   registrations of the same form. `register_style`, `register_category`,
-  `styles`, `categories`, `evaluate`, `unregister`.
+  `styles`, `categories`, `evaluate`, `unregister_style`.
 - **Three kernel tiers**: an energy expression (a Lepton-style grammar with
   `distance`, `angle` and `dihedral` over points), a native scalar or
-  compound form, or a Python callable; the generic
-  `molrs.ff.potential.kernel(category, style, atoms, **params)` builds the
-  kernel of any registered style over explicit instances.
+  compound form, or a Python callable;
+  `molrs.ff.potential.compile_explicit_terms(category, style, atoms, **params)`
+  (Rust `ff::potential::ExplicitTerms`) builds the kernel of any registered
+  style over explicit terms.
 - **Custom categories** beyond the seven built-in ones are relation styles
-  over a `<category>s` block; a typifier's `Match.links` types any relation
+  over a `<category>s` block; a typifier's `TypeAssignment.links` types any relation
   kind (`{Bond: rows, "urey_bradleys": rows}`).
 - **Persistence**: a custom style is stored in a `*.mrec` record with its
   expression, so a process that registered nothing reads and prices it.
@@ -230,6 +231,37 @@ Every file-format factory has one shape: a function at the top of
 - The [migration guide](migration.md#wave-s2-io-per-format) lists every old →
   new name.
 
+### Force-field names
+
+Every `ff` name states what it is, in Rust and Python alike, with acronyms
+cased as words; the [migration guide](migration.md#wave-s3-force-field)
+lists each one.
+
+- **Kernels are `<Category><Style>`**: `BondHarmonic`, `PairLjCut`,
+  `BondMmff`, `AngleMmffStretchBend`, `PairUffVdw`, …; constructors are
+  `<category>_<style>_constructor`. Python `molrs.ff.potential.PairLjCut`
+  evaluates with `energy_forces_skin` / `_table` / `_pairs`, and
+  `compile_explicit_terms` (Rust `ExplicitTerms`) builds any style's kernel
+  over explicit terms.
+- **The force-field IR** names its items for what they are: `ParamSpec`,
+  `CategorySpec`, `StyleSpec` (Python too), `ParamDimension`,
+  `ParamCombination`, `CombiningRule`, `ParamValue`, `ConformanceSample`,
+  `FitMetric` / `FitResidual`, `FormRefusal`; one registry
+  (`ff::ir::Registry`), one expression module (`ff::ir::expression`), the
+  torsion algebra at `ff::ir::torsion`. Python refusals are
+  `<Variant>Error` (`SealedError`, `DimensionError`, …) under `IrError`, and
+  a style declared as a class subclasses `molrs.ff.ir.StyleDeclaration`.
+- **Typifiers**: `assign(graph) -> TypeAssignment` is the one hook and
+  `source_forcefield()` the force field typed against (`forcefield()` stays
+  the typed output); `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`,
+  `UffTypifier`, `BccAtomChargeTypifier`. MMFF aromaticity is perception's.
+- **Tables**: CL&Pol scaling is `molrs.ff.clpol_scaling`
+  (`scale_lj(..., fragment_table=)`), its shipped table
+  `molrs.ff.params.clpol_fragment_scaling()`; parmchk2's table is
+  `ff::params`' `parmchk`; the BCC correction families are named by
+  `BccParameterSet::from_name` everywhere. The force-field model's type
+  handle is `ForceFieldType`, and `Style.get_types()` its one accessor.
+
 ### Packaging
 
 - FFI capsules move to the `0.16` ABI line (`molrs.FrameRef/0.16`, …):
@@ -303,8 +335,8 @@ refuse what they used to drop or mistranslate; the
   `ForceFieldSection`, the typifiers, units, neighbour lists, meshes,
   trajectory observables, views and more. A subclass instance pickles as
   its own class and keeps its instance attributes.
-- The native typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
-  subclassed too. Their `match` and `library` run in Rust, so a subclass that
+- The native typifiers (`OplsAaTypifier`, `Mmff94Typifier`, …) can be
+  subclassed too. Their `assign` and `source_forcefield` run in Rust, so a subclass that
   defines either raises `TypeError`; subclass `Typifier` to supply your own.
 - `ForceField.special_bonds` reads the `(lj, coul)` weights back.
 

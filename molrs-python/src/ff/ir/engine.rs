@@ -6,10 +6,10 @@
 //!   `params` in order on the `*_coeff` line, each converted by its
 //!   dimension; `"positional:<name>"` writes it under the LAMMPS style
 //!   `<name>`; `None` (the default) gives it none, so LAMMPS refuses it by
-//!   name ([`NoEngineForm`](crate::ff::ir::errors::NoEngineForm));
+//!   name ([`NoEngineFormError`](crate::ff::ir::errors::NoEngineFormError));
 //! * `register_engine_form(engine, category, name, form)` gives a style
 //!   registered without one its form afterwards;
-//! * `StyleInfo.lammps` names a style's form: `"positional"`,
+//! * `StyleSpec.lammps` names a style's form: `"positional"`,
 //!   `"positional:<name>"`, `"custom:<name>"` (a codec of its own, the
 //!   built-ins whose LAMMPS line is not positional) or `None`.
 
@@ -62,9 +62,9 @@ pub(crate) fn lammps_form_name(spec: &StyleSpec) -> Option<String> {
 ///
 /// Raises
 /// ------
-/// NoKernel
+/// NoKernelError
 ///     The style is not registered.
-/// NoEngineForm
+/// NoEngineFormError
 ///     Another engine, or a positional form the style's spec cannot have (a
 ///     Text, Array or indexed parameter, a style parameter other than
 ///     ``cutoff`` / ``mixing``, a category without a ``*_style`` command).
@@ -79,7 +79,7 @@ pub(crate) fn lammps_form_name(spec: &StyleSpec) -> Option<String> {
 /// >>> ir.register_engine_form("lammps", "bond", "fene/doc", "positional:fene")
 /// >>> [s.lammps for s in ir.styles("bond") if s.name == "fene/doc"]
 /// ['positional:fene']
-/// >>> ir.unregister("bond", "fene/doc")
+/// >>> ir.unregister_style("bond", "fene/doc")
 #[pyfunction]
 pub(crate) fn register_engine_form(
     engine: &str,

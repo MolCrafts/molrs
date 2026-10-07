@@ -20,7 +20,7 @@ so the Python path and the Rust path are the same words
   bytes.
 * :mod:`molrs.ff` — force fields, one submodule per Rust owner
   (``forcefield``, ``potential``, ``typifier``, ``charge``, ``ir``,
-  ``params``, ``scale_lj``).
+  ``params``, ``clpol_scaling``).
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.md` — in-process molecular dynamics: the integrators and the
   ``MD`` driver; it integrates potentials, it defines none.

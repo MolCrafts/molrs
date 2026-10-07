@@ -61,19 +61,21 @@ mod clpol;
 mod gaff;
 mod gaff2;
 mod gaff_empirical;
-mod gaff_equiv;
 mod gasparm;
 pub mod mmff;
 mod oplsaa;
 mod oplsaa_typing;
+mod parmchk;
 pub mod uff;
 
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
+pub use clpol::{
+    CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_fragment_scaling,
+    clpol_polarizability,
+};
 pub use gaff::GAFF;
 pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
-pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
 pub use oplsaa::{
@@ -81,6 +83,7 @@ pub use oplsaa::{
     OPLSAA_MIXING, OPLSAA_NAME,
 };
 pub use oplsaa_typing::OPLSAA_TYPING;
+pub use parmchk::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///

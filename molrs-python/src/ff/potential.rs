@@ -2,23 +2,23 @@
 //! evaluable force terms.
 //!
 //! * [`PyPotentialCompiler`] — a `ForceField` compiled into kernels:
-//!   [`PyPotentials`] over a fixed topology, or [`PyTypedPotentials`] (each
+//!   [`PyPotentials`] over a fixed topology, or [`PyWeightedTerms`] (each
 //!   kernel with its special-bonds weights) for a neighbour-driven integrator.
 //! * [`PyPotentials`] — a collection of kernels evaluated together
 //!   (`calc_energy_forces`); `push` moves one more member in.
-//! * `kernel(category, style, atoms, *, charges=None, **params)` — the kernel
+//! * `compile_explicit_terms(category, style, atoms, *, charges=None, **params)` — the kernel
 //!   of **any** registered style over explicit instances (atom indices and
 //!   one parameter row per term, as stored: the force-field IR's units, angle
-//!   values in degrees). It is [`molrs::ff::potential::Instances`], so the
+//!   values in degrees). It is [`molrs::ff::potential::ExplicitTerms`], so the
 //!   kernel is priced by the code a compiled force field is.
-//! * [`PyLJCut`] — the one-type `lj/cut` kernel a neighbour loop feeds (the
-//!   MD integrators' nonbond kernel: `eval`, `eval_table`, `eval_pairs`).
+//! * [`PyPairLjCut`] — the one-type `lj/cut` kernel a neighbour loop feeds (the
+//!   MD integrators' nonbond kernel: `energy_forces_skin`, `energy_forces_table`, `energy_forces_pairs`).
 //! * `intramolecular_pairs` — the special-bonds pair list of a typed frame.
 //!
 //! ```text
 //! pots = Potentials()
-//! pots.push(kernel("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4))
-//! pots.push(kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+//! pots.push(compile_explicit_terms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4))
+//! pots.push(compile_explicit_terms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
 //! energy, forces = pots.calc_energy_forces(pos)
 //! ```
 //!
@@ -26,10 +26,10 @@
 //!
 //! A Python object with ``calc_energy_forces`` (a
 //! `molrs.ff.potential.Potential`) is a potential like any other:
-//! [`take_potential`] turns any exposed potential — `LJCut`, `Potentials`, or
+//! [`take_potential`] turns any exposed potential — `PairLjCut`, `Potentials`, or
 //! a duck-typed object wrapped as [`SubclassPotential`] — into one
-//! [`Member`]; [`take_members`] does the same for a whole
-//! [`PyTypedPotentials`]. The `Potential` trait has no error channel, so a
+//! [`ForceTerm`]; [`take_members`] does the same for a whole
+//! [`PyWeightedTerms`]. The `Potential` trait has no error channel, so a
 //! Python exception raised mid-evaluation is parked in an [`ErrSlot`] and
 //! re-raised by the caller that drove the evaluation ([`take_err`]). The MD
 //! integrators and `molrs.optimize.LBFGS` consume potentials through here.
@@ -42,8 +42,8 @@ use crate::core::neighborlist::{PyNeighbors, PyVerletSkin};
 use crate::ff::forcefield::PyForceField;
 use molrs::ff::forcefield::{ForceField, Params};
 use molrs::ff::ir::{self as rir, ParamKind, StyleSpec};
-use molrs::ff::potential::pair::{LJCut, PairPotential};
-use molrs::ff::potential::{Instances, Member, Potential, PotentialCompiler, Potentials};
+use molrs::ff::potential::pair::{PairLjCut, PairPotential};
+use molrs::ff::potential::{ExplicitTerms, ForceTerm, Potential, PotentialCompiler, Potentials};
 use molrs::op::types::F;
 use ndarray::{Array2, ArrayD, Axis};
 use numpy::{
@@ -158,14 +158,14 @@ fn per_term(
 /// Examples
 /// --------
 /// >>> import numpy as np
-/// >>> from molrs.ff.potential import kernel
-/// >>> pots = kernel("bond", "harmonic", [[0, 1]], k=300.0, r0=1.5)
+/// >>> from molrs.ff.potential import compile_explicit_terms
+/// >>> pots = compile_explicit_terms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.5)
 /// >>> e, f = pots.calc_energy_forces(np.array([0.0, 0, 0, 1.6, 0, 0]))
 /// >>> round(e, 12)
 /// 3.0
 #[pyfunction]
 #[pyo3(signature = (category, style, atoms, *, charges=None, **params))]
-fn kernel(
+fn compile_explicit_terms(
     py: Python<'_>,
     category: &str,
     style: &str,
@@ -176,7 +176,7 @@ fn kernel(
     let who = format!("{category} `{style}`");
     let atoms = term_atoms(atoms)?;
     let n = atoms.len();
-    let (pair, spec): (bool, Option<StyleSpec>) = rir::with_global(|r| {
+    let (pair, spec): (bool, Option<StyleSpec>) = rir::with_global_registry(|r| {
         (
             r.category(category).is_some_and(|c| c.is_pair_driven()),
             r.style(category, style).map(|(s, _)| s.clone()),
@@ -215,7 +215,7 @@ fn kernel(
         let kind = decl.and_then(|(p, _)| p).map(|p| &p.kind);
         columns.push((key, per_term(py, &what, kind, &v, n)?));
     }
-    let mut terms = Instances::new(category, style).style_params(style_params);
+    let mut terms = ExplicitTerms::new(category, style).style_params(style_params);
     if columns.is_empty() {
         terms = terms.atoms(atoms);
     } else {
@@ -247,9 +247,13 @@ fn kernel(
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPotentialCompiler>()?;
     m.add_class::<PyPotentials>()?;
-    m.add_class::<PyTypedPotentials>()?;
-    m.add_class::<PyLJCut>()?;
-    crate::add_function(m, "molrs.ff.potential", wrap_pyfunction!(kernel, m)?)?;
+    m.add_class::<PyWeightedTerms>()?;
+    m.add_class::<PyPairLjCut>()?;
+    crate::add_function(
+        m,
+        "molrs.ff.potential",
+        wrap_pyfunction!(compile_explicit_terms, m)?,
+    )?;
     crate::add_function(
         m,
         "molrs.ff.potential",
@@ -260,14 +264,14 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie kernel
 /// a neighbour loop feeds pairs to (MD's nonbond kernel). A pair list with a
-/// row per pair is ``kernel("pair", "lj/cut", pairs, epsilon=…, sigma=…)``.
-#[pyclass(name = "LJCut", module = "molrs.ff.potential", subclass)]
-pub struct PyLJCut {
-    pub(crate) inner: LJCut,
+/// row per pair is ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=…, sigma=…)``.
+#[pyclass(name = "PairLjCut", module = "molrs.ff.potential", subclass)]
+pub struct PyPairLjCut {
+    pub(crate) inner: PairLjCut,
 }
 
 #[pymethods]
-impl PyLJCut {
+impl PyPairLjCut {
     #[new]
     #[pyo3(signature = (epsilon, sigma, cutoff, *, n=12, m=6, shifted=true, smeared=false))]
     fn new(
@@ -280,7 +284,7 @@ impl PyLJCut {
         smeared: bool,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: LJCut::new(epsilon, sigma, cutoff, n, m, shifted, smeared)
+            inner: PairLjCut::new(epsilon, sigma, cutoff, n, m, shifted, smeared)
                 .map_err(PyValueError::new_err)?,
         })
     }
@@ -320,8 +324,8 @@ impl PyLJCut {
     fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]> {
         self.inner.pair_force(r2, disp)
     }
-    fn pair_eval(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
-        self.inner.pair_eval(r2, disp)
+    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
+        self.inner.pair_energy_force(r2, disp)
     }
 
     fn calc_energy_forces<'py>(
@@ -348,7 +352,7 @@ impl PyLJCut {
         Ok((energy, arr.into_pyarray(py)))
     }
 
-    fn eval<'py>(
+    fn energy_forces_skin<'py>(
         &self,
         py: Python<'py>,
         neighbors: &mut PyVerletSkin,
@@ -358,12 +362,12 @@ impl PyLJCut {
         let nl = neighbors.get_mut()?;
         let (e, f) = self
             .inner
-            .eval(nl, pos.as_array())
+            .energy_forces_skin(nl, pos.as_array())
             .map_err(PyValueError::new_err)?;
         Ok((e, f.into_pyarray(py)))
     }
 
-    fn eval_table<'py>(
+    fn energy_forces_table<'py>(
         &self,
         py: Python<'py>,
         n_atoms: usize,
@@ -371,13 +375,13 @@ impl PyLJCut {
     ) -> PyResult<(F, Bound<'py, PyArray2<f64>>)> {
         let (e, f) = self
             .inner
-            .eval_table(n_atoms, &neighbors.inner)
+            .energy_forces_table(n_atoms, &neighbors.inner)
             .map_err(PyValueError::new_err)?;
         Ok((e, f.into_pyarray(py)))
     }
 
     #[pyo3(signature = (n_atoms, i, j, disp, dist_sq=None))]
-    fn eval_pairs<'py>(
+    fn energy_forces_pairs<'py>(
         &self,
         py: Python<'py>,
         n_atoms: usize,
@@ -393,7 +397,7 @@ impl PyLJCut {
         };
         let (e, f) = self
             .inner
-            .eval_pairs(n_atoms, i.as_slice()?, j.as_slice()?, disp.as_array(), d2)
+            .energy_forces_pairs(n_atoms, i.as_slice()?, j.as_slice()?, disp.as_array(), d2)
             .map_err(PyValueError::new_err)?;
         Ok((e, f.into_pyarray(py)))
     }
@@ -406,14 +410,14 @@ impl PyLJCut {
 /// integrator. Taking it apart in Python would mean re-deciding which member
 /// is which and how its close neighbours are scaled — the two things
 /// :meth:`PotentialCompiler.compile_typed` exists to decide once.
-#[pyclass(name = "TypedPotentials", module = "molrs.ff.potential", subclass)]
-pub struct PyTypedPotentials {
+#[pyclass(name = "WeightedTerms", module = "molrs.ff.potential", subclass)]
+pub struct PyWeightedTerms {
     /// Taken by the integrator that consumes it; `None` afterwards.
-    pub(crate) members: Option<Vec<(Member, molrs::ff::potential::SpecialWeights)>>,
+    pub(crate) members: Option<Vec<(ForceTerm, molrs::ff::potential::SpecialWeights)>>,
 }
 
 #[pymethods]
-impl PyTypedPotentials {
+impl PyWeightedTerms {
     /// How many kernels this carries.
     fn __len__(&self) -> usize {
         self.members.as_ref().map_or(0, |m| m.len())
@@ -429,11 +433,11 @@ impl PyTypedPotentials {
 ///
 /// Examples
 /// --------
-/// >>> typifier = MMFF94Typifier()
+/// >>> typifier = Mmff94Typifier()
 /// >>> frame = typifier.typify(mol).to_frame()
 /// >>> frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame)
 /// >>> potentials = molrs.ff.potential.PotentialCompiler(typifier.forcefield()).compile(frame)
-/// >>> energy, forces = potentials.eval(coords)
+/// >>> energy, forces = potentials.calc_energy_forces(coords)
 #[pyclass(module = "molrs.ff.potential", name = "Potentials", subclass)]
 pub struct PyPotentials {
     pub(crate) inner: PotBacking,
@@ -562,7 +566,7 @@ impl PyPotentials {
         }
     }
 
-    /// Move one more member into the collection: an ``LJCut`` nonbond term, a
+    /// Move one more member into the collection: an ``PairLjCut`` nonbond term, a
     /// callable ``Potential``, or another ``Potentials``.
     fn push(&mut self, potential: &Bound<'_, PyAny>) -> PyResult<()> {
         // Gate first so a failed push does not consume the pushed potential.
@@ -740,14 +744,14 @@ impl PyPotentialCompiler {
     ///
     /// Returns
     /// -------
-    /// TypedPotentials
+    /// WeightedTerms
     ///
     /// Raises
     /// ------
     /// ValueError
     ///     If a style cannot be built, or a pair style has no
     ///     neighbour-driven form.
-    fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
+    fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyWeightedTerms> {
         let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
             let topo = molrs::core::Topology::from_frame(core)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -767,7 +771,7 @@ impl PyPotentialCompiler {
                 (pot, special)
             })
             .collect();
-        Ok(PyTypedPotentials {
+        Ok(PyWeightedTerms {
             members: Some(bound),
         })
     }
@@ -919,11 +923,11 @@ impl Potential for SubclassPotential {
 
 /// The members a provider will evaluate, with the weights each one takes.
 ///
-/// A [`TypedPotentials`](PyTypedPotentials) already knows both —
+/// A [`WeightedTerms`](PyWeightedTerms) already knows both —
 /// which kernel is which and how its close neighbours are scaled — because
 /// `PotentialCompiler::compile_typed` decided it. Anything else is one member
 /// that scales nothing.
-pub(crate) type Members = Vec<(Member, molrs::ff::potential::SpecialWeights)>;
+pub(crate) type Members = Vec<(ForceTerm, molrs::ff::potential::SpecialWeights)>;
 
 /// Move the Rust potential out of any exposed potential class.
 ///
@@ -931,10 +935,10 @@ pub(crate) type Members = Vec<(Member, molrs::ff::potential::SpecialWeights)>;
 /// fallback last. Putting the fallback first would wrap every `Potentials`
 /// as a Python dispatch object.
 pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<ErrSlot>)> {
-    if let Ok(typed) = obj.cast::<PyTypedPotentials>() {
+    if let Ok(typed) = obj.cast::<PyWeightedTerms>() {
         let members = typed.borrow_mut().members.take().ok_or_else(|| {
             PyValueError::new_err(
-                "these TypedPotentials were already given to an integrator; \
+                "these WeightedTerms were already given to an integrator; \
                  build them again from the force field",
             )
         })?;
@@ -948,23 +952,23 @@ pub(crate) fn take_members(obj: &Bound<'_, PyAny>) -> PyResult<(Members, Vec<Err
     ))
 }
 
-pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(Member, Vec<ErrSlot>)> {
+pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(ForceTerm, Vec<ErrSlot>)> {
     // Each arm also settles which part the member plays. A pair kernel and an
     // aggregate of them read a neighbour table; a duck-typed Python object has
     // only `calc_energy_forces`, so it reads coordinates and nothing else —
     // and, being unable to tally a virial over pairs, makes the step's virial
     // `None` rather than a number that moves with the box origin.
-    if let Ok(lj) = obj.cast::<PyLJCut>() {
-        return Ok((Member::pair(lj.borrow().inner.clone()), Vec::new()));
+    if let Ok(lj) = obj.cast::<PyPairLjCut>() {
+        return Ok((ForceTerm::pair(lj.borrow().inner.clone()), Vec::new()));
     }
     if let Ok(pots) = obj.cast::<PyPotentials>() {
         let (inner, slots) = pots.borrow_mut().take_compiled()?;
-        return Ok((Member::pair(inner), slots));
+        return Ok((ForceTerm::pair(inner), slots));
     }
     if obj.hasattr("calc_energy_forces")? && obj.getattr("calc_energy_forces")?.is_callable() {
         let error: ErrSlot = Arc::default();
         return Ok((
-            Member::plain(SubclassPotential {
+            ForceTerm::plain(SubclassPotential {
                 obj: obj.clone().unbind(),
                 error: Arc::clone(&error),
             }),
@@ -972,6 +976,6 @@ pub(crate) fn take_potential(obj: &Bound<'_, PyAny>) -> PyResult<(Member, Vec<Er
         ));
     }
     Err(PyTypeError::new_err(
-        "expected a potential with callable calc_energy_forces (LJCut, Potentials, or duck-typed)",
+        "expected a potential with callable calc_energy_forces (PairLjCut, Potentials, or duck-typed)",
     ))
 }

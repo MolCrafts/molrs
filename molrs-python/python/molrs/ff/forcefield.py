@@ -2,7 +2,7 @@
 
 :class:`ForceField` holds styles (one per category and style name, in the
 force-field IR, which adopts the LAMMPS standard) and the types defined under
-them; :class:`Style` / :class:`Type` and their per-category subclasses are
+them; :class:`Style` / :class:`ForceFieldType` and their per-category subclasses are
 live handles onto it.
 
 No file format is here. Every force-field file reader and writer —
@@ -30,7 +30,7 @@ from .._lib import (
     RelationStyle,
     RelationType,
     Style,
-    Type,
+    ForceFieldType,
 )
 
 __all__ = [
@@ -52,5 +52,5 @@ __all__ = [
     "RelationStyle",
     "RelationType",
     "Style",
-    "Type",
+    "ForceFieldType",
 ]

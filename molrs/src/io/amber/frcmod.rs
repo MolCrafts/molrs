@@ -68,7 +68,7 @@
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, Style};
 use crate::ff::ir::Engine;
 use crate::ff::typifier::Provenance;
@@ -153,7 +153,8 @@ impl AmberFrcmodWriter {
             }
         }
         for (key, value) in p.iter_strings() {
-            let arithmetic = || Mixing::parse(value).is_ok_and(|m| m == Mixing::Arithmetic);
+            let arithmetic =
+                || CombiningRule::parse(value).is_ok_and(|m| m == CombiningRule::Arithmetic);
             if !(what == "pair/lj/cut" && key == "mixing" && arithmetic()) {
                 return Err(format!(
                     "{what} style param '{key}' = '{value}' has no frcmod column (AMBER \

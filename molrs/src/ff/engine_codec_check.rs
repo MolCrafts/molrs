@@ -27,8 +27,8 @@ use serde_json::json;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{
-    CategorySpec, Coordinate, Dim, EndpointOrder, LammpsForm, Mix, ParamSpec, Registry,
-    SpecialClass, StyleSpec, Value,
+    CategorySpec, Coordinate, EndpointOrder, LammpsForm, ParamCombination, ParamDimension,
+    ParamSpec, ParamValue, Registry, SpecialClass, StyleSpec,
 };
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use crate::io::lammps::units::LammpsUnitConverter;
@@ -44,7 +44,7 @@ use molrs::core::TypeLabels;
 use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::types::{F, Idx};
 
-fn dim(s: &str) -> Dim {
+fn dim(s: &str) -> ParamDimension {
     s.parse().unwrap()
 }
 
@@ -54,9 +54,9 @@ pub(crate) fn fene_spec() -> StyleSpec {
     StyleSpec::new("bond", "fene")
         .params(vec![
             ParamSpec::new("k", dim("E/L^2")),
-            ParamSpec::new("r0", Dim::LENGTH),
-            ParamSpec::new("epsilon", Dim::ENERGY),
-            ParamSpec::new("sigma", Dim::LENGTH),
+            ParamSpec::new("r0", ParamDimension::LENGTH),
+            ParamSpec::new("epsilon", ParamDimension::ENERGY),
+            ParamSpec::new("sigma", ParamDimension::LENGTH),
         ])
         .expression(
             "-0.5*k*r0^2*log(1-(r/r0)^2)+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)",
@@ -69,17 +69,17 @@ pub(crate) fn fene_spec() -> StyleSpec {
 pub(crate) fn smooth_spec() -> StyleSpec {
     StyleSpec::new("pair", "lj/smooth/linear")
         .params(vec![
-            ParamSpec::new("epsilon", Dim::ENERGY).mix(Mix::LjEpsilon {
+            ParamSpec::new("epsilon", ParamDimension::ENERGY).mix(ParamCombination::LjEpsilon {
                 sigma: "sigma".into(),
             }),
-            ParamSpec::new("sigma", Dim::LENGTH).mix(Mix::LjSigma {
+            ParamSpec::new("sigma", ParamDimension::LENGTH).mix(ParamCombination::LjSigma {
                 epsilon: "epsilon".into(),
             }),
         ])
         .style_params(vec![
-            ParamSpec::new("cutoff", Dim::LENGTH),
+            ParamSpec::new("cutoff", ParamDimension::LENGTH),
             ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
-                .default_value(Value::Text("arithmetic".into())),
+                .default_value(ParamValue::Text("arithmetic".into())),
         ])
         .special(SpecialClass::Vdw)
         .expression(
@@ -102,7 +102,7 @@ pub(crate) fn urey_bradley() -> (CategorySpec, StyleSpec) {
         StyleSpec::new("urey_bradley", "harmonic")
             .params(vec![
                 ParamSpec::new("k", dim("E/L^2")),
-                ParamSpec::new("r0", Dim::LENGTH),
+                ParamSpec::new("r0", ParamDimension::LENGTH),
             ])
             .expression("k*(distance(p1,p3)-r0)^2"),
     )
@@ -777,7 +777,7 @@ fn every_engine_prices_the_codec_cases_as_molrs() {
 
 mod codecs {
     use super::*;
-    use crate::ff::ir::expr::{Binding, Geometry, compile};
+    use crate::ff::ir::expression::{Binding, Geometry, compile};
     use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
     use crate::io::amber::frcmod::write_amber_frcmod_str;
     use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
@@ -816,7 +816,7 @@ mod codecs {
         }
         let mut p = Params::new();
         for (i, ps) in spec.params.iter().enumerate() {
-            let v = if ps.dim == Dim::ANGLE {
+            let v = if ps.dim == ParamDimension::ANGLE {
                 100.0 + 5.0 * i as F
             } else {
                 0.5 + 0.25 * i as F
@@ -915,7 +915,9 @@ mod codecs {
                     b.set(k, v * 1.1);
                 }
                 s.def_type("B", &["B"], b).unwrap();
-                if spec.params.iter().any(|p| p.mix == Mix::None) || spec.name == "lj/class2" {
+                if spec.params.iter().any(|p| p.mix == ParamCombination::None)
+                    || spec.name == "lj/class2"
+                {
                     let mut c = Params::new();
                     for (k, v) in row.iter() {
                         c.set(k, v * 1.05);
@@ -1093,7 +1095,7 @@ mod codecs {
         close(scale.apply(2.0, dim("E/L^2")), 2.0 * fe);
         close(scale.apply(2.0, dim("E*L^6")), 2.0 * fe);
         close(scale.apply(2.0, dim("1/L")), 2.0);
-        assert_eq!(scale.apply(109.5, Dim::ANGLE), 109.5);
+        assert_eq!(scale.apply(109.5, ParamDimension::ANGLE), 109.5);
         close(scale.apply(2.0, dim("E/A^2")), 2.0 * fe);
         assert!(sys.scale("real", "real").unwrap().is_identity());
         // Through a writer: `buck`'s `c` (E·L⁶) is the energy's factor.
@@ -1169,7 +1171,7 @@ mod codecs {
         // A positional form the spec cannot have, at registration.
         let mut r = Registry::builtin();
         let mut indexed = StyleSpec::new("dihedral", "my_series")
-            .params(vec![ParamSpec::new("k", Dim::ENERGY).indexed()])
+            .params(vec![ParamSpec::new("k", ParamDimension::ENERGY).indexed()])
             .expression("k1*cos(phi)")
             .lammps(LammpsForm::positional());
         let err = r.register_style(indexed.clone(), None).unwrap_err();
@@ -1182,7 +1184,7 @@ mod codecs {
         // register_engine_form: a form for a style registered without one;
         // another engine refused; a built-in sealed.
         indexed.lammps = LammpsForm::None;
-        indexed.params = vec![ParamSpec::new("k", Dim::ENERGY)];
+        indexed.params = vec![ParamSpec::new("k", ParamDimension::ENERGY)];
         indexed.expression = Some("k*cos(phi)".into());
         r.register_style(indexed, None).unwrap();
         r.register_engine_form(
@@ -1330,7 +1332,7 @@ mod codecs {
         .unwrap();
         r.register_style(
             StyleSpec::new("quint", "x")
-                .params(vec![ParamSpec::new("k", Dim::ENERGY)])
+                .params(vec![ParamSpec::new("k", ParamDimension::ENERGY)])
                 .expression("k*distance(p1,p5)"),
             None,
         )

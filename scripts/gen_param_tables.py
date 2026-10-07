@@ -12,7 +12,7 @@ Fourteen tables, from two upstream directories:
     BCCPARM.DAT          -> bccparm.rs        (corrections + CORR aliases)
     BCCPARM_ABCG2.DAT    -> bccparm_abcg2.rs  (corrections + CORR aliases)
     GASPARM.DAT          -> gasparm.rs        (Gasteiger PEOE parameters)
-    PARMCHK.DAT          -> gaff_equiv.rs     (parmchk2's EQUA / CORR table)
+    PARMCHK.DAT          -> parmchk.rs     (parmchk2's EQUA / CORR table)
     PARM_BLBA_GAFF{,2}.DAT -> gaff_empirical.rs (empirical bond / angle constants)
     ATOMTYPE_{BCC,ABCG2,GAS,GFF,GFF2,AMBER,SYBYL}.DEF -> atomtype_*.rs
   dat/leap/parm/
@@ -161,7 +161,7 @@ ATOMTYPE_FILES = [
 
 #: The conjugated pairing table. Read for its `equivalent_flag` column — the only
 #: in-repo source of the phase-2 names (`cd`, `cf`, ...) — AND, since
-#: chem-perceive-10, emitted whole as `gaff_equiv.rs`: it is parmchk2's atom-type
+#: chem-perceive-10, emitted whole as `parmchk.rs`: it is parmchk2's atom-type
 #: substitution table (EQUA / CORR rows, per-arity penalties, weights, defaults)
 #: and the `improper_flag` column that decides which atoms carry an improper.
 PARMCHK_FILE = "PARMCHK.DAT"
@@ -470,7 +470,7 @@ def emit_alternate(atom_type: str, eq: Equivalents | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# PARMCHK.DAT — the substitution table itself (gaff_equiv.rs)
+# PARMCHK.DAT — the substitution table itself (parmchk.rs)
 # ---------------------------------------------------------------------------
 #
 # The file's own header names the PARM columns:
@@ -1624,7 +1624,7 @@ def main() -> int:
     staged["bccparm.rs"] = emit_bccparm(src / "BCCPARM.DAT", "BCC")
     staged["bccparm_abcg2.rs"] = emit_bccparm(src / "BCCPARM_ABCG2.DAT", "ABCG2")
     staged["gasparm.rs"] = emit_gasparm(src / "GASPARM.DAT")
-    staged["gaff_equiv.rs"] = emit_parmchk(src / PARMCHK_FILE, equivalents)
+    staged["parmchk.rs"] = emit_parmchk(src / PARMCHK_FILE, equivalents)
     staged["gaff_empirical.rs"] = emit_empirical_from(src)
     for filename, module, const, gaff_namespace in ATOMTYPE_FILES:
         staged[f"{module}.rs"] = emit_atomtype(

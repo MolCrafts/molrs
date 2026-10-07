@@ -1,7 +1,7 @@
 """Seam smoke test for the AMBER prmtop whole-system reader.
 
 The 1-4 weighting (which pairs differ, their summed weights, what is refused)
-is proved in Rust (``io::forcefield::readers::prmtop``, and term by term
+is proved in Rust (``io::amber::prmtop_forcefield``, and term by term
 against sander in ``prmtop_check``). This test only asserts that
 ``molrs.io.read_amber_prmtop_system`` returns the force field and
 the structure frame with the per-pair ``pairs`` block a mixed-SCEE topology

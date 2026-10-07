@@ -3,15 +3,15 @@
 //! Ported from RDKit `Code/GraphMol/ForceFieldHelpers/MMFF/AtomTyper.cpp`
 //! (BSD-3, Paolo Tosco / RDKit contributors). The pipeline mirrors
 //! `MMFFMolProperties`'s constructor:
-//! [`set_mmff_aromaticity`](super::aromaticity::set_mmff_aromaticity) →
+//! [`set_mmff_aromaticity`](crate::perceive::mmff_aromaticity::set_mmff_aromaticity) →
 //! [`assign_atom_types`](super::atomtype::assign_atom_types) →
 //! [`compute_partial_charges`](super::charges::compute_partial_charges).
 
 use molrs::core::Atomistic;
 use molrs::core::MolRsError;
 
-use super::topo::Topo;
-use super::{aromaticity, atomtype, charges};
+use super::{atomtype, charges};
+use crate::perceive::mmff_aromaticity::MmffTopology;
 
 /// MMFF parameterization variant.
 ///
@@ -38,8 +38,8 @@ use super::{aromaticity, atomtype, charges};
 /// is what "static" means.
 ///
 /// A variant is picked by picking a typifier —
-/// [`MMFF94Typifier`](super::MMFF94Typifier) or
-/// [`MMFF94STypifier`](super::MMFF94STypifier) — never by passing this enum: it
+/// [`Mmff94Typifier`](super::Mmff94Typifier) or
+/// [`Mmff94sTypifier`](super::Mmff94sTypifier) — never by passing this enum: it
 /// is their private field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MmffVariant {
@@ -62,10 +62,10 @@ impl MmffMolProperties {
     /// Returns `Err` if any atom could not be assigned an MMFF type
     /// (e.g. an unsupported element / transition metal with no MMFF type).
     pub(crate) fn compute(mol: &Atomistic) -> Result<Self, MolRsError> {
-        let base = Topo::build(mol).map_err(|sym| {
+        let base = MmffTopology::build(mol).map_err(|sym| {
             MolRsError::validation(format!("MMFF: unsupported element symbol '{sym}'"))
         })?;
-        let topo = aromaticity::set_mmff_aromaticity(&base);
+        let topo = crate::perceive::mmff_aromaticity::set_mmff_aromaticity(&base);
         let atom_types = atomtype::assign_atom_types(&topo);
 
         // Locate the first untyped atom for a useful error message.

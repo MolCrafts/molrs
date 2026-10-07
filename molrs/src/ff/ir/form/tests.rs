@@ -9,10 +9,10 @@ use std::f64::consts::PI;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 
-use crate::ff::forcefield::torsion::{CosineTerm, Opls, Periodic};
 use crate::ff::forcefield::{ForceField, Params, pair_key};
-use crate::ff::ir::{Dim, IrError, ParamSpec, Registry, StyleSpec};
-use crate::ff::ir::{FormCodec, Metric, Refusal, TypeParams};
+use crate::ff::ir::torsion::{CosineTerm, Opls, Periodic};
+use crate::ff::ir::{FitMetric, FormCodec, FormRefusal, TypeParams};
+use crate::ff::ir::{IrError, ParamDimension, ParamSpec, Registry, StyleSpec};
 use crate::ff::potential::PotentialCompiler;
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -311,7 +311,7 @@ fn every_builtin_family_has_one_canonical_style() {
 #[test]
 fn register_form_refuses_what_does_not_conform() {
     let mut r = Registry::builtin();
-    let identity = |tp: &TypeParams| -> Result<TypeParams, Refusal> { Ok(tp.clone()) };
+    let identity = |tp: &TypeParams| -> Result<TypeParams, FormRefusal> { Ok(tp.clone()) };
     // A style that is not registered.
     assert_eq!(
         r.register_form(
@@ -336,7 +336,7 @@ fn register_form_refuses_what_does_not_conform() {
     // A second canonical style of one family.
     r.register_style(
         StyleSpec::new("dihedral", "cos3")
-            .params(vec![ParamSpec::new("k", Dim::ENERGY)])
+            .params(vec![ParamSpec::new("k", ParamDimension::ENERGY)])
             .expression("k*(1+cos(3*phi))"),
         None,
     )
@@ -793,7 +793,7 @@ fn a_row_in_the_image_fits_exactly() {
             &opls,
             "dihedral",
             "multi/harmonic",
-            &Metric::grid(-PI, PI, 36),
+            &FitMetric::grid(-PI, PI, 36),
         )
         .unwrap();
     assert_eq!(res.types.len(), 1);
@@ -819,11 +819,11 @@ fn a_row_in_the_image_fits_exactly() {
 fn the_residual_is_monotone_in_the_metric() {
     let r = Registry::builtin();
     let ff = off_image(0.5);
-    let fit = |m: &Metric| r.fit_form(&ff, "dihedral", "opls", m).unwrap().1;
+    let fit = |m: &FitMetric| r.fit_form(&ff, "dihedral", "opls", m).unwrap().1;
 
     let mut previous = 0.0;
     for n in [9, 18, 36, 72, 144] {
-        let res = fit(&Metric::grid(-PI, PI, n));
+        let res = fit(&FitMetric::grid(-PI, PI, n));
         assert!(!res.types[0].exact);
         let s = res.sum_sq();
         assert!(
@@ -838,7 +838,7 @@ fn the_residual_is_monotone_in_the_metric() {
                 &ff,
                 "dihedral",
                 "opls",
-                &Metric::grid(-PI, PI, n).free_offset(),
+                &FitMetric::grid(-PI, PI, n).free_offset(),
             )
             .unwrap();
         if n >= 18 {
@@ -864,7 +864,7 @@ fn the_residual_is_monotone_in_the_metric() {
     }
 
     let mut rng = StdRng::seed_from_u64(SEED + 3);
-    let base = Metric::grid(-PI, PI, 48);
+    let base = FitMetric::grid(-PI, PI, 48);
     let low = fit(&base).sum_sq();
     for _ in 0..5 {
         let heavier: Vec<F> = base
@@ -899,7 +899,7 @@ fn a_free_offset_absorbs_the_constant() {
         pairs(&[("k1", 1.0), ("periodicity1", 2.0), ("phase1", 0.0)]),
     );
     assert!(r.to_form(&ff, "dihedral", "opls").is_err());
-    let grid = Metric::grid(-PI, PI, 24);
+    let grid = FitMetric::grid(-PI, PI, 24);
     let fixed = r.fit_form(&ff, "dihedral", "opls", &grid).unwrap().1;
     assert!(fixed.rms() > 0.2, "{fixed:?}");
     let (out, free) = r
@@ -923,7 +923,9 @@ fn a_style_without_a_codec_fits_through_its_energy() {
         "periodic",
         pairs(&[("k", 2.0), ("periodicity", 2.0), ("phase", 180.0)]),
     );
-    let metric = Metric::grid(-0.5, 0.5, 101).boltzmann(0.02).free_offset();
+    let metric = FitMetric::grid(-0.5, 0.5, 101)
+        .boltzmann(0.02)
+        .free_offset();
     let (out, res) = r.fit_form(&ff, "improper", "harmonic", &metric).unwrap();
     let row = &out.get_style("improper", "harmonic").unwrap().type_rows()[0].2;
     let (k, chi0) = (row.get("k").unwrap(), row.get("chi0").unwrap());
@@ -941,17 +943,17 @@ fn a_style_without_a_codec_fits_through_its_energy() {
     assert!(chi0.abs() < 1.0, "chi0 = {chi0}");
     assert!(!res.types[0].exact && res.types[0].rms().is_finite());
 
-    let bad = r.fit_form(&ff, "improper", "harmonic", &Metric::new(vec![]));
+    let bad = r.fit_form(&ff, "improper", "harmonic", &FitMetric::new(vec![]));
     assert!(matches!(bad, Err(IrError::Malformed { .. })), "{bad:?}");
     let bond = one_row(
         "bond",
         "morse",
         pairs(&[("d0", 80.0), ("alpha", 2.0), ("r0", 1.2)]),
     );
-    let bad = r.fit_form(&bond, "bond", "harmonic", &Metric::new(vec![-1.0, 1.0]));
+    let bad = r.fit_form(&bond, "bond", "harmonic", &FitMetric::new(vec![-1.0, 1.0]));
     assert!(matches!(bad, Err(IrError::Malformed { .. })), "{bad:?}");
     let (_, res) = r
-        .fit_form(&bond, "bond", "harmonic", &Metric::grid(1.0, 1.4, 41))
+        .fit_form(&bond, "bond", "harmonic", &FitMetric::grid(1.0, 1.4, 41))
         .unwrap();
     assert!(
         res.rms() < 2.0,
@@ -959,7 +961,7 @@ fn a_style_without_a_codec_fits_through_its_energy() {
     );
     let lj = ForceField::new("x");
     assert!(matches!(
-        r.fit_form(&lj, "pair", "lj/cut", &Metric::grid(3.0, 6.0, 10)),
+        r.fit_form(&lj, "pair", "lj/cut", &FitMetric::grid(3.0, 6.0, 10)),
         Err(IrError::OutOfImage { .. })
     ));
 }
@@ -973,24 +975,27 @@ fn a_style_without_a_codec_fits_through_its_energy() {
 fn cos3(r: &mut Registry) {
     r.register_style(
         StyleSpec::new("dihedral", "cos3")
-            .params(vec![ParamSpec::new("k", Dim::ENERGY)])
+            .params(vec![ParamSpec::new("k", ParamDimension::ENERGY)])
             .expression("k*(1+cos(3*phi))"),
         None,
     )
     .unwrap();
-    let embed = |tp: &TypeParams| -> Result<TypeParams, Refusal> {
-        let k = tp.row.get("k").ok_or_else(|| Refusal::new("missing `k`"))?;
+    let embed = |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
+        let k = tp
+            .row
+            .get("k")
+            .ok_or_else(|| FormRefusal::new("missing `k`"))?;
         Ok(TypeParams::row(Params::from_pairs(&[
             ("k1", k),
             ("periodicity1", 3.0),
             ("phase1", 0.0),
         ])))
     };
-    let project = |tp: &TypeParams| -> Result<TypeParams, Refusal> {
+    let project = |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let s = Periodic::from_params(&tp.row)?.to_series()?;
         let t = CosineTerm::from_series(&s)?;
         if t.k != 0.0 && (t.periodicity, t.phase) != (3.0, 0.0) {
-            return Err(Refusal::new(format!(
+            return Err(FormRefusal::new(format!(
                 "periodicity {} phase {}: cos3 is k[1 + cos 3φ]",
                 t.periodicity, t.phase
             )));
@@ -1053,7 +1058,7 @@ fn a_registered_expression_style_takes_part_in_its_family() {
             &mixed,
             "dihedral",
             "cos3",
-            &Metric::grid(-PI, PI, 36).free_offset(),
+            &FitMetric::grid(-PI, PI, 36).free_offset(),
         )
         .unwrap();
     let k = out.get_style("dihedral", "cos3").unwrap().type_rows()[0]

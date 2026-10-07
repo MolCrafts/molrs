@@ -55,7 +55,7 @@ def write(name, frame, ff, energies):
 
 
 def mmff(energies):
-    typifier = molrs.ff.typifier.MMFF94Typifier()
+    typifier = molrs.ff.typifier.Mmff94Typifier()
     frame = typifier.typify(molecule()).to_frame()
     ff = typifier.forcefield()
     write("mmff", frame, ff, energies)
@@ -67,7 +67,7 @@ def mmff(energies):
 
 def topology():
     """The MMFF-typed molecule's geometry and topology, typed by element."""
-    src = molrs.ff.typifier.MMFF94Typifier().typify(molecule()).to_frame()
+    src = molrs.ff.typifier.Mmff94Typifier().typify(molecule()).to_frame()
     atoms = src["atoms"]
     element = [str(e) for e in atoms["element"]]
     frame = molrs.Frame()

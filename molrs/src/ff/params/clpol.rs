@@ -9,6 +9,10 @@
 //! for row; a caller's own `alpha.ff` is read by
 //! [`crate::io::clpol::codec::read_clpol_alpha`].
 
+use std::collections::HashMap;
+
+use crate::ff::clpol_scaling::FragmentScaling;
+
 /// `(name, q, mu, alpha, polarizable)` rows used by CL&Pol scaleLJ.
 pub const CLPOL_FRAGMENTS: &[(&str, f64, f64, f64, bool)] = &[
     ("c2c1im", 1.0, 1.1558, 12.383, false),
@@ -158,6 +162,28 @@ pub fn clpol_polarizability(type_name: &str) -> Option<&'static ClpolPolarizabil
     CLPOL_POLARIZABILITY
         .iter()
         .find(|row| row.type_name == type_name)
+}
+
+/// CL&Pol's fragment scaling table (paduagroup/clandpol `fragment.ff`): each
+/// fragment's charge, dipole and polarizability, by fragment name, as
+/// [`scale_lj`](crate::ff::clpol_scaling::scale_lj) reads it.
+pub fn clpol_fragment_scaling() -> HashMap<String, FragmentScaling> {
+    CLPOL_FRAGMENTS
+        .iter()
+        .copied()
+        .map(|(name, q, mu, alpha, polarizable)| {
+            (
+                name.to_string(),
+                FragmentScaling {
+                    name: name.to_string(),
+                    q,
+                    mu,
+                    alpha,
+                    polarizable,
+                },
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]

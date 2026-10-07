@@ -1,7 +1,7 @@
 """Seam smoke test for the GROMACS topology force-field reader.
 
 The directive model (what is read, what is refused, what a skip does) is proved
-in Rust (``io::forcefield::readers::gromacs``). This test only asserts that the
+in Rust (``io::gromacs::top_reader``). This test only asserts that the
 public ``molrs.io.read_gromacs_top_forcefield`` maps a refused directive to
 ``ValueError`` and that its ``skip_directives`` keyword reaches the Rust reader.
 """

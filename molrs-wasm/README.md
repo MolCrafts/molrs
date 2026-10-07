@@ -101,7 +101,7 @@ const withH = p.findHydrogens(frame);
 ### Force fields + geometry optimization
 
 ```js
-const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
+const typifier = new UffTypifier();                 // or Mmff94Typifier / Mmff94sTypifier
 const typed    = typifier.typify(frame);
 const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
 const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)

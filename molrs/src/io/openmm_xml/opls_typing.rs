@@ -2,12 +2,12 @@
 //! `overrides`, `priority` and `layer` of each `<AtomTypes><Type>`, the
 //! annotations Foyer adds to the OpenMM schema.
 
-use crate::ff::typifier::{OplsTypeRow, OplsTypingMeta};
+use crate::ff::typifier::{OplsTypeRow, OplsTypingMetadata};
 use crate::io::xml_attribute::{attr_str, forcefield_root};
 
-/// Parse OPLS-AA typing metadata ([`OplsTypingMeta`]) from an XML string —
+/// Parse OPLS-AA typing metadata ([`OplsTypingMetadata`]) from an XML string —
 /// the typing half of a caller's OPLS-AA XML, which
-/// [`OPLSAATypifier::new`](crate::ff::typifier::OPLSAATypifier::new) takes
+/// [`OplsAaTypifier::new`](crate::ff::typifier::OplsAaTypifier::new) takes
 /// beside the force field
 /// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) reads.
 ///
@@ -26,14 +26,14 @@ use crate::io::xml_attribute::{attr_str, forcefield_root};
 ///
 /// Returns `Err` if the root element is not `<ForceField>`, a `<Type>` lacks the
 /// required `name`/`class`, `priority`/`layer` is present but non-integer, or
-/// the table is not valid ([`OplsTypingMeta::validate`]: an `overrides` naming
+/// the table is not valid ([`OplsTypingMetadata::validate`]: an `overrides` naming
 /// a type the XML does not declare, or overrides forming a cycle).
-pub fn read_openmm_xml_opls_typing_str(xml: &str) -> Result<OplsTypingMeta, String> {
+pub fn read_openmm_xml_opls_typing_str(xml: &str) -> Result<OplsTypingMetadata, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
 
     let root = forcefield_root(&doc)?;
 
-    let mut meta = OplsTypingMeta::new();
+    let mut meta = OplsTypingMetadata::new();
 
     for child in root.children().filter(|n| n.is_element()) {
         if child.tag_name().name() != "AtomTypes" {

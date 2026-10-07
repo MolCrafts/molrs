@@ -1,9 +1,9 @@
 //! Unique LJ / Mie pair kernel (`lj/cut`).
 //!
 //! Pair source is fixed at construction:
-//! - [`LJCut::new`] / [`LJCut::lj126`] — uniform ε/σ, loop-fed pairs (MD)
-//! - [`LJCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block,
-//!   truncated (and shifted) at the style's `cutoff` by [`LJCut::truncated`]
+//! - [`PairLjCut::new`] / [`PairLjCut::lj126`] — uniform ε/σ, loop-fed pairs (MD)
+//! - [`PairLjCut::compiled`] — per-pair ε/σ from a ForceField `pairs` block,
+//!   truncated (and shifted) at the style's `cutoff` by [`PairLjCut::truncated`]
 //!
 //! Every source prices a pair only at `r < cutoff`, as LAMMPS does.
 //! Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
@@ -11,15 +11,15 @@
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::IrError;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
+use crate::ff::potential::{CompileError, ForceTerm, PairDriven, Potential, param_reads};
 use molrs::core::Frame;
 use molrs::core::Virial;
 use molrs::core::{Neighbors, VerletSkin};
@@ -95,7 +95,7 @@ fn shift_constants(
 
 /// LAMMPS `pair_style lj/cut`.
 #[derive(Clone, Debug)]
-pub struct LJCut {
+pub struct PairLjCut {
     epsilon: F,
     sigma: F,
     cutoff: F,
@@ -116,7 +116,7 @@ fn mie_c(n: i32, m: i32) -> F {
     (n / (n - m)) * (n / m).powf(m / (n - m))
 }
 
-impl LJCut {
+impl PairLjCut {
     pub fn new(
         epsilon: F,
         sigma: F,
@@ -127,11 +127,11 @@ impl LJCut {
         smeared: bool,
     ) -> Result<Self, String> {
         if epsilon <= 0.0 || sigma <= 0.0 || cutoff <= 0.0 {
-            return Err("LJCut requires epsilon, sigma, cutoff > 0".into());
+            return Err("PairLjCut requires epsilon, sigma, cutoff > 0".into());
         }
         if m <= 0 || n <= m {
             return Err(format!(
-                "LJCut exponents must satisfy n > m > 0, got n={n}, m={m}"
+                "PairLjCut exponents must satisfy n > m > 0, got n={n}, m={m}"
             ));
         }
         let cutoff2 = cutoff * cutoff;
@@ -201,14 +201,14 @@ impl LJCut {
     /// The kernel is not compiled, or `cutoff` is not positive.
     pub fn truncated(mut self, cutoff: F, shifted: bool) -> Result<Self, String> {
         if cutoff.is_nan() || cutoff <= 0.0 {
-            return Err(format!("LJCut requires cutoff > 0, got {cutoff}"));
+            return Err(format!("PairLjCut requires cutoff > 0, got {cutoff}"));
         }
         let (n, m) = (self.n, self.m);
         let PairSource::Compiled {
             epsilon, sigma, e0, ..
         } = &mut self.source
         else {
-            return Err("LJCut::truncated: only a compiled kernel is truncated here".into());
+            return Err("PairLjCut::truncated: only a compiled kernel is truncated here".into());
         };
         if shifted {
             for (e, (&eps, &sig)) in e0.iter_mut().zip(epsilon.iter().zip(sigma.iter())) {
@@ -230,11 +230,11 @@ impl LJCut {
     /// `n > m > 0`.
     pub fn with_exponents(mut self, n: i32, m: i32) -> Result<Self, String> {
         if !matches!(self.source, PairSource::Compiled { .. }) {
-            return Err("LJCut::with_exponents: only a compiled kernel takes them here".into());
+            return Err("PairLjCut::with_exponents: only a compiled kernel takes them here".into());
         }
         if m <= 0 || n <= m {
             return Err(format!(
-                "LJCut exponents must satisfy n > m > 0, got n={n}, m={m}"
+                "PairLjCut exponents must satisfy n > m > 0, got n={n}, m={m}"
             ));
         }
         self.n = n;
@@ -257,7 +257,7 @@ impl LJCut {
     pub fn typed(
         type_id: Vec<u32>,
         per_type: &[(F, F)],
-        mixing: Mixing,
+        mixing: CombiningRule,
         cutoff: F,
         n: i32,
         m: i32,
@@ -265,22 +265,22 @@ impl LJCut {
         smeared: bool,
     ) -> Result<Self, String> {
         if cutoff <= 0.0 {
-            return Err("LJCut requires cutoff > 0".into());
+            return Err("PairLjCut requires cutoff > 0".into());
         }
         if m <= 0 || n <= m {
             return Err(format!(
-                "LJCut exponents must satisfy n > m > 0, got n={n}, m={m}"
+                "PairLjCut exponents must satisfy n > m > 0, got n={n}, m={m}"
             ));
         }
         let ntypes = per_type.len();
         if ntypes == 0 {
-            return Err("LJCut::typed needs at least one type".into());
+            return Err("PairLjCut::typed needs at least one type".into());
         }
         if let Some(&t) = type_id.iter().max()
             && t as usize >= ntypes
         {
             return Err(format!(
-                "LJCut::typed: atom type {t} has no parameters (only {ntypes} types)"
+                "PairLjCut::typed: atom type {t} has no parameters (only {ntypes} types)"
             ));
         }
         let mut sigma = vec![0.0; ntypes * ntypes];
@@ -347,12 +347,14 @@ impl LJCut {
             ..
         } = &mut self.source
         else {
-            return Err("LJCut::with_type_pair: only a typed kernel has a type-pair table".into());
+            return Err(
+                "PairLjCut::with_type_pair: only a typed kernel has a type-pair table".into(),
+            );
         };
         let nt = *ntypes;
         if ti >= nt || tj >= nt {
             return Err(format!(
-                "LJCut::with_type_pair: type pair ({ti}, {tj}) out of range ({nt} types)"
+                "PairLjCut::with_type_pair: type pair ({ti}, {tj}) out of range ({nt} types)"
             ));
         }
         let (c, e, fr) = shift_constants(epsilon, sigma, cutoff, n, m, shifted, smeared);
@@ -641,7 +643,7 @@ impl LJCut {
     }
 
     /// Compose `pairs_at` + table fold. Neighbour search stays the caller's.
-    pub fn eval(
+    pub fn energy_forces_skin(
         &self,
         neighbors: &mut VerletSkin,
         pos: ArrayView2<'_, F>,
@@ -658,19 +660,19 @@ impl LJCut {
     }
 }
 
-impl PairPotential for LJCut {
+impl PairPotential for PairLjCut {
     fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F> {
         self.pair_kernel(r2, disp).map(|(e, _)| e)
     }
     fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]> {
         self.pair_kernel(r2, disp).map(|(_, f)| f)
     }
-    fn pair_eval(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
+    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
         self.pair_kernel(r2, disp)
     }
 }
 
-impl Potential for LJCut {
+impl Potential for PairLjCut {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -691,7 +693,7 @@ impl Potential for LJCut {
     }
 }
 
-impl PairDriven for LJCut {
+impl PairDriven for PairLjCut {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -751,8 +753,8 @@ fn lj_row(
     let Some(p) = type_map.get(key) else {
         return Ok(None);
     };
-    let eps = need::type_num(style, key, p, "epsilon")?;
-    let sigma = need::type_num(style, key, p, "sigma")?;
+    let eps = param_reads::type_num(style, key, p, "epsilon")?;
+    let sigma = param_reads::type_num(style, key, p, "sigma")?;
     Ok(Some((eps, sigma)))
 }
 
@@ -777,7 +779,7 @@ fn lj_cross_row(
 pub(crate) fn lj_pair_params(
     style: &str,
     type_map: &HashMap<&str, &Params>,
-    mixing: Mixing,
+    mixing: CombiningRule,
     a: &str,
     b: &str,
 ) -> Result<(F, F), CompileError> {
@@ -822,17 +824,17 @@ pub(crate) fn lj_table(
 
 /// The `mixing` rule of the Lennard-Jones style `style` (gathered: declared,
 /// else the spec's default).
-pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<Mixing, IrError> {
-    let name = need::style_text(style, style_params, "mixing")?;
-    Mixing::parse(name).map_err(|e| need::bad(style, "", "mixing", e))
+pub(crate) fn mixing_of(style: &str, style_params: &Params) -> Result<CombiningRule, IrError> {
+    let name = param_reads::style_text(style, style_params, "mixing")?;
+    CombiningRule::parse(name).map_err(|e| param_reads::bad(style, "", "mixing", e))
 }
 
 /// The style's exponents `(n, m)`: integers with `n > m > 0`.
 fn exponents(style_params: &Params) -> Result<(i32, i32), IrError> {
     let get = |key: &str| -> Result<i32, IrError> {
-        let v = need::style_num("lj/cut", style_params, key)?;
+        let v = param_reads::style_num("lj/cut", style_params, key)?;
         if v.fract() != 0.0 {
-            return Err(need::bad(
+            return Err(param_reads::bad(
                 "lj/cut",
                 "",
                 key,
@@ -843,7 +845,7 @@ fn exponents(style_params: &Params) -> Result<(i32, i32), IrError> {
     };
     let (n, m) = (get("n")?, get("m")?);
     if m <= 0 || n <= m {
-        return Err(need::bad(
+        return Err(param_reads::bad(
             "lj/cut",
             "",
             "n",
@@ -853,42 +855,42 @@ fn exponents(style_params: &Params) -> Result<(i32, i32), IrError> {
     Ok((n, m))
 }
 
-/// Construct a compiled [`LJCut`] from per-atom-type params + a neighbour list.
+/// Construct a compiled [`PairLjCut`] from per-atom-type params + a neighbour list.
 ///
 /// A pair whose types have an explicit cross row is priced with it; every other
 /// pair is mixed from the two self rows by the style's `mixing`. A pair at or
 /// beyond the style's `cutoff` prices nothing, shifted by `shift` — exactly
 /// as the typed kernel and LAMMPS price it.
-pub fn pair_lj_cut_ctor(
+pub fn pair_lj_cut_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let scale_14 = style_params.get("lj14scale").unwrap_or(1.0) as F;
     let mixing = mixing_of("lj/cut", style_params)?;
     let (n_exp, m_exp) = exponents(style_params)?;
-    let cutoff = need::pair_cutoff("lj/cut", style_params)?;
-    let shifted = need::style_num("lj/cut", style_params, "shift")? != 0.0;
+    let cutoff = param_reads::pair_cutoff("lj/cut", style_params)?;
+    let shifted = param_reads::style_num("lj/cut", style_params, "shift")? != 0.0;
 
     let atoms = frame
         .get(ATOMS)
-        .ok_or_else(|| "LJCut: frame missing \"atoms\" block".to_string())?;
+        .ok_or_else(|| "PairLjCut: frame missing \"atoms\" block".to_string())?;
     let atom_types = atoms
         .get("type")
         .and_then(|c| c.as_string())
-        .ok_or_else(|| "LJCut: atoms block missing \"type\" column".to_string())?;
+        .ok_or_else(|| "PairLjCut: atoms block missing \"type\" column".to_string())?;
     let block = frame
         .get(PAIRS)
-        .ok_or_else(|| "LJCut: frame missing \"pairs\" block".to_string())?;
+        .ok_or_else(|| "PairLjCut: frame missing \"pairs\" block".to_string())?;
     let i_col = block
         .get("atomi")
         .and_then(|c| c.as_uint())
-        .ok_or_else(|| "LJCut: pairs block missing \"atomi\" column".to_string())?;
+        .ok_or_else(|| "PairLjCut: pairs block missing \"atomi\" column".to_string())?;
     let j_col = block
         .get("atomj")
         .and_then(|c| c.as_uint())
-        .ok_or_else(|| "LJCut: pairs block missing \"atomj\" column".to_string())?;
+        .ok_or_else(|| "PairLjCut: pairs block missing \"atomj\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
 
     let n = i_col.len();
@@ -912,41 +914,41 @@ pub fn pair_lj_cut_ctor(
         sig_vec.push(sigma);
     }
 
-    Ok(Member::pair(
-        LJCut::compiled(atom_i, atom_j, eps_vec, sig_vec)
+    Ok(ForceTerm::pair(
+        PairLjCut::compiled(atom_i, atom_j, eps_vec, sig_vec)
             .with_exponents(n_exp, m_exp)?
             .truncated(cutoff, shifted)?,
     ))
 }
 
-/// Construct a neighbour-driven [`LJCut`] from per-atom parameters.
+/// Construct a neighbour-driven [`PairLjCut`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_lj_cut_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_lj_cut_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_lj_cut_typed_ctor(
+pub fn pair_lj_cut_typed_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let mixing = mixing_of("lj/cut", style_params)?;
     // Required finite, where the compiled form takes ∞ (a style stating no
     // cutoff): an intramolecular list is finite by construction, a periodic
     // neighbour sum is not.
-    let cutoff = need::neighbour_cutoff("lj/cut", style_params)?;
+    let cutoff = param_reads::neighbour_cutoff("lj/cut", style_params)?;
     let (n, m) = exponents(style_params)?;
-    let shifted = need::style_num("lj/cut", style_params, "shift")? != 0.0;
+    let shifted = param_reads::style_num("lj/cut", style_params, "shift")? != 0.0;
 
     let (type_id, labels) = atom_type_index(frame)?;
     let (per_type, cross) = lj_table("lj/cut", &type_map, &labels)?;
-    let mut kernel = LJCut::typed(type_id, &per_type, mixing, cutoff, n, m, shifted, false)?;
+    let mut kernel = PairLjCut::typed(type_id, &per_type, mixing, cutoff, n, m, shifted, false)?;
     // Explicit cross rows replace the mixed entries of the type-pair table.
     for (ti, tj, eps, sigma) in cross {
         kernel = kernel.with_type_pair(ti, tj, eps, sigma)?;
     }
-    Ok(Member::pair(kernel))
+    Ok(ForceTerm::pair(kernel))
 }
 
 /// Lennard-Jones `A`/`B` coefficients to `(σ, ε)`.
@@ -1026,10 +1028,10 @@ mod tests {
             "the fixture must cross the parallel threshold"
         );
 
-        let kernel = LJCut::typed(
+        let kernel = PairLjCut::typed(
             (0..n).map(|i| (i % 2) as u32).collect(),
             &[(0.3, 3.4), (0.5, 3.0)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             6.0,
             12,
             6,
@@ -1078,7 +1080,7 @@ mod tests {
 
     #[test]
     fn loop_without_pairs_is_explicit_zero() {
-        let lj = LJCut::lj126(1.0, 1.0, 2.5).unwrap();
+        let lj = PairLjCut::lj126(1.0, 1.0, 2.5).unwrap();
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.1, 0.0, 0.0];
         let (e, f) = Potential::calc_energy_forces(&lj, &coords);
         assert_eq!(e, 0.0);
@@ -1087,7 +1089,7 @@ mod tests {
 
     #[test]
     fn compiled_newton_third_law() {
-        let pot = LJCut::compiled(vec![0], vec![1], vec![0.5], vec![1.0]);
+        let pot = PairLjCut::compiled(vec![0], vec![1], vec![0.5], vec![1.0]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.5, 0.3, 0.1];
         let (e, forces) = pot.calc_energy_forces(&coords);
         assert!(e.is_finite());
@@ -1098,7 +1100,7 @@ mod tests {
 
     #[test]
     fn compiled_ignores_loop_pairs() {
-        let pot = LJCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
+        let pot = PairLjCut::compiled(vec![0], vec![1], vec![1.0], vec![1.0]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let (e0, _) = pot.calc_energy_forces(&coords);
         let extra = Neighbors::from_pairs(
@@ -1140,8 +1142,8 @@ mod tests {
         let coords = [0.0, 0.0, 0.0, 3.7, 0.0, 0.0];
         for (n, m) in [(12.0, 6.0), (9.0, 6.0), (10.0, 4.0)] {
             let style = gathered(Params::from_pairs(&[("cutoff", 100.0), ("n", n), ("m", m)]));
-            let compiled = pair_lj_cut_ctor(&style, &tp, &frame).unwrap();
-            let typed = pair_lj_cut_typed_ctor(&style, &tp, &frame).unwrap();
+            let compiled = pair_lj_cut_constructor(&style, &tp, &frame).unwrap();
+            let typed = pair_lj_cut_typed_constructor(&style, &tp, &frame).unwrap();
             let c = (n / (n - m)) * (n / m).powf(m / (n - m));
             let want = c * 0.2 * ((3.0_f64 / 3.7).powf(n) - (3.0_f64 / 3.7).powf(m));
             let e_c = compiled.as_potential().calc_energy(&coords);
@@ -1156,7 +1158,7 @@ mod tests {
                 molrs::core::NeighborsStorage::FULL,
                 molrs::core::QueryMode::SelfQuery { num_points: 2 },
             );
-            let Member::Pair(typed) = typed else {
+            let ForceTerm::Pair(typed) = typed else {
                 panic!("a pair member")
             };
             let e_t = typed.calc_energy_forces_with_pairs(&coords, &pair).0;
@@ -1189,7 +1191,7 @@ mod tests {
             4.0, 3.3, 1.1,
         ];
         let links = [(0_usize, 1_usize), (0, 2), (1, 3), (2, 3)];
-        let mixing = Mixing::Arithmetic;
+        let mixing = CombiningRule::Arithmetic;
 
         let mut ai = Vec::new();
         let mut aj = Vec::new();
@@ -1216,9 +1218,9 @@ mod tests {
             });
         }
 
-        let compiled = LJCut::compiled(ai, aj, eps, sig);
+        let compiled = PairLjCut::compiled(ai, aj, eps, sig);
         let typed =
-            LJCut::typed(type_id, &per_type, mixing, F::INFINITY, 12, 6, false, false).unwrap();
+            PairLjCut::typed(type_id, &per_type, mixing, F::INFINITY, 12, 6, false, false).unwrap();
 
         let neighbors = Neighbors::from_pairs(
             table,
@@ -1239,7 +1241,7 @@ mod tests {
             assert_eq!(a.to_bits(), b.to_bits(), "force component {c}: {a} vs {b}");
         }
 
-        crate::ff::potential::pair::testing::assert_virial_matches_forces(
+        crate::ff::potential::pair::fixtures::assert_virial_matches_forces(
             "lj/cut",
             &coords,
             typed.calc_energy_forces_with_pairs_virial(&coords, &neighbors),
@@ -1249,13 +1251,13 @@ mod tests {
     /// A typed kernel stops at its cutoff (`r < cutoff`, as LAMMPS): every
     /// pair inside it interacts and nothing outside it does, which is what
     /// makes the sum finite in a periodic system. The compiled kernel stops
-    /// at the same cutoff ([`LJCut::truncated`]).
+    /// at the same cutoff ([`PairLjCut::truncated`]).
     #[test]
     fn a_typed_kernel_stops_at_its_cutoff() {
-        let typed = LJCut::typed(
+        let typed = PairLjCut::typed(
             vec![0_u32, 0],
             &[(1.0, 1.0)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             2.5,
             12,
             6,
@@ -1263,13 +1265,13 @@ mod tests {
             false,
         )
         .unwrap();
-        assert!(typed.pair_eval(4.0, [2.0, 0.0, 0.0]).is_some());
+        assert!(typed.pair_energy_force(4.0, [2.0, 0.0, 0.0]).is_some());
         assert!(
-            typed.pair_eval(9.0, [3.0, 0.0, 0.0]).is_none(),
+            typed.pair_energy_force(9.0, [3.0, 0.0, 0.0]).is_none(),
             "3 Å is past the 2.5 Å cutoff"
         );
         assert!(
-            typed.pair_eval(6.25, [2.5, 0.0, 0.0]).is_none(),
+            typed.pair_energy_force(6.25, [2.5, 0.0, 0.0]).is_none(),
             "LAMMPS prices `rsq < cutsq`: nothing at the cutoff itself"
         );
     }
@@ -1278,18 +1280,18 @@ mod tests {
     /// one does, bit for bit, on each side of the cutoff.
     #[test]
     fn a_truncated_compiled_kernel_is_the_typed_one() {
-        use crate::ff::potential::pair::testing::{assert_same, table_over};
+        use crate::ff::potential::pair::fixtures::{assert_same, table_over};
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 1.1, 0.2, 0.0, 2.9, -0.4, 0.3];
         let links = [(0_usize, 1_usize), (0, 2), (1, 2)];
         for shifted in [false, true] {
             let compiled =
-                LJCut::compiled(vec![0, 0, 1], vec![1, 2, 2], vec![1.0; 3], vec![1.0; 3])
+                PairLjCut::compiled(vec![0, 0, 1], vec![1, 2, 2], vec![1.0; 3], vec![1.0; 3])
                     .truncated(2.5, shifted)
                     .unwrap();
-            let typed = LJCut::typed(
+            let typed = PairLjCut::typed(
                 vec![0_u32; 3],
                 &[(1.0, 1.0)],
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 2.5,
                 12,
                 6,
@@ -1307,8 +1309,8 @@ mod tests {
 
     #[test]
     fn unshifted_energy_at_sigma_is_zero() {
-        let lj = LJCut::new(1.5, 2.0, 5.0, 12, 6, false, false).unwrap();
-        let (e, f) = lj.pair_eval(4.0, [2.0, 0.0, 0.0]).unwrap();
+        let lj = PairLjCut::new(1.5, 2.0, 5.0, 12, 6, false, false).unwrap();
+        let (e, f) = lj.pair_energy_force(4.0, [2.0, 0.0, 0.0]).unwrap();
         assert!(e.abs() < 1e-12);
         assert!(f[0] > 0.0);
     }
@@ -1365,9 +1367,11 @@ mod tests {
     /// `style` as a compile hands it to the kernel: the `lj/cut` spec's
     /// defaults filled in.
     fn gathered(style: Params) -> Params {
-        crate::ff::ir::with_global(|r| r.style("pair", "lj/cut").unwrap().0.gather(&style, &[]))
-            .unwrap()
-            .0
+        crate::ff::ir::with_global_registry(|r| {
+            r.style("pair", "lj/cut").unwrap().0.gather(&style, &[])
+        })
+        .unwrap()
+        .0
     }
 
     fn lj(eps: F, sigma: F, r: F) -> F {
@@ -1382,7 +1386,7 @@ mod tests {
         style.set_str("mixing", "geometric");
         let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
-        let member = pair_lj_cut_ctor(&style, &refs, &ab_frame()).unwrap();
+        let member = pair_lj_cut_constructor(&style, &refs, &ab_frame()).unwrap();
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];
         member.as_potential().calc_energy_forces(&coords).0
     }
@@ -1393,7 +1397,8 @@ mod tests {
         style.set_str("mixing", "geometric");
         let style = gathered(style);
         let refs: Vec<(&str, &Params)> = rows.iter().map(|(k, p)| (k.as_str(), p)).collect();
-        let Member::Pair(kernel) = pair_lj_cut_typed_ctor(&style, &refs, &ab_frame()).unwrap()
+        let ForceTerm::Pair(kernel) =
+            pair_lj_cut_typed_constructor(&style, &refs, &ab_frame()).unwrap()
         else {
             panic!("lj/cut is a pair member");
         };

@@ -24,13 +24,12 @@
 //!
 //! [`read_mmff_xml_forcefield`] reads the force-field half,
 //! [`read_mmff_xml_params_str`] the typing half (`<AtomProperties>`);
-//! `MMFF94Typifier::from_parts` takes the two.
-
-use std::collections::HashMap;
+//! `Mmff94Typifier::from_parts` takes the two.
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
+use crate::ff::params::mmff::MmffProp;
 use crate::ff::params::mmff::encode_da;
-use crate::ff::typifier::mmff::{MMFFAtomProp, MMFFParams};
+use crate::ff::typifier::mmff::MmffAtomProperties;
 use crate::io::molrs_xml::read_style_element;
 use crate::io::xml_attribute::{attr_f64, attr_u32, children_named, forcefield_root, opt_attr_f64};
 
@@ -173,15 +172,15 @@ fn parse_electrostatics(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(
     Ok(())
 }
 
-/// Parse [`MMFFParams`] from the `<AtomProperties>` section of an MMFF XML
+/// Parse [`MmffAtomProperties`] from the `<AtomProperties>` section of an MMFF XML
 /// string — the typing half of a caller's MMFF XML (the potential half is
-/// [`read_mmff_xml_forcefield_str`]); `MMFF94Typifier::from_parts` takes the two.
-pub fn read_mmff_xml_params_str(xml: &str) -> Result<MMFFParams, String> {
+/// [`read_mmff_xml_forcefield_str`]); `Mmff94Typifier::from_parts` takes the two.
+pub fn read_mmff_xml_params_str(xml: &str) -> Result<MmffAtomProperties, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
 
     let root = forcefield_root(&doc)?;
 
-    let mut props = HashMap::new();
+    let mut props = Vec::new();
 
     for child in root.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "AtomProperties" {
@@ -189,8 +188,7 @@ pub fn read_mmff_xml_params_str(xml: &str) -> Result<MMFFParams, String> {
                 .children()
                 .filter(|n| n.is_element() && n.tag_name().name() == "Prop")
             {
-                let p = parse_atom_prop(&prop_node)?;
-                props.insert(p.type_id, p);
+                props.push(parse_atom_prop(&prop_node)?);
             }
         }
     }
@@ -199,20 +197,24 @@ pub fn read_mmff_xml_params_str(xml: &str) -> Result<MMFFParams, String> {
         return Err("No <AtomProperties> found in XML".to_string());
     }
 
-    Ok(MMFFParams::new(props))
+    Ok(MmffAtomProperties::new(props))
 }
 
-fn parse_atom_prop(node: &roxmltree::Node) -> Result<MMFFAtomProp, String> {
-    Ok(MMFFAtomProp {
-        type_id: attr_u32(node, "type")?,
-        atno: attr_u32(node, "atno")?,
-        crd: attr_u32(node, "crd")?,
-        val: attr_u32(node, "val")?,
-        pilp: attr_u32(node, "pilp")?,
-        mltb: attr_u32(node, "mltb")?,
-        arom: attr_u32(node, "arom")?,
-        linh: attr_u32(node, "linh")?,
-        sbmb: attr_u32(node, "sbmb")?,
+fn parse_atom_prop(node: &roxmltree::Node) -> Result<MmffProp, String> {
+    let byte = |name: &str| -> Result<u8, String> {
+        let v = attr_u32(node, name)?;
+        u8::try_from(v).map_err(|_| format!("<Prop {name}=\"{v}\">: MMFF's tables hold 0..=255"))
+    };
+    Ok(MmffProp {
+        atom_type: byte("type")?,
+        atno: byte("atno")?,
+        crd: byte("crd")?,
+        val: byte("val")?,
+        pilp: byte("pilp")?,
+        mltb: byte("mltb")?,
+        arom: byte("arom")?,
+        linh: byte("linh")?,
+        sbmb: byte("sbmb")?,
     })
 }
 
@@ -291,7 +293,7 @@ mod tests {
         "#;
 
         let params = read_mmff_xml_params_str(xml).unwrap();
-        let p = params.get_prop(1).expect("type 1 is in the parsed table");
+        let p = params.get(1).expect("type 1 is in the parsed table");
         assert_eq!((p.atno, p.crd, p.val), (6, 4, 4));
     }
 }

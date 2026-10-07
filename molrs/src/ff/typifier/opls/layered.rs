@@ -34,8 +34,8 @@ use std::collections::{HashMap, HashSet};
 use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
 
-use super::deps::OplsDependencyAnalyzer;
-use super::meta::OplsTypingMeta;
+use super::dependency::OplsDependencyAnalyzer;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// Maximum fixed-point iterations for a circular-dependency level.
 pub const MAX_CIRCULAR_ITERATIONS: usize = 10;
@@ -84,8 +84,8 @@ impl Dominance {
     /// `Err` naming both types when an override names a type absent from
     /// `meta`, and `Err` naming every member when the declared overrides form
     /// a cycle.
-    pub(super) fn new(meta: &OplsTypingMeta) -> Result<Self, String> {
-        let mut named: Vec<(&String, &super::meta::OplsTypeRow)> = meta.iter().collect();
+    pub(super) fn new(meta: &OplsTypingMetadata) -> Result<Self, String> {
+        let mut named: Vec<(&String, &super::typing_metadata::OplsTypeRow)> = meta.iter().collect();
         named.sort_by(|a, b| a.0.cmp(b.0));
         for (name, row) in &named {
             if let Some(missing) = row.overrides.iter().find(|o| meta.get(o).is_none()) {
@@ -162,12 +162,12 @@ impl LayeredTypingEngine {
     /// `Err` naming the type for a malformed SMARTS `def`; naming both types
     /// for an override of a type absent from `meta`; naming every member for
     /// an overrides cycle.
-    pub fn build(meta: &OplsTypingMeta) -> Result<Self, String> {
+    pub fn build(meta: &OplsTypingMetadata) -> Result<Self, String> {
         let dominance = Dominance::new(meta)?;
         let analyzer = OplsDependencyAnalyzer::new(meta);
 
         // Deterministic definition order: sort by type name.
-        let mut named: Vec<(&String, &super::meta::OplsTypeRow)> = meta.iter().collect();
+        let mut named: Vec<(&String, &super::typing_metadata::OplsTypeRow)> = meta.iter().collect();
         named.sort_by(|a, b| a.0.cmp(b.0));
 
         let max_level = analyzer.max_level().unwrap_or(0);
@@ -350,8 +350,8 @@ mod tests {
         }
     }
 
-    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMeta {
-        let mut m = OplsTypingMeta::new();
+    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMetadata {
+        let mut m = OplsTypingMetadata::new();
         for (name, r) in rows {
             m.insert(*name, r.clone());
         }
@@ -494,7 +494,7 @@ mod tests {
     }
 
     /// The type the engine built from `meta` assigns to ethanol's oxygen.
-    fn oxygen_type(meta: &OplsTypingMeta) -> Option<String> {
+    fn oxygen_type(meta: &OplsTypingMetadata) -> Option<String> {
         let engine = LayeredTypingEngine::build(meta).expect("engine builds");
         let (g, o, _ho) = ethanol();
         engine.assign(&g).get(&o).cloned()

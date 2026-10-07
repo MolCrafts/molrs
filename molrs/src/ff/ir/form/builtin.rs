@@ -1,10 +1,10 @@
 //! The built-in form families: `torsion` (in
-//! [`crate::ff::forcefield::torsion`], beside its algebra), `bond`, `angle`
+//! [`crate::ff::ir::torsion`], beside its algebra), `bond`, `angle`
 //! and `lj`.
 
 use crate::ff::forcefield::Params;
-use crate::ff::forcefield::torsion;
-use crate::ff::ir::{FormCodec, Refusal, TypeParams};
+use crate::ff::ir::torsion;
+use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
 
 /// Every built-in `(category, style, codec)`, registered and sealed by
 /// [`Registry::builtin`](crate::ff::ir::Registry::builtin).
@@ -18,9 +18,9 @@ pub fn builtin_forms() -> Vec<(&'static str, &'static str, FormCodec)> {
 }
 
 /// A required numeric param.
-fn need(p: &Params, what: &str, key: &str) -> Result<f64, Refusal> {
+fn need(p: &Params, what: &str, key: &str) -> Result<f64, FormRefusal> {
     p.get(key)
-        .ok_or_else(|| Refusal::new(format!("{what}: missing param `{key}`")))
+        .ok_or_else(|| FormRefusal::new(format!("{what}: missing param `{key}`")))
 }
 
 /// `harmonic` (canonical: `k(q − q0)²`, the identity on its two
@@ -31,20 +31,20 @@ fn polynomial(
     category: &'static str,
     q0: &'static str,
 ) -> Vec<(&'static str, &'static str, FormCodec)> {
-    let harmonic = move |tp: &TypeParams| -> Result<TypeParams, Refusal> {
+    let harmonic = move |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let what = format!("{category} harmonic");
         Ok(TypeParams::row(Params::from_pairs(&[
             ("k", need(&tp.row, &what, "k")?),
             (q0, need(&tp.row, &what, q0)?),
         ])))
     };
-    let embed = move |tp: &TypeParams| -> Result<TypeParams, Refusal> {
+    let embed = move |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let what = format!("{category} class2");
         for key in ["k3", "k4"] {
             let v = need(&tp.row, &what, key)?;
             if v != 0.0 {
                 let power = if key == "k3" { "cubic" } else { "quartic" };
-                return Err(Refusal::new(format!(
+                return Err(FormRefusal::new(format!(
                     "{key} = {v} ≠ 0: a {power} term has no harmonic form"
                 )));
             }
@@ -54,7 +54,7 @@ fn polynomial(
             (q0, need(&tp.row, &what, q0)?),
         ])))
     };
-    let project = move |tp: &TypeParams| -> Result<TypeParams, Refusal> {
+    let project = move |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
         let h = harmonic(tp)?.row;
         Ok(TypeParams::row(Params::from_pairs(&[
             (q0, h.get(q0).expect("set")),
@@ -82,7 +82,7 @@ fn angle_charmm() -> FormCodec {
         |tp: &TypeParams| {
             let k_ub = need(&tp.row, WHAT, "k_ub")?;
             if k_ub != 0.0 {
-                return Err(Refusal::new(format!(
+                return Err(FormRefusal::new(format!(
                     "k_ub = {k_ub} ≠ 0: the Urey–Bradley 1-3 term is no function of θ"
                 )));
             }
@@ -175,13 +175,13 @@ fn lj() -> Vec<(&'static str, &'static str, FormCodec)> {
             let style = lj_cut_style(&tp.style);
             let (n, m) = (style.get("n").expect("set"), style.get("m").expect("set"));
             if (n, m) != (9.0, 6.0) {
-                return Err(Refusal::new(format!(
+                return Err(FormRefusal::new(format!(
                     "exponents n = {n}, m = {m}: lj/class2 is the 9-6 form"
                 )));
             }
             let shift = style.get("shift").expect("set");
             if shift != 0.0 {
-                return Err(Refusal::new(
+                return Err(FormRefusal::new(
                     "shift = 1: lj/class2 holds no energy shift at the cutoff",
                 ));
             }

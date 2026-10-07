@@ -131,7 +131,7 @@ and `PotentialCompiler` turns the force field and the typed frame into
 potentials that can be evaluated.
 
 ```python
-typifier = molrs.ff.typifier.MMFF94Typifier()
+typifier = molrs.ff.typifier.Mmff94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
@@ -150,7 +150,7 @@ print("forces shape:", forces.shape)
 
 Typing and compiling are separate steps on purpose. Typing gives a labeled
 graph and accumulates the definitions it assigned in the typifier's output:
-`forcefield()` returns a copy of it, `library()` is the full parameter set it
+`forcefield()` returns a copy of it, `source_forcefield()` is the full parameter set it
 matched against, and `typify` is its only writer.
 `PotentialCompiler(ff).compile(frame)` is the one compile path every force
 field uses, whether it came from a typifier or from a file.
@@ -168,22 +168,22 @@ print("force balance:", np.abs(forces.sum(axis=0)).max())
 ```
 
 A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
-only `match(graph)`. It returns a `Match` with one mapping of annotations per
+only `assign(graph)`. It returns a `TypeAssignment` with one mapping of annotations per
 atom and, in `links`, per term of any relation kind: keyed by a relation class
 (`Bond`, `Angle`, …) or a kind name (`"bonds"`, or a custom
 `"urey_bradleys"` the graph registered with `register_kind`, whose types land
 in the category `urey_bradley`). A type annotation is
 `(style, name, endpoints, params)`; endpoints are empty for an atom type. The
-base class's `typify` copies the graph, stamps the match onto the copy and
+base class's `typify` copies the graph, stamps the assignment onto the copy and
 defines the types in its output force field:
 
 ```python
-from molrs.ff.typifier import Match, Typifier
+from molrs.ff.typifier import TypeAssignment, Typifier
 
 
 class EveryAtomX(Typifier):
-    def match(self, graph):
-        return Match(
+    def assign(self, graph):
+        return TypeAssignment(
             [{"type": ("full", "X", (), {"mass": 12.0})} for _ in graph.atoms],
             styles=[("atom", "full", {})],
         )
@@ -194,10 +194,10 @@ custom.typify(mol3d)
 print([(s.category, s.name) for s in custom.forcefield().styles])
 ```
 
-The built-in typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
-subclassed to carry your own attributes or methods, but they match in Rust:
-a subclass that defines `match` or `library` raises `TypeError`. Start from
-`Typifier` to supply your own matching.
+The built-in typifiers (`OplsAaTypifier`, `Mmff94Typifier`, …) can be
+subclassed to carry your own attributes or methods, but they type in Rust:
+a subclass that defines `assign` or `source_forcefield` raises `TypeError`. Start from
+`Typifier` to supply your own typing.
 
 ## 7. Write Files
 
@@ -230,6 +230,6 @@ This quickstart crossed the main molrs boundaries:
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
 - `RDF` consumed an explicit neighbor list.
-- `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
+- `Mmff94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
 - `write_xyz` and `write_mrec_frame` wrote the result to disk.

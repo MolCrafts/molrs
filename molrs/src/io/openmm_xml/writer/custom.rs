@@ -40,13 +40,13 @@ use std::collections::BTreeMap;
 use super::{
     ANGSTROM_PER_NM, Endpoints, KJ_PER_KCAL, OpenmmXmlWriter, Out, centre_first, either_way, esc,
 };
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
-use crate::ff::ir::expr::{self, BinOp, Definition, Expr, Func, Parsed};
 use crate::ff::ir::expression::fallback_spec;
+use crate::ff::ir::expression::{self, BinOp, Definition, Expr, Func, Parsed};
 use crate::ff::ir::{
-    CategorySpec, Coordinate, EndpointOrder, Engine, Mix, ParamKind, Registry, SpecialClass,
-    StyleSpec, Value,
+    CategorySpec, Coordinate, EndpointOrder, Engine, ParamCombination, ParamKind, ParamValue,
+    Registry, SpecialClass, StyleSpec,
 };
 use crate::io::writer::ForceFieldWriteError;
 use molrs::op::types::F;
@@ -111,7 +111,8 @@ fn custom_of(reg: &Registry, style: &Style) -> Result<Custom, ForceFieldWriteErr
         }
     };
     let source = spec.expression.as_deref().ok_or_else(no_expression)?;
-    let parsed = expr::parse(source).map_err(|e| refuse(style, format!("its expression: {e}")))?;
+    let parsed =
+        expression::parse(source).map_err(|e| refuse(style, format!("its expression: {e}")))?;
     Ok(Custom { cat, spec, parsed })
 }
 
@@ -270,7 +271,7 @@ fn row_value(
         .or_else(|| {
             spec.param(name)
                 .and_then(|p| p.default.as_ref())
-                .and_then(Value::as_num)
+                .and_then(ParamValue::as_num)
         })
         .ok_or_else(|| refuse(style, format!("type '{ty}' has no `{name}`")))
 }
@@ -297,7 +298,7 @@ fn globals(
         let v = style
             .params()
             .get(&p.name)
-            .or_else(|| p.default.as_ref().and_then(Value::as_num))
+            .or_else(|| p.default.as_ref().and_then(ParamValue::as_num))
             .ok_or_else(|| refuse(style, format!("style parameter `{}` has no value", p.name)))?;
         match out.globals.get(p.name.as_ref()) {
             Some(&other) if other != v => {
@@ -534,8 +535,8 @@ pub(super) fn pair(
     }
     // Bare names: the pair value, by its mixing rule of the two self rows.
     let rule = match style.params().get_str("mixing") {
-        Some(m) => Mixing::parse(m)?,
-        None => Mixing::UNDECLARED,
+        Some(m) => CombiningRule::parse(m)?,
+        None => CombiningRule::UNDECLARED,
     };
     let mut bare: BTreeMap<String, Expr> = BTreeMap::new();
     let mut per_particle: Vec<&str> = Vec::new();
@@ -563,7 +564,7 @@ pub(super) fn pair(
         }
         let geometric = || call("sqrt", mul(one(name, 1), one(name, 2)));
         let formula = match (&p.mix, rule) {
-            (Mix::None, _) => {
+            (ParamCombination::None, _) => {
                 return Err(refuse(
                     style,
                     format!(
@@ -572,25 +573,28 @@ pub(super) fn pair(
                     ),
                 ));
             }
-            (Mix::Arithmetic, _) => mul(
+            (ParamCombination::Arithmetic, _) => mul(
                 Expr::num(0.5),
                 Expr::bin(BinOp::Add, one(name, 1), one(name, 2)),
             ),
-            (Mix::Geometric, _)
-            | (Mix::LjEpsilon { .. }, Mixing::Arithmetic | Mixing::Geometric) => geometric(),
-            (Mix::LjSigma { .. }, Mixing::Arithmetic) => mul(
+            (ParamCombination::Geometric, _)
+            | (
+                ParamCombination::LjEpsilon { .. },
+                CombiningRule::Arithmetic | CombiningRule::Geometric,
+            ) => geometric(),
+            (ParamCombination::LjSigma { .. }, CombiningRule::Arithmetic) => mul(
                 Expr::num(0.5),
                 Expr::bin(BinOp::Add, one(name, 1), one(name, 2)),
             ),
-            (Mix::LjSigma { .. }, Mixing::Geometric) => geometric(),
-            (Mix::LjSigma { .. }, Mixing::SixthPower) => pow(
+            (ParamCombination::LjSigma { .. }, CombiningRule::Geometric) => geometric(),
+            (ParamCombination::LjSigma { .. }, CombiningRule::SixthPower) => pow(
                 mul(
                     Expr::num(0.5),
                     Expr::bin(BinOp::Add, pow(one(name, 1), 6.0), pow(one(name, 2), 6.0)),
                 ),
                 1.0 / 6.0,
             ),
-            (Mix::LjEpsilon { sigma }, Mixing::SixthPower) => {
+            (ParamCombination::LjEpsilon { sigma }, CombiningRule::SixthPower) => {
                 let s = sigma.as_ref();
                 if !per_particle.contains(&s) && c.spec.param(s).is_some() {
                     per_particle.push(c.spec.param(s).unwrap().name.as_ref());

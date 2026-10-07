@@ -8,13 +8,13 @@
 //!   not `<name>s`, a coordinate its arity cannot carry;
 //! * a style: a parameter name outside `^[A-Za-z_][A-Za-z0-9_]*$` or
 //!   reserved (a structural column, a variable, a point, a pair input; not
-//!   a function name, since a call always has its parenthesis), declared twice, of a forbidden [`Dim`]; a reserved style
+//!   a function name, since a call always has its parenthesis), declared twice, of a forbidden [`ParamDimension`]; a reserved style
 //!   parameter of the wrong kind; a mixing rule or special class off a pair;
 //!   a kernel tier the category cannot take; an expression reading what the
 //!   style does not declare.
 //!
 //! Numeric checks evaluate the style's form ([`ScalarForm`], [`CompoundForm`],
-//! or an expression's) — on its registration [`Sample`]s, or, without any,
+//! or an expression's) — on its registration [`ConformanceSample`]s, or, without any,
 //! once per process at its first compile on up to [`PROBE_TERMS`] real
 //! terms:
 //!
@@ -36,10 +36,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::ff::forcefield::Params;
 use crate::ff::ir::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 use crate::ff::ir::{
-    Arity, CategorySpec, Coordinate, Dim, IrError, Kernel, Mix, ParamKind, Sample, StyleSpec,
+    Arity, CategorySpec, ConformanceSample, Coordinate, IrError, Kernel, ParamCombination,
+    ParamDimension, ParamKind, StyleSpec,
 };
 use crate::ff::ir::{ExpressionCompiler, ExpressionForm};
-use crate::ff::potential::generic::{CompoundForm, ScalarForm, TermParams, columns};
+use crate::ff::potential::form_kernel::{CompoundForm, ScalarForm, TermParams, columns};
 use molrs::op::types::F;
 
 /// `dE/dq` against a central difference.
@@ -140,11 +141,11 @@ pub(crate) fn check_style(
             }
         };
         match p.name.as_ref() {
-            "cutoff" => reserved(p.dim == Dim::LENGTH && p.kind == ParamKind::Scalar)?,
+            "cutoff" => reserved(p.dim == ParamDimension::LENGTH && p.kind == ParamKind::Scalar)?,
             "mixing" | "special" => reserved(matches!(p.kind, ParamKind::Text { .. }))?,
             _ => {}
         }
-        if p.mix != Mix::None || p.indexed {
+        if p.mix != ParamCombination::None || p.indexed {
             return Err(malformed(format!(
                 "style param `{}` is one value for the style: it neither mixes nor is indexed",
                 p.name
@@ -156,17 +157,17 @@ pub(crate) fn check_style(
             return Err(malformed(format!("indexed `{}` must be numeric", p.name)));
         }
         match &p.mix {
-            Mix::None => {}
+            ParamCombination::None => {}
             _ if !pair => {
                 return Err(malformed(format!(
                     "`{}` declares a mixing rule, and a {} row is no pair",
                     p.name, category.name
                 )));
             }
-            Mix::LjEpsilon { sigma } => {
+            ParamCombination::LjEpsilon { sigma } => {
                 if !spec.param(sigma).is_some_and(|s| {
                     s.mix
-                        == Mix::LjSigma {
+                        == ParamCombination::LjSigma {
                             epsilon: p.name.clone(),
                         }
                 }) {
@@ -176,10 +177,10 @@ pub(crate) fn check_style(
                     )));
                 }
             }
-            Mix::LjSigma { epsilon } => {
+            ParamCombination::LjSigma { epsilon } => {
                 if !spec.param(epsilon).is_some_and(|e| {
                     e.mix
-                        == Mix::LjEpsilon {
+                        == ParamCombination::LjEpsilon {
                             sigma: p.name.clone(),
                         }
                 }) {
@@ -189,7 +190,7 @@ pub(crate) fn check_style(
                     )));
                 }
             }
-            Mix::Arithmetic | Mix::Geometric => {}
+            ParamCombination::Arithmetic | ParamCombination::Geometric => {}
         }
     }
     if spec.unindexed_one_term && !spec.params.iter().any(|p| p.indexed) {
@@ -233,7 +234,7 @@ pub(crate) fn check_style(
                 None => return Ok(()),
             }
         }
-        Some(Kernel::Ctor { typed, .. }) => {
+        Some(Kernel::Constructor { typed, .. }) => {
             return match typed {
                 Some(_) if !pair => Err(mismatch("neighbour-driven constructor")),
                 Some((_, class)) if *class != spec.special_class() => Err(malformed(format!(
@@ -277,7 +278,7 @@ pub(crate) fn check_style(
 }
 
 /// Reserved and duplicated parameter names, across per-type and style
-/// parameters alike (an expression reads both by name), and their [`Dim`]s.
+/// parameters alike (an expression reads both by name), and their [`ParamDimension`]s.
 fn check_param_names(spec: &StyleSpec, pair: bool) -> Result<(), IrError> {
     let style = spec.name.to_string();
     let per_type: HashSet<&str> = spec.params.iter().map(|p| p.name.as_ref()).collect();
@@ -318,7 +319,7 @@ fn check_param_names(spec: &StyleSpec, pair: bool) -> Result<(), IrError> {
                 param: name.to_owned(),
             });
         }
-        p.dim.check().map_err(|reason| IrError::Dim {
+        p.dim.check().map_err(|reason| IrError::Dimension {
             param: name.to_owned(),
             dim: p.dim.to_string(),
             reason,
@@ -412,7 +413,11 @@ impl Probe {
     }
 
     /// [`SAMPLE_POINTS`] seeded points of one registration sample.
-    fn seeded(category: &CategorySpec, spec: &StyleSpec, sample: &Sample) -> Result<Self, IrError> {
+    fn seeded(
+        category: &CategorySpec,
+        spec: &StyleSpec,
+        sample: &ConformanceSample,
+    ) -> Result<Self, IrError> {
         let n = SAMPLE_POINTS;
         let mut rng = Rng(SEED);
         let mut row = Params::new();
@@ -421,8 +426,8 @@ impl Probe {
         for (name, value) in &sample.params {
             let target = if declared(name) { &mut style } else { &mut row };
             match value {
-                crate::ff::ir::Value::Num(v) => target.set(name, *v),
-                crate::ff::ir::Value::Text(t) => target.set_str(name, t),
+                crate::ff::ir::ParamValue::Num(v) => target.set(name, *v),
+                crate::ff::ir::ParamValue::Text(t) => target.set_str(name, t),
             }
         }
         let (style, gathered) = spec.gather(&style, &[("sample", &row)])?;
@@ -438,7 +443,7 @@ impl Probe {
             let decl = &spec.params[col.param];
             match &decl.kind {
                 ParamKind::Scalar => {
-                    let v = crate::ff::potential::generic::row_num(spec, &col, row)
+                    let v = crate::ff::potential::form_kernel::row_num(spec, &col, row)
                         .ok_or_else(|| missing(&col.name))?;
                     params.nums.push((col.name, vec![v; n]));
                 }
@@ -650,7 +655,7 @@ pub(crate) fn check_probe(
 /// per-atom input).
 fn check_symmetry(f: &dyn ScalarForm, probe: &Probe, e: &[F], style: &str) -> Result<(), IrError> {
     // Every per-atom column `<x>1` exchanged with its `<x>2` (`q1` ↔ `q2`,
-    // `epsilon1` ↔ `epsilon2`): `expr::Input::swapped`, by spelling.
+    // `epsilon1` ↔ `epsilon2`): `expression::Input::swapped`, by spelling.
     let mut swapped = probe.clone();
     let lookup: HashMap<String, Vec<F>> = probe.params.nums.iter().cloned().collect();
     for (name, col) in &mut swapped.params.nums {

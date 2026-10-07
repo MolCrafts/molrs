@@ -3,16 +3,16 @@
 //!
 //! The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::term_table;
-use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::term_table;
+use crate::ff::potential::flat_coords::validate_coords;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
@@ -145,11 +145,11 @@ impl IndexedTerms for BondClass2 {
 }
 
 /// Construct a [`BondClass2`] from style params, type params, and Frame topology.
-pub fn bond_class2_ctor(
+pub fn bond_class2_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -170,7 +170,7 @@ pub fn bond_class2_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut r0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| need::type_num("class2", label, p, key);
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -184,7 +184,7 @@ pub fn bond_class2_ctor(
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Member::indexed(BondClass2::new(ai, aj, r0, k2, k3, k4)))
+    Ok(ForceTerm::indexed(BondClass2::new(ai, aj, r0, k2, k3, k4)))
 }
 
 #[cfg(test)]

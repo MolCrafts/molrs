@@ -6,7 +6,7 @@
 //! The table in `molrs-python/docs/guides/forcefield-ir.md` ("Completeness")
 //! is rendered from [`MATRIX`] and checked against it, so it cannot go stale:
 //!
-//! - every kernel [`KernelRegistry::builtin`] registers has a row, and every
+//! - every kernel [`BuiltinKernels::builtin`] registers has a row, and every
 //!   style row is a registered kernel;
 //! - every test a cell cites exists (`fn <name>(` in the named file);
 //! - every Class-I style of molrec's registry is a registered kernel or a
@@ -19,7 +19,7 @@
 use std::path::Path;
 
 use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::KernelRegistry;
+use crate::ff::potential::BuiltinKernels;
 use crate::ff::potential::PotentialCompiler;
 
 /// The columns, in order.
@@ -71,7 +71,7 @@ const GMX_RT: &str =
     "io/gromacs/top_reader/engine_check.rs::fixture_directives_survive_write_then_read";
 const GMX_SYS: &str = "io/gromacs/top_writer.rs::a_system_reads_back_as_written";
 const PRMTOP: &str = "io/amber/prmtop_check.rs::each_term_matches_sander_and_lammps";
-const SERIES: &str = "ff/forcefield/torsion.rs::registered_kernels_price_the_series";
+const SERIES: &str = "ff/ir/form/torsion.rs::registered_kernels_price_the_series";
 const NO_OMM: &str = "io/openmm_xml/writer.rs::styles_without_an_openmm_form_are_refused_by_name";
 const NO_LMP: &str = "io/lammps/forcefield_writer.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
 const NO_LMP_PAIR: &str =
@@ -358,7 +358,7 @@ const MATRIX: &[Row] = &[
         cells: [
             Exact(&[
                 "ff/potential/dihedral/charmm.rs::a_zero_weight_compiles_to_the_lammps_energy",
-                "ff/one_four.rs::charmm_weights_of_one_match_lammps",
+                "ff/one_four_lammps_check.rs::charmm_weights_of_one_match_lammps",
             ]),
             Exact(&["io/lammps/forcefield_reader.rs::dihedral_charmm_reads_its_own_layout"]),
             Exact(&[RT_L, EQUIV]),
@@ -701,7 +701,7 @@ const MATRIX: &[Row] = &[
             ]),
             Exact(&["io/lammps/forcefield_reader.rs::reads_lj_charmm_coul_charmm"]),
             Exact(&[
-                "ff/one_four.rs::lammps_round_trip_and_override_refusal",
+                "ff/one_four_lammps_check.rs::lammps_round_trip_and_override_refusal",
                 EQUIV,
             ]),
             Exact(&[
@@ -881,8 +881,8 @@ const MATRIX: &[Row] = &[
         item: "per-pair overrides (pairs epsilon, sigma, lj_scale, charge_product, coul_scale)",
         cells: [
             Exact(&[
-                "ff/one_four.rs::global_half_equals_per_pair_scales_equals_per_pair_parameters",
-                "ff/one_four.rs::an_override_cell_beats_the_weight_and_a_null_cell_keeps_it",
+                "ff/one_four_lammps_check.rs::global_half_equals_per_pair_scales_equals_per_pair_parameters",
+                "ff/one_four_lammps_check.rs::an_override_cell_beats_the_weight_and_a_null_cell_keeps_it",
             ]),
             Na("LAMMPS has no per-pair 1-4 parameters"),
             Refused(
@@ -914,7 +914,7 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair",
                 &[
-                    "ff/one_four.rs::lammps_round_trip_and_override_refusal",
+                    "ff/one_four_lammps_check.rs::lammps_round_trip_and_override_refusal",
                     EQUIV,
                 ],
             ),
@@ -981,7 +981,7 @@ const MATRIX: &[Row] = &[
     Row {
         item: "mixing sixthpower",
         cells: [
-            Exact(&["ff/forcefield/mixing.rs::sixthpower_is_the_waldman_hagler_rule"]),
+            Exact(&["ff/forcefield/combining_rule.rs::sixthpower_is_the_waldman_hagler_rule"]),
             Exact(&["io/lammps/forcefield_writer.rs::sixthpower_mixing_is_read_and_written_back"]),
             Exact(&["io/lammps/forcefield_writer.rs::sixthpower_mixing_is_read_and_written_back"]),
             Na("OpenMM mixes arithmetically"),
@@ -1283,7 +1283,7 @@ const END: &str = "<!-- completeness:end -->";
 
 #[test]
 fn every_registered_kernel_has_a_row_and_every_style_row_a_kernel() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     let styles: Vec<String> = registry
         .styles()
         .into_iter()
@@ -1346,7 +1346,7 @@ fn every_cited_test_exists() {
 /// same name, or refused by name when compiled.
 #[test]
 fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     let known: Vec<(&str, &str)> = registry.styles();
     for &item in MOLREC_CLASS_I {
         let (category, style) = item.split_once(' ').unwrap();
@@ -1413,7 +1413,7 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
 /// back unchanged.
 #[test]
 fn every_registered_style_persists_through_a_record() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     for (category, style) in registry.styles() {
         let mut ff = ForceField::new("persist");
         ff.def_style("atom", "full", Params::new())

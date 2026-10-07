@@ -29,12 +29,12 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style, StyleDefs};
-use crate::ff::ir::registry::StyleEntry;
+use crate::ff::ir::style_registry::RegisteredStyle;
 use crate::ff::ir::{self, CategorySpec, Coordinate, EndpointOrder, Registry};
 use crate::ff::ir::{ParamSource, RowSource, SpecialClass};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{
-    CompileError, Member, PairWeights, Potentials, TypedKernel, TypedMember,
+    CompileError, ForceTerm, PairWeights, Potentials, ScaledTerm, WeightedTerm,
 };
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
@@ -95,7 +95,7 @@ impl<'a> PotentialCompiler<'a> {
     fn registry(&self) -> Cow<'a, Registry> {
         match self.registry {
             Some(r) => Cow::Borrowed(r),
-            None => Cow::Owned(ir::with_global(Registry::clone)),
+            None => Cow::Owned(ir::with_global_registry(Registry::clone)),
         }
     }
 
@@ -156,7 +156,7 @@ impl<'a> PotentialCompiler<'a> {
             }
         }
         if let Some(kernel) = exceptions.kernel {
-            pots.push(Member::indexed(kernel));
+            pots.push(ForceTerm::indexed(kernel));
         }
         // Record the atom count so callers (e.g. the geometry optimizer's batch
         // path) can validate coordinate shapes against this topology.
@@ -192,7 +192,7 @@ impl<'a> PotentialCompiler<'a> {
     /// such memory — it finds every pair inside the cutoff, bonded or not — so
     /// without the weights a bonded pair is counted twice: once by the bond
     /// term and once at full non-bonded strength, at bond length.
-    pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<TypedMember>, CompileError> {
+    pub fn compile_typed(&self, frame: &Frame) -> Result<Vec<WeightedTerm>, CompileError> {
         let reg = self.registry();
         let exceptions = exceptions::plan(self.ff, frame)?;
         let mut out = Vec::new();
@@ -213,7 +213,7 @@ impl<'a> PotentialCompiler<'a> {
             }
         }
         if let Some(kernel) = exceptions.kernel {
-            out.push((Member::indexed(kernel), None));
+            out.push((ForceTerm::indexed(kernel), None));
         }
         Ok(out)
     }
@@ -236,7 +236,7 @@ impl<'a> PotentialCompiler<'a> {
         reg: &Registry,
         style: &Style,
         frame: &Frame,
-    ) -> Result<Option<TypedKernel>, CompileError> {
+    ) -> Result<Option<ScaledTerm>, CompileError> {
         let category = category_of(reg, style)?;
         let category = &*category;
         if !category.prices_energy() {
@@ -300,7 +300,7 @@ impl<'a> PotentialCompiler<'a> {
         Ok(Some((pot, Some(special))))
     }
 
-    /// Build `style`'s molecule-bound [`Member`] by **expanding** its type
+    /// Build `style`'s molecule-bound [`ForceTerm`] by **expanding** its type
     /// parameters against `frame`'s topology — each bond/angle/… row's string
     /// type label is resolved to its parameters and stored as per-element
     /// arrays, so the resulting potential evaluates from coordinates alone.
@@ -317,7 +317,7 @@ impl<'a> PotentialCompiler<'a> {
         style: &Style,
         frame: &Frame,
         special_bonds: &SpecialBonds,
-    ) -> Result<Option<Member>, CompileError> {
+    ) -> Result<Option<ForceTerm>, CompileError> {
         let spec = category_of(reg, style)?;
         let spec = &*spec;
         if !spec.prices_energy() {
@@ -487,7 +487,7 @@ impl<'a> PotentialCompiler<'a> {
 /// same number there as in the kernel. An unregistered style is as stated.
 pub(crate) fn gathered(style: &Style) -> Result<(Params, Vec<(String, Params)>), CompileError> {
     let rows = style.defs().kernel_type_params()?;
-    let spec = ir::with_global(|r| {
+    let spec = ir::with_global_registry(|r| {
         r.style(style.category(), style.name())
             .map(|(spec, _)| spec.clone())
     });
@@ -507,9 +507,9 @@ fn with_fallback<'r>(
     reg: &'r Registry,
     category: &CategorySpec,
     style: &Style,
-    entry: Option<&'r StyleEntry>,
+    entry: Option<&'r RegisteredStyle>,
     tp: &[(&str, &Params)],
-) -> Result<Cow<'r, StyleEntry>, CompileError> {
+) -> Result<Cow<'r, RegisteredStyle>, CompileError> {
     if let Some(e) = entry {
         return Ok(e.with_instance_expression(
             category,
@@ -517,7 +517,7 @@ fn with_fallback<'r>(
             reg.expression_compiler(),
         )?);
     }
-    match StyleEntry::fallback(
+    match RegisteredStyle::fallback(
         category,
         style.name(),
         style.params(),
@@ -793,7 +793,7 @@ mod tests {
     /// prices over the same pairs with the same weights.
     #[test]
     fn compile_truncates_every_pair_at_its_cutoff_as_lammps_and_compile_typed() {
-        use crate::ff::potential::pair::testing::table_over;
+        use crate::ff::potential::pair::fixtures::table_over;
         let (frame, x) = straddling();
         let (links, is_14) = (LINKS, IS_14);
         let (rc, w14) = (4.0, 0.5);
@@ -864,7 +864,7 @@ mod tests {
             let mut ft = vec![0.0; x.len()];
             let mut et = 0.0;
             for (member, _) in compiler.compile_typed(&frame).unwrap() {
-                let Member::Pair(p) = &member else {
+                let ForceTerm::Pair(p) = &member else {
                     panic!("a pair member")
                 };
                 et += p.accumulate_pairs(&x, &table, &factor, &mut ft).0;
