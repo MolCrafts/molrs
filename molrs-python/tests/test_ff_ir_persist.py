@@ -137,6 +137,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
         capture_output=True,
         text=True,
         check=False,
+        encoding="utf-8",
     )
     assert done.returncode == 0, done.stderr
     return here_out, json.loads(done.stdout)
@@ -158,6 +159,7 @@ def test_the_fresh_process_registered_nothing() -> None:
         capture_output=True,
         text=True,
         check=True,
+        encoding="utf-8",
     )
     assert done.stdout.strip() == "unknown"
 

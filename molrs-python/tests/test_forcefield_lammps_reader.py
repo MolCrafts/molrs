@@ -39,7 +39,7 @@ def read_ff(tmp_path):
 
     def read(text: str) -> molrs.ff.forcefield.ForceField:
         path = tmp_path / "in.ff"
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return molrs.io.read_lammps_forcefield(path)
 
     return read
@@ -96,7 +96,7 @@ def test_lammps_units_pass_through_binding(read_ff):
 
 def test_read_lammps_forcefield_from_path(tmp_path):
     p = tmp_path / "melt.ff"
-    p.write_text(_FF)
+    p.write_text(_FF, encoding="utf-8")
     ff = molrs.io.read_lammps_forcefield(str(p))
     # LAMMPS `dihedral_style fourier` is molrs's `dihedral periodic`.
     assert len(ff.get_style("dihedral", "periodic").get_types()) == 1
@@ -191,7 +191,7 @@ def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
     ff = read_ff(_FF)
     out = tmp_path / "out.ff"
     molrs.io.write_lammps_forcefield(str(out), ff, _ff_frame())
-    assert "bond_coeff c3-c3" in out.read_text()
+    assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
 
 
 # --- label-driven writing (system-forcefield-06): the frame argument seam ---
@@ -232,7 +232,7 @@ def test_label_write_lammps_forcefield_str_takes_frame():
 def test_label_write_lammps_forcefield_to_path_takes_frame(tmp_path):
     out = tmp_path / "out.ff"
     molrs.io.write_lammps_forcefield(str(out), _hand_ff(), _labelled_frame())
-    assert "bond_coeff c3-c3" in out.read_text()
+    assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
 
 
 def test_label_write_lammps_data_coeffs_str_takes_frame():
@@ -260,7 +260,7 @@ def test_ff_file_io_accepts_pathlike(tmp_path):
 
     out = tmp_path / "hand.ff"
     molrs.io.write_lammps_forcefield(out, _hand_ff(), _labelled_frame())
-    assert "bond_coeff c3-c3" in out.read_text()
+    assert "bond_coeff c3-c3" in out.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +334,7 @@ Angles
 @pytest.fixture
 def data_path(tmp_path):
     path = tmp_path / "in.data"
-    path.write_text(_DATA)
+    path.write_text(_DATA, encoding="utf-8")
     return path
 
 
@@ -367,9 +367,9 @@ def test_lammps_data_forcefield_lammps_round_trip(data_path, data_frame, tmp_pat
     out = tmp_path / "out.data"
     molrs.io.write_lammps_data(out, data_frame)
     out.write_text(
-        out.read_text()
+        out.read_text(encoding="utf-8")
         + "\n"
-        + molrs.io.write_lammps_data_coeffs_str(ff, data_frame)
+        + molrs.io.write_lammps_data_coeffs_str(ff, data_frame), encoding="utf-8"
     )
     again_frame = molrs.io.read_lammps_data(out)
     again = molrs.io.read_lammps_data_coeffs(out, units="real")

@@ -49,7 +49,7 @@ REPO = Path(__file__).resolve().parents[1]
 def sources(d: Path):
     for sub in sorted(d.iterdir()):
         if (sub / "system.json").exists():
-            yield sub, json.loads((sub / "system.json").read_text())
+            yield sub, json.loads((sub / "system.json").read_text(encoding="utf-8"))
 
 
 def fingerprint(f, v):
@@ -64,7 +64,7 @@ def rows_of(name, k, engine, terms, forces, probe):
 
 
 def write_tsv(path: Path, rows):
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(
             "# source\tconfig\tengine\tterm\tvalue (kcal/mol; fdotv, fnorm2: kcal/(mol·Å), "
             "(kcal/(mol·Å))²) — scripts/ff_equivalence_check.sh --pin\n"
@@ -304,7 +304,7 @@ def collect(d: Path, pin: Path | None):
             scale = math.sqrt(molrs[(s, k, e, "fnorm2")]) * math.sqrt(
                 sum(
                     p * p
-                    for p in json.loads((d / s / "system.json").read_text())["probes"][
+                    for p in json.loads((d / s / "system.json").read_text(encoding="utf-8"))["probes"][
                         k
                     ]
                 )

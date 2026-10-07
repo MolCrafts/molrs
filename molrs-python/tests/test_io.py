@@ -141,7 +141,7 @@ def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
         lines.append("  endfacet")
     lines.append("endsolid tet")
     path = tmp_path / "tet.stl"
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     mesh = molrs.io.read_stl(str(path))
     assert isinstance(mesh, molrs.core.TriMesh)
@@ -235,7 +235,7 @@ class TestCanonicalNativeColumns:
         path.write_text(
             "ATOM      1  OW  SOL A   7       0.000   0.000   0.000  1.00  0.00           O\n"
             "ATOM      2  HW1 SOL A   7       0.957   0.000   0.000  1.00  0.00           H\n"
-            "END\n"
+            "END\n", encoding="utf-8"
         )
         atoms = molrs.io.read_pdb(path)["atoms"]
         assert list(atoms["element"]) == ["O", "H"]
@@ -250,7 +250,7 @@ class TestCanonicalNativeColumns:
             "ITEM: TIMESTEP\n0\nITEM: NUMBER OF ATOMS\n2\n"
             "ITEM: BOX BOUNDS pp pp pp\n0 10\n0 10\n0 10\n"
             "ITEM: ATOMS id type mol q x y z\n"
-            "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n"
+            "1 1 1 -0.5 0 0 0\n2 1 1 0.5 1 0 0\n", encoding="utf-8"
         )
         atoms = molrs.io.read_lammps_dump_trajectory(path).read_frame(0)["atoms"]
         np.testing.assert_allclose(atoms["charge"], [-0.5, 0.5])
@@ -262,7 +262,7 @@ class TestCanonicalNativeColumns:
         path = tmp_path / "m.mol"
         path.write_text(
             "two atoms\n\n2 atoms\n\nCoords\n\n1 0 0 0\n2 0 0 1\n\n"
-            "Types\n\n1 1\n2 1\n\nCharges\n\n1 0.1\n2 -0.1\n"
+            "Types\n\n1 1\n2 1\n\nCharges\n\n1 0.1\n2 -0.1\n", encoding="utf-8"
         )
         atoms = molrs.io.read_lammps_molecule(path)["atoms"]
         np.testing.assert_allclose(atoms["charge"], [0.1, -0.1])
@@ -273,7 +273,7 @@ class TestCanonicalNativeColumns:
         path.write_text(
             "@<TRIPOS>MOLECULE\nX\n2 1 2 0 0\nSMALL\nNO_CHARGES\n@<TRIPOS>ATOM\n"
             "1 C1 0.0 0.0 0.0 C.ar 7 BEN 0.0\n2 N1 1.4 0.0 0.0 N.am 9 AMD 0.0\n"
-            "@<TRIPOS>BOND\n1 1 2 am\n"
+            "@<TRIPOS>BOND\n1 1 2 am\n", encoding="utf-8"
         )
         frame = molrs.io.read_mol2(path)
         atoms = frame["atoms"]
@@ -289,7 +289,7 @@ class TestCanonicalNativeColumns:
         path = tmp_path / "f.xyz"
         path.write_text(
             "2\nProperties=species:S:1:pos:R:3:forces:R:3\n"
-            "O 0 0 0 0.1 0.2 0.3\nH 1 0 0 -0.1 -0.2 -0.3\n"
+            "O 0 0 0 0.1 0.2 0.3\nH 1 0 0 -0.1 -0.2 -0.3\n", encoding="utf-8"
         )
         atoms = molrs.io.read_xyz(path)["atoms"]
         assert list(atoms["element"]) == ["O", "H"]
@@ -308,7 +308,7 @@ class TestLammpsDataLabels:
 
     def test_typed_blocks_carry_string_types(self, tmp_path):
         path = tmp_path / "w.data"
-        path.write_text(self.LABELLED)
+        path.write_text(self.LABELLED, encoding="utf-8")
         frame = molrs.io.read_lammps_data(path)
         assert list(frame["atoms"]["type"]) == ["OW", "HW", "HW"]
         assert list(frame["atoms"]["type_id"]) == [1, 2, 2]
@@ -318,7 +318,7 @@ class TestLammpsDataLabels:
         path = tmp_path / "a.data"
         path.write_text(
             "t\n\n1 atoms\n1 atom types\n\n0 1 xlo xhi\n0 1 ylo yhi\n0 1 zlo zhi\n\n"
-            "Atoms # full\n\n1 1 0.1 0.2 0.3\n"
+            "Atoms # full\n\n1 1 0.1 0.2 0.3\n", encoding="utf-8"
         )
         atoms = molrs.io.read_lammps_data(path, atom_style="atomic")["atoms"]
         assert "charge" not in atoms and "mol_id" not in atoms
@@ -327,11 +327,11 @@ class TestLammpsDataLabels:
 
     def test_write_declares_extra_type_labels(self, tmp_path):
         src = tmp_path / "w.data"
-        src.write_text(self.LABELLED)
+        src.write_text(self.LABELLED, encoding="utf-8")
         frame = molrs.io.read_lammps_data(src)
         out = tmp_path / "o.data"
         molrs.io.write_lammps_data(out, frame, type_labels={"atoms": ["OX"]})
-        text = out.read_text()
+        text = out.read_text(encoding="utf-8")
         assert "3 atom types" in text
         assert "Atom Type Labels\n\n1 HW\n2 OW\n3 OX\n" in text
         with pytest.raises(ValueError, match="empty"):
@@ -346,7 +346,7 @@ class TestInpcrdIntoFrame:
 
     def test_coordinates_go_into_the_given_frame(self, tmp_path):
         path = tmp_path / "x.inpcrd"
-        path.write_text(self.TEXT)
+        path.write_text(self.TEXT, encoding="utf-8")
         frame = molrs.core.Frame()
         atoms = molrs.core.Block()
         atoms.insert("x", np.zeros(2))
@@ -360,7 +360,7 @@ class TestInpcrdIntoFrame:
 
     def test_a_count_mismatch_leaves_the_frame_alone(self, tmp_path):
         path = tmp_path / "x.inpcrd"
-        path.write_text(self.TEXT)
+        path.write_text(self.TEXT, encoding="utf-8")
         frame = molrs.core.Frame()
         atoms = molrs.core.Block()
         atoms.insert("x", np.zeros(3))

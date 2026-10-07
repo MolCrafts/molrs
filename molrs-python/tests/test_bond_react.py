@@ -59,7 +59,7 @@ def test_the_template_keeps_its_objects_and_writes_a_map(tmp_path):
     assert len(template.initiator_atoms) == 2
     assert list(template.edge_atoms) == []
     molrs.io.write_lammps_bond_react_map(template, tmp_path / "rxn1")
-    lines = (tmp_path / "rxn1.map").read_text().splitlines()
+    lines = (tmp_path / "rxn1.map").read_text(encoding="utf-8").splitlines()
     assert "2 equivalences" in lines
     assert "0 edgeIDs" in lines and "0 deleteIDs" in lines
     sections = [lines.index(s) for s in ("InitiatorIDs", "EdgeIDs", "DeleteIDs", "Equivalences")]
@@ -87,14 +87,14 @@ def test_the_system_covers_template_only_types(tmp_path):
     )
     coeff_lines = [
         line.split()[:3]
-        for line in (workdir / "rxn.ff").read_text().splitlines()
+        for line in (workdir / "rxn.ff").read_text(encoding="utf-8").splitlines()
         if line.startswith(("pair_coeff", "bond_coeff"))
     ]
     assert ["bond_coeff", "c3-oh"] in [line[:2] for line in coeff_lines]
     assert ["pair_coeff", "oh", "oh"] in coeff_lines
-    data = (workdir / "rxn.data").read_text()
+    data = (workdir / "rxn.data").read_text(encoding="utf-8")
     assert "Bond Type Labels\n\n1 c3-c3\n2 c3-oh\n" in data
-    post = (workdir / "rxn1_post.mol").read_text()
+    post = (workdir / "rxn1_post.mol").read_text(encoding="utf-8")
     assert "Bonds\n\n1 2 1 2\n" in post
     assert (workdir / "rxn1.map").exists()
 
@@ -126,7 +126,7 @@ def test_lammps_reads_the_file_set(tmp_path):
         "units real\natom_style full\n"
         "read_data rxn.data\ninclude rxn.ff\n"
         "molecule pre rxn1_pre.mol\nmolecule post rxn1_post.mol\n"
-        "run 0\n"
+        "run 0\n", encoding="utf-8"
     )
     run = subprocess.run(
         ["lmp", "-in", "in.check", "-log", "none"],
@@ -140,5 +140,6 @@ def test_lammps_reads_the_file_set(tmp_path):
             for k, v in os.environ.items()
             if not k.startswith(("PMI_", "PMIX_", "SLURM_", "OMPI_", "I_MPI_"))
         },
+        encoding="utf-8",
     )
     assert run.returncode == 0, run.stdout + run.stderr

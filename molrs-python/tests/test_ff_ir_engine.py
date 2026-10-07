@@ -70,7 +70,7 @@ def test_a_positional_style_writes_and_reads_as_its_lammps_style(
     assert "bond_style fene\n" in text
     assert "bond_coeff B-B 30.000000 1.500000 1.000000 1.000000\n" in text
     path = tmp_path / "fene.ff"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     back = molrs.io.read_lammps_forcefield(path)
     assert back.get_style("bond", "fene/py") is not None
     assert energy(back, frame) == pytest.approx(energy(ff, frame), rel=1e-12)

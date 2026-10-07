@@ -57,7 +57,7 @@ def test_clpol_polarizability_ships_alpha_ff():
 def test_read_clpol_alpha_reads_a_file(tmp_path):
     text = "# mine\nXX 0.4 -1.0 4184.0 2.0 2.6\nXX 0.4 -1.0 4184.0 3.0 2.6\n"
     path = tmp_path / "alpha.ff"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     rows = [
         {"type_name": "XX", "m_D": 0.4, "q_D_sign": -1.0, "k_D": 4184.0, "alpha": a, "a_thole": 2.6}
         for a in (2.0, 3.0)

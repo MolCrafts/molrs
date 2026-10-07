@@ -222,7 +222,7 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
 
     cmap = tmp_path / "charmm.cmap"
     molrs.io.write_lammps_cmap_forcefield(cmap, ff, frame)
-    assert _number_lines(cmap.read_text()) == _number_lines(ALANINE.read_text())
+    assert _number_lines(cmap.read_text(encoding="utf-8")) == _number_lines(ALANINE.read_text(encoding="utf-8"))
 
     include = molrs.io.write_lammps_forcefield_str(
         ff, frame, skip_pair_style=True, cmap_file="charmm.cmap"
@@ -233,7 +233,7 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
 
     data = tmp_path / "data.lmp"
     molrs.io.write_lammps_data(data, frame)
-    assert "\n1 crossterms\n" in data.read_text()
+    assert "\n1 crossterms\n" in data.read_text(encoding="utf-8")
     back = molrs.io.read_lammps_data(data)
     assert [int(back["cmaps"][k][0]) for k in ("atomi", "atomm", "type_id")] == [
         0,

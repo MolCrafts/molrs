@@ -9,16 +9,17 @@ on:
 
 jobs:
   lint:
-    name: fmt + partners + clippy + doc
+    name: fmt + ruff + partners + clippy + doc
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
           workspaces: ". -> target"
-      - run: scripts/check.sh fmt partners clippy doc
+      - run: scripts/check.sh fmt ruff partners clippy doc
 
   test:
     name: unit + ffi + cxx + ext + package

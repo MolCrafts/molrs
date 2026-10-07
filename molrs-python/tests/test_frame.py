@@ -67,7 +67,7 @@ class TestOneFrame:
 
     def test_readers_return_the_one_class(self, tmp_path):
         path = tmp_path / "one.xyz"
-        path.write_text("1\n\nH 0.0 0.0 0.0\n")
+        path.write_text("1\n\nH 0.0 0.0 0.0\n", encoding="utf-8")
         assert type(molrs.io.read_xyz(str(path))) is Frame
 
     def test_a_graph_serialises_to_the_one_class(self):
@@ -368,6 +368,7 @@ class TestFrameMeta:
             text=True,
             timeout=120,
             check=False,
+            encoding="utf-8",
         )
         assert child.returncode == 0, (child.returncode, child.stderr[-2000:])
 

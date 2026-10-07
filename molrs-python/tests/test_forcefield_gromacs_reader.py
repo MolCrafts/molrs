@@ -28,7 +28,7 @@ CT  HC  1  0.10900
 
 def test_constrainttypes_is_refused_without_skip_and_read_past_with_it(tmp_path):
     path = tmp_path / "ff.top"
-    path.write_text(_TOP)
+    path.write_text(_TOP, encoding="utf-8")
     with pytest.raises(ValueError, match="constrainttypes"):
         molrs.io.read_gromacs_top_forcefield(path)
 
@@ -64,7 +64,7 @@ CH  2
 
 def test_read_gromacs_top_system_returns_the_force_field_and_a_typed_frame(tmp_path):
     path = tmp_path / "topol.top"
-    path.write_text(_SYSTEM)
+    path.write_text(_SYSTEM, encoding="utf-8")
     ff, frame = molrs.io.read_gromacs_top_system(path)
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert list(frame["bonds"]["type"]) == ["CT-HC", "CT-HC"]
@@ -77,7 +77,7 @@ def test_read_gromacs_top_system_returns_the_force_field_and_a_typed_frame(tmp_p
 
 def test_write_gromacs_top_system_round_trips_read_gromacs_top_system(tmp_path):
     path = tmp_path / "topol.top"
-    path.write_text(_SYSTEM)
+    path.write_text(_SYSTEM, encoding="utf-8")
     ff, frame = molrs.io.read_gromacs_top_system(path)
     out = tmp_path / "out.top"
     molrs.io.write_gromacs_top_system(out, ff, frame)

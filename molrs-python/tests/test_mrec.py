@@ -170,9 +170,9 @@ class TestUnknownSections:
         # a frame group: its block claims more rows than its columns hold.
         shutil.copytree(path / "frame", path / "future")
         block_json = path / "future" / "atoms" / "zarr.json"
-        doc = json.loads(block_json.read_text())
+        doc = json.loads(block_json.read_text(encoding="utf-8"))
         doc.setdefault("attributes", {})["count"] = 99
-        block_json.write_text(json.dumps(doc))
+        block_json.write_text(json.dumps(doc), encoding="utf-8")
 
         assert "future" in molrs.io.mrec.section_names(path)
         _assert_coords(molrs.io.read_mrec_frame(path))

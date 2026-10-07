@@ -245,7 +245,7 @@ def parse_bccparm(path: Path) -> tuple[list[tuple[str, str, int, str]], list[tup
     """
     corrections: list[tuple[str, str, int, str]] = []
     aliases: list[tuple[str, str]] = []
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -310,7 +310,7 @@ def emit_gasparm(path: Path) -> str:
     meanings get three distinct field names — never an anonymous `[f64; 5]`.
     """
     rows = []
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -382,7 +382,7 @@ def parse_parmchk(path: Path) -> Equivalents:
     flags: dict[str, int] = {}
     phases: dict[int, list[str]] = {}
 
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         header = EQUIVALENT_FLAG_RE.match(raw.rstrip())
         if header:
             phase, names = int(header[1]), header[2].split("/")
@@ -563,7 +563,7 @@ def parse_parmchk_table(path: Path) -> tuple[list[ParmchkType], dict[str, str]]:
     scalars: dict[str, str] = {}
     current: ParmchkType | None = None
 
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         f = raw.split()
         if not f:
             continue
@@ -673,7 +673,7 @@ def parse_blba(path: Path) -> tuple[str, list[tuple[int, int, str, str]], list[t
     power: str | None = None
     bonds: list[tuple[int, int, str, str]] = []
     angles: list[tuple[int, str, str]] = []
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         f = raw.split()
         if not f or f[0] != "PARM":
             continue
@@ -909,7 +909,7 @@ def parse_atomtype_def(path: Path) -> tuple[dict[str, list[tuple[int, int | None
         v = f[i] if i < len(f) else None
         return None if v in (None, "*", "&") else v
 
-    for lineno, raw in enumerate(path.read_text().splitlines(), 1):
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if is_comment(line):
             continue
@@ -1164,7 +1164,7 @@ class ParmCursor:
 
     def __init__(self, path: Path) -> None:
         self.name = path.name
-        self.lines = path.read_text().splitlines()
+        self.lines = path.read_text(encoding="utf-8").splitlines()
         self.pos = 0
 
     def line(self) -> tuple[int, str]:
@@ -1651,7 +1651,7 @@ def main() -> int:
         tmp_paths = []
         for name, text in staged.items():
             p = Path(tmp) / name
-            p.write_text(text)
+            p.write_text(text, encoding="utf-8")
             tmp_paths.append(p)
         rustfmt(tmp_paths)
 
@@ -1674,7 +1674,7 @@ def main() -> int:
     for name in sorted(staged):
         out = args.out_dir / name
         print(f"  wrote {out.relative_to(REPO) if out.is_relative_to(REPO) else out}"
-              f"  ({len(out.read_text().splitlines())} lines)")
+              f"  ({len(out.read_text(encoding="utf-8").splitlines())} lines)")
     print(f"{len(staged)} files -> {args.out_dir}")
     return 0
 

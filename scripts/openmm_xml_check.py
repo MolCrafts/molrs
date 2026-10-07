@@ -261,7 +261,7 @@ def written(name, out_dir, written_dir, mol, x, atoms, foyer_geometric=False):
     path = written_dir / f"{name}.written+residues.xml"
     ET.ElementTree(root).write(path)
     got = price(path, mol, x, atoms, foyer_geometric)
-    want = json.loads((out_dir / f"{name}.json").read_text())["openmm_kcal"]
+    want = json.loads((out_dir / f"{name}.json").read_text(encoding="utf-8"))["openmm_kcal"]
     print(f"== {name}: OpenMM on molrs's XML vs OpenMM on the source XML")
     for k, v in want.items():
         g = got.get(k, 0.0)
@@ -270,7 +270,7 @@ def written(name, out_dir, written_dir, mol, x, atoms, foyer_geometric=False):
 
 def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
     xml_path = out_dir / f"{name}.xml"
-    xml_path.write_text(xml_text)
+    xml_path.write_text(xml_text, encoding="utf-8")
     ff = app.ForceField(str(xml_path))
     top = topology(mol, atoms)
     system = ff.createSystem(top, nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False)
@@ -312,7 +312,7 @@ def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
         "cmaps": cmaps,
         "openmm_kcal": e,
     }
-    (out_dir / f"{name}.json").write_text(json.dumps(data, indent=1) + "\n")
+    (out_dir / f"{name}.json").write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
     print(f"== {name}")
     for k, v in e.items():
         print(f"  {k:9s} {v!r}")

@@ -389,22 +389,22 @@ def test_write_lammps_inputs() -> None:
             text = molrs.io.write_lammps_forcefield_str(deck, deck_frame, precision=17,
                                                          units=units)
             lines = text.splitlines(keepends=True)
-            (out / "pre.lmp").write_text("".join(l for l in lines if l.startswith("units")))
+            (out / "pre.lmp").write_text("".join(l for l in lines if l.startswith("units")), encoding="utf-8")
             (out / "system.ff").write_text("".join(l for l in lines
-                                                   if not l.startswith("units")))
+                                                   if not l.startswith("units")), encoding="utf-8")
             molrs.io.write_lammps_data(out / f"data_{k}.lmp", deck_frame)
             e, forces = price(ff, f)
             tsv.append(f"{case}\t{k}\tpe\t{e!r}\n")
             for atom, (fx, fy, fz) in enumerate(forces.tolist()):
                 tsv.append(f"{case}\t{k}\tf\t{atom}\t{fx!r}\t{fy!r}\t{fz!r}\n")
-        (out / "molrs.tsv").write_text("".join(tsv))
+        (out / "molrs.tsv").write_text("".join(tsv), encoding="utf-8")
 
 
 def pinned() -> dict[tuple[str, int], tuple[float, np.ndarray]]:
     """``(case, config)`` → LAMMPS's energy and forces."""
     pe: dict[tuple[str, int], float] = {}
     forces: dict[tuple[str, int], list[list[float]]] = {}
-    for line in PINNED.read_text().splitlines():
+    for line in PINNED.read_text(encoding="utf-8").splitlines():
         if line.startswith("#") or not line.strip():
             continue
         c = line.split("\t")
@@ -600,7 +600,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
         e, f = price(ff, spec_frame(spec))
         here[name] = {"e": e.hex(), "f": [float(v).hex() for v in f.ravel()]}
     done = subprocess.run([sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, encoding="utf-8")
     assert done.returncode == 0, done.stderr
     return molrs.io.read_mrec_forcefield(path).document, here, json.loads(done.stdout)
 

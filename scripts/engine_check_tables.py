@@ -32,7 +32,7 @@ def read_energy_tsv(path: Path) -> dict[tuple[str, int, str, str], float]:
     """A ``case  config  engine  term  value`` table (``#`` lines are comments)
     as ``{(case, config, engine, term): value}``."""
     out = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         case, k, engine, term, value = line.split("\t")

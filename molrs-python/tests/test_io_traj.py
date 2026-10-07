@@ -94,7 +94,7 @@ class TestDumpLocalWrite:
         frame.box = molrs.core.Box.cube(10.0)
         path = tmp_path / "bonds.dump.local"
         molrs.io.write_lammps_dump_local(path, [frame])
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "ITEM: NUMBER OF ENTRIES" in text
         assert "batom1 batom2" in text
         loaded = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()
@@ -122,14 +122,14 @@ class TestDumpColumnChoice:
         molrs.io.write_lammps_dump_trajectory(
             path, [self._frame()], columns=["id", "element", "mol", "x", "y", "z"]
         )
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "ITEM: ATOMS id element mol x y z" in text
         assert "mass" not in text
 
     def test_default_writes_every_column(self, tmp_path):
         path = tmp_path / "all.lammpstrj"
         molrs.io.write_lammps_dump_trajectory(path, [self._frame()])
-        assert "ITEM: ATOMS id element mass mol x y z" in path.read_text()
+        assert "ITEM: ATOMS id element mass mol x y z" in path.read_text(encoding="utf-8")
 
     def test_rejects_a_column_the_frame_lacks(self, tmp_path):
         path = tmp_path / "missing.lammpstrj"
@@ -154,7 +154,7 @@ class TestDumpTypeField:
             {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.core.Box.cube(10.0)
         )
         molrs.io.write_lammps_dump_trajectory(path, [frame])
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "ITEM: ATOMS id type x y z\n1 OW " in text
         atoms = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type"]) == ["OW", "HW", "HW"]
@@ -167,7 +167,7 @@ class TestDumpTypeField:
             box=molrs.core.Box.cube(10.0),
         )
         molrs.io.write_lammps_dump_trajectory(path, [frame])
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "ITEM: ATOMS id type x y z\n1 1 " in text
         atoms = molrs.io.read_lammps_dump_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type_id"]) == [1, 2, 2]

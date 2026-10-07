@@ -54,10 +54,10 @@ def run(cmd, cwd):
 
 
 def tleap(script, cwd):
-    with open(os.path.join(cwd, "leap.in"), "w") as f:
+    with open(os.path.join(cwd, "leap.in"), "w", encoding="utf-8") as f:
         f.write(script + "\nquit\n")
     run("tleap -f leap.in > leap.log 2>&1", cwd)
-    with open(os.path.join(cwd, "leap.log")) as f:
+    with open(os.path.join(cwd, "leap.log"), encoding="utf-8") as f:
         log = f.read()
     m = re.search(r"Errors = (\d+)", log)
     if m is None or int(m.group(1)) != 0:
@@ -166,7 +166,7 @@ def gaff2_multi(parm, xyz, out):
 
 def rewrite_floats(path, flag, values):
     """Replace the data of ``%FLAG flag`` (``5E16.8``) in place."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.read().split("\n")
     start = lines.index(f"%FLAG {flag}")
     if not lines[start + 1].startswith("%FORMAT(5E16.8)"):
@@ -176,7 +176,7 @@ def rewrite_floats(path, flag, values):
         end += 1
     body = ["".join(f"{v:16.8E}" for v in values[i:i + 5]) for i in range(0, len(values), 5)]
     lines[start + 2:end] = body
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
 
@@ -213,7 +213,7 @@ AGLC_RENAME = {"H6O": "HO6", "H4O": "HO4", "H3O": "HO3", "H2O": "HO2"}
 def rtf_block(path, resname):
     """The IMPR and CMAP atom-name tuples of residue ``resname``."""
     impr, cmap, inside = [], [], False
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         text = f.read().splitlines()
     for line in text:
         line = line.split("!")[0]

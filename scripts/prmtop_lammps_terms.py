@@ -15,7 +15,7 @@ from molrs.core.constants import COULOMB_REAL  # LAMMPS's qqr2e, units real
 def main():
     path = Path(sys.argv[1])
     runs, weights = {}, {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         words = line.split()
         if not words:
             continue
@@ -29,7 +29,7 @@ def main():
             runs[words[0]] = {k: float(v) for k, v in (w.split("=") for w in words[1:])}
     f = coulomb / COULOMB_REAL
     a, b = runs["A"], runs["B"]
-    ff = (path.parent / "body.ff").read_text()
+    ff = (path.parent / "body.ff").read_text(encoding="utf-8")
     charmm_improper = "improper_style harmonic" in ff
     terms = {"bond": a["E_bond"]}
     if "U" in runs:

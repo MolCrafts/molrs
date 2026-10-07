@@ -7,14 +7,14 @@
 #   scripts/check.sh fmt clippy     # run the named gates, in order
 #   scripts/check.sh all            # every gate (CI parity)
 #
-# Gates: fmt partners clippy doc test features package ffi cxx ext python capi
+# Gates: fmt ruff partners clippy doc test features package ffi cxx ext python capi
 # wasm mrec docs. Root-workspace cargo calls go through the `cargo mrs-*`
 # aliases (.cargo/config.toml) so they share one feature set and one build.
 # Every cargo / maturin / wasm-pack call is --locked and every uv call runs
 # on CI's Python (3.12) against the committed lock: a gate that would have to
 # change a lock file fails instead.
 #
-# Dispatch: `fmt` and `partners` compile nothing and run wherever this script
+# Dispatch: `fmt`, `ruff` and `partners` compile nothing and run wherever this script
 # is called. When the environment names a runner in MOLCRAFTS_HOOK_RUNNER and
 # this is not already a Slurm job, any other gate hands the whole call to it.
 # The MolCrafts cluster's shared git hooks set it to a launcher that runs its
@@ -53,6 +53,12 @@ gate_fmt() {
     for crate in "${ROOTS[@]}"; do
         cargo fmt --manifest-path "$crate/Cargo.toml" --check
     done
+}
+
+# Python lint (ruff.toml): text-mode file I/O names its encoding, so a read
+# that passes on Linux cannot fail only on Windows (cp1252).
+gate_ruff() {
+    uvx ruff@0.16.5 check .
 }
 
 # Every partner in .github/partners.env resolves, no path dependency points
@@ -197,9 +203,9 @@ gate_docs() {
     (cd molrs-python && "$work/venv/bin/zensical" build --clean --strict)
 }
 
-ALL=(fmt partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)
+ALL=(fmt ruff partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)
 # Gates that compile nothing; everything else goes to MOLCRAFTS_HOOK_RUNNER.
-CHEAP=(fmt partners)
+CHEAP=(fmt ruff partners)
 
 [ "$#" -gt 0 ] || { echo "usage: $0 <gate>... | all   (gates: ${ALL[*]})" >&2; exit 2; }
 [ "$1" = all ] && set -- "${ALL[@]}"

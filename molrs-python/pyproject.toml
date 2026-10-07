@@ -63,6 +63,12 @@ cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { git = { co
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `python -X warn_default_encoding -m pytest` (how the suite is run) makes
+# every text-mode open without encoding= warn, and this makes the warning an
+# error: Python would decode with the locale, cp1252 on Windows, so such a
+# read passes on Linux and fails only on Windows. Ruff's PLW1514 catches it
+# statically only where it can tell the receiver is a Path.
+filterwarnings = ["error::EncodingWarning"]
 
 
 [tool.tox]
@@ -114,5 +120,5 @@ commands_pre = [
   ],
 ]
 commands = [
-  ["{envpython}", "-m", "pytest", "-q"],
+  ["{envpython}", "-X", "warn_default_encoding", "-m", "pytest", "-q"],
 ]

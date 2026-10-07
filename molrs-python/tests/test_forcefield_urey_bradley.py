@@ -89,7 +89,7 @@ def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None
     assert "angle_style charmm\n" in text
     assert "angle_coeff HA-CT-CT 33.430000 110.100000 22.530000 2.179000\n" in text
     path = tmp_path / "ub.ff"
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     back = molrs.io.read_lammps_forcefield(path)
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)

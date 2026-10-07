@@ -65,7 +65,7 @@ def test_text_doors_are_the_path_doors_in_memory(
     path = tmp_path / f"a.{ext}"
     write_path(path, frame)
     text = write_str(frame)
-    assert path.read_text() == text
+    assert path.read_text(encoding="utf-8") == text
     assert _n(read_str(text)) == _n(read_path(path)) == 2
 
 
@@ -74,14 +74,14 @@ def test_xsf_text_doors(tmp_path):
     assert _n(frame) == 2
     path = tmp_path / "a.xsf"
     mio.write_xsf(path, frame)
-    assert path.read_text() == mio.write_xsf_str(frame)
+    assert path.read_text(encoding="utf-8") == mio.write_xsf_str(frame)
 
 
 def test_lammps_dump_str_is_one_snapshot_of_the_trajectory(tmp_path, frame):
     path = tmp_path / "a.dump"
     mio.write_lammps_dump_trajectory(path, [frame], columns=["type", "x", "y", "z"])
     text = mio.write_lammps_dump_str(frame, columns=["type", "x", "y", "z"])
-    assert path.read_text() == text
+    assert path.read_text(encoding="utf-8") == text
     assert _n(mio.read_lammps_dump_str(text)) == 2
     assert _n(mio.read_lammps_dump_bytes(text.encode())) == 2
 
@@ -108,13 +108,13 @@ def test_binary_bytes_doors_are_one_frame_files(tmp_path, frame, fmt):
 
 def test_forcefield_text_doors_are_the_path_doors_in_memory(tmp_path):
     source = FIXTURES / "amber.xml"
-    ff = mio.read_openmm_xml_forcefield_str(source.read_text())
+    ff = mio.read_openmm_xml_forcefield_str(source.read_text(encoding="utf-8"))
     from_path = mio.read_openmm_xml_forcefield(source)
     xml = mio.write_openmm_xml_forcefield_str(ff)
     assert xml == mio.write_openmm_xml_forcefield_str(from_path)
     path = tmp_path / "ff.xml"
     mio.write_openmm_xml_forcefield(path, ff)
-    assert path.read_text() == xml
+    assert path.read_text(encoding="utf-8") == xml
     # Its long atom types do not fit frcmod: both frcmod doors refuse alike.
     with pytest.raises(ValueError, match="two-character") as by_path:
         mio.write_amber_frcmod(tmp_path / "ff.frcmod", ff)

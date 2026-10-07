@@ -102,7 +102,7 @@ def collect(d: Path, pin: Path | None):
                 for t, v in lammps(sub, k).items():
                     engines[(case, k, engine, t)] = v
         else:
-            sysj = json.loads((sub / "system.json").read_text())
+            sysj = json.loads((sub / "system.json").read_text(encoding="utf-8"))
             for k, terms in enumerate(openmm(sub, sysj)):
                 for t, v in terms.items():
                     engines[(case, k, engine, t)] = v
@@ -130,7 +130,7 @@ def collect(d: Path, pin: Path | None):
             lines.append("\t".join([key[0], str(key[1]), key[2], key[3], repr(e)]))
     print(f"worst relative difference: {worst:.1e}")
     out = pin or d / "engines.tsv"
-    out.write_text("\n".join(lines) + "\n")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {out}")
 
 

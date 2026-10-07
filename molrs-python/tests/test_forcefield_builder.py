@@ -261,7 +261,7 @@ _OPLS_GEOMETRIC = """<ForceField name="OPLS-AA" combining_rule="geometric">
 
 def test_read_opls_xml_returns_the_force_field_with_its_mixing(tmp_path):
     path = tmp_path / "opls.xml"
-    path.write_text(_OPLS_GEOMETRIC)
+    path.write_text(_OPLS_GEOMETRIC, encoding="utf-8")
     ff = molrs.io.read_openmm_xml_forcefield(path)
     assert type(ff) is molrs.ff.forcefield.ForceField
     assert ff.get_style("pair", "lj/cut")["mixing"] == "geometric"
