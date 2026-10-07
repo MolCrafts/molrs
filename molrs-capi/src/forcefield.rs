@@ -15,27 +15,27 @@
 //!
 //! ```c
 //! MolrsForceFieldHandle ff;
-//! molrs_ff_new("my_ff", &ff);
+//! molrs_forcefield_new("my_ff", &ff);
 //!
 //! // Define a pair style with a global cutoff parameter
 //! const char* pk[] = {"cutoff"};
 //! double      pv[] = {12.0};
-//! molrs_ff_def_style(ff, "pair", "lj/cut", pk, pv, 1);
+//! molrs_forcefield_def_style(ff, "pair", "lj/cut", pk, pv, 1);
 //!
 //! // Define a type under that style: its name, then its endpoints
 //! const char* ow[] = {"OW"};
 //! const char* tk[] = {"epsilon", "sigma"};
 //! double      tv[] = {0.1553, 3.166};
-//! molrs_ff_def_type(ff, "pair", "lj/cut", "OW", ow, 1, tk, tv, 2);
+//! molrs_forcefield_def_type(ff, "pair", "lj/cut", "OW", ow, 1, tk, tv, 2);
 //!
 //! // Serialize to JSON (the core forcefield section) for storage
 //! char*  json;
 //! size_t json_len;
-//! molrs_ff_to_json(ff, &json, &json_len);
+//! molrs_forcefield_to_json(ff, &json, &json_len);
 //! // ... write json to file ...
 //! molrs_free_string(json);
 //!
-//! molrs_ff_drop(ff);
+//! molrs_forcefield_drop(ff);
 //! ```
 //!
 //! # Parameter values
@@ -44,9 +44,9 @@
 //! precision feature, because force field parameters require full
 //! precision for numerical stability.
 //!
-//! The `molrs_ff_def_*` calls take numeric parameters only. String
+//! The `molrs_forcefield_def_*` calls take numeric parameters only. String
 //! parameters (a pair style's `mixing`, an atom type's `element`) reach a
-//! force field from C through [`molrs_ff_from_json`], whose section carries
+//! force field from C through [`molrs_forcefield_from_json`], whose section carries
 //! both.
 
 use std::ffi::{CStr, CString, c_char};
@@ -55,8 +55,8 @@ use molrs::ff::forcefield::{DefError, ForceField, Params};
 use molrs::io::mrec::ForceFieldSection;
 
 use crate::error::{self, MolrsStatus};
-use crate::handle::{MolrsForceFieldHandle, ff_key_to_handle, handle_to_ff_key};
-use crate::store::lock_store;
+use crate::handle::{MolrsForceFieldHandle, forcefield_key_to_handle, handle_to_forcefield_key};
+use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 
 // ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ use crate::{ffi_try, null_check};
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_new(const char* name,
+/// MolrsStatus molrs_forcefield_new(const char* name,
 ///                           MolrsForceFieldHandle* out);
 /// ```
 ///
@@ -89,7 +89,7 @@ use crate::{ffi_try, null_check};
 /// * `name` must be a valid, null-terminated C string.
 /// * `out` must point to a writable `MolrsForceFieldHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_new(
+pub unsafe extern "C" fn molrs_forcefield_new(
     name: *const c_char,
     out: *mut MolrsForceFieldHandle,
 ) -> MolrsStatus {
@@ -104,9 +104,9 @@ pub unsafe extern "C" fn molrs_ff_new(
             }
         };
         let ff = ForceField::new(name_str);
-        let mut store = lock_store();
-        let key = store.forcefields.insert(ff);
-        unsafe { *out = ff_key_to_handle(key) };
+        let mut registry = lock_registry();
+        let key = registry.forcefields.insert(ff);
+        unsafe { *out = forcefield_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn molrs_ff_new(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_drop(MolrsForceFieldHandle handle);
+/// MolrsStatus molrs_forcefield_drop(MolrsForceFieldHandle handle);
 /// ```
 ///
 /// # Arguments
@@ -132,11 +132,11 @@ pub unsafe extern "C" fn molrs_ff_new(
 ///
 /// The caller must not use `handle` after this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_drop(handle: MolrsForceFieldHandle) -> MolrsStatus {
+pub unsafe extern "C" fn molrs_forcefield_drop(handle: MolrsForceFieldHandle) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
-        let key = handle_to_ff_key(handle);
-        match store.forcefields.remove(key) {
+        let mut registry = lock_registry();
+        let key = handle_to_forcefield_key(handle);
+        match registry.forcefields.remove(key) {
             Some(_) => MolrsStatus::Ok,
             None => {
                 error::set_last_error("invalid forcefield handle");
@@ -150,10 +150,10 @@ pub unsafe extern "C" fn molrs_ff_drop(handle: MolrsForceFieldHandle) -> MolrsSt
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Extract a ForceField ref from the store.
-macro_rules! get_ff {
-    ($store:expr, $handle:expr) => {
-        match $store.forcefields.get(handle_to_ff_key($handle)) {
+/// Extract a ForceField ref from the registry.
+macro_rules! get_forcefield {
+    ($registry:expr, $handle:expr) => {
+        match $registry.forcefields.get(handle_to_forcefield_key($handle)) {
             Some(ff) => ff,
             None => {
                 error::set_last_error("invalid forcefield handle");
@@ -163,9 +163,12 @@ macro_rules! get_ff {
     };
 }
 
-macro_rules! get_ff_mut {
-    ($store:expr, $handle:expr) => {
-        match $store.forcefields.get_mut(handle_to_ff_key($handle)) {
+macro_rules! get_forcefield_mut {
+    ($registry:expr, $handle:expr) => {
+        match $registry
+            .forcefields
+            .get_mut(handle_to_forcefield_key($handle))
+        {
             Some(ff) => ff,
             None => {
                 error::set_last_error("invalid forcefield handle");
@@ -271,7 +274,7 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_def_style(MolrsForceFieldHandle ff,
+/// MolrsStatus molrs_forcefield_def_style(MolrsForceFieldHandle ff,
 ///                                 const char* category,
 ///                                 const char* name,
 ///                                 const char** param_keys,
@@ -294,7 +297,7 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 /// * `n_params` -- Number of style-level parameters.
 ///
 /// Parameters are numeric only; string params (e.g. `mixing`) reach a
-/// force field from C through [`molrs_ff_from_json`].
+/// force field from C through [`molrs_forcefield_from_json`].
 ///
 /// # Returns
 ///
@@ -312,7 +315,7 @@ fn invalid_argument(e: DefError) -> MolrsStatus {
 /// * `param_keys` (if non-null) must point to `n_params` valid C string
 ///   pointers; `param_values` (if non-null) to `n_params` doubles.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_def_style(
+pub unsafe extern "C" fn molrs_forcefield_def_style(
     ff: MolrsForceFieldHandle,
     category: *const c_char,
     name: *const c_char,
@@ -324,8 +327,8 @@ pub unsafe extern "C" fn molrs_ff_def_style(
         let category = or_return!(unsafe { arg_str(category, "category") });
         let name = or_return!(unsafe { arg_str(name, "name") });
         let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
+        let mut registry = lock_registry();
+        let ff = get_forcefield_mut!(registry, ff);
         match ff.def_style(category, name, Params::from_pairs(&params)) {
             Ok(_) => MolrsStatus::Ok,
             Err(e) => invalid_argument(e),
@@ -336,14 +339,14 @@ pub unsafe extern "C" fn molrs_ff_def_style(
 /// Define a type on an existing style: its name and its endpoints.
 ///
 /// The style `(style_category, style_name)` must already exist (see
-/// [`molrs_ff_def_style`]); it is never created implicitly. The name is an
+/// [`molrs_forcefield_def_style`]); it is never created implicitly. The name is an
 /// opaque identifier stored verbatim and never split into endpoints (`CT-OH`
 /// and MMFF's `0_1_5` alike); the endpoints are the ones given.
 ///
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_def_type(MolrsForceFieldHandle ff,
+/// MolrsStatus molrs_forcefield_def_type(MolrsForceFieldHandle ff,
 ///                                const char* style_category,
 ///                                const char* style_name,
 ///                                const char* type_name,
@@ -387,7 +390,7 @@ pub unsafe extern "C" fn molrs_ff_def_style(
 ///   pointers; `param_values` (if non-null) to `n_params` doubles.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn molrs_ff_def_type(
+pub unsafe extern "C" fn molrs_forcefield_def_type(
     ff: MolrsForceFieldHandle,
     style_category: *const c_char,
     style_name: *const c_char,
@@ -404,8 +407,8 @@ pub unsafe extern "C" fn molrs_ff_def_type(
         let type_name = or_return!(unsafe { arg_str(type_name, "type_name") });
         let endpoints = or_return!(unsafe { parse_strings(endpoints, n_endpoints, "endpoints") });
         let params = or_return!(unsafe { parse_params(param_keys, param_values, n_params) });
-        let mut store = lock_store();
-        let ff = get_ff_mut!(store, ff);
+        let mut registry = lock_registry();
+        let ff = get_forcefield_mut!(registry, ff);
         let Some(style) = ff.get_style_mut(category, style_name) else {
             return invalid_argument(DefError::UnknownStyle {
                 category: category.to_owned(),
@@ -428,7 +431,7 @@ pub unsafe extern "C" fn molrs_ff_def_type(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_style_count(MolrsForceFieldHandle ff,
+/// MolrsStatus molrs_forcefield_n_styles(MolrsForceFieldHandle ff,
 ///                                   size_t* out);
 /// ```
 ///
@@ -448,14 +451,14 @@ pub unsafe extern "C" fn molrs_ff_def_type(
 /// * `ff` must be a live ForceField handle.
 /// * `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_style_count(
+pub unsafe extern "C" fn molrs_forcefield_n_styles(
     ff: MolrsForceFieldHandle,
     out: *mut usize,
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let store = lock_store();
-        let ff = get_ff!(store, ff);
+        let registry = lock_registry();
+        let ff = get_forcefield!(registry, ff);
         unsafe { *out = ff.styles().len() };
         MolrsStatus::Ok
     })
@@ -463,7 +466,7 @@ pub unsafe extern "C" fn molrs_ff_style_count(
 
 /// Get the category and name of a style by positional index.
 ///
-/// Use [`molrs_ff_style_count`] to determine the valid index range
+/// Use [`molrs_forcefield_n_styles`] to determine the valid index range
 /// `[0, count)`.
 ///
 /// Both returned strings are heap-allocated and must be freed with
@@ -472,7 +475,7 @@ pub unsafe extern "C" fn molrs_ff_style_count(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_get_style_name(MolrsForceFieldHandle ff,
+/// MolrsStatus molrs_forcefield_style_name(MolrsForceFieldHandle ff,
 ///                                      size_t index,
 ///                                      char** out_category,
 ///                                      char** out_name);
@@ -500,7 +503,7 @@ pub unsafe extern "C" fn molrs_ff_style_count(
 /// * `out_category` and `out_name` must each point to a writable `char*`.
 /// * The caller owns both returned strings and must free them.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_get_style_name(
+pub unsafe extern "C" fn molrs_forcefield_style_name(
     ff: MolrsForceFieldHandle,
     index: usize,
     out_category: *mut *mut c_char,
@@ -509,8 +512,8 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
     ffi_try!({
         null_check!(out_category);
         null_check!(out_name);
-        let store = lock_store();
-        let ff = get_ff!(store, ff);
+        let registry = lock_registry();
+        let ff = get_forcefield!(registry, ff);
         let styles = ff.styles();
         if index >= styles.len() {
             error::set_last_error(format!(
@@ -546,7 +549,7 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_to_json(MolrsForceFieldHandle ff,
+/// MolrsStatus molrs_forcefield_to_json(MolrsForceFieldHandle ff,
 ///                               char** out_json,
 ///                               size_t* out_len);
 /// ```
@@ -573,7 +576,7 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 /// * `out_len` must point to a writable `size_t`.
 /// * The caller owns the returned string and must free it.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_to_json(
+pub unsafe extern "C" fn molrs_forcefield_to_json(
     ff: MolrsForceFieldHandle,
     out_json: *mut *mut c_char,
     out_len: *mut usize,
@@ -581,8 +584,8 @@ pub unsafe extern "C" fn molrs_ff_to_json(
     ffi_try!({
         null_check!(out_json);
         null_check!(out_len);
-        let store = lock_store();
-        let ff = get_ff!(store, ff);
+        let registry = lock_registry();
+        let ff = get_forcefield!(registry, ff);
 
         let json = match ff_to_json_string(ff) {
             Ok(json) => json,
@@ -602,7 +605,7 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 }
 
 /// Deserialize a ForceField from a JSON string: a core `forcefield`
-/// section in the serde form [`molrs_ff_to_json`] writes, turned into a
+/// section in the serde form [`molrs_forcefield_to_json`] writes, turned into a
 /// force field by `ForceFieldSection::to_forcefield`.
 ///
 /// The section is carried whole or refused: JSON that is no section (a
@@ -613,7 +616,7 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_ff_from_json(const char* json,
+/// MolrsStatus molrs_forcefield_from_json(const char* json,
 ///                                 MolrsForceFieldHandle* out);
 /// ```
 ///
@@ -635,7 +638,7 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 /// * `json` must be a valid, null-terminated C string.
 /// * `out` must point to a writable `MolrsForceFieldHandle`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_ff_from_json(
+pub unsafe extern "C" fn molrs_forcefield_from_json(
     json: *const c_char,
     out: *mut MolrsForceFieldHandle,
 ) -> MolrsStatus {
@@ -656,9 +659,9 @@ pub unsafe extern "C" fn molrs_ff_from_json(
                 return MolrsStatus::InvalidArgument;
             }
         };
-        let mut store = lock_store();
-        let key = store.forcefields.insert(ff);
-        unsafe { *out = ff_key_to_handle(key) };
+        let mut registry = lock_registry();
+        let key = registry.forcefields.insert(ff);
+        unsafe { *out = forcefield_key_to_handle(key) };
         MolrsStatus::Ok
     })
 }
@@ -775,7 +778,7 @@ mod tests {
     }
 
     /// Seam only: the Rust conflict rule is unit-tested in molrs; here a
-    /// conflicting `molrs_ff_def_type` must surface as `InvalidArgument`.
+    /// conflicting `molrs_forcefield_def_type` must surface as `InvalidArgument`.
     #[test]
     fn def_type_conflicting_redefinition_is_invalid_argument() {
         let name = CString::new("conflict").unwrap();
@@ -793,11 +796,14 @@ mod tests {
         let mut ff = MolrsForceFieldHandle { idx: 0, version: 0 };
 
         // SAFETY: every pointer is a live CString / array of the stated length,
-        // and `ff` is written by `molrs_ff_new` before use.
+        // and `ff` is written by `molrs_forcefield_new` before use.
         unsafe {
-            assert_eq!(molrs_ff_new(name.as_ptr(), &mut ff), MolrsStatus::Ok);
             assert_eq!(
-                molrs_ff_def_style(
+                molrs_forcefield_new(name.as_ptr(), &mut ff),
+                MolrsStatus::Ok
+            );
+            assert_eq!(
+                molrs_forcefield_def_style(
                     ff,
                     bond.as_ptr(),
                     harmonic.as_ptr(),
@@ -808,7 +814,7 @@ mod tests {
                 MolrsStatus::Ok
             );
             assert_eq!(
-                molrs_ff_def_type(
+                molrs_forcefield_def_type(
                     ff,
                     bond.as_ptr(),
                     harmonic.as_ptr(),
@@ -821,7 +827,7 @@ mod tests {
                 ),
                 MolrsStatus::Ok
             );
-            let status = molrs_ff_def_type(
+            let status = molrs_forcefield_def_type(
                 ff,
                 bond.as_ptr(),
                 harmonic.as_ptr(),
@@ -832,7 +838,7 @@ mod tests {
                 second.as_ptr(),
                 2,
             );
-            assert_eq!(molrs_ff_drop(ff), MolrsStatus::Ok);
+            assert_eq!(molrs_forcefield_drop(ff), MolrsStatus::Ok);
             assert_eq!(status, MolrsStatus::InvalidArgument);
         }
     }

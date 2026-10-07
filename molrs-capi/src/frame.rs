@@ -29,7 +29,7 @@ use crate::handle::{
     MolrsBlockHandle, MolrsBoxHandle, MolrsFrameHandle, block_handle_to_c, box_key_to_handle,
     frame_id_to_handle, handle_to_box_key, handle_to_frame_id,
 };
-use crate::store::lock_store;
+use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 
 /// Exact frame-metadata dtype exposed by the C API.
@@ -56,7 +56,7 @@ pub enum MolrsMetaType {
 /// Tagged exact-dtype frame metadata value.
 ///
 /// Only the field selected by `dtype` is read. A string returned by
-/// `molrs_frame_read_meta` is owned by the caller and must be released with
+/// `molrs_frame_get_meta` is owned by the caller and must be released with
 /// `molrs_free_string`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -104,80 +104,6 @@ impl Default for MolrsMetaValue {
     }
 }
 
-/// Parse a SMILES string and create a frame containing atoms and bonds.
-///
-/// The frame will contain an `"atoms"` block with `"symbol"`, `"x"`,
-/// `"y"`, `"z"` columns and a `"bonds"` block with `"i"`, `"j"`,
-/// `"bond_type"` / `"bond_number"` columns.  Initial coordinates are 2D layout coordinates
-/// (not optimised 3D); use `embed` for 3D embedding.
-///
-/// # C signature
-///
-/// ```c
-/// MolrsStatus molrs_frame_from_smiles(const char* smiles,
-///                                      MolrsFrameHandle* out);
-/// ```
-///
-/// # Arguments
-///
-/// * `smiles` -- Null-terminated SMILES string (e.g. `"CCO"`).
-/// * `out` -- On success, receives the new frame handle.
-///
-/// # Returns
-///
-/// * `MolrsStatus::Ok` on success.
-/// * `MolrsStatus::NullPointer` if either pointer is null.
-/// * `MolrsStatus::Utf8Error` if `smiles` is not valid UTF-8.
-/// * `MolrsStatus::ParseError` if the SMILES string is malformed.
-/// * `MolrsStatus::InternalError` if the parsed molecule cannot be expressed
-///   as a frame (a property contradicting the Frame schema).
-///
-/// # Safety
-///
-/// * `smiles` must be a valid, null-terminated UTF-8 C string.
-/// * `out` must point to a writable `MolrsFrameHandle`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_from_smiles(
-    smiles: *const c_char,
-    out: *mut MolrsFrameHandle,
-) -> MolrsStatus {
-    ffi_try!({
-        null_check!(smiles);
-        null_check!(out);
-        let c_str = unsafe { CStr::from_ptr(smiles) };
-        let smiles_str = match c_str.to_str() {
-            Ok(s) => s,
-            Err(_) => {
-                error::set_last_error("SMILES string is not valid UTF-8");
-                return MolrsStatus::Utf8Error;
-            }
-        };
-
-        let mol = match molrs::io::read_smiles_str(smiles_str) {
-            Ok(m) => m,
-            Err(e) => {
-                error::set_last_error(format!("{e}"));
-                return MolrsStatus::ParseError;
-            }
-        };
-        let frame = match mol.to_frame() {
-            Ok(f) => f,
-            Err(e) => {
-                error::set_last_error(format!("{e}"));
-                return MolrsStatus::InternalError;
-            }
-        };
-
-        let mut store = lock_store();
-        let id = store.inner.frame_new();
-        if let Err(e) = store.inner.set_frame(id, frame) {
-            return ffi_err_to_status(&e);
-        }
-        unsafe { *out = frame_id_to_handle(id) };
-        MolrsStatus::Ok
-    })
-}
-
 /// Create a new, empty frame with no blocks, no SimBox, and no metadata.
 ///
 /// # C signature
@@ -202,8 +128,8 @@ pub unsafe extern "C" fn molrs_frame_from_smiles(
 pub unsafe extern "C" fn molrs_frame_new(out: *mut MolrsFrameHandle) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let mut store = lock_store();
-        let id = store.inner.frame_new();
+        let mut registry = lock_registry();
+        let id = registry.frames.frame_new();
         unsafe { *out = frame_id_to_handle(id) };
         MolrsStatus::Ok
     })
@@ -236,9 +162,9 @@ pub unsafe extern "C" fn molrs_frame_new(out: *mut MolrsFrameHandle) -> MolrsSta
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let id = handle_to_frame_id(handle);
-        match store.inner.frame_drop(id) {
+        match registry.frames.frame_drop(id) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -278,14 +204,14 @@ pub unsafe extern "C" fn molrs_frame_clone(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let src_id = handle_to_frame_id(src);
-        let cloned = match store.inner.clone_frame(src_id) {
+        let cloned = match registry.frames.clone_frame(src_id) {
             Ok(f) => f,
             Err(e) => return ffi_err_to_status(&e),
         };
-        let new_id = store.inner.frame_new();
-        if let Err(e) = store.inner.set_frame(new_id, cloned) {
+        let new_id = registry.frames.frame_new();
+        if let Err(e) = registry.frames.set_frame(new_id, cloned) {
             return ffi_err_to_status(&e);
         }
         unsafe { *out = frame_id_to_handle(new_id) };
@@ -328,9 +254,9 @@ pub unsafe extern "C" fn molrs_frame_set_block(
     _nrows: usize,
 ) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        let key_str = match store.key_str(key_id) {
+        let key_str = match registry.key_str(key_id) {
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
@@ -338,7 +264,7 @@ pub unsafe extern "C" fn molrs_frame_set_block(
             }
         };
         let block = Block::new();
-        match store.inner.set_block(frame_id, &key_str, block) {
+        match registry.frames.set_block(frame_id, &key_str, block) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -377,16 +303,16 @@ pub unsafe extern "C" fn molrs_frame_remove_block(
     key_id: u32,
 ) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        let key_str = match store.key_str(key_id) {
+        let key_str = match registry.key_str(key_id) {
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
                 return MolrsStatus::KeyNotFound;
             }
         };
-        match store.inner.remove_block(frame_id, &key_str) {
+        match registry.frames.remove_block(frame_id, &key_str) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -432,20 +358,20 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let store = lock_store();
+        let registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        let key_str = match store.key_str(key_id) {
+        let key_str = match registry.key_str(key_id) {
             Some(s) => s.to_owned(),
             None => {
                 error::set_last_error(format!("unknown key_id {key_id}"));
                 return MolrsStatus::KeyNotFound;
             }
         };
-        let bh = match store.inner.get_block(frame_id, &key_str) {
+        let bh = match registry.frames.get_block(frame_id, &key_str) {
             Ok(h) => h,
             Err(e) => return ffi_err_to_status(&e),
         };
-        let c_handle = match block_handle_to_c(&bh, &store.key_to_id) {
+        let c_handle = match block_handle_to_c(&bh, &registry.key_to_id) {
             Some(h) => h,
             None => {
                 error::set_last_error("failed to intern block key");
@@ -459,7 +385,7 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 
 /// Associate a SimBox with a frame.
 ///
-/// The SimBox is cloned from the global SimBox store into the frame.
+/// The SimBox is cloned from the handle registry into the frame.
 /// Changes to the original SimBox handle after this call do not affect
 /// the frame's copy.
 ///
@@ -490,17 +416,17 @@ pub unsafe extern "C" fn molrs_frame_set_box(
     box_handle: MolrsBoxHandle,
 ) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
         let sb_key = handle_to_box_key(box_handle);
-        let sb = match store.simboxes.get(sb_key) {
+        let sb = match registry.simboxes.get(sb_key) {
             Some(sb) => sb.clone(),
             None => {
                 error::set_last_error("invalid simbox handle");
                 return MolrsStatus::InvalidBoxHandle;
             }
         };
-        match store.inner.set_frame_box(frame_id, Some(sb)) {
+        match registry.frames.set_frame_box(frame_id, Some(sb)) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
@@ -530,20 +456,20 @@ pub unsafe extern "C" fn molrs_frame_set_box(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_frame_clear_box(frame: MolrsFrameHandle) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        match store.inner.set_frame_box(frame_id, None) {
+        match registry.frames.set_frame_box(frame_id, None) {
             Ok(()) => MolrsStatus::Ok,
             Err(e) => ffi_err_to_status(&e),
         }
     })
 }
 
-/// Extract the SimBox from a frame, cloning it into the SimBox store.
+/// Extract the SimBox from a frame, cloning it into the SimBox registry.
 ///
 /// A new SimBox handle is created each time this function is called.
 /// The caller is responsible for freeing it with
-/// [`molrs_box_drop`](crate::simbox::molrs_box_drop).
+/// [`molrs_box_drop`](crate::molrs_box_drop).
 ///
 /// # C signature
 ///
@@ -575,9 +501,9 @@ pub unsafe extern "C" fn molrs_frame_get_box(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let mut store = lock_store();
+        let mut registry = lock_registry();
         let frame_id = handle_to_frame_id(frame);
-        let sb_clone = match store.inner.with_frame_box(frame_id, |opt| opt.cloned()) {
+        let sb_clone = match registry.frames.with_frame_box(frame_id, |opt| opt.cloned()) {
             Ok(Some(sb)) => sb,
             Ok(None) => {
                 error::set_last_error("frame has no simbox");
@@ -585,7 +511,7 @@ pub unsafe extern "C" fn molrs_frame_get_box(
             }
             Err(e) => return ffi_err_to_status(&e),
         };
-        let key = store.simboxes.insert(sb_clone);
+        let key = registry.simboxes.insert(sb_clone);
         unsafe { *out = box_key_to_handle(key) };
         MolrsStatus::Ok
     })
@@ -721,8 +647,30 @@ unsafe fn meta_from_c(value: &MolrsMetaValue) -> Result<MetaValue, MolrsStatus> 
 }
 
 /// Insert or replace one exact-dtype metadata entry.
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_frame_set_meta(MolrsFrameHandle frame, const char* key,
+///                                  const MolrsMetaValue* value);
+/// ```
+///
+/// Block handles on the frame stay valid: only the metadata changes.
+///
+/// # Returns
+///
+/// * `MolrsStatus::Ok` on success.
+/// * `MolrsStatus::NullPointer` if `key` or `value` (or a string payload) is null.
+/// * `MolrsStatus::InvalidArgument` if `key` is empty.
+/// * `MolrsStatus::Utf8Error` if `key` or a string payload is not UTF-8.
+/// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
+///
+/// # Safety
+///
+/// `key` must be a NUL-terminated C string and `value` must point to a
+/// readable `MolrsMetaValue`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_put_meta(
+pub unsafe extern "C" fn molrs_frame_set_meta(
     frame: MolrsFrameHandle,
     key: *const c_char,
     value: *const MolrsMetaValue,
@@ -745,9 +693,9 @@ pub unsafe extern "C" fn molrs_frame_put_meta(
             Ok(value) => value,
             Err(status) => return status,
         };
-        let mut store = lock_store();
-        match store
-            .inner
+        let mut registry = lock_registry();
+        match registry
+            .frames
             .with_frame_meta_mut(handle_to_frame_id(frame), |meta| {
                 meta.insert(key, value);
             }) {
@@ -758,8 +706,30 @@ pub unsafe extern "C" fn molrs_frame_put_meta(
 }
 
 /// Read one exact-dtype metadata entry.
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_frame_get_meta(MolrsFrameHandle frame, const char* key,
+///                                  MolrsMetaValue* out);
+/// ```
+///
+/// A string value (`MOLRS_META_TYPE_STRING`; a JSON value is returned as its
+/// text) is owned by the caller: free `out->string_value` with
+/// `molrs_free_string`.
+///
+/// # Returns
+///
+/// * `MolrsStatus::Ok` on success.
+/// * `MolrsStatus::KeyNotFound` if the frame has no entry `key`.
+/// * `MolrsStatus::NullPointer`, `Utf8Error`, `InvalidFrameHandle` as usual.
+///
+/// # Safety
+///
+/// `key` must be a NUL-terminated C string and `out` a writable
+/// `MolrsMetaValue`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_read_meta(
+pub unsafe extern "C" fn molrs_frame_get_meta(
     frame: MolrsFrameHandle,
     key: *const c_char,
     out: *mut MolrsMetaValue,
@@ -774,8 +744,8 @@ pub unsafe extern "C" fn molrs_frame_read_meta(
                 return MolrsStatus::Utf8Error;
             }
         };
-        let store = lock_store();
-        let frame = match store.inner.clone_frame(handle_to_frame_id(frame)) {
+        let registry = lock_registry();
+        let frame = match registry.frames.clone_frame(handle_to_frame_id(frame)) {
             Ok(frame) => frame,
             Err(e) => return ffi_err_to_status(&e),
         };
@@ -792,16 +762,27 @@ pub unsafe extern "C" fn molrs_frame_read_meta(
     })
 }
 
-/// Return the number of metadata entries.
+/// Number of metadata entries; with [`molrs_frame_meta_key`] this lists the
+/// keys (the C shape of `meta_keys`).
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_frame_n_meta(MolrsFrameHandle frame, size_t* out);
+/// ```
+///
+/// # Safety
+///
+/// `out` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_frame_meta_count(
+pub unsafe extern "C" fn molrs_frame_n_meta(
     frame: MolrsFrameHandle,
     out: *mut usize,
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let store = lock_store();
-        let frame = match store.inner.clone_frame(handle_to_frame_id(frame)) {
+        let registry = lock_registry();
+        let frame = match registry.frames.clone_frame(handle_to_frame_id(frame)) {
             Ok(frame) => frame,
             Err(e) => return ffi_err_to_status(&e),
         };
@@ -812,7 +793,21 @@ pub unsafe extern "C" fn molrs_frame_meta_count(
     })
 }
 
-/// Return the metadata key at `index`, in insertion order.
+/// The metadata key at `index` (`0 <= index < n_meta`), in insertion order.
+///
+/// # C signature
+///
+/// ```c
+/// MolrsStatus molrs_frame_meta_key(MolrsFrameHandle frame, size_t index,
+///                                  char** out);
+/// ```
+///
+/// The caller owns `*out`: free it with `molrs_free_string`. An index past
+/// the end is `InvalidArgument`.
+///
+/// # Safety
+///
+/// `out` must point to a writable `char*`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_frame_meta_key(
     frame: MolrsFrameHandle,
@@ -821,8 +816,8 @@ pub unsafe extern "C" fn molrs_frame_meta_key(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let store = lock_store();
-        let frame = match store.inner.clone_frame(handle_to_frame_id(frame)) {
+        let registry = lock_registry();
+        let frame = match registry.frames.clone_frame(handle_to_frame_id(frame)) {
             Ok(frame) => frame,
             Err(e) => return ffi_err_to_status(&e),
         };

@@ -16,7 +16,7 @@ after_includes = "typedef double F;"
 
 [export]
 prefix = ""
-exclude = ["CStore", "BoxKey", "ForceFieldKey"]
+exclude = ["HandleRegistry", "BoxKey", "ForceFieldKey", "RegionKey"]
 
 [export.rename]
 

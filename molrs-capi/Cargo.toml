@@ -29,7 +29,7 @@ default = []
 [dependencies]
 # molrs defaults to core only, so the set is spelled here: `full` +
 # `filesystem` + `rayon` (molrs-ffi's default) + `serde`, whose force-field
-# section impls are `molrs_ff_to_json` / `molrs_ff_from_json` — build 2 in
+# section impls are `molrs_forcefield_to_json` / `molrs_forcefield_from_json` — build 2 in
 # .cargo/config.toml, shared with molrs-cxxapi. Never `stream`: no tokio /
 # tungstenite in a C archive.
 molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false, features = ["full", "filesystem", "rayon", "serde"] }

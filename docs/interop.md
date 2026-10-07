@@ -178,9 +178,10 @@ re-align and ship after ("Release before molpy" iron law).
 The **only sanctioned dynamic-linking deliverable**. External C / C++ / HPC
 consumers link `libmolrs_capi` (cdylib or staticlib) against the
 cbindgen-generated `molrs.h` — a flat, handle-based C API over frames,
-blocks, sim boxes, force fields, and regions (feature surface: always-on core
-+ perceive, plus `ff`, `io`, `smiles`; storage is a global mutex-protected
-store, so treat the library as single-threaded per process).
+blocks, boxes, force fields, and regions (feature surface: always-on core
++ perceive, plus `ff`, `io`, `smiles`; every object lives in one global,
+mutex-protected handle registry, so treat the library as single-threaded per
+process).
 
 - **Download**: `molrs-capi-<version>-<platform>.tar.gz` (lib + `molrs.h` +
   LICENSE + sha256) attached to each GitHub Release on `v*` tags.
@@ -193,7 +194,7 @@ store, so treat the library as single-threaded per process).
 A region is `Arc<dyn Region>` — a trait object — and it does **not** cross any
 boundary. What crosses is `molrs_ffi::RegionRef`, the same handle the Python
 capsule (`molrs.RegionRef/<abi_line>`) and the WASM binder carry; the C API
-keeps it in its store and hands back the usual two-word
+keeps it in its handle registry and hands back the usual two-word
 `MolrsRegionHandle`. So a region is no different from a `SimBox` or a
 `ForceField` at this seam, and the vtable stays on the Rust side where it was
 compiled.

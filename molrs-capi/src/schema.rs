@@ -10,6 +10,7 @@
 //! one column and do not want to parse anything.
 
 use std::ffi::{CStr, CString, c_char};
+use std::sync::OnceLock;
 
 use molrs::core::DType;
 use molrs::core::schema;
@@ -59,10 +60,10 @@ pub extern "C" fn molrs_schema_vocab_version() -> u32 {
 /// # C signature
 ///
 /// ```c
-/// size_t molrs_schema_column_count(void);
+/// size_t molrs_schema_n_columns(void);
 /// ```
 #[unsafe(no_mangle)]
-pub extern "C" fn molrs_schema_column_count() -> usize {
+pub extern "C" fn molrs_schema_n_columns() -> usize {
     schema::SCHEMA_COLUMNS.len()
 }
 
@@ -71,10 +72,10 @@ pub extern "C" fn molrs_schema_column_count() -> usize {
 /// # C signature
 ///
 /// ```c
-/// size_t molrs_schema_block_count(void);
+/// size_t molrs_schema_n_blocks(void);
 /// ```
 #[unsafe(no_mangle)]
-pub extern "C" fn molrs_schema_block_count() -> usize {
+pub extern "C" fn molrs_schema_n_blocks() -> usize {
     schema::SCHEMA_BLOCKS.len()
 }
 
@@ -107,32 +108,25 @@ pub unsafe extern "C" fn molrs_schema_column_dtype(key: *const c_char) -> *const
         return std::ptr::null();
     };
     match schema::column(key) {
-        // Every DType name is a `&'static str` with no interior NUL, and the
-        // table is `'static`, so a static C string can be handed out without
-        // an allocation the caller would have to free.
-        // Exhaustive over `DType`: a canonical key at a width this table
-        // missed used to be reported as "string" (`formal_charge`, `i64`).
-        Some(spec) => match spec.dtype {
-            DType::Float => c"float".as_ptr(),
-            DType::Int8 => c"i8".as_ptr(),
-            DType::Int16 => c"i16".as_ptr(),
-            DType::Int => c"int".as_ptr(),
-            DType::Int64 => c"i64".as_ptr(),
-            DType::Bool => c"bool".as_ptr(),
-            DType::UInt => c"uint".as_ptr(),
-            DType::U8 => c"u8".as_ptr(),
-            DType::UInt16 => c"u16".as_ptr(),
-            DType::UInt32 => c"u32".as_ptr(),
-            DType::String => c"string".as_ptr(),
-            DType::Complex64 => c"c64".as_ptr(),
-            DType::Complex128 => c"c128".as_ptr(),
-            // `DType` is non-exhaustive across crates; a width added to it
-            // fails `dtype_lookup_matches_the_table_for_every_key` once a
-            // canonical key uses it, before this arm can be reached.
-            _ => std::ptr::null(),
-        },
+        Some(spec) => dtype_c_name(spec.dtype),
         None => std::ptr::null(),
     }
+}
+
+/// `DType::name()` as a static C string, built once from the core table so
+/// the caller never frees it.
+fn dtype_c_name(dtype: DType) -> *const c_char {
+    static NAMES: OnceLock<Vec<(DType, CString)>> = OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            DType::ALL
+                .into_iter()
+                .map(|d| (d, CString::new(d.name()).expect("dtype names have no NUL")))
+                .collect()
+        })
+        .iter()
+        .find(|(d, _)| *d == dtype)
+        .map_or(std::ptr::null(), |(_, name)| name.as_ptr())
 }
 
 /// Whether a block name is part of the canonical vocabulary.
@@ -176,8 +170,8 @@ mod tests {
 
     #[test]
     fn counts_match_the_tables() {
-        assert_eq!(molrs_schema_column_count(), schema::SCHEMA_COLUMNS.len());
-        assert_eq!(molrs_schema_block_count(), schema::SCHEMA_BLOCKS.len());
+        assert_eq!(molrs_schema_n_columns(), schema::SCHEMA_COLUMNS.len());
+        assert_eq!(molrs_schema_n_blocks(), schema::SCHEMA_BLOCKS.len());
     }
 
     #[test]

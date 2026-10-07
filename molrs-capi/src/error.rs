@@ -69,40 +69,44 @@ pub enum MolrsStatus {
 ///
 /// Each column in a [`Block`](molrs::core::Block) stores a
 /// homogeneously-typed ndarray.  This enum is the stored variant, not a
-/// width bucket: an `i64` column is [`Int64`](Self::Int64), not [`Int`](Self::Int).
+/// width bucket: an `i64` column is [`I64`](Self::I64), not [`Int`](Self::Int).
 /// Discriminants 0–4 stay where they were; later variants are appended.
+///
+/// Each variant is named after the core dtype name (`DType::name()`), so the
+/// C constant is `MOLRS_D_TYPE_` + that name upper-cased: `MOLRS_D_TYPE_FLOAT`,
+/// `MOLRS_D_TYPE_UINT`, `MOLRS_D_TYPE_I64`, `MOLRS_D_TYPE_C128`, ….
 ///
 /// A string column has no flat scalar buffer. [`molrs_block_get`](crate::molrs_block_get)
 /// reports that as `TypeMismatch`, not as a missing key.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MolrsDType {
-    /// `f64` column.
+    /// `float`: `f64` column.
     Float = 0,
-    /// `i32` column.
+    /// `int`: `i32` column.
     Int = 1,
-    /// Boolean column, one byte per element.
+    /// `bool`: one byte per element.
     Bool = 2,
-    /// `u64` column.
-    UInt = 3,
-    /// String column. No flat scalar buffer.
+    /// `uint`: `u64` column (indices and identifiers).
+    Uint = 3,
+    /// `string`: no flat scalar buffer.
     String = 4,
     /// `i8` column.
-    Int8 = 5,
+    I8 = 5,
     /// `i16` column.
-    Int16 = 6,
+    I16 = 6,
     /// `i64` column.
-    Int64 = 7,
+    I64 = 7,
     /// `u8` column.
     U8 = 8,
     /// `u16` column.
-    UInt16 = 9,
+    U16 = 9,
     /// `u32` column.
-    UInt32 = 10,
-    /// `complex64` column, a pair of `f32` per element.
-    Complex64 = 11,
-    /// `complex128` column, a pair of `f64` per element.
-    Complex128 = 12,
+    U32 = 10,
+    /// `c64`: numpy `complex64`, a pair of `f32` per element.
+    C64 = 11,
+    /// `c128`: numpy `complex128`, a pair of `f64` per element.
+    C128 = 12,
 }
 
 impl From<DType> for MolrsDType {
@@ -111,16 +115,16 @@ impl From<DType> for MolrsDType {
             DType::Float => Self::Float,
             DType::Int => Self::Int,
             DType::Bool => Self::Bool,
-            DType::UInt => Self::UInt,
+            DType::UInt => Self::Uint,
             DType::String => Self::String,
-            DType::Int8 => Self::Int8,
-            DType::Int16 => Self::Int16,
-            DType::Int64 => Self::Int64,
+            DType::Int8 => Self::I8,
+            DType::Int16 => Self::I16,
+            DType::Int64 => Self::I64,
             DType::U8 => Self::U8,
-            DType::UInt16 => Self::UInt16,
-            DType::UInt32 => Self::UInt32,
-            DType::Complex64 => Self::Complex64,
-            DType::Complex128 => Self::Complex128,
+            DType::UInt16 => Self::U16,
+            DType::UInt32 => Self::U32,
+            DType::Complex64 => Self::C64,
+            DType::Complex128 => Self::C128,
             // `DType` is `non_exhaustive`. Every variant that exists today is
             // named above; a future one must not be reported as `String`.
             other => unreachable!("no C dtype for {other:?}"),
@@ -175,23 +179,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dtype_reports_the_stored_variant() {
+    fn dtype_keeps_its_discriminants() {
         assert_eq!(MolrsDType::from(DType::Float) as u8, 0);
         assert_eq!(MolrsDType::from(DType::Int) as u8, 1);
         assert_eq!(MolrsDType::from(DType::Bool) as u8, 2);
         assert_eq!(MolrsDType::from(DType::UInt) as u8, 3);
         assert_eq!(MolrsDType::from(DType::String) as u8, 4);
-        assert_eq!(MolrsDType::from(DType::Int8), MolrsDType::Int8);
-        assert_eq!(MolrsDType::from(DType::Int16), MolrsDType::Int16);
-        assert_eq!(MolrsDType::from(DType::Int64), MolrsDType::Int64);
-        assert_eq!(MolrsDType::from(DType::U8), MolrsDType::U8);
-        assert_eq!(MolrsDType::from(DType::UInt16), MolrsDType::UInt16);
-        assert_eq!(MolrsDType::from(DType::UInt32), MolrsDType::UInt32);
-        assert_eq!(MolrsDType::from(DType::Complex64), MolrsDType::Complex64);
-        assert_eq!(MolrsDType::from(DType::Complex128), MolrsDType::Complex128);
-        assert_ne!(MolrsDType::from(DType::Int64), MolrsDType::Int);
-        assert_ne!(MolrsDType::from(DType::U8), MolrsDType::UInt);
-        assert_ne!(MolrsDType::from(DType::Complex64), MolrsDType::Float);
-        assert_ne!(MolrsDType::from(DType::Complex128), MolrsDType::Float);
+    }
+
+    #[test]
+    fn every_variant_is_named_after_the_core_dtype() {
+        // The C constant is MOLRS_D_TYPE_<name>: the variant's name must be
+        // the core `DType::name()` for every dtype the core has.
+        for dtype in DType::ALL {
+            let variant = format!("{:?}", MolrsDType::from(dtype)).to_lowercase();
+            assert_eq!(variant, dtype.name());
+        }
     }
 }
