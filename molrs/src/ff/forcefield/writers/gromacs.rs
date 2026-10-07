@@ -1132,16 +1132,19 @@ impl GromacsTopFfWriter {
             Some(p) => p.clone(),
             None => intramolecular_pairs(frame, ff.special_bonds())?,
         };
-        let (pi, pj) = (
+        // A frame whose every pair is excluded (a water) has a column-less
+        // `pairs` block: no rows, not a missing column.
+        let endpoints = |key: &str| -> Result<Vec<usize>, String> {
+            if pairs.is_empty() {
+                return Ok(Vec::new());
+            }
             pairs
-                .get("atomi")
+                .get(key)
                 .and_then(|c| c.as_uint())
-                .ok_or("pairs has no atomi")?,
-            pairs
-                .get("atomj")
-                .and_then(|c| c.as_uint())
-                .ok_or("pairs has no atomj")?,
-        );
+                .map(|c| c.iter().map(|&v| v as usize).collect())
+                .ok_or_else(|| format!("pairs has no {key}"))
+        };
+        let (pi, pj) = (endpoints("atomi")?, endpoints("atomj")?);
         let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
         let cell = |key: &str, r: usize| -> Option<f64> {
             let col = pairs.get(key)?.as_float()?;
@@ -1172,7 +1175,7 @@ impl GromacsTopFfWriter {
         let sb = ff.special_bonds();
         let mut priced = HashSet::new();
         for r in 0..pi.len() {
-            let (a, b) = (pi[[r]] as usize, pj[[r]] as usize);
+            let (a, b) = (pi[r], pj[r]);
             let key = (a.min(b), a.max(b));
             let one_four = is_14.is_some_and(|f| f[[r]]);
             if one_four != near.contains(&key) {
@@ -2452,6 +2455,49 @@ SOL  2
                 (Ok(a), Ok(b)) => assert!((a - b).abs() <= 1e-14 * a.abs().max(b.abs())),
                 _ => assert_eq!(u, &v),
             }
+        }
+    }
+
+    /// A water: every pair of it is within three bonds, so its pair list has
+    /// no row (a column-less `pairs` block). It writes, the reader's frame or
+    /// one whose pair list the writer builds itself.
+    #[test]
+    fn a_molecule_with_every_pair_excluded_writes() {
+        let (ff, frame) = read_system(
+            "\
+[ defaults ]
+1  2  yes  0.5  0.8333
+[ atomtypes ]
+OW  OW  8  15.999  -0.834  A  0.315  0.6364
+HW  HW  1   1.008   0.417  A  0.0    0.0
+[ bondtypes ]
+OW  HW  1  0.09572  502416.0
+[ angletypes ]
+HW  OW  HW  1  104.52  628.02
+[ moleculetype ]
+SOL  2
+[ atoms ]
+1  OW  1  SOL  OW   1
+2  HW  1  SOL  HW1  1
+3  HW  1  SOL  HW2  1
+[ bonds ]
+1  2  1
+1  3  1
+[ angles ]
+2  1  3  1
+[ system ]
+water
+[ molecules ]
+SOL  1
+",
+        );
+        let mut bare = frame.clone();
+        bare.remove("pairs");
+        let writer = GromacsTopFfWriter::new();
+        for f in [&frame, &bare] {
+            let top = writer.write_system_str(&ff, f).unwrap();
+            assert!(top.contains("[ molecules ]"), "{top}");
+            assert!(!top.contains("[ pairs ]"), "{top}");
         }
     }
 
