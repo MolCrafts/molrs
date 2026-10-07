@@ -5,6 +5,7 @@
 //! [`crate::op`] (`det3`, `inv3`, `eigh_sym_3x3`); the vector kernels in [`crate::op::vec3`].
 
 mod complex;
+mod factorial;
 mod spherical_harmonics;
 mod virial;
 mod wigner3j;

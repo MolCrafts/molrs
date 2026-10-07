@@ -12,6 +12,7 @@ use molrs::op::F;
 use ndarray::Array3;
 use std::f64::consts::TAU;
 
+use super::orientation::wrap_2pi;
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::require_disp;
@@ -73,12 +74,6 @@ impl PmftR12 {
 pub struct PmftR12Args<'a> {
     pub nlists: &'a [Neighbors],
     pub orientations: &'a [Vec<F>],
-}
-
-#[inline]
-fn wrap_2pi(a: F) -> F {
-    let v = a.rem_euclid(TAU);
-    if v < 0.0 { v + TAU } else { v }
 }
 
 impl PmftR12 {

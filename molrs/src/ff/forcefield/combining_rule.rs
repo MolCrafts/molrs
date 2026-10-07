@@ -83,6 +83,18 @@ impl CombiningRule {
     }
 }
 
+/// Relative tolerance under which two Lennard-Jones `(ε, σ)` pairs are one.
+const SAME_LJ: F = 1e-12;
+
+/// Whether two Lennard-Jones `(ε, σ)` pairs are the same pair, to a relative
+/// [`SAME_LJ`] on each of ε and σ — the test that decides whether an explicit
+/// pair row says anything the [`CombiningRule`] (or the regular pair, for a
+/// 1-4 row) does not already say.
+pub(crate) fn same_lj(a: (F, F), b: (F, F)) -> bool {
+    let close = |x: F, y: F| (x - y).abs() <= SAME_LJ * x.abs().max(y.abs());
+    close(a.0, b.0) && close(a.1, b.1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
