@@ -104,7 +104,7 @@
 //!
 //! # The perceived type is a *perceived fact*, and lives in its own key
 //!
-//! The type is written to [`BCC_BOND_TYPE`] — never to the bond's [`keys::TYPE`],
+//! The type is written to [`BCC_BOND_TYPE`] — never to the bond's [`keys::TYPE`](crate::core::keys::TYPE),
 //! which belongs to the **caller**: it is where a bond's force-field type *name*
 //! (`c3-c3`) or a reader's LAMMPS bond-type id lives, and it is what `to_frame` puts
 //! in the `bonds` block's `type` column for every bonded kernel to resolve its
@@ -153,7 +153,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// receive a [`BCC_BOND_TYPE`] prop holding the perceived type, and the clone is
 /// returned. Bond `order` is *not* rewritten — the perceived Kekulé structure is
 /// consumed internally and does not leak into the graph. Neither is the bond's
-/// [`keys::TYPE`], which is the caller's (see the [module docs](self)).
+/// [`keys::TYPE`](crate::core::keys::TYPE), which is the caller's (see the module docs of `perceive::bcc_bond_class`).
 ///
 /// The type is always (re)derived from structure: a [`BCC_BOND_TYPE`] already on
 /// the input is read only as an aromaticity *hint* (7, 8 and 10 mark an aromatic
@@ -207,7 +207,7 @@ pub(super) const AROMATIC_UNRESOLVED: i32 = 10;
 /// ```
 ///
 /// The caller's own bond labels are untouched — perception neither reads nor
-/// writes [`keys::TYPE`], so a molecule already carrying force-field bond-type
+/// writes [`keys::TYPE`](crate::core::keys::TYPE), so a molecule already carrying force-field bond-type
 /// *names* (a `String` column an `i32` could never share) survives it unchanged
 /// and is still usable to build a force field:
 ///
@@ -293,7 +293,7 @@ pub fn assign_bcc_bond_types(mol: &Atomistic) -> Atomistic {
 ///
 /// A clone of `mol` whose every bond carries a [`BCC_BOND_TYPE`] prop in
 /// `{1, 2, 3, 6, 7, 8, 9}` (10 only as above). As with `assign_bcc_bond_types`,
-/// bond `order` and [`keys::TYPE`] are not rewritten.
+/// bond `order` and [`keys::TYPE`](crate::core::keys::TYPE) are not rewritten.
 pub fn assign_bcc_bond_types_from_connectivity(mol: &Atomistic) -> Atomistic {
     if mol.n_bonds() == 0 {
         return mol.clone();
@@ -530,7 +530,7 @@ impl BondGraph {
     /// O/S, where that nitrogen carries a *second* terminal chalcogen: nitrite, and
     /// only its kin.
     ///
-    /// Two deliberate repairs to `bondtype.c` (see the [module docs](self)):
+    /// Two deliberate repairs to `bondtype.c` (see the module docs of `perceive::bcc_bond_class`):
     ///
     /// * the second-chalcogen scan is **exhaustive**, not "first non-partner
     ///   neighbour only" — antechamber's `break` is outside its `if`, which makes

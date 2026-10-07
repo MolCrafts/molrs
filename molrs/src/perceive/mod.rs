@@ -78,6 +78,8 @@ mod stereo;
 mod subgraph;
 
 pub use aromaticity::assign_aromaticity;
+// The in-place marker, for SMARTS reactions and the conformer pipeline.
+#[cfg(feature = "smiles")]
 pub(crate) use aromaticity::mark_aromaticity;
 pub use bcc_bond_class::{assign_bcc_bond_types, assign_bcc_bond_types_from_connectivity};
 pub use bond_order::{assign_bond_orders, perceive_bond_orders};

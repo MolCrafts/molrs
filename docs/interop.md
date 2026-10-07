@@ -64,9 +64,9 @@ definitions typing assigned. Compiling is
 `PotentialCompiler::new(ff).compile(&frame)`.
 The neighbour list is *yours* because you are the one who knows when it goes
 stale: a minimizer that moves atoms decides when to rebuild it, and molrs will
-not guess. (WASM `LBFGS` may install a topology pair list when no neighbor list
-is supplied — that still lives on the optimizer, not as a free-floating
-`optimizeGeometry`.)
+not guess. (WASM `Lbfgs` takes its pairs from the `Neighbors` table it is
+constructed with, through `ff::potential::intramolecular_pairs_from_neighbors`
+— the same exclusion and 1-4 rules as `intramolecular_pairs`.)
 
 (A `MMFF94Typifier::build(&mol)` convenience used to fold all three into one call.
 It was deleted — it had, for its whole life, compiled potentials with **no

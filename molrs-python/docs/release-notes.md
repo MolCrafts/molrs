@@ -174,7 +174,7 @@ Python alike. The Rust crate root holds subsystems only (`molrs::core`,
 `molrs::ff`, `molrs::io`, …), and so does `import molrs`:
 `molrs.core.Frame`, `molrs.core.Box`, `molrs.core.Atomistic`,
 `molrs.ff.forcefield.ForceField`, `molrs.ff.potential.PotentialCompiler`,
-`molrs.compute.RDF`. The data model is **one core**: every core name is flat
+`molrs.compute.Rdf`. The data model is **one core**: every core name is flat
 on `molrs::core` / `molrs.core`, with three vocabularies as submodules —
 `core::keys` (every column, frame-meta and graph key, in one place),
 `core::schema` and `core::constants` (every physical and engine constant:
@@ -183,7 +183,8 @@ Coulomb constant, unit factors). The cell is `SimBox` in Rust and `Box`
 everywhere else; the graph is `MolGraph` everywhere; the chemical bond class
 is `BondOrder`, and freud's bond-orientational histogram is
 `BondOrientationalOrder`. Ring perception has one owner,
-`molrs::perceive::rings`; whole-graph moves are `molrs::op::geometry`; the
+`molrs::perceive::perceive_rings`; whole-graph moves are `molrs::op`'s
+(`translate`, `rotate`, `scale`, `center`); the
 record's `ForceFieldSection` and `MOLREC_VERSION` are `molrs::io::mrec`'s.
 `molrs.__version__` is the package version. `molrs.io.raw`,
 `molrs.fields` and the alias functions are gone — every reader emits the
@@ -210,6 +211,52 @@ records, `SmilesError`), `molrs.io.log` (the LAMMPS log records),
 `molrs::io::smiles::read_smiles`) reads one molecule — connectivity only —
 and refuses a `'.'`-separated set, and `read_lammps_log_str` reads a log
 from text.
+
+### Analysis, perception, geometry and dynamics
+
+- **Names that state their job, Python equal to Rust.** Acronyms are cased
+  as words (`Msd`, `Rdf`, `Vacf`, `PmftXy`, `IrSpectrum`, `Lbfgs`), counts
+  are `n_*`, and every `molrs.compute` name is the Rust one: the
+  `Dielectric` / `Persist` namespaces are the functions `dipole_moment`,
+  `current_density`, `static_dielectric_constant`, `decompose_current` and
+  `pair_survival_tcf`; `Onsager` is `OnsagerCorrelation`; the three
+  `*Distribution` classes are `DistributionFunction(observable, …)`; the
+  spectral checks are `KramersKronig`, `ConductivitySumRule`,
+  `RouteAgreement`; the Voronoi analyses are `VoronoiDomainAnalysis` /
+  `VoronoiVoidAnalysis`.
+- **Perception is two verbs.** The `Perceive` builder is gone:
+  `perceive_<fact>(mol)` returns a side table (`perceive_rings` →
+  `RingInfo`, `perceive_bond_orders`, `perceive_rotatable_bonds`, …) and
+  `assign_<fact>(mol)` writes the fact onto a clone (`assign_rings`,
+  `assign_aromaticity`, `assign_stereo`, `assign_bcc_bond_types`, …), in
+  Rust, Python and WASM alike; `add_hydrogens` is public beside
+  `remove_hydrogens`.
+- **One implementation each.** One multiple-time-origin ACF
+  (`compute::autocorrelation`) behind `Acf`, `Vacf`, the Debye dipole ACF and
+  the Green–Kubo current ACF; one Einstein `D = slope / (2 n_dims)`
+  (`EinsteinDiffusionResult::diffusion_coefficient`, which the C++ binding
+  calls); one kinetic energy and temperature (`compute::kinetic_energy`,
+  `kinetic_temperature`, which `md.MD`'s thermo calls); one PMFT orientation
+  reader (`compute::planar_orientation_angles`: quaternion columns or
+  head–tail axes, for Python and WASM alike); one exclusion rule for a
+  neighbour-table pair list (`ff::potential::intramolecular_pairs_from_neighbors`,
+  used by the WASM optimizer).
+- **`md` is integrators and force providers.** The periodic ghost halo is
+  `core::GhostHalo`; `Direct` is `SelfPairedForces`.
+- **One optimization report.** `optimize::Lbfgs` takes `LbfgsSettings`, whose
+  `DEFAULT` every binding reads (the WASM optimizer ran 200 steps by default,
+  now 500 like the others); `Optimizer::minimize` and Python
+  `Lbfgs.minimize` return the one `OptimizationReport`.
+- **ETKDG uses the force-field kernels.** Its torsions are priced by the
+  `dihedral periodic` kernel and its sp2 planarity by the new
+  `improper_style distance` kernel (`ImproperDistance`), with analytic
+  forces, and the flat-ring basic-knowledge torsions it computed are now
+  applied.
+- **Flat `op`.** `molrs::op::X` matches `molrs.op.X` (`op::vec3` stays a
+  namespace); the superposition result is `Superposition`, and the rigid
+  helpers say what they do (`transform_point`, `rotation_about`,
+  `orthonormal_frame`, `place_from_internal_coords`). `Box.contains` and
+  `NeighborQuery.unbounded` replace `isin` and `free`.
 
 ### Packaging
 
@@ -306,6 +353,10 @@ the same as in 0.15, except where 0.15 was wrong:
 - `pair_style lj/cut` alone read from LAMMPS prices no charges, as in LAMMPS.
 - An explicit LJ cross row (NBFIX) prices its pair in place of the mixing
   rule (0.15.0 compiled it and ignored it).
+
+ETKDG conformers of molecules with sp2 rings differ slightly from 0.15: the
+flat-ring torsions RDKit applies are now applied, and the second stage's
+torsion and planarity forces are analytic instead of finite differences.
 
 Records molrs 0.16 writes are version 2 and cannot be read by 0.15. A
 `ForceField` pickled by 0.15 does not unpickle in 0.16.

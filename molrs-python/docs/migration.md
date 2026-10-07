@@ -1004,15 +1004,15 @@ The rule, applied crate-wide:
 |---|---|
 | `molrs::Frame`, `Block`, `FrameAccess`, `FrameView`, `ForceFieldSection`, `MetaMap`, `MetaValue`, `MolRec`, `Trajectory`, … (crate root, `molrs::core::…`, `molrs::store::frame::Frame`, `store::block::Block`, …) | `molrs::core::{Frame, Block, …}` |
 | `molrs::Atomistic`, `Element`, `MolGraph`, `NodeId`, `RelationId`, `Topology`, `CoarseGrain`, … (crate root, `molrs::system::{atomistic, molgraph, topology, coarsegrain, bond, bond_weights, extract, graph_hash, link, port}::…`) | `molrs::core::{Atomistic, Element, …}` (also `FromMolGraph`, `TopologyError`) |
-| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::core::{SimBox, Mic, BoxKind, BoxError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}`; `molrs::op::geometry::{translate, rotate, scale, center, CenterError}` |
+| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::core::{SimBox, Mic, BoxKind, BoxError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}`; `molrs::op::{translate, rotate, scale, center, CenterError}` |
 | `molrs::spatial::neighbors::{aabb, bruteforce, filter, grid}::…`, `spatial::region::{region, cylinder, ellipsoid, half_space, polyhedron, sphere_union}::…` | `molrs::core::…`, `molrs::core::…` |
 | `molrs::units::{dimension, error, preset, quantity, registry, unit}::…` (and the crate-root `Unit`, `UnitRegistry`, …) | `molrs::core::…` |
 | `molrs::math::virial::Virial` | `molrs::core::Virial` |
-| `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::types::…`, the one owner of the scalar and array aliases |
+| `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::{F, F3, FNx3, …}` (flat), the one owner of the scalar and array aliases |
 | `molrs::store::schema::consts::…` | `molrs::core::keys::…` |
 | `molrs::store::schema::{block, column, document, validator, violation}::…` | `molrs::core::schema::…` |
 | `molrs::GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler`, … | `molrs::builder::…` |
-| `molrs::compute::<family>::X`, `compute::<family>::<file>::X` (`compute::order::Nematic`, `compute::distribution::AtomGroups`, `compute::dynamics::persist::pair_survival_tcf`, `compute::dielectric::compute_dipole_moment`, …) | `molrs::compute::X` — now also the `*Args` aliases, `EinsteinDiffusionResult`, `AnyObservable`, `Observable` and the distribution observables, `NodeId`, `BOUNDARY`, `compute_qlm` |
+| `molrs::compute::<family>::X`, `compute::<family>::<file>::X` (`compute::order::Nematic`, `compute::distribution::AtomGroups`, `compute::dynamics::persist::pair_survival_tcf`, `compute::dielectric::compute_dipole_moment`, …) | `molrs::compute::X` — now also the `*Args` aliases, `EinsteinDiffusionResult`, `InternalCoordinate` (was `AnyObservable`), `Observable` and the distribution observables, `VORONOI_BOUNDARY`, `steinhardt_qlm`; see [Wave S4](#wave-s4-analysis-perception-geometry-dynamics) for the renames |
 | `molrs::ff::potential::<family>::<file>::X` (`pair::lj_cut::LJCut`, `bond::harmonic::BondHarmonic`, `kspace::pme::PmePotential`, …) | `molrs::ff::potential::<family>::X` (also `pair::{VdwAtomParams, VdwStyleParams, lj_ab_to_sigma_epsilon}`, `angle::CharmmAngleParams`, `kspace::PmeParams`) |
 | `molrs::ff::potential::{compile, error, instances}::…` | `molrs::ff::potential::{PotentialCompiler, CompileError, Instances}` |
 | `molrs::ff::ir::{category, dim, engine, error, expression, form, registry, spec}::…`, `ff::ir::engine::positional` | `molrs::ff::ir::…`, `molrs::ff::ir::positional` |
@@ -1026,8 +1026,8 @@ The rule, applied crate-wide:
 | `molrs::io::mrec::schema::{MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::io::mrec::{MOLREC_VERSION, RESERVED_META_KEYS}` |
 | `molrs::io::mrec::{FrameSequence, FrameSequenceWriter}` | `molrs::io::mrec::{MrecReader, MrecWriter}` (Python `molrs.io.mrec.MrecReader` / `MrecWriter`, WASM `MrecReader`) |
 | `molrs::io::log::parse_lammps_log_text` | `molrs::io::log::read_lammps_log_str` |
-| `molrs::md::{error, forces, integrators, maxwell, pairs, types}::…` | `molrs::md::…` (also `com_velocity`) |
-| `molrs::optimize::lbfgs::…`, `perceive::{builder, subgraph}::…`, `signal::{acf, grid, window}::…`, `stream::message::…` | `molrs::optimize::…`, `molrs::perceive::…`, `molrs::signal::…` (also `SignalError`), `molrs::stream::…` |
+| `molrs::md::{error, forces, integrators, maxwell, pairs, types}::…` | `molrs::md::…`; `com_velocity` and `kinetic_energy` are `molrs::compute::{center_of_mass_velocity, kinetic_energy}` |
+| `molrs::optimize::lbfgs::…`, `perceive::{builder, subgraph}::…`, `signal::{acf, grid, window}::…`, `stream::message::…` | `molrs::optimize::…`, `molrs::perceive::…` (the builder is gone: [Wave S4](#wave-s4-analysis-perception-geometry-dynamics)), `molrs::signal::…` (also `SignalError`), `molrs::stream::…` |
 
 No longer public (each had no user outside the crate; reached before only
 through a file module): the pair styles' `*_typed_ctor`,
@@ -1037,9 +1037,9 @@ through a file module): the pair styles' `*_typed_ctor`,
 MIXING_RULES, ONE_FOUR_VALUES, UNIT_QUANTITIES, category_arity,
 check_pair_restatements, is_parameter_column, unit_preset}`,
 `system::port::PORTS`, the transport helpers `apply_unbiased_norm`,
-`component_means`, `gradient_axis0_order2`, `unbiased_cartesian_acf_scaled`,
+`component_means`, `gradient_axis0_order2`, `unbiased_cartesian_acf_scaled` (gone: `compute::autocorrelation` is the one ACF),
 `compute::environment::angular_separation::angular_distance`,
-`conformer::distgeom::assign_with_provenance`, and the typifier internals
+`conformer::distgeom` (private as a whole), and the typifier internals
 `estimate::{Candidate, CandidateSet, DEFAULT_IMPROPER, is_wildcard,
 substitution_table, empirical::{angle_k, angle_theta0, bond_k}}`,
 `opls::{CandidateTables, NoMatch, deps::OplsDependencyAnalyzer,
@@ -1067,13 +1067,13 @@ left column.
 | `molrs::store::typed_json` | crate-private (`typed_json::{encode_complex, decode_complex}` removed: unused) |
 | `molrs::store::keys`, `molrs::store::schema`, `molrs::units::constants` | `molrs::core::keys`, `molrs::core::schema`, `molrs::core::constants` |
 | `molrs::units::{lookup_preset, preset_names, register_preset, replace_preset}` | `molrs::core::{lookup_unit_preset, unit_preset_names, register_unit_preset, replace_unit_preset}` |
-| `molrs::spatial::{translate, rotate, scale, center, CenterError}`; `Atomistic::{translate, rotate, scale, center}`, `CoarseGrain::{translate, rotate, scale, center}` (Rust) | `molrs::op::geometry::{translate, rotate, scale, center, CenterError}` over `as_molgraph()` / `as_molgraph_mut()` (Python keeps the methods) |
+| `molrs::spatial::{translate, rotate, scale, center, CenterError}`; `Atomistic::{translate, rotate, scale, center}`, `CoarseGrain::{translate, rotate, scale, center}` (Rust) | `molrs::op::{translate, rotate, scale, center, CenterError}` over `as_molgraph()` / `as_molgraph_mut()` (Python keeps the methods) |
 | `molrs::system::BondType` | `molrs::core::BondOrder` (the chemical bond class; the `bond_type` key is unchanged) |
 | `molrs::compute::{BondOrder, BondOrderResult}`, Python `molrs.compute.BondOrder`, JS `BondOrder` | `molrs::compute::{BondOrientationalOrder, BondOrientationalOrderResult}`, `molrs.compute.BondOrientationalOrder`, JS `BondOrientationalOrder` |
 | `molrs::store::ColumnHolder`, `Column::from_<dtype>_holder` | `molrs::core::ColumnArray`, `Column::from_<dtype>_array` |
 | `molrs::store::ObservableData` | `molrs::core::ObservableValues` |
 | `molrs::system::entity_table::{Column, Cell}` | `molrs::core::{EntityColumn, EntityCell}` |
-| `molrs::system::{Topology::find_rings, TopologyRingInfo}` | `molrs::perceive::rings::{find_rings, RingInfo}` (the one ring perception; RingInfo keeps RDKit's name) |
+| `molrs::system::{Topology::find_rings, TopologyRingInfo}` | `molrs::perceive::{perceive_rings, RingInfo}` (the one ring perception; RingInfo keeps RDKit's name) |
 | `molrs::compute::NodeId` and the unused graph variants of `ComputeError` | removed |
 | `molrs::store::{ForceFieldSection, StyleEntry, EndpointKey, style_block_name, MolRec, Observables, MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::io::mrec::…` (feature `zarr`, which now enables `ff`) |
 | `ForceField::to_section()`, `to_section_in(&registry)`, `ForceField::from_section(&section)`; Python `ForceField.to_section()` / `ForceField.from_section(s)` | `ForceFieldSection::from_forcefield(&ff)`, `from_forcefield_in(&ff, &registry)`, `section.to_forcefield()`; Python `molrs.io.mrec.ForceFieldSection.from_forcefield(ff)` / `section.to_forcefield()` |
@@ -1176,11 +1176,11 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
 - **`molrs::md::SpecialWeights` → `molrs::ff::potential::SpecialWeights`**,
   and `PairWeights::special_weights(&topo)` returns it (was the per-atom
   lists to feed `SpecialWeights::new`).
-- **The soft packing potential is a potential; `LBFGS` is the one
+- **The soft packing potential is a potential; `Lbfgs` is the one
   optimizer.** `molrs::optimize::{SoftSpec, SoftLbfgs}` and
   `optimize::soft` are removed. `SoftSpec` is
   `molrs::ff::potential::soft::SoftSpec`; minimize with
-  `LBFGS::new(Arc::new(spec.potential(frame.simbox.as_ref())), fmax,
+  `Lbfgs::new(Arc::new(spec.potential(frame.simbox.as_ref())), settings
   max_steps, max_step, memory)`. `SoftPotential` resolves its own pairs: its
   springs at the first configuration it sees (as `SoftLbfgs` did), its
   non-bonded pairs rebuilt whenever an atom has moved half a 1 Å skin
@@ -1196,7 +1196,7 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
   `ff::typifier::mmff::params::{MMFFAtomProp, MMFFParams}` →
   `ff::typifier::mmff::{MMFFAtomProp, MMFFParams}`.
 - **One hybridization: `molrs::perceive::Hybridization`**, with
-  `perceive::{hybridizations, conjugated_atoms}` — RDKit's
+  `perceive::{perceive_hybridizations, perceive_conjugated_atoms}` — RDKit's
   `setHybridization` / `setConjugation`, checked against RDKit 2026.03 on 27
   molecules. It replaces `ff::mmff::hybrid::Hyb`, the UFF typifier's private
   heuristic and the conformer's `distgeom::mol_features::Hybridization`.
@@ -1275,14 +1275,10 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
   `AtomPrimitive::{AtomicNumber, RingSizeRange, RingBondCount, ContextLabel}`;
   `[#6]` is `AtomicNumber(6)`, no longer `Element { "C" }`. `perceive::smarts`
   needs the `smiles` feature (`ff` enables it).
-- One way to perceive onto a graph, the `molrs::perceive::Perceive` builder.
-  Crate-private now: `perceive::hydrogens::add_hydrogens` (→
-  `Perceive::find_hydrogens`), `aromaticity::perceive_aromaticity` (→
-  `find_aromaticity`), `bond_order::find_bond_orders`,
-  `bond_type::{find_bond_types, find_kekule_orders}` (→ the same-named
-  builder methods), `bond_type::find_bond_types_from_connectivity` (→
-  `Perceive::find_bond_types_from_connectivity`),
-  `bond_type::assign_kekule_numbers`. The side-table queries stay public.
+- Perception is free functions in two shapes, `perceive_<fact>` (a side
+  table) and `assign_<fact>` (writes a clone): see
+  [Wave S4](#wave-s4-analysis-perception-geometry-dynamics).
+  `kekule::assign_kekule_numbers` is crate-private.
 - `molrs::perceive::{Coarsener, CoarsenError}` → `molrs::builder::{Coarsener,
   CoarsenError}` (Python: `molrs.perceive.Coarsener` →
   `molrs.builder.Coarsener`).
@@ -1308,8 +1304,9 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
     references) and `columns` (Frame columns, dump attribute names).
   - `molrs::perceive::aromaticity` and `molrs::ff::forcefield::lammps_codecs`
     are crate-private (they had no public item).
-  - `molrs::optimize::{minimize_lbfgs_rms, MinResult}` are crate-private (the
-    ETKDG stages are their one user); `optimize::LBFGS` is the optimizer.
+  - `molrs::optimize::minimize_lbfgs_rms` is crate-private (the ETKDG
+    stages are its one user); `optimize::Lbfgs` is the optimizer and
+    `optimize::OptimizationReport` its one report.
   - `molrs::ff::charge::compute_gasteiger_charges` is gone:
     `GasteigerModel` is the door.
   - The record section's units table derives each section preset from
@@ -1396,7 +1393,7 @@ it any more.
   (`molrs.io.read_*_trajectory(path).read_all()`), the native `*TrajReader`
   classes as public names (`molrs.io.read_*_trajectory` wraps them in
   `molrs.io.trajectory.TrajectoryReader`), `Atomistic.max_ring_system_size()`
-  (`molrs.perceive.RingInfo(mol).max_ring_system_size()`), and the
+  (`molrs.perceive.perceive_rings(mol).max_ring_system_size()`), and the
   `molrs.md` lazy loader.
 - The protocol and driver modules are private: `molrs.compute.Compute`,
   `molrs.ff.potential.Potential` and `molrs.md.MD` are the only spellings.
@@ -1468,7 +1465,7 @@ it any more.
 | `molrs.schema.relation_endpoints` | `molrs.core.schema.relation_endpoints` |
 | `molrs.schema.to_json` | `molrs.core.schema.to_json` |
 | `molrs.schema.to_markdown` | `molrs.core.schema.to_markdown` |
-| `molrs.Atomistic.max_ring_system_size()` | `molrs.perceive.RingInfo(mol).max_ring_system_size()` |
+| `molrs.Atomistic.max_ring_system_size()` | `molrs.perceive.perceive_rings(mol).max_ring_system_size()` |
 
 **Force fields: `molrs.ff` holds only its submodules**
 
@@ -1614,20 +1611,20 @@ it any more.
 | `molrs.compute.density` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.density.GaussianDensity` | `molrs.compute.GaussianDensity` |
 | `molrs.compute.density.LocalDensity` | `molrs.compute.LocalDensity` |
-| `molrs.compute.density.RDF` | `molrs.compute.RDF` |
-| `molrs.compute.density.RDFResult` | `molrs.compute.RDFResult` |
+| `molrs.compute.density.RDF` | `molrs.compute.Rdf` |
+| `molrs.compute.density.RDFResult` | `molrs.compute.RdfResult` |
 | `molrs.compute.density.SpatialDistribution` | `molrs.compute.SpatialDistribution` |
 | `molrs.compute.density.SpatialDistributionResult` | `molrs.compute.SpatialDistributionResult` |
 | `molrs.compute.dielectric` | `molrs.compute` (flat; the domain subpackages are gone) |
-| `molrs.compute.dielectric.Dielectric` | `molrs.compute.Dielectric` |
+| `molrs.compute.dielectric.Dielectric` | the functions `molrs.compute.{dipole_moment, current_density, static_dielectric_constant, decompose_current}` |
 | `molrs.compute.diffraction` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.diffraction.StaticStructureFactorDebye` | `molrs.compute.StaticStructureFactorDebye` |
 | `molrs.compute.distribution` | `molrs.compute` (flat; the domain subpackages are gone) |
-| `molrs.compute.distribution.AngleDistribution` | `molrs.compute.AngleDistribution` |
+| `molrs.compute.distribution.AngleDistribution` | `molrs.compute.DistributionFunction` (`"angle"`) |
 | `molrs.compute.distribution.CombinedDistribution` | `molrs.compute.CombinedDistribution` |
 | `molrs.compute.distribution.CombinedDistributionResult` | `molrs.compute.CombinedDistributionResult` |
-| `molrs.compute.distribution.DihedralDistribution` | `molrs.compute.DihedralDistribution` |
-| `molrs.compute.distribution.DistanceDistribution` | `molrs.compute.DistanceDistribution` |
+| `molrs.compute.distribution.DihedralDistribution` | `molrs.compute.DistributionFunction` (`"dihedral"`) |
+| `molrs.compute.distribution.DistanceDistribution` | `molrs.compute.DistributionFunction` (`"distance"`) |
 | `molrs.compute.distribution.DistributionResult` | `molrs.compute.DistributionResult` |
 | `molrs.compute.dynamics` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.dynamics.Acf` | `molrs.compute.Acf` |
@@ -1635,7 +1632,7 @@ it any more.
 | `molrs.compute.dynamics.VanHove` | `molrs.compute.VanHove` |
 | `molrs.compute.dynamics.VanHoveResult` | `molrs.compute.VanHoveResult` |
 | `molrs.compute.environment` | `molrs.compute` (flat; the domain subpackages are gone) |
-| `molrs.compute.environment.BondOrder` | `molrs.compute.BondOrder` |
+| `molrs.compute.environment.BondOrder` | `molrs.compute.BondOrientationalOrder` |
 | `molrs.compute.fitting` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.fitting.CumulativeTrapezoid` | `molrs.compute.CumulativeTrapezoid` |
 | `molrs.compute.fitting.LinearFit` | `molrs.compute.LinearFit` |
@@ -1648,12 +1645,12 @@ it any more.
 | `molrs.compute.ml.DescriptorRow` | `molrs.compute.DescriptorRow` |
 | `molrs.compute.ml.KMeans` | `molrs.compute.KMeans` |
 | `molrs.compute.ml.KMeansResult` | `molrs.compute.KMeansResult` |
-| `molrs.compute.ml.Pca2` | `molrs.compute.Pca2` |
+| `molrs.compute.ml.Pca2` | `molrs.compute.Pca` |
 | `molrs.compute.ml.PcaResult` | `molrs.compute.PcaResult` |
 | `molrs.compute.msd` | `molrs.compute` (flat; the domain subpackages are gone) |
-| `molrs.compute.msd.MSD` | `molrs.compute.MSD` |
-| `molrs.compute.msd.MSDResult` | `molrs.compute.MSDResult` |
-| `molrs.compute.msd.MSDTimeSeries` | `molrs.compute.MSDTimeSeries` |
+| `molrs.compute.msd.MSD` | `molrs.compute.Msd` |
+| `molrs.compute.msd.MSDResult` | `molrs.compute.MsdResult` |
+| `molrs.compute.msd.MSDTimeSeries` | `molrs.compute.MsdTimeSeries` |
 | `molrs.compute.order` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.order.Hexatic` | `molrs.compute.Hexatic` |
 | `molrs.compute.order.LegendreReorientation` | `molrs.compute.LegendreReorientation` |
@@ -1662,14 +1659,14 @@ it any more.
 | `molrs.compute.order.SolidLiquid` | `molrs.compute.SolidLiquid` |
 | `molrs.compute.order.Steinhardt` | `molrs.compute.Steinhardt` |
 | `molrs.compute.pmft` | `molrs.compute` (flat; the domain subpackages are gone) |
-| `molrs.compute.pmft.PMFTXY` | `molrs.compute.PMFTXY` |
+| `molrs.compute.pmft.PMFTXY` | `molrs.compute.PmftXy` |
 | `molrs.compute.protocol.Compute` | `molrs.compute.Compute` |
 | `molrs.compute.spectroscopy` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.spectroscopy.DipoleAutocorrelationSpectrum` | `molrs.compute.DipoleAutocorrelationSpectrum` |
 | `molrs.compute.spectroscopy.DipoleRateCrossSpectrum` | `molrs.compute.DipoleRateCrossSpectrum` |
 | `molrs.compute.spectroscopy.EinsteinHelfandSpectrum` | `molrs.compute.EinsteinHelfandSpectrum` |
 | `molrs.compute.spectroscopy.GreenKuboSpectrum` | `molrs.compute.GreenKuboSpectrum` |
-| `molrs.compute.spectroscopy.IRSpectrum` | `molrs.compute.IRSpectrum` |
+| `molrs.compute.spectroscopy.IRSpectrum` | `molrs.compute.IrSpectrum` |
 | `molrs.compute.spectroscopy.PowerSpectrum` | `molrs.compute.PowerSpectrum` |
 | `molrs.compute.spectroscopy.RamanSpectrum` | `molrs.compute.RamanSpectrum` |
 | `molrs.compute.spectroscopy.ResonanceRamanSpectrum` | `molrs.compute.ResonanceRamanSpectrum` |
@@ -1687,9 +1684,9 @@ it any more.
 | `molrs.compute.transport.EinsteinDiffusion` | `molrs.compute.EinsteinDiffusion` |
 | `molrs.compute.transport.GreenKuboConductivity` | `molrs.compute.GreenKuboConductivity` |
 | `molrs.compute.transport.GreenKuboDiffusion` | `molrs.compute.GreenKuboDiffusion` |
-| `molrs.compute.transport.Onsager` | `molrs.compute.Onsager` |
-| `molrs.compute.transport.Persist` | `molrs.compute.Persist` |
-| `molrs.compute.transport.VACF` | `molrs.compute.VACF` |
+| `molrs.compute.transport.Onsager` | `molrs.compute.OnsagerCorrelation` (a compute: `.compute(...)`) |
+| `molrs.compute.transport.Persist` | the function `molrs.compute.pair_survival_tcf` |
+| `molrs.compute.transport.VACF` | `molrs.compute.Vacf` |
 | `molrs.compute.voronoi` | `molrs.compute` (flat; the domain subpackages are gone) |
 | `molrs.compute.voronoi.DensityGrid` | `molrs.compute.DensityGrid` |
 | `molrs.compute.voronoi.MolecularMoments` | `molrs.compute.MolecularMoments` |
@@ -1733,12 +1730,12 @@ The JS namespace stays flat. What changes for callers:
 | `new LinkedCell(cutoff, storeDistSq?, storeDiff?).build(frame)` | `const nl = new NeighborList(cutoff); nl.build(frame); nl.neighbors({ distSq, disp })` |
 | `new BruteForce(cutoff, …).build(frame)` | `NeighborList.bruteForce(cutoff)`, then `build` / `neighbors` (no 8 000-atom refusal) |
 | `new LinkedCell(cutoff).query(refFrame, otherFrame)` | `new NeighborQuery(refFrame, cutoff).query(otherFrame)` (both columns kept) |
-| `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `new Perceive().findRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
+| `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `assignRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
 | `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::core::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
 | `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XYZStream` / `PDBStream` / `SDFStream` / `LAMMPSStream` / `LAMMPSTrajStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
 | `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DCDStream` / `TRRStream` / `XTCStream` |
 | `new TrajectoryReader(files)` / `TrajectoryReader.fromZip` / `.fromStore` (a `*.mrec` store) | `new MrecReader(files)` / `MrecReader.fromZip` / `.fromStore`: named as Rust's `molrs::io::mrec::MrecReader` |
-| `new LBFGS(pots)` (an internal O(N²) topology pair list, N ≤ 2000) | `new LBFGS(pots, nl.neighbors())`: the table is required and comes from a `NeighborList` (or `NeighborList.bruteForce`); the force field's `special_bonds` decide whether 1-2 / 1-3 pairs are kept, as `intramolecular_pairs` does |
+| `new LBFGS(pots)` (an internal O(N²) topology pair list, N ≤ 2000) | `new Lbfgs(pots, nl.neighbors())`: the table is required and comes from a `NeighborList` (or `NeighborList.bruteForce`); the force field's `special_bonds` decide whether 1-2 / 1-3 pairs are kept, as `intramolecular_pairs` does |
 
 **The analysis classes drop the `Wasm` prefix**, so every compute class is
 named like `RDF`, `MSD` and `Cluster` already were: `WasmVACF` → `VACF`,
@@ -1782,7 +1779,7 @@ of `molrs::io::mrec::ForceFieldSection`, i.e.
 document (`name` / `units` / `special_bonds` / `styles[]` with `params` /
 `str_params` / `array_params` / `types`) is gone and refused on read; a force
 field `to_section` refuses is `InvalidArgument` from `molrs_ff_to_json`.
-capi's `F` is `molrs::op::types::F` (the header keeps `typedef double F;`).
+capi's `F` is `molrs::op::F` (the header keeps `typedef double F;`).
 molrs-capi and molrs-cxxapi link molrs with `full,filesystem,rayon,serde`.
 
 C++ (`molrs-cxxapi`):
@@ -1796,6 +1793,151 @@ C++ (`molrs-cxxapi`):
   generates it and rewrites it only when the text changes; Atomiverse's
   CMake reads it from the source tree (`corrosion_add_cxxbridge`, and
   `MolrsContract.cmake`'s feature probes) before any cargo build.
+
+#### Wave S4: analysis, perception, geometry, dynamics
+
+Names in `compute`, `perceive`, `op`, `md`, `optimize`, `conformer`,
+`signal`, `builder` and `stream` state their job, acronyms are cased as
+words (`Msd`, `Rdf`, `Lbfgs`), counts are `n_*` (numpy / freud), and every
+Python name is the Rust name. No old name is kept as an alias.
+
+**`compute`** (Rust and Python, WASM where bound):
+
+| 0.16 pre-release | Now |
+|---|---|
+| `MSD`, `MSDAccumulator`, `MSDResult`, `MSDTimeSeries` | `Msd`, `MsdAccumulator`, `MsdResult`, `MsdTimeSeries` |
+| `RDF`, `RDFAccumulator`, `RDFResult` | `Rdf`, `RdfAccumulator`, `RdfResult` |
+| `VACF`, `VACFAccumulator` | `Vacf`, `VacfAccumulator` |
+| `PMFTXY`, `PMFTXYT`, `PMFTXYZ`, `PMFTR12` (+ `*Args`, `*Result`) | `PmftXy`, `PmftXyt`, `PmftXyz`, `PmftR12` |
+| `IRFlux`, `IRSpectrum` | `IrFlux`, `IrSpectrum` |
+| `COMResult`, `RgResult` | `CenterOfMassResult`, `RadiusOfGyrationResult` |
+| `Pca2` | `Pca` |
+| `MatchEnv`, `MatchEnvResult` | `EnvironmentMatch`, `EnvironmentMatchResult` |
+| `PersistResult` | `PairSurvivalResult` |
+| `OnsagerResult` | `OnsagerCorrelationResult` |
+| `AnyObservable` | `InternalCoordinate` |
+| `DistKind`, `NetworkResult`, `LifetimeResult` | `HBondDistanceKind`, `HBondNetworkResult`, `HBondLifetimeResult` |
+| `DomainAnalysis`, `DomainResult`, `VoidAnalysis`, `VoidResult`, `Face`, `BOUNDARY` | `VoronoiDomainAnalysis`, `VoronoiDomainResult`, `VoronoiVoidAnalysis`, `VoronoiVoidResult`, `VoronoiFace`, `VORONOI_BOUNDARY` |
+| `compute_qlm`, `compute_current_density`, `compute_dipole_moment` | `steinhardt_qlm`, `current_density`, `dipole_moment` |
+| `autocorrelation(&series, max_lag)`; `transport::unbiased_cartesian_acf(_scaled)` | `autocorrelation(series.view(), max_lag, mean_subtract)` — the one multiple-time-origin ACF; a `(T, D)` series is `series.view().insert_axis(Axis(1))` |
+| `fitting::forward_fft_onesided` (crate-private) | `molrs::signal::forward_fft_onesided` |
+| `fit.slope / (2.0 * dims)` by hand | `EinsteinDiffusionResult::diffusion_coefficient(n_dims, window)` |
+| `md::kinetic_energy`, `md::com_velocity` | `compute::kinetic_energy`, `compute::center_of_mass_velocity`; new `compute::kinetic_temperature` |
+| — | `compute::planar_orientation_angles`, `compute::orientation_quaternions`: the per-particle orientations a PMFT reads (quaternion columns or an `orientations` head–tail block) |
+
+The implementation modules follow (`ml` → `clustering` + `decomposition`,
+`density/spatial` → `spatial_distribution`, `dynamics/persist` →
+`pair_survival`, `environment/match_env` → `environment_match`, `traits` +
+`result` → `analysis_contract`); they are private.
+
+Python `molrs.compute` drops its namespace classes for the Rust shapes:
+
+| Before | Now |
+|---|---|
+| `Dielectric.compute_dipole_moment(…)` (and the other static methods) | `dipole_moment(…)`, `current_density(…)`, `static_dielectric_constant(…)`, `decompose_current(…)` |
+| `Persist.pair_survival_tcf(…)` | `pair_survival_tcf(…)` |
+| `Onsager.correlation(p_i, p_j, dt, n)` | `OnsagerCorrelation().compute(p_i, p_j, dt, n)` |
+| `AngleDistribution(n)`, `DihedralDistribution(n)`, `DistanceDistribution(n, lo, hi)` | `DistributionFunction("angle", n)`, `DistributionFunction("dihedral", n)`, `DistributionFunction("distance", n, lo, hi)` |
+| `kramers_kronig(f, re, im, eps_inf)`, `conductivity_sum_rule(f, s, j2, v, t)`, `route_agreement(d)` | `KramersKronig(eps_inf).check(f, re, im)`, `ConductivitySumRule(j2, v, t).check(f, s)`, `RouteAgreement().check(d)` |
+| `voronoi_domains(cells, labels)`, `voronoi_voids(cells, mask, v)` | `VoronoiDomainAnalysis().analyze(cells, labels)`, `VoronoiVoidAnalysis().analyze(cells, mask, v)` |
+| `PmftXy.compute` reads an `orientations` block only | reads that block or the `quatw`…`quatk` columns (not both) |
+| — | `kinetic_energy`, `kinetic_temperature`, `center_of_mass_velocity` |
+
+**`perceive`**: the `Perceive` builder is deleted (Rust, Python, WASM). Every
+perception is a free function, `perceive_<fact>` for a side table and
+`assign_<fact>` for writing the fact onto a clone, as RDKit splits a query
+from an `Assign*`:
+
+| Before | Now |
+|---|---|
+| `rings::find_rings` | `perceive_rings` (Python `perceive_rings(mol)`; `RingInfo` has no constructor) |
+| `Perceive::find_rings` | `assign_rings` |
+| `Perceive::find_aromaticity` | `assign_aromaticity` |
+| `Perceive::find_hydrogens` | `add_hydrogens` (an edit, beside `remove_hydrogens`) |
+| `Perceive::find_stereo` | `assign_stereo` |
+| `Perceive::find_rotatable` | `assign_rotatable_bonds` |
+| `Perceive::find_bond_orders` | `assign_bond_orders` |
+| `Perceive::find_kekule_orders` | `assign_kekule_bond_orders` |
+| `Perceive::find_bond_types[_from_connectivity]` | `assign_bcc_bond_types[_from_connectivity]` |
+| `Perceive::find_equivalence_classes[_with]` | `assign_equivalence_classes(mol, opts)` |
+| `bond_order::judge_bond_orders` | `perceive_bond_orders` |
+| `rotatable::detect_rotatable_bonds[_with_downstream]` | `perceive_rotatable_bonds[_with_downstream]` |
+| `stereo::{find_chiral_centers, assign_stereo_from_3d, assign_bond_stereo_from_3d}` | `perceive_chiral_centers`, `perceive_tetrahedral_stereo`, `perceive_bond_stereo` |
+| `equivalence::find_equivalence_classes` | `perceive_equivalence_classes` |
+| `hybridizations`, `conjugated_atoms` | `perceive_hybridizations`, `perceive_conjugated_atoms` |
+| `ring_class::{ring_classes, RingSlot, RingFacts}` | `perceive_ring_classes`, `AntechamberRingMembership`, `AntechamberRingSummary` |
+| `rings::max_ring_system_size(mol)` | `perceive_rings(mol).max_ring_system_size()` |
+| `rotatable::atom_id_to_index` | removed (a test helper) |
+| `RingInfo::{num_rings, num_atom_rings, num_bond_rings}` | `n_rings`, `n_atom_rings`, `n_bond_rings` |
+
+Every `perceive` leaf module is private (`perceive::rings::RingInfo` →
+`perceive::RingInfo`); `bond_type` is split into `kekule` and
+`bcc_bond_class`. WASM: `new Perceive().findRings(f)` → `assignRings(f)`,
+likewise `assignAromaticity`, `addHydrogens`, `removeHydrogens`,
+`assignKekuleBondOrders`.
+
+**`op`**: the leaf modules are private and re-exported flat, except
+`op::vec3`, which stays a namespace (`add`, `sub`, `dot`, `dihedral`, …).
+
+| Before | Now |
+|---|---|
+| `op::types::{F, Vec3, …}` | `op::{F, Vec3, …}` |
+| `op::{geometry, linalg, rigid, so3, random, superpose}::X` | `op::X` |
+| `superpose::Fit`, `SuperposeError` (Python `molrs.op.Fit`) | `Superposition`, `SuperpositionError` (Python `molrs.op.Superposition`) |
+| `rigid::{apply, apply_all, compose}` | `transform_point`, `transform_points`, `compose_rigid` |
+| `rigid::{about, alignment, frame, nerf}` | `rotation_about`, `alignment_axis_angle`, `orthonormal_frame`, `place_from_internal_coords` |
+
+**`md`** holds integrators and force providers only:
+
+| Before | Now |
+|---|---|
+| `md::Comm` | `core::GhostHalo` (errors are `GhostError`); `GhostPairs::comm()` → `halo()` |
+| `md::Direct` | `md::SelfPairedForces` |
+| `md::scalar_mass` | `md::uniform_masses` |
+| `md::{kinetic_energy, com_velocity}` | `compute::{kinetic_energy, center_of_mass_velocity}` |
+| Python `MD.num_edges` | `MD.n_edges`; `MD.run(thermo=…)` prices KE and T in Rust |
+
+**`optimize`**:
+
+| Before | Now |
+|---|---|
+| `LBFGS::new(pot, fmax, max_steps, max_step, memory)` | `Lbfgs::new(pot, LbfgsSettings { … })`; `LbfgsSettings::DEFAULT` is the one set of defaults (fmax 0.05, max_steps 500, max_step 0.2, memory 8) every binding reads |
+| `Optimizer::run`, `LBFGS::run_coords` | `Optimizer::minimize`, `Lbfgs::minimize_coords` |
+| `LBFGS::minimize(pot, coords, …)`, `LBFGS::minimize_batch(…)` | `minimize_lbfgs(pot, coords, &settings)`, `minimize_lbfgs_batch(…)` |
+| `OptReport`, crate `MinResult` | `OptimizationReport` (adds `final_grad_rms`) |
+| Python `LBFGS(...).run(x)` → `(x, OptReport)` | `Lbfgs(...).minimize(x)` → `(x, OptimizationReport)` |
+| WASM `new LBFGS(p, n).run(f, 200)` → `OptReport {steps, energy, maxForce}` | `new Lbfgs(p, n).minimize(f)` (500 steps by default) → `OptimizationReport {converged, nSteps, finalEnergy, finalFmax, finalGradRms}` |
+
+**`ff::potential`** gains `intramolecular_pairs_from_neighbors` (the
+exclusion and 1-4 rules of `intramolecular_pairs` over a neighbour table; the
+WASM `Lbfgs` uses it) and `improper::ImproperDistance` (LAMMPS
+`improper_style distance`, the ETKDG planarity term).
+
+**`conformer`**: `conformer::distgeom` is private. The ETKDG second stage
+prices its M6 torsions with the `dihedral periodic` kernel and its planarity
+with `ImproperDistance`, and now applies the flat-ring basic-knowledge
+torsions it used to compute and drop, so embedded geometries of molecules
+with sp2 rings change slightly. Modules: `graph` → `topological_distance`,
+`distgeom/{knowledge, matrix, smooth}` → `basic_knowledge_torsions`,
+`bounds_matrix`, `triangle_smoothing`.
+
+**`signal`, `builder`, `stream`, core**:
+
+| Before | Now |
+|---|---|
+| `signal/grid.rs` | `signal/frequency_grid.rs` (`signal::frequency_grid` unchanged) |
+| `builder/{strategy, walk}.rs` | `builder/{growth_strategy, self_avoiding_walk}.rs`; paths `builder::GrowthStrategy` etc. unchanged |
+| `stream::MessageFormat` | `stream::FrameEncoding` |
+| `NeighborQuery::{free, free_columns}` (Python `NeighborQuery.free`) | `unbounded`, `unbounded_columns` (Python `NeighborQuery.unbounded`) |
+| `SimBox::isin` (Python `Box.isin`) | `contains`, the `Region` verb |
+| `QueryMode::SelfQuery { num_points }`, `Neighbors.num_points`, `num_query_points`, `num_pairs`, `num_clusters`, `num_neighbors`, `num_components` (JS `numPoints`, …) | `n_points`, `n_query_points`, `n_pairs`, `n_clusters`, `n_neighbors`, `n_components` (JS `nPoints`, …) |
+
+**WASM catalog** (version 5): exports are cased as words (`Rdf`, `Msd`,
+`Vacf`, `PmftXy`, `IrFlux`, `EnvironmentMatch`, `PairSurvival`, `Pca`), and
+the `rdf.*` / `voronoi.*` id prefixes are gone: `density.radial_distribution`,
+`locality.radical_voronoi`, `locality.voronoi_domain_analysis`,
+`locality.voronoi_void_analysis`; `dynamics.pair_persistence` is
+`dynamics.pair_survival`.
 
 ### Python: kernels live in `molrs.ff.potential`
 

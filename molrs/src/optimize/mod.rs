@@ -1,14 +1,16 @@
 //! Geometry optimization of a [`Frame`].
 //!
 //! The optimizer contract lives here and is always compiled: the
-//! [`Optimizer`] trait, its [`OptReport`] and the `atoms.free` mask
+//! [`Optimizer`] trait, its [`OptimizationReport`], the [`LbfgsSettings`]
+//! defaults and the `atoms.free` mask
 //! ([`set_free_mask`]). A purely geometric optimizer (e.g. a packer's
 //! torsion Monte Carlo) implements [`Optimizer`] without enabling `ff`. The
-//! force-field-agnostic L-BFGS engine behind `LBFGS` is crate-internal; the
+//! force-field-agnostic L-BFGS engine behind `Lbfgs` is crate-internal; the
 //! ETKDG conformer stages drive it on their own distance-geometry energies.
 //!
 //! The optimizer that minimizes a force-field potential
-//! (`ff::potential::Potential`), `LBFGS`, is gated on `ff`. It is the one
+//! (`ff::potential::Potential`), `Lbfgs` (and the borrowed-potential
+//! `minimize_lbfgs` / `minimize_lbfgs_batch`), is gated on `ff`. It is the one
 //! front door for every potential — a potential that rebuilds its pairs as
 //! the atoms move (`ff::potential::soft::SoftPotential`) does so itself.
 //! The dependency points one way: `optimize` consumes `ff`, never the
@@ -63,6 +65,7 @@ impl OptimizationReport {
     }
 
     /// The report of an empty system: nothing to move, converged at zero.
+    #[cfg(any(feature = "ff", test))]
     pub(crate) const EMPTY: Self = Self {
         converged: true,
         n_steps: 0,

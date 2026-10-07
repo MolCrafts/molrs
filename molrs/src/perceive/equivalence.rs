@@ -244,7 +244,7 @@ impl EquivalenceClasses {
 
 /// Partition a molecule's atoms into charge-equivalence classes.
 ///
-/// The path-score algorithm described in the [module docs](self). At
+/// The path-score algorithm described in the module docs of `perceive::equivalence`. At
 /// [`EquivalenceLevel::Off`] every atom is placed in a class of its own, so the
 /// caller can keep the pipeline shape and still opt out.
 ///
