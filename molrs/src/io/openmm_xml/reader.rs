@@ -1256,7 +1256,7 @@ mod tests {
     }
 
     /// A constant offset (ΣC ≠ 0) is part of the polynomial form: kept, not
-    /// refused (0.15 required ΣC = 0 for its OPLS form).
+    /// refused.
     #[test]
     fn rb_row_with_nonzero_sum_keeps_its_constant() {
         let p = rb_params(
@@ -1474,7 +1474,6 @@ mod tests {
     /// OpenMM's own spelling — `E = Σ k_m [1 + cos(n_m φ − γ_m)]`, kJ/mol and
     /// radians — is the same form as molrs `dihedral periodic`, so it reads
     /// term by term: 4.184 kJ/mol → 1 kcal/mol, 2.092 → 0.5, phases in degrees.
-    /// It used to be parsed as CL&P `c0..c3`, absent, and stored as all zeros.
     #[test]
     fn openmm_periodic_proper_reads_as_multi_term_periodic() {
         let xml = periodic_section(
@@ -1536,7 +1535,7 @@ mod tests {
         assert!(err.contains("phase1"), "{err}");
     }
 
-    /// OpenMM impropers live under the same force (they used to be skipped).
+    /// OpenMM impropers live under the same force and are read.
     /// The row lists the centre (`N`) first and OpenMM prices the dihedral
     /// `(c2, c3, c1, c4)`, so it is stored in that order: AMBER's, centre third.
     #[test]
@@ -1598,9 +1597,8 @@ mod tests {
         assert!(OpenmmXmlReader::new().read_str(&xml).is_err());
     }
 
-    /// `<PeriodicImproperForce>` is no OpenMM force (the molrs 0.15.0 writer
-    /// made it up, with the improper atoms in no OpenMM order); it is refused
-    /// as an unknown section.
+    /// `<PeriodicImproperForce>` is no OpenMM force; it is refused as an
+    /// unknown section.
     #[test]
     fn a_periodic_improper_force_section_is_refused() {
         let xml = r#"<ForceField name="x"><PeriodicImproperForce>

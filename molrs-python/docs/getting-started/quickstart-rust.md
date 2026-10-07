@@ -84,7 +84,3 @@ feature is not enabled (`smiles` implies `io`, and `conformer` implies `ff`).
 If `write_mrec_frame` cannot be found, enable `filesystem`. If code compiles
 but embedding fails at runtime, inspect the topology: embedding expects
 chemically meaningful atoms and bonds, not just a coordinate table.
-
-Code written against 0.14 needs the changes in the
-[migration guide](../migration.md); the common ones are the column accessor
-above, `to_frame` returning `Result`, and the force-field builders.

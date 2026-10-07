@@ -10,7 +10,7 @@
 //!
 //! A caller's own parameter set still comes from XML — `molrs::io::read_mmff_xml_forcefield`
 //! reads it and [`Mmff94Typifier::from_parts`] takes it — but the *shipped*
-//! set is no longer text.
+//! set is not text.
 
 use std::sync::{Arc, OnceLock};
 

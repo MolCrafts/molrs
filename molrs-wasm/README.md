@@ -7,8 +7,7 @@ WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molrs) molecul
 Full documentation lives at <https://docs.molcrafts.org/molrs/>. The package
 ships its TypeScript declarations (`molrs.d.ts`); the
 [WASM reference page](https://docs.molcrafts.org/molrs/reference/wasm/) maps
-the main exports. Upgrading from 0.15? See the
-[migration guide](https://docs.molcrafts.org/molrs/migration/).
+the main exports.
 
 ## Install
 

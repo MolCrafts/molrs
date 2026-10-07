@@ -78,9 +78,8 @@ pass_env = [
   "RUSTUP_HOME",
   # Standard cargo variable, none of ours: passed through so a developer's own
   # flags (e.g. `-C target-cpu=native` for a bench build) survive tox's clean
-  # env. Nothing in this repo sets it, and LTO no longer rides on the
-  # environment at all — `lto` lives in `[profile.release]` in the manifests,
-  # where tox cannot strip it.
+  # env. Nothing in this repo sets it; `lto` lives in `[profile.release]` in
+  # the manifests, where tox cannot strip it.
   "RUSTFLAGS",
   # sccache (CI compile cache) — harmless when unset locally.
   "RUSTC_WRAPPER",

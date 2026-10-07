@@ -52,8 +52,8 @@ enum Source {
 /// Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
 /// minimum is `-d0` at `r = r0`). Parameters per pair type, as LAMMPS names
 /// them: `d0` (LAMMPS `D0`), `alpha`, `r0`. The compiled and the
-/// neighbour-driven constructors read the same keys (the compiled one read
-/// `D0` until 0.16, so one field could not price under both).
+/// neighbour-driven constructors read the same keys, so one field prices
+/// under both.
 pub struct PairMorse {
     source: Source,
     /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite

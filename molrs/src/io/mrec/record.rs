@@ -9,22 +9,6 @@ use crate::core::MolRsError;
 use crate::core::{ObservableRecord, Trajectory};
 use crate::io::mrec::ForceFieldSection;
 
-/// Sole version key of a MolRec record (root layout + L1 encoding), stored as
-/// `meta.molrec_version`. Every molrs writer stamps this key, at this value.
-/// A present key must be an integer in `1..=MOLREC_VERSION`; a version-1
-/// store, and one without the key (written before version 1), is converted on
-/// read by the `*.mrec` reader's version-1 conversion. Identity of a store is the `*.mrec/`
-/// path suffix plus a Zarr root; there is no separate brand key.
-///
-/// Version 2 (molrs 0.16): the force-field IR adopts LAMMPS's definitions —
-/// harmonic `k` without the ½, angle values in degrees, `bond morse` `d0` —
-/// in the `forcefield` section and in the parameter columns of relation
-/// blocks.
-pub const MOLREC_VERSION: u64 = 2;
-
-/// Reserved `meta` keys owned by the contract rather than by the producer.
-pub const RESERVED_META_KEYS: [&str; 1] = ["molrec_version"];
-
 /// Named observables of a record, keyed by observable name.
 ///
 /// Data and semantic metadata are one unit: the contract forbids standalone
@@ -95,13 +79,11 @@ impl Observables {
 /// (feature `zarr`).
 ///
 /// Contract: <https://github.com/MolCrafts/molrec> (`docs/spec/overview.md`).
-/// `meta.molrec_version` is the **sole** version key of a record; there is no
-/// parallel per-frame schema version and no `format_name` key — the scientific
-/// path brand is the `*.mrec/` suffix.
+/// The scientific path brand is the `*.mrec/` suffix.
 #[derive(Debug, Clone, Default)]
 pub struct MolRec {
-    /// Record-level metadata. The writer adds the reserved contract keys
-    /// (see [`RESERVED_META_KEYS`]); everything else is the producer's.
+    /// Record-level metadata, the producer's own document. Keys a reader does
+    /// not recognise are kept.
     pub meta: JsonMap<String, JsonValue>,
     /// How the record was produced (run surface).
     pub method: JsonMap<String, JsonValue>,
@@ -232,10 +214,8 @@ mod tests {
     /// status — is a complete record, not a defective one.
     ///
     /// Contract: `../molrec/docs/spec/overview.md` lists `trajectory`
-    /// alongside `frame`, `system` and `status`. While the validator did not
-    /// say so, `write_mrec_trajectory` had to duplicate frame 0 into `frame` to
-    /// get a trajectory past this gate; it no longer does, and this test is
-    /// what keeps that workaround from being needed again.
+    /// alongside `frame`, `system` and `status`, so `write_mrec_trajectory`
+    /// writes no duplicate of frame 0 into `frame`.
     #[test]
     fn a_trajectory_only_record_validates() {
         let mut rec = MolRec::new();

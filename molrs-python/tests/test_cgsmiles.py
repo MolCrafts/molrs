@@ -304,32 +304,8 @@ def test_fragment_definition_carries_its_own_name() -> None:
 
 
 # ---------------------------------------------------------------------------
-# One spelling per fact
+# One public path
 # ---------------------------------------------------------------------------
-
-
-def test_cg_edge_has_no_second_spelling_of_its_order_or_origin() -> None:
-    edge = molrs.io.cgsmiles.CgSmilesIr(F2).levels[0].edges[0]
-    assert not hasattr(edge, "order")
-    assert not hasattr(edge, "origin")
-
-
-def test_cg_fragment_def_has_no_body_kind() -> None:
-    definition = molrs.io.cgsmiles.CgSmilesIr(F2).fragments[0]["PEO"]
-    assert not hasattr(definition, "body_kind")
-
-
-def test_cg_smiles_ir_has_no_n_levels() -> None:
-    ir = molrs.io.cgsmiles.CgSmilesIr(F2)
-    assert not hasattr(ir, "n_levels")
-
-
-def test_io_namespace_has_no_cgsmiles_reader() -> None:
-    assert not hasattr(molrs.io, "CgSmilesReader")
-
-
-def test_molrs_has_no_parse_cgsmiles_free_function() -> None:
-    assert not hasattr(molrs, "parse_cgsmiles")
 
 
 def test_the_classes_are_public_names_of_their_notation_modules() -> None:

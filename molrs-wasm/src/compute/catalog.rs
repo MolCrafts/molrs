@@ -268,8 +268,6 @@ const CATEGORIES: [CatalogCategory; 15] = [
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ComputeCatalog {
-    /// Bump whenever an entry's `id`, `wasm_export`, `input_kind` or param keys change.
-    version: u32,
     categories: &'static [CatalogCategory],
     analyses: Vec<ComputeDescriptor>,
 }
@@ -300,7 +298,7 @@ fn descriptor(
 
 /// Describe every analysis this module exports.
 ///
-/// Returns `{ version, categories, analyses }`. Consumers should group
+/// Returns `{ categories, analyses }`. Consumers should group
 /// `analyses` by `category` in `categories` order to build a menu.
 #[wasm_bindgen(js_name = molrsComputeCatalog)]
 pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
@@ -1168,22 +1166,6 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
     ];
 
     js_value(&ComputeCatalog {
-        // v3: freud core order + molrs extensions — dynamics→transport,
-        // static dielectric→spectroscopy; cluster_properties→cluster.
-        // v4: `wasmExport` names drop the `Wasm` prefix (`WasmVACF` → `VACF`).
-        // v5: exports cased as words (`VACF` → `Vacf`, `PMFTXY` → `PmftXy`,
-        // `MatchEnv` → `EnvironmentMatch`, `PairPersistence` → `PairSurvival`);
-        // the `rdf.*` / `voronoi.*` id prefixes are gone (`density.*`,
-        // `locality.*`), and `dynamics.pair_persistence` is
-        // `dynamics.pair_survival`.
-        // v6: per-analysis classes that molrs has as free functions are those
-        // functions (`input_kind: "function"`: `staticDielectricConstant`,
-        // `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`); the three
-        // distribution entries export `DistributionFunction`, its
-        // `observable` the first constructor param;
-        // `AngularSeparation` is `AngularSeparationGlobal`, and the
-        // dielectric spectra are `GreenKuboSpectrum` / `EinsteinHelfandSpectrum`.
-        version: 6,
         categories: &CATEGORIES,
         analyses,
     })

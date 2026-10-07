@@ -328,10 +328,9 @@ mod tests {
     ///   m = 4 → would need r_5, which does not exist (n = 4)
     /// No `m < n` closes the shell → unconverged → keep all 4.
     ///
-    /// This fixture previously asserted 3, which was the *bug's* answer: the
-    /// in-tree inequality `Σ_{j≤m} r_j ≥ m·r_m` fires at m = 3 purely because
-    /// the first three distances are exactly equal. The golden is now the
-    /// published value.
+    /// 3 would be the wrong answer: the inequality `Σ_{j≤m} r_j ≥ m·r_m`
+    /// fires at m = 3 purely because the first three distances are exactly
+    /// equal. The golden is the published value.
     #[test]
     fn sann_keeps_all_when_shell_never_closes() {
         let pairs = [

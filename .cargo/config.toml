@@ -17,7 +17,7 @@ target-dir = "target"
 # fingerprint, which compiles all 293k lines of `molcrafts-molrs` again and
 # leaves another ~420 MB incremental cache in target/. `cargo test <filter>`
 # with no flags is exactly that mistake — it drops `stream`/`serde` and adds
-# the doctest and bin targets, so "run one test" used to cost a full rebuild.
+# the doctest and bin targets, so "run one test" costs a full rebuild.
 #
 # With the aliases, only the filter after `--` varies, so the crate is compiled
 # once and every later run is a filter over the same test binary:

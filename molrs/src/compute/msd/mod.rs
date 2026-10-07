@@ -42,14 +42,14 @@ pub enum MsdMode {
 /// modes are supported, matching the conventions in `freud.msd`:
 ///
 /// - [`MsdMode::Direct`] — `Msd(t) = ⟨|r(t) − r(0)|²⟩_i` with frame 0 as
-///   the single time origin. The original molrs behaviour.
+///   the single time origin.
 /// - [`MsdMode::Window`] — `Msd(t) = ⟨|r(τ+t) − r(τ)|²⟩_{i, τ}` averaged
 ///   over all time origins τ. Implemented in O(N log N) via the
 ///   Wiener–Khinchin identity (zero-padded autocorrelation through
 ///   `rustfft`) — the nMoldyn / Allen-Tildesley algorithm.
 ///
 /// Both modes produce the same `MsdTimeSeries` output shape; callers select
-/// via [`Msd::with_mode`] (default is `Direct` for backward compatibility).
+/// via [`Msd::with_mode`] (default is `Direct`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Msd {
     mode: MsdMode,

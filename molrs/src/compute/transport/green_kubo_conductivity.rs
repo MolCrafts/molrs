@@ -9,21 +9,20 @@ use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::autocorrelation;
 
-/// Raw current autocorrelation function — the raw portion of the legacy
-/// `JacfResult`, with **no** fitted sigma.
+/// Raw current autocorrelation function, with **no** fitted sigma.
 #[derive(Debug, Clone)]
 pub struct GreenKuboConductivityResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
-    /// Current ACF `C(τ) = ⟨J(0)·J(τ)⟩` over time origins, identical to
-    /// `JacfResult.jacf`. Units: `(e·Å·fs⁻¹)²`.
+    /// Current ACF `C(τ) = ⟨J(0)·J(τ)⟩` over time origins.
+    /// Units: `(e·Å·fs⁻¹)²`.
     pub jacf: Array1<f64>,
 }
 
 impl ComputeResult for GreenKuboConductivityResult {}
 
-/// Raw current-ACF compute. Lifts the unbiased windowed-ACF loop from
-/// the Green–Kubo conductivity and stops there (no trapezoid, no σ). The
+/// Raw current-ACF compute: the unbiased windowed ACF of the Green–Kubo
+/// conductivity, and nothing more (no trapezoid, no σ). The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
 /// [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + scale.
 ///
@@ -105,8 +104,7 @@ mod tests {
 
     #[test]
     fn green_kubo_raw_jacf_matches_direct_acf() {
-        // ac-010: GreenKuboConductivity.jacf == the direct unbiased current ACF
-        // (the raw observable the removed bundled result also carried).
+        // ac-010: GreenKuboConductivity.jacf == the direct unbiased current ACF.
         let n = 256;
         let dt = 0.5;
         let mct = 80;
@@ -138,8 +136,7 @@ mod tests {
     #[test]
     fn green_kubo_raw_plus_cumulative_trapezoid_matches_manual_trapezoid() {
         // ac-015: CumulativeTrapezoid on GreenKuboConductivity.jacf reproduces a manual
-        // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined
-        // (replaces the removed bundled Green–Kubo conductivity).
+        // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined.
         use crate::compute::CumulativeTrapezoid;
         use crate::compute::Fit;
         use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};

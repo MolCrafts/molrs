@@ -434,9 +434,8 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
 /// converged)`. Errors (as a message) if the molecule has no MMFF typing.
 ///
 /// Runs the standard route — typify → `Frame` → `PotentialCompiler::compile` — the
-/// same one every other force field in molrs goes through. (It used to call a
-/// bespoke `MmffForceField` energy assembly, a second implementation of the seven
-/// MMFF terms that `ff::potential::*::mmff` already provides; that layer is gone.)
+/// same one every other force field in molrs goes through, so the seven MMFF
+/// terms come from `ff::potential::*::mmff` and nowhere else.
 fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bool), String> {
     // Write current coords so MMFF setup that consults geometry sees them.
     let mut staged = mol.clone();

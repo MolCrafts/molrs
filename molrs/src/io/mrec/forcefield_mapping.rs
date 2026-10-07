@@ -927,10 +927,9 @@ mod tests {
         round_trips(&ff, "custom");
     }
 
-    /// A section written by molrs 0.15 states `angle: radian` beside its
-    /// preset, and its parameters are in that release's convention (radians,
-    /// ½k). The 0.16 presets state degrees, so the old section disagrees with
-    /// its own preset and is refused rather than read in the wrong convention.
+    /// A section stating `angle: radian` beside a preset disagrees with its
+    /// own preset (the presets state degrees), and is refused rather than read
+    /// in a unit it does not hold.
     #[test]
     fn a_section_stating_radians_beside_a_preset_is_refused() {
         let mut ff = ForceField::new("t");

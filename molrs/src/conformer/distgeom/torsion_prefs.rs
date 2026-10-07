@@ -26,12 +26,10 @@
 //!    separate ring-membership dispatch: the right table simply fails to match
 //!    bonds of the wrong ring class. This is exactly how RDKit layers them.
 //!
-//! The patterns are passed verbatim to the core SMARTS engine: as of
-//! `core-perception-02-smarts-rings` the engine parses and evaluates RDKit's
-//! **ring-size range** `r{lo-hi}` / `r{-hi}` / `r{lo-}` and **ring
-//! connectivity** `x<n>` natively, so the former strip-token + post-check shim
-//! is gone (validated against RDKit `GetExperimentalTorsions` in
-//! `tests/embed/torsions.rs`).
+//! The patterns are passed verbatim to the core SMARTS engine, which parses and
+//! evaluates RDKit's **ring-size range** `r{lo-hi}` / `r{-hi}` / `r{lo-}` and
+//! **ring connectivity** `x<n>` natively (validated against RDKit
+//! `GetExperimentalTorsions` in `tests/embed/torsions.rs`).
 
 use std::collections::HashMap;
 

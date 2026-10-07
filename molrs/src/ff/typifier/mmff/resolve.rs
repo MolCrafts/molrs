@@ -3,12 +3,9 @@
 //!
 //! **This is the one correct implementation of MMFF's context rules in molrs**,
 //! and everything that needs a bond / angle / torsion type or a force constant
-//! comes through here. It used to live under `ff/mmff/energy/` next to the
-//! bespoke energy assembly, which made it look like an energy file; it never was.
-//! The energy layer is gone (`mmff-orthogonal-02` — the generic
-//! typifier → `ForceField` → kernel path reproduces RDKit on 11/11 fixtures,
-//! term by term, so a second assembly was a second set of numbers to be wrong);
-//! the resolver stayed, because it is what the *typifier* runs.
+//! comes through here. It is not an energy file: energies come from the
+//! generic typifier → `ForceField` → kernel path, which reproduces RDKit on
+//! 11/11 fixtures, term by term. The resolver is what the *typifier* runs.
 //!
 //! What makes these rules irreducible to a `(type_i, type_j, …) → params` table
 //! — and hence the reason MMFF's kernels are

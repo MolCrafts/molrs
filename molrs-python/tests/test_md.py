@@ -49,20 +49,6 @@ class TestMDDtype:
             MdDriver(dtype=np.float32)
 
 
-class TestAbsence:
-    def test_deleted_precision_names_are_gone(self) -> None:
-        from molrs import md
-
-        for name in (
-            "PRECISIONS",
-            "resolve_prec",
-            "FrameVelocityVerlet",
-            "kb_md",
-            "MD_ENERGY",
-        ):
-            assert not hasattr(md, name)
-
-
 class TestWarnings:
     def test_import_molrs_is_silent(self) -> None:
         with warnings.catch_warnings(record=True) as caught:

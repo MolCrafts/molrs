@@ -15,12 +15,7 @@ def test_write_smiles_str_round_trip():
     assert molrs.io.read_smiles_str(s).n_atoms == 3
 
 
-def test_write_smiles_str_is_the_one_spelling():
-    # Writing SMILES text is `molrs.io.write_smiles_str`; neither an IR method
-    # nor a module-level `write_smiles` writes it.
-    assert not hasattr(molrs.io, "write_smiles")
-    assert not hasattr(molrs.io.smiles.SmilesIr, "write_smiles")
-    assert not hasattr(molrs.io.smiles.SmilesIr, "write_smarts")
+def test_write_smiles_str_round_trips():
     mol = molrs.io.read_smiles_str("c1ccccc1")
     s = molrs.io.write_smiles_str(mol, canonical=True)
     assert s
@@ -41,18 +36,8 @@ def test_environment_pattern_matches():
     env = SmartsPattern.from_environment(mol, center, reach=1, atomic_number=True)
     s = str(env)
     assert isinstance(s, str) and s
-    assert not hasattr(molrs.io, "write_smarts")
-    assert not hasattr(molrs.io, "write_local_smarts")
     assert env.has_match(mol)
     assert SmartsPattern(s).has_match(mol)
-
-
-def test_atomistic_has_no_to_smiles():
-    mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
-    assert not hasattr(mol, "to_smiles")
-    assert not hasattr(mol, "from_smiles")
-    assert not hasattr(mol, "to_smarts")
-    assert not hasattr(type(mol), "to_smiles")
 
 
 def test_bad_aromatic_flag():

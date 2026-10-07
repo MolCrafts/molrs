@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString};
 use std::sync::OnceLock;
 
 /// The ABI line of this build: `major.minor` of the statically linked
-/// `molcrafts-molrs` core (e.g. `"0.14"`). This crate's version is the core's
+/// `molcrafts-molrs` core (e.g. `"0.16"`). This crate's version is the core's
 /// by policy, and its dependency on the core is pinned to that minor line, so
 /// its own `CARGO_PKG_VERSION` names the line.
 ///
@@ -37,8 +37,7 @@ fn versioned_name(prefix: &str) -> CString {
 ///
 /// The name carries the ABI line so a cross-minor handle exchange fails the
 /// capsule name check (a clean `ValueError`) instead of dereferencing a
-/// possibly drifted layout. Builds on the 0.13 line and earlier used the
-/// unversioned name `molrs.FrameRef`.
+/// possibly drifted layout.
 pub fn frameref_capsule_name() -> &'static CStr {
     static NAME: OnceLock<CString> = OnceLock::new();
     NAME.get_or_init(|| versioned_name("molrs.FrameRef"))

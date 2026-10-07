@@ -251,10 +251,6 @@ def test_label_write_lammps_data_coeffs_str_missing_label_raises_value_error():
         molrs.io.write_lammps_data_coeffs_str(_hand_ff(), _labelled_frame("c3-n"))
 
 
-def test_label_io_has_no_lammps_type_ids_from_frame():
-    assert not hasattr(molrs.io, "lammps_type_ids_from_frame")
-
-
 def test_ff_file_io_accepts_pathlike(tmp_path):
     """``molrs.ff`` path functions take ``os.PathLike`` like ``molrs.io`` does."""
     xml = tmp_path / "hand.xml"

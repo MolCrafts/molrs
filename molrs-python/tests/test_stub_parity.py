@@ -1,7 +1,6 @@
 """Freshness guard for ``python/molrs/_native.pyi`` at class-name level.
 
-``_native.pyi`` has claimed this test since it was written; this is it. It
-compares, in **both** directions, the top-level ``class`` names the stub
+It compares, in **both** directions, the top-level ``class`` names the stub
 declares against the public classes the native module actually exports, so a
 new pyclass that nobody declared — and a declaration whose class has been
 deleted or moved to a ``.py`` module — both fail here rather than rotting.

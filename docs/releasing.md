@@ -48,12 +48,8 @@ zensical build --clean      # must end with "No issues found"
 
 ## Publishing
 
-1. Finish the checks and review the release diff, including API migrations;
-   add every breaking change to the
-   [migration guide](../molrs-python/docs/migration.md) and the highlights to
-   the [release notes](../molrs-python/docs/release-notes.md). Both are pages
-   of the documentation site; the GitHub Release created by **Publish** links
-   to both at the tag, beside the auto-generated changelog.
+1. Finish the checks and review the release diff. The GitHub Release created
+   by **Publish** links to the documentation site.
 2. Run **Publish** manually on a branch for a build rehearsal. It runs CI and
    builds artifacts without uploading to registries or creating a release.
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,

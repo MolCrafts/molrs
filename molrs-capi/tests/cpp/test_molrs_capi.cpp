@@ -666,15 +666,14 @@ TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
     ASSERT_NE(json, nullptr);
     std::string s(json);
     molrs_free_string(json);
-    EXPECT_NE(s.find("\"vocabVersion\""), std::string::npos);
+    EXPECT_NE(s.find("\"id\""), std::string::npos);
     EXPECT_NE(s.find("\"columns\""), std::string::npos);
     EXPECT_NE(s.find("\"blocks\""), std::string::npos);
 }
 
-TEST(Schema, CountsAreNonZeroAndVersioned) {
+TEST(Schema, CountsAreNonZero) {
     EXPECT_GT(molrs_schema_n_columns(), 0u);
     EXPECT_GT(molrs_schema_n_blocks(), 0u);
-    EXPECT_GE(molrs_schema_vocab_version(), 1u);
 }
 
 TEST(Schema, IdentifiersAreUnsignedAndTypeIsAString) {

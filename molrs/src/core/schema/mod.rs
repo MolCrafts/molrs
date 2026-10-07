@@ -63,25 +63,6 @@ use PresetDim::{Charge, Force, Length, Mass, Velocity};
 // cell crossings and must be able to count them backwards.
 use DType::{Float, I64, Int, String as Str, Uint};
 
-/// Version of the **vocabulary** — what block and column names mean, and what
-/// dtype each carries.
-///
-/// Bump when: a spec's `dtype` or `shape` changes, a canonical key is renamed
-/// or removed, or a block's `required` set grows. Do **not** bump when: a new
-/// key is added, a new optional column is added, or a doc/unit string changes.
-/// Adding a key is forward-compatible — old data simply lacks it; changing what
-/// an existing key means is not.
-///
-/// History:
-/// - 2 (assembly-06): the atom keys `site` and `q0` were removed — connection
-///   is port-only, and a leaving group's charge is folded by `MolGraph::link`.
-///   Folded into 2, which never shipped.
-/// - Also 2 (backmap-primitives): the atom key `bead` was removed — a whole
-///   molecule maps onto a bead group, so no atom carries a template-local
-///   bead index — and the `beads` block was removed: a coarse-grained frame
-///   stores its beads as `atoms` rows and its bonds in `bonds`.
-pub const FRAME_VOCAB_VERSION: u32 = 2;
-
 /// A declared name that is not a column: a block name or a frame-meta key.
 #[derive(Debug, Clone, Copy)]
 pub struct NamedConst {

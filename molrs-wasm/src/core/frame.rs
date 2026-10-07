@@ -308,8 +308,8 @@ impl Frame {
     /// non-numeric (e.g., `config="trans"`).
     ///
     /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
-    /// scalar dtype and preserves compatibility with numeric strings written
-    /// through [`setMeta`](Self::set_meta).
+    /// scalar dtype, and numeric strings written through
+    /// [`setMeta`](Self::set_meta).
     ///
     /// # Arguments
     ///

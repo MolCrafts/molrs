@@ -458,15 +458,14 @@ the largest, and a fresh process that registered nothing prices the saved
   constructors; a `TypeRows` one prices another row differently and no row
   not at all, a `PerInstance` one prices the same bits with or without a
   row.
-- Every positional LAMMPS codec writes the pinned includes of the
-  hand-written LAMMPS writer it replaced (`ff/testdata/builtin_conformance/`)
-  for the LAMMPS-read hand molecule, the five cross-engine sources
-  (`ff14sb`, `gaff2`, `chamber`, `charmm36`, `oplsaa`) and one field per
-  positional built-in in `real` and `metal`: 16 of 22 files byte for byte,
-  the rest by rounding alone (≤ 2 ulps: the hand-written writer converted
-  every value through LAMMPS's `lj` units by a unit expression, `real` →
-  `real` included, and wrote `bond morse`'s `alpha` = 1.987 one ulp off; the
-  codec multiplies by one exact factor per dimension). `bond class2`, `pair
+- Every positional LAMMPS codec writes the pinned includes
+  (`ff/testdata/builtin_conformance/`) for the LAMMPS-read hand molecule, the
+  five cross-engine sources (`ff14sb`, `gaff2`, `chamber`, `charmm36`,
+  `oplsaa`) and one field per positional built-in in `real` and `metal`: 16
+  of 22 files byte for byte, the rest to ≤ 2 ulps (the pinned includes were
+  converted through LAMMPS's `lj` units by a unit expression, `real` → `real`
+  included; the codec multiplies by one exact factor per dimension).
+  `bond class2`, `pair
   buck` and `pair morse` have no pinned include; LAMMPS prices them in
   `ff::engine_codec_check`.
 

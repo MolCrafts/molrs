@@ -266,7 +266,7 @@ mod tests {
         }
     }
 
-    /// The one number → class map (amended 2026-09-26), the inverse of
+    /// The one number → class map, the inverse of
     /// `BondOrder::implied_number`. Quadruple has no class of its own and is
     /// classed `Double`, as the SMILES reader classes `$`.
     #[test]

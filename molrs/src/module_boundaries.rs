@@ -471,19 +471,6 @@ fn the_ff_path_resolver_sees_relative_and_grouped_imports() {
 //   registry's value is checked against.
 // ---------------------------------------------------------------------------
 
-/// Conversion-factor constants `core::constants` no longer defines.
-const RETIRED_FACTOR_CONSTANTS: [&str; 9] = [
-    "KJ_PER_KCAL",
-    "ANGSTROM_PER_NM",
-    "ANGSTROM_PER_BOHR",
-    "ANGSTROM3_PER_CM3",
-    "ANGSTROM_M",
-    "FEMTOSECOND_S",
-    "CENTIMETER_PER_METER",
-    "OPENMM_COULOMB",
-    "GROMACS_COULOMB",
-];
-
 /// Conversion factors as they would be written by hand: kcal ↔ kJ (and its
 /// nm² / Å² product), bohr ↔ Å, hartree, eV and Faraday's kcal/mol forms.
 const FACTOR_LITERALS: [&str; 9] = [
@@ -597,27 +584,6 @@ fn scales_by_180(code: &str) -> bool {
         let head = head.trim_end();
         head.ends_with(['/', '*']) || tail.starts_with(['/', '*'])
     })
-}
-
-#[test]
-fn no_module_names_a_retired_conversion_constant() {
-    let mut found = Vec::new();
-    for (file, rel) in crate_sources() {
-        if rel == "module_boundaries.rs" {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file).unwrap();
-        for (n, line) in text.lines().enumerate() {
-            if RETIRED_FACTOR_CONSTANTS.iter().any(|c| names(line, c)) {
-                found.push(format!("{rel}:{}: {}", n + 1, line.trim()));
-            }
-        }
-    }
-    assert!(
-        found.is_empty(),
-        "unit conversions go through core::units (UnitFactor), not a constant:\n{}",
-        found.join("\n")
-    );
 }
 
 #[test]

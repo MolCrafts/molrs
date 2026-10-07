@@ -1,31 +1,21 @@
-//! Energy invariance across molrs 0.16's move to the force-field IR (LAMMPS
-//! standard).
+//! Reference energies under the force-field IR (LAMMPS standard).
 //!
-//! 0.16 made the force-field IR the LAMMPS standard: harmonic bonds and
-//! angles are `k(x − x0)²` (no hidden ½), every angle-valued parameter is in
-//! degrees, and an improper is priced over the dihedral of its stored atom
-//! order. Every reader, writer and typifier moved with the kernels, so the
-//! energy of a physical system must not change. The expected values below
-//! were computed by molrs 0.15.1 (`637c720a`) on the same inputs, before any
-//! of it changed, and the test holds the 0.16 energies to them term by term
-//! at 1e-12 relative — one engine family each: GAFF-, OPLS-AA-, MMFF94- and
-//! UFF-typed acetanilide, and a GROMACS-, OpenMM- and LAMMPS-read field on a
-//! hand-built molecule.
+//! Harmonic bonds and angles are `k(x − x0)²` (no hidden ½), every
+//! angle-valued parameter is in degrees, and an improper is priced over the
+//! dihedral of its stored atom order. Every reader, writer and typifier
+//! follows the kernels, so one physical system has one energy. The tests hold
+//! the energies to fixed reference values term by term at 1e-12 relative —
+//! one engine family each: GAFF-, OPLS-AA-, MMFF94- and UFF-typed
+//! acetanilide, and a GROMACS-, OpenMM- and LAMMPS-read field on a hand-built
+//! molecule.
 //!
-//! UFF's bonded terms change because 0.16 labels UFF atoms from RDKit's own
-//! hybridization and conjugation, and so prices them as RDKit does.
-//!
-//! The GAFF improper term changes because 0.16 orders a GAFF improper's
-//! atoms as tleap does (`ff::typifier::gaff::improper`); 0.15.1 put the same
-//! barriers on another peripheral order.
-//!
-//! Two OpenMM terms change, each the point of its change: 0.15 priced an
-//! OpenMM `<Improper>` over the dihedral of OpenMM's file order (centre
-//! first), where OpenMM prices `(c2, c3, c1, c4)`. It now prices what
-//! OpenMM, GROMACS and AMBER price — the GROMACS-read value of the same
-//! improper, and the hand value of OpenMM's formula. And an OpenMM-read
-//! Coulomb style now states OpenMM's own constant, so its energy is 0.15.1's
-//! times 332.06371329919216 / 332.06371 (1 + 9.9·10⁻⁹).
+//! UFF atoms are labelled from RDKit's own hybridization and conjugation, so
+//! molrs prices them as RDKit does. A GAFF improper's atoms are ordered as
+//! tleap orders them (`ff::typifier::gaff::improper`). An OpenMM
+//! `<Improper>` is priced as OpenMM prices it, `(c2, c3, c1, c4)` from its
+//! centre-first file order — the GROMACS-read value of the same improper, and
+//! the hand value of OpenMM's formula. An OpenMM- or GROMACS-read Coulomb
+//! style states that engine's own constant.
 
 use std::collections::BTreeMap;
 
@@ -91,7 +81,7 @@ fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
 /// kcal/mol absolute. The absolute floor is for a term that is a small
 /// difference of large ones: the GROMACS RB torsion here is 1.45e-6 kcal/mol
 /// out of coefficients of 0.1 kcal/mol, and the same polynomial summed in
-/// another order (`multi/harmonic` for 0.15's `opls`) moves it by 2e-17.
+/// another order moves it by 2e-17.
 fn assert_energies(label: &str, got: &BTreeMap<String, f64>, want: &[(&str, f64)]) {
     let names: Vec<&str> = got.keys().map(String::as_str).collect();
     let want_names: Vec<&str> = want.iter().map(|(n, _)| *n).collect();
@@ -101,7 +91,7 @@ fn assert_energies(label: &str, got: &BTreeMap<String, f64>, want: &[(&str, f64)
         let rel = (g - w).abs() / w.abs().max(f64::MIN_POSITIVE);
         assert!(
             rel <= 1e-12 || (g - w).abs() <= 1e-15,
-            "{label} {style}: {g:?} vs 0.15.1's {w:?} (rel {rel:e})"
+            "{label} {style}: {g:?} vs the reference {w:?} (rel {rel:e})"
         );
     }
 }
@@ -402,22 +392,20 @@ improper_coeff C-N-O-HA 20.0 0.0
 improper_coeff N-C-H-CT 10.5 12.0
 ";
 
-/// The 0.15.1 per-style energies of the GROMACS-, OpenMM- and LAMMPS-read
-/// fields on the hand molecule. `dihedral/fourier` of 0.15.1 is 0.16's
-/// `dihedral/periodic` (the alias is gone), and its GROMACS funct-3
-/// `dihedral/opls` is 0.16's `dihedral/multi/harmonic` (the same polynomial,
-/// read without the OPLS projection); the OpenMM improper and the OpenMM and
-/// GROMACS Coulomb constants are the intended changes (see the module docs
-/// and the next test).
+/// The per-style reference energies of the GROMACS-, OpenMM- and LAMMPS-read
+/// fields on the hand molecule. A GROMACS funct-3 torsion reads as
+/// `dihedral/multi/harmonic` (the polynomial, without the OPLS projection).
+/// Each Coulomb reference is stated at LAMMPS real's 332.06371 and scaled to
+/// the engine's own constant; the OpenMM improper is checked in the next test.
 #[test]
-fn file_read_fields_price_as_in_0_15() {
+fn file_read_fields_price_at_the_reference_energies() {
     let gmx = GromacsTopForcefieldReader::new()
         .read_str(GROMACS_FF)
         .unwrap();
     let mut gmx_energies = per_style(&gmx, &hand_frame(&gmx));
-    // 0.16 prices a GROMACS-read field with GROMACS's own Coulomb constant
-    // (its ONE_4PI_EPS0, CODATA 2018); 0.15.1 stated LAMMPS real's. The
-    // energy is 0.15.1's times their ratio, exactly.
+    // A GROMACS-read field is priced with GROMACS's own Coulomb constant
+    // (its ONE_4PI_EPS0, CODATA 2018): the LAMMPS-real reference times their
+    // ratio, exactly.
     let coul = gmx_energies.remove("pair/coul/cut").unwrap();
     let ratio = crate::core::constants::gromacs_coulomb_real() / 332.06371;
     let want = -10.706661989420029 * ratio;
@@ -440,11 +428,12 @@ fn file_read_fields_price_as_in_0_15() {
     );
     let omm = OpenmmXmlReader::new().read_str(OPENMM_FF).unwrap();
     let mut omm_energies = per_style(&omm, &hand_frame(&omm));
-    // 0.15.1: 0.0013423609738289378 — the dihedral of the wrong atom order.
+    // 0.0013423609738289378 is this improper over the dihedral of OpenMM's
+    // file order (centre first), which is not what OpenMM prices.
     let improper = omm_energies.remove("improper/periodic").unwrap();
-    // 0.16 prices an OpenMM-read field with OpenMM's own Coulomb constant
-    // (ONE_4PI_EPS0 = 332.06371329919216 kcal·Å/(mol·e²)); 0.15.1 used LAMMPS
-    // real's 332.06371. The energy is 0.15.1's times their ratio, exactly.
+    // An OpenMM-read field is priced with OpenMM's own Coulomb constant
+    // (ONE_4PI_EPS0 = 332.06371329919216 kcal·Å/(mol·e²)): the LAMMPS-real
+    // (332.06371) reference times their ratio, exactly.
     let coul = omm_energies.remove("pair/coul/cut").unwrap();
     let ratio = crate::core::constants::openmm_coulomb_real() / 332.06371;
     let want = -10.706661989738114 * ratio;
@@ -482,8 +471,8 @@ fn file_read_fields_price_as_in_0_15() {
 /// `k` = 4.6024 kJ/mol, n = 2, phase 180° — read from OpenMM XML (centre
 /// first, `<Improper class1="N" class2="C" class3="H" class4="CT">`) and from
 /// GROMACS (`C H N CT 4`, centre third) prices identically, at OpenMM's own
-/// value `k[1 + cos(2φ − π)]` with φ the dihedral C-H-N-CT. 0.15 priced the
-/// OpenMM row over N-C-H-CT, 0.40× the energy here.
+/// value `k[1 + cos(2φ − π)]` with φ the dihedral C-H-N-CT. Pricing the
+/// OpenMM row over its file order N-C-H-CT gives 0.40× the energy here.
 #[test]
 fn an_openmm_improper_prices_as_gromacs_and_openmm_do() {
     let gmx = GromacsTopForcefieldReader::new()
@@ -507,8 +496,8 @@ fn an_openmm_improper_prices_as_gromacs_and_openmm_do() {
     );
 }
 
-/// Acetanilide, as `add_hydrogens` orders it, at an ETKDG conformer (seed 7)
-/// of molrs 0.15.1, hard-coded so the test does not depend on the embedder.
+/// Acetanilide, as `add_hydrogens` orders it, at an ETKDG conformer (seed 7),
+/// hard-coded so the test does not depend on the embedder.
 const ACETANILIDE_XYZ: [[f64; 3]; 19] = [
     [
         3.4074919590548594,
@@ -583,11 +572,11 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
 }
 
 /// GAFF (ATD types, then the table), OPLS-AA, MMFF94 and UFF typings of
-/// acetanilide price as 0.15.1 priced them: GAFF and OPLS-AA through the
+/// acetanilide price at the reference energies: GAFF and OPLS-AA through the
 /// re-based table values (`K`, degrees), MMFF94 and UFF through their
 /// per-instance columns (θ0 in degrees, the out-of-plane centre first).
 #[test]
-fn typed_molecules_price_as_in_0_15() {
+fn typed_molecules_price_at_the_reference_energies() {
     use crate::ff::typifier::mmff::Mmff94Typifier;
     use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
     use crate::ff::typifier::{GaffParameterSet, GaffTypifier};
@@ -608,10 +597,9 @@ fn typed_molecules_price_as_in_0_15() {
             ("angle/harmonic", 2.2194097346204344),
             ("bond/harmonic", 7.3769495524832465),
             ("dihedral/periodic", 2.541103465113677),
-            // 0.16 also builds GAFF impropers as tleap does (atom order from
-            // the matched row, parmchk2's estimates): 0.15.1 had
-            // 0.010339607422863516, the same barriers on another peripheral
-            // order (`ff::typifier::gaff::improper`).
+            // GAFF impropers are built as tleap builds them: atom order from
+            // the matched row, parmchk2's estimates
+            // (`ff::typifier::gaff::improper`).
             ("improper/periodic", 0.010339596944304806),
             ("pair/coul/cut", -37.15184225195395),
             ("pair/lj/cut", 8.660474394181266),
@@ -657,16 +645,12 @@ fn typed_molecules_price_as_in_0_15() {
         "UFF",
         &per_style(ff, &typed_frame(&typed, ff)),
         &[
-            // UFF's bonded terms changed with its atom labels, which 0.16
-            // takes from RDKit's hybridization and conjugation
-            // (`perceive::perceive_hybridizations`): the amide N, carbonyl C and O are
-            // `N_R` / `C_R` / `O_R` (0.15.1: `N_3` / `C_2` / `O_2`), and the
-            // amide C-N is priced at order 1, not 1.41. The four bonded
-            // terms below sum to RDKit 2026.03's UFF energy on the same
-            // geometry without vdW, 16.88335231598728, to 1e-14 (0.15.1:
-            // 35.2429). 0.15.1 had angle 27.68913795225764, bond
-            // 4.946564125573773, torsion 2.598167385505838, inversion
-            // 0.009038965561054917.
+            // UFF's atom labels come from RDKit's hybridization and
+            // conjugation (`perceive::perceive_hybridizations`): the amide N,
+            // carbonyl C and O are `N_R` / `C_R` / `O_R`, and the amide C-N
+            // is priced at order 1, not 1.41. The four bonded terms below sum
+            // to RDKit 2026.03's UFF energy on the same geometry without vdW,
+            // 16.88335231598728, to 1e-14.
             ("angle/uff_angle", 9.878623919580525),
             ("bond/uff_bond", 6.018563091754078),
             ("dihedral/uff_torsion", 0.9769947445298511),

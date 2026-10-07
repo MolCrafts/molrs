@@ -173,17 +173,6 @@ def test_an_existing_types_endpoints_are_handles_def_type_accepts():
     assert [e.name for e in again.endpoints] == ["CT", "OH"]
 
 
-@pytest.mark.parametrize(
-    "cls", [molrs.ff.forcefield.Style, molrs.ff.forcefield.BondStyle, molrs.ff.forcefield.PairStyle]
-)
-def test_there_is_no_def_type_at(cls):
-    assert not hasattr(cls, "def_type_at")
-
-
-def test_the_generic_style_has_no_def_type():
-    assert not hasattr(molrs.ff.forcefield.Style, "def_type")
-
-
 def test_def_style_returns_the_category_handle():
     ff = molrs.ff.forcefield.ForceField("handle")
     assert isinstance(ff.def_style("pair", "lj/cut"), molrs.ff.forcefield.PairStyle)
@@ -195,12 +184,7 @@ def test_style_params_exposes_mixing():
     assert style.params == {"cutoff": 10.0, "mixing": "geometric"}
 
 
-def test_forcefield_has_no_def_bondstyle():
-    assert not hasattr(molrs.ff.forcefield.ForceField, "def_bondstyle")
-
-
 def test_kspace_is_not_a_category():
-    assert not hasattr(molrs.ff.forcefield.ForceField, "def_kspacestyle")
     ff = molrs.ff.forcefield.ForceField("guard")
     with pytest.raises(ValueError, match="unknown"):
         ff.def_style("kspace", "pme")
@@ -511,11 +495,6 @@ def test_a_pair_restated_in_reverse_is_one_row_or_a_conflict():
 def test_potential_compiler_lives_in_compile():
     assert hasattr(molrs.ff.compile, "PotentialCompiler")
     assert not hasattr(molrs.ff, "PotentialCompiler")
-
-
-@pytest.mark.parametrize("method", ["to_potentials", "to_typed_potentials"])
-def test_forcefield_has_no_compile_method(method):
-    assert not hasattr(molrs.ff.forcefield.ForceField, method)
 
 
 def test_style_setitem_declares_a_cutoff():

@@ -2344,7 +2344,7 @@ Angles
     }
 
     /// `PairIJ Coeffs` rows are pair_coeff lines: the self rows are the types'
-    /// own, `1 2` an explicit cross pair. The section used to be skipped.
+    /// own, `1 2` an explicit cross pair.
     #[test]
     fn data_coeffs_pairij_rows_keep_their_cross_pairs() {
         let mut labels = LammpsTypeLabelMaps::default();

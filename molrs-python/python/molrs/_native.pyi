@@ -2276,7 +2276,6 @@ class schema:
 
     columns: list[ColumnSpec]
     blocks: list[BlockSpec]
-    VOCAB_VERSION: int
     ANGLES: str
     ATOMS: str
     BONDS: str
@@ -4213,16 +4212,9 @@ class mrec:
     @staticmethod
     def pack_mrec_zip(path: PathInput) -> str: ...
 
-    MOLREC_VERSION: int
-    RESERVED_META_KEYS: tuple[str, ...]
-
     class validation:
         """``molrs.io.mrec.validation``: the record contract's runtime checks."""
 
-        @staticmethod
-        def validate_path(path: PathInput) -> None: ...
-        @staticmethod
-        def validate_meta(meta: _AbcMapping[str, Any]) -> None: ...
         @staticmethod
         def validate_frame(frame: Frame) -> None: ...
 
@@ -5287,9 +5279,7 @@ def xcorr_fft(a: ArrayF, b: ArrayF, max_lag: int) -> ArrayF:
 
 class CumulativeTrapezoid:
     """
-    Cumulative trapezoidal integral of a uniformly-sampled curve. Reproduces the
-    running integral inside the legacy `green_kubo_conductivity` bit-for-bit on
-    the same curve + dt (before the Green–Kubo prefactor).
+    Cumulative trapezoidal integral of a uniformly-sampled curve.
     """
     def __init__(self) -> None: ...
     def fit(self, /, y, dt, n_lags=None): ...
@@ -5316,8 +5306,7 @@ class DebyeRelaxation:
 
 class EinsteinConductivity:
     """
-    Raw collective charge-dipole MSD — the raw portion of the legacy
-    `dielectric_einstein_helfand_conductivity`, with **no** fitted sigma/slope.
+    Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
     `σ = slope/(6·V·k_B·T)·prefactor` is a downstream
     [`LinearFit`](PyLinearFit) + scale step.
     """
@@ -5337,9 +5326,7 @@ class EinsteinHelfandSpectrum:
     """
     Einstein–Helfand ε(ω) transform of a **raw fluctuation dipole ACF** (the
     [`DebyeRelaxation`](PyDebyeRelaxation) ACF): one-sided cos² taper +
-    derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor. Reproduces the legacy
-    `einstein_helfand_spectrum` bit-for-bit on the raw ACF that function built
-    internally.
+    derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor.
     """
     def __init__(
         self, dt, volume, temperature, epsilon_inf, zero_lag_variance
@@ -5348,8 +5335,7 @@ class EinsteinHelfandSpectrum:
 
 class GreenKuboConductivity:
     """
-    Raw current autocorrelation function — the raw portion of the legacy
-    `transport_green_kubo_conductivity`, with **no** fitted sigma. The
+    Raw current autocorrelation function, with **no** fitted sigma. The
     σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
     [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
     """
@@ -5369,9 +5355,7 @@ class GreenKuboSpectrum:
     """
     Green–Kubo ε(ω) transform of a **raw current ACF** (the
     [`GreenKuboConductivity`](PyGreenKuboConductivity) ACF over the post-NaN
-    series): window + FFT → σ(ω) → ε(ω). Reproduces the legacy
-    `green_kubo_spectrum` bit-for-bit on the raw ACF that function built
-    internally.
+    series): window + FFT → σ(ω) → ε(ω).
     """
     def __init__(
         self, dt, volume, temperature, epsilon_inf, window_type="hann"
@@ -5382,7 +5366,7 @@ class IrSpectrum:
     """
     Infrared absorption spectrum transform of a **raw dipole-flux ACF**
     (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
-    supplied ACF differs). Reproduces the legacy `ir_spectrum` bit-for-bit.
+    supplied ACF differs).
     """
     def __init__(self) -> None: ...
     def fit(self, /, acf, dt_fs): ...
@@ -5390,8 +5374,7 @@ class IrSpectrum:
 class LinearFit:
     """
     Ordinary-least-squares line fit over a fractional ``(start, end)`` window of
-    an ``(x, y)`` curve. Reproduces the OLS slope of the legacy
-    `einstein_helfand_conductivity` bit-for-bit on the same curve + window.
+    an ``(x, y)`` curve.
     """
     def __init__(self, start_frac, end_frac) -> None: ...
     def fit(self, /, x, y): ...
@@ -5407,8 +5390,7 @@ class Plateau:
 class PowerSpectrum:
     """
     Velocity power spectrum (VDOS) transform of a **raw velocity ACF**
-    (CosineSq window + zero-padded forward FFT). Reproduces the legacy
-    `power_spectrum` bit-for-bit on the raw ACF that function builds internally.
+    (CosineSq window + zero-padded forward FFT).
     """
     def __init__(self) -> None: ...
     def fit(self, /, acf, dt_fs): ...
@@ -5417,7 +5399,7 @@ class RamanSpectrum:
     """
     Raman spectrum transform of **raw isotropic + anisotropic ACFs**
     (one CosineSq window per ACF, FFT both, then the cross-section + Bose
-    prefactors). Reproduces the legacy `raman_spectrum` bit-for-bit.
+    prefactors).
     """
     def __init__(
         self, incident_frequency_cm1=0.0, temperature_k=0.0, averaged=False

@@ -273,7 +273,7 @@ pub(in crate::io::mrec::zarr_storage) fn zarr_dtype(
 /// [`frame_codecs`]), with `attributes` on the array.
 ///
 /// `chunking.chunks` of `None` — a variable-width dtype or an empty leading
-/// axis, both of which molrec declines to size — keeps the pre-plan layout of
+/// axis, both of which molrec declines to size — is laid out as
 /// one chunk spanning the whole array. `chunking.shards` of `Some` packs those
 /// chunks into one shard file per shard extent, with `codecs` on the inner
 /// chunks and the shard index at the end (zarrs' default); `None` applies
@@ -775,10 +775,6 @@ pub(crate) const VALIDITY_GROUP: &str = "_validity";
 #[cfg(feature = "zarr")]
 /// Write one [`Frame`] as a Zarr group of blocks.
 ///
-/// The group carries **no** schema-version attribute: `meta/molrec_version`
-/// at the record root is the sole version key of the MolRec contract, and a
-/// parallel per-frame version is forbidden by it.
-///
 /// # A nullable column carries its mask beside its values
 ///
 /// A block column may carry a [validity
@@ -789,13 +785,10 @@ pub(crate) const VALIDITY_GROUP: &str = "_validity";
 /// reserved **subgroup** of the block group, holding the masks of that block
 /// and nothing else.
 ///
-/// The subgroup is the reason the layout stays backward compatible in both
-/// directions. [`read_frame_group`] skips every non-Array child of a block,
-/// so a reader that predates masks — molrs <= 0.15, molrec, molvis — walks
-/// past the group instead of taking it for a column; and a block no column
-/// of which is masked writes no subgroup at all, so its store is
-/// byte-identical to one written before masks existed. A store written then
-/// reads now as fully valid, which is exactly what it was.
+/// [`read_frame_group`] skips every non-Array child of a block, so a reader
+/// that does not read masks walks past the subgroup instead of taking it for
+/// a column; and a block no column of which is masked writes no subgroup at
+/// all, and reads back as fully valid.
 ///
 /// `_validity` is reserved among a block group's children the way `box` is
 /// among a frame group's: a block carrying a column of that name is refused
@@ -1096,8 +1089,7 @@ where
 ///
 /// `_meta_types` is taken off the map and never surfaces as a key. A key it
 /// types is decoded under its tag and refused in any other form; a key it
-/// does not type is inferred ([`MetaValue::from_attr_value`] — a store
-/// written before typed meta reads as it always did); a tag whose key is
+/// does not type is inferred ([`MetaValue::from_attr_value`]); a tag whose key is
 /// absent is ignored.
 ///
 /// # Errors
@@ -1204,8 +1196,7 @@ pub(crate) fn check_local_references(frame: &Frame, what: &str) -> Result<(), Mo
 
 /// Restore the validity masks [`write_validity_group`] wrote for `block`.
 ///
-/// A block group with no `_validity` child is fully valid, which is what
-/// every store written before masks were persisted is.
+/// A block group with no `_validity` child is fully valid.
 ///
 /// # Errors
 ///
@@ -2177,8 +2168,8 @@ mod tests {
     }
 
     /// The mask lives in a reserved **subgroup**, not in a sibling array: a
-    /// reader that predates masks skips non-Array children of a block group,
-    /// so it ignores the subgroup instead of taking it for a column.
+    /// reader that does not read masks skips non-Array children of a block
+    /// group, so it ignores the subgroup instead of taking it for a column.
     #[test]
     fn a_masked_column_writes_its_mask_into_a_validity_subgroup() {
         let dir = TempDir::new().unwrap();
@@ -2191,7 +2182,7 @@ mod tests {
             .expect("the mask subgroup exists");
         assert!(
             matches!(child.metadata(), NodeMetadata::Group(_)),
-            "{VALIDITY_GROUP} must be a group, so an older reader skips it"
+            "{VALIDITY_GROUP} must be a group, so a reader that skips groups skips it"
         );
     }
 

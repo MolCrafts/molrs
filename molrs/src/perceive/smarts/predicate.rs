@@ -51,11 +51,11 @@ pub struct SmartsTarget<'m> {
     /// atom → number of incident ring bonds (RDKit `x<n>`).
     ring_bond_count: HashMap<NodeId, u32>,
     /// External "current label" map for the `%LABEL` context predicate.
-    /// Borrowed from the caller; empty for the legacy match path.
+    /// Borrowed from the caller; empty for the label-free match path.
     labels: &'m HashMap<NodeId, String>,
 }
 
-/// Shared empty label map for the legacy (label-free) match path, so
+/// Shared empty label map for the label-free match path, so
 /// [`SmartsTarget::new`] can borrow a `&'static HashMap` without allocating.
 static EMPTY_LABELS: std::sync::LazyLock<HashMap<NodeId, String>> =
     std::sync::LazyLock::new(HashMap::new);

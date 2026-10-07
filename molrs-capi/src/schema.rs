@@ -41,20 +41,6 @@ pub unsafe extern "C" fn molrs_schema_document() -> *mut c_char {
         .into_raw()
 }
 
-/// Vocabulary version — what the names and dtypes *mean*.
-///
-/// A caller that persists frames should record this alongside the data.
-///
-/// # C signature
-///
-/// ```c
-/// uint32_t molrs_schema_vocab_version(void);
-/// ```
-#[unsafe(no_mangle)]
-pub extern "C" fn molrs_schema_vocab_version() -> u32 {
-    schema::FRAME_VOCAB_VERSION
-}
-
 /// Number of canonical columns in the vocabulary.
 ///
 /// # C signature
@@ -165,7 +151,8 @@ mod tests {
         let s = unsafe { CStr::from_ptr(p) }.to_str().unwrap().to_string();
         unsafe { crate::molrs_free_string(p) };
         let v: serde_json::Value = serde_json::from_str(&s).expect("valid JSON");
-        assert_eq!(v["vocabVersion"], schema::FRAME_VOCAB_VERSION);
+        assert!(v["columns"].is_array());
+        assert!(v["blocks"].is_array());
     }
 
     #[test]

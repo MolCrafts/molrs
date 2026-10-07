@@ -1053,7 +1053,7 @@ mod tests {
         );
     }
 
-    /// Amended 2026-09-26: two compatible ports whose anchors are already
+    /// Two compatible ports whose anchors are already
     /// bonded would otherwise gain a duplicate anchor–anchor bond.
     #[test]
     fn link_refuses_anchors_that_are_already_bonded() {
@@ -1076,7 +1076,7 @@ mod tests {
         );
     }
 
-    /// Amended 2026-09-26: two compatible ports on one anchor are their own
+    /// Two compatible ports on one anchor are their own
     /// refusal, not a `Graph(Validation)`.
     #[test]
     fn link_refuses_two_ports_on_one_anchor() {
@@ -1105,7 +1105,7 @@ mod tests {
         );
     }
 
-    /// Amended 2026-09-26: the anchor–handle bond is checked only at
+    /// The anchor–handle bond is checked only at
     /// `add_port`; removing it through the inner graph leaves a port that
     /// still reads back but is stale.
     #[test]

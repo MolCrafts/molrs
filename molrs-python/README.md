@@ -54,7 +54,7 @@ symbol has one path, named after its Rust owner (`molrs.core.Frame` is
 | `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
 | `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
 | `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory); each format's classes in its own submodule: `io.pdb`, `io.xyz`, `io.gro`, `io.dcd`, `io.trr`, `io.xtc`, `io.lammps`, `io.smiles`, `io.cgsmiles`, `io.mrec` |
-| `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` (whole records: `molrs.io.read_mrec_frame` / `write_mrec_frame` and partners) |
+| `molrs.io.mrec` | `*.mrec` store pieces: streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` (whole records: `molrs.io.read_mrec_frame` / `write_mrec_frame` and partners) |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
 | `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | Integrators and the `MD` driver |
@@ -66,9 +66,6 @@ symbol has one path, named after its Rust owner (`molrs.core.Frame` is
 Analysis kernels take `dt` in the time unit of your trajectory, and
 time-valued results come back in that unit. MSD needs **unwrapped**
 coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D and VDOS.
-
-Upgrading from 0.15? See the
-[migration guide](https://docs.molcrafts.org/molrs/migration/).
 
 ## Development
 

@@ -20,8 +20,6 @@ def _lj_dimer():
 
 def test_names_are_the_rust_names():
     assert molrs.optimize.__all__ == ["Lbfgs", "OptimizationReport"]
-    assert not hasattr(molrs.optimize, "LBFGS")
-    assert not hasattr(molrs.optimize, "OptReport")
 
 
 def test_minimize_relaxes_a_dimer_to_the_lj_minimum():

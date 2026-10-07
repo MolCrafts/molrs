@@ -66,11 +66,6 @@ def test_typify_and_compose_potentials():
     assert np.isfinite(np.asarray(forces)).all()
 
 
-def test_opls_has_no_build_facade():
-    """0.12: OPLS matches MMFF — no typifier.build()."""
-    assert not hasattr(molrs.ff.typifier.OplsAaTypifier(), "build")
-
-
 def test_xml_source_constructs():
     """The constructor accepts OPLS-AA XML text."""
     # The embedded canonical set is also reachable via the reader; round-trip a

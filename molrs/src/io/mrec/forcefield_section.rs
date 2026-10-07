@@ -212,9 +212,9 @@ impl SectionStyle<'_> {
 ///   `{itom, jtom}` that differ in a parameter.
 ///
 /// A table no style names is unknown content: kept, never checked. A style
-/// of a category outside the chapter's (`pair14` among them: molrec retired
-/// it — 1-4 parameters are `lj/charmm`'s `epsilon14` / `sigma14` and the
-/// frame's per-pair override columns) is kept with its table, checked only
+/// of a category outside the chapter's (`pair14` among them — 1-4 parameters
+/// are `lj/charmm`'s `epsilon14` / `sigma14` and the frame's per-pair
+/// override columns) is kept with its table, checked only
 /// as any table is, its endpoints a prefix of `itom..mtom`.
 #[derive(Debug, Clone, Default)]
 pub struct ForceFieldSection {
@@ -1218,7 +1218,7 @@ mod tests {
         assert!(err.contains("[\"epsilon\"]"), "{err}");
     }
 
-    /// `pair14` is no category of the chapter (molrec retired it): a table
+    /// `pair14` is no category of the chapter: a table
     /// under it is unknown content, so neither its arity nor a conflicting
     /// restatement is checked.
     #[test]

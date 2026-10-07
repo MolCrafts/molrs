@@ -1448,8 +1448,7 @@ impl MolGraph {
     /// [`MolRsError::Validation`] when a column is refused by the [`Block`] it
     /// is written into; the message names the column. A value whose element
     /// type the Frame schema does not declare for its key is refused at the
-    /// write ([`set_node`](Self::set_node) no longer accepts a string under
-    /// `"x"`), so the property API cannot build such a column; the raw column
+    /// write ([`set_node`](Self::set_node) refuses a string under `"x"`), so the property API cannot build such a column; the raw column
     /// table ([`node_table_mut`](Self::node_table_mut)) still can, because it
     /// writes an element type without consulting the key's declared dtype.
     /// That is a caller reaching past the door, not a broken invariant, so it

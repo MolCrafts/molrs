@@ -14,8 +14,7 @@ use pyo3::types::{PyDict, PyDictMethods};
 // ── LinearFit ─────────────────────────────────────────────────────────────────
 
 /// Ordinary-least-squares line fit over a fractional ``(start, end)`` window of
-/// an ``(x, y)`` curve. Reproduces the OLS slope of the legacy
-/// `einstein_helfand_conductivity` bit-for-bit on the same curve + window.
+/// an ``(x, y)`` curve.
 #[pyclass(module = "molrs.compute", name = "LinearFit")]
 pub struct PyLinearFit {
     inner: LinearFit,
@@ -58,9 +57,7 @@ impl PyLinearFit {
 
 // ── CumulativeTrapezoid ──────────────────────────────────────────────────────────
 
-/// Cumulative trapezoidal integral of a uniformly-sampled curve. Reproduces the
-/// running integral inside the legacy `green_kubo_conductivity` bit-for-bit on
-/// the same curve + dt (before the Green–Kubo prefactor).
+/// Cumulative trapezoidal integral of a uniformly-sampled curve.
 #[pyclass(module = "molrs.compute", name = "CumulativeTrapezoid")]
 pub struct PyCumulativeTrapezoid;
 

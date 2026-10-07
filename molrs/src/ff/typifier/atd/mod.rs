@@ -28,8 +28,8 @@ use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
 ///
-/// This is the **atom-type** axis, and it is wider than the BCC-correction axis
-/// it used to be conflated with: `ATOMTYPE_GAS.DEF` exists but there is no
+/// This is the **atom-type** axis, and it is wider than the BCC-correction
+/// axis: `ATOMTYPE_GAS.DEF` exists but there is no
 /// `BCCPARM_GAS.DAT`, so GAS is a set of atom types with no correction family.
 /// Only [`BccParameterSet`](crate::ff::charge::BccParameterSet) — `Bcc` and `Abcg2`
 /// — names both.

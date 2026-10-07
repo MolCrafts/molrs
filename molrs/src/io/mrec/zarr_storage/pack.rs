@@ -11,7 +11,7 @@ use zarrs::storage::{ReadableListableStorage, StoreKey};
 
 use molrs::core::MolRsError;
 
-use super::record_io::{reject_retired_zarr_path, zerr};
+use super::record_io::zerr;
 
 /// The suffix a packed store carries.
 const ZIP_SUFFIX: &str = ".zip";
@@ -23,7 +23,7 @@ const MREC_SUFFIX: &str = "mrec";
 ///
 /// The archive's name is derived from the directory's: `traj.mrec` becomes
 /// `traj.mrec.zip`, and a directory without the `.mrec` suffix gains the whole
-/// `.mrec.zip`. Paths ending in `.zarr` or `.zarr.zip` are refused. Entries
+/// `.mrec.zip`. Entries
 /// are walked in sorted order and written STORED (method 0) — the chunks
 /// arrived gzipped, so a second compression pass would buy nothing and cost a
 /// full re-encode.
@@ -36,8 +36,7 @@ const MREC_SUFFIX: &str = "mrec";
 ///
 /// # Errors
 ///
-/// Returns a [`MolRsError::Zarr`] when `storage_path`'s file name ends in
-/// `.zarr` or `.zarr.zip`. Returns a [`MolRsError::Zarr`] naming `storage_path`
+/// Returns a [`MolRsError::Zarr`] naming `storage_path`
 /// when no directory is there — which is also what a second `pack` of the same
 /// store meets, since the first one removed the directory. Nothing is created
 /// in that case, so a refused pack leaves no half-written archive behind.
@@ -82,7 +81,6 @@ const MREC_SUFFIX: &str = "mrec";
 /// ```
 pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
     let storage_path = storage_path.as_ref();
-    reject_retired_zarr_path(storage_path)?;
     if !storage_path.is_dir() {
         return Err(at(storage_path, "pack", "no directory store is there"));
     }
@@ -128,20 +126,17 @@ pub fn pack_mrec_zip(storage_path: impl AsRef<Path>) -> Result<PathBuf, MolRsErr
 /// Open a packed `.mrec.zip` read-only, through `zarrs_zip`'s
 /// `ZipStorageAdapter`.
 ///
-/// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
-/// returned store is readable and listable and nothing more, which is exactly
+/// The returned store is readable and listable and nothing more, which is exactly
 /// what a read function such as [`crate::io::mrec::MrecReader::open`] asks
 /// for. Stored entries are read through the adapter's byte-range fast path, so
 /// a frame costs the bytes of that frame rather than the bytes of the archive.
 ///
 /// # Errors
 ///
-/// Returns a [`MolRsError::Zarr`] if `path` uses a retired `.zarr` suffix, if
-/// `path` has no file name, if its directory cannot be opened, or if the file
+/// Returns a [`MolRsError::Zarr`] if `path` has no file name, if its directory cannot be opened, or if the file
 /// is not a readable zip archive.
 pub fn open_mrec_zip(path: impl AsRef<Path>) -> Result<ReadableListableStorage, MolRsError> {
     let path = path.as_ref();
-    reject_retired_zarr_path(path)?;
     let name = path
         .file_name()
         .and_then(OsStr::to_str)

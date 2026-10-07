@@ -210,7 +210,6 @@ jobs:
         env:
           CIBW_PLATFORM: pyodide
           # Desktop supports Python 3.12+; this target uses Pyodide CPython 3.14.
-          # (0.27.x / emscripten 3.1.58 was for 3.12; MolVis plugin upgrade later.)
           CIBW_BUILD: cp314-pyodide_wasm32
           CIBW_TEST_SKIP: "*"
           # No host FS / zarr (libz-sys) on Emscripten.
@@ -337,6 +336,6 @@ jobs:
           set -euo pipefail
           ls -la capi
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
-                 --notes "Release notes: https://github.com/MolCrafts/molrs/blob/$GITHUB_REF_NAME/molrs-python/docs/release-notes.md · Migration guide: https://github.com/MolCrafts/molrs/blob/$GITHUB_REF_NAME/molrs-python/docs/migration.md"
+            || gh release create "$GITHUB_REF_NAME" --verify-tag \
+                 --notes "Documentation: https://docs.molcrafts.org/molrs/"
           gh release upload "$GITHUB_REF_NAME" capi/* --clobber

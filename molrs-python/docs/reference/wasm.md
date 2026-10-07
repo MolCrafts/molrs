@@ -27,7 +27,7 @@ The generated `pkg/` directory is not committed.
 | Perception | `assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders` |
 | Analysis (`molrs::compute`) | `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, `DistributionFunction`, … (one class per molrs analysis type, under its Rust name); `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`, … (molrs's free functions); `molrsComputeCatalog()` lists them all |
 | Force fields | `UffTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` (`typify`, `forcefield` → `ForceField`), `PotentialCompiler` (`compile` → `Potentials`), `Potentials` (`calcEnergyForces`), `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
-| Schema | `schemaDocument`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
+| Schema | `schemaDocument`, `keysDocument`, `schemaColumnDtype` |
 
 The [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#readme)
 shows each of these in use, including the column dtype table and the record

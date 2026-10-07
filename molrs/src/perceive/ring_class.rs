@@ -420,7 +420,7 @@ mod tests {
         let gaff = classes(&z, &bonds, &[], false);
         let bcc = classes(&z, &bonds, &[], true);
         assert_eq!(gaff.atoms[6].ar, [0, 1, 0, 0, 0], "N: AR2");
-        assert_eq!(bcc.atoms[6].ar, [0, 0, 0, 0, 0], "N: no longer AR2");
+        assert_eq!(bcc.atoms[6].ar, [0, 0, 0, 0, 0], "N: not AR2 under BCC");
         assert_eq!(bcc.atoms[3].ar, [1, 0, 0, 0, 0], "fused C: AR1 only");
         assert_eq!(
             (bcc.atoms[3].rg[0], bcc.atoms[3].rg[5], bcc.atoms[3].rg[6]),

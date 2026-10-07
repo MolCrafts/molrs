@@ -49,8 +49,7 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 /// This is the cross-extension ingress point. molrs-python's
 /// `Frame._ffi_frameref_capsule()` produces a `PyCapsule` named
 /// `molrs_ffi::abi::frameref_capsule_name()` — `"molrs.FrameRef/<major.minor>"`,
-/// carrying the ABI line (builds before 0.14 used the unversioned
-/// `"molrs.FrameRef"`). PyO3 heap-boxes the capsule payload, and that payload
+/// carrying the ABI line. PyO3 heap-boxes the capsule payload, and that payload
 /// is a `#[repr(transparent)]` `FrameRefPtr` — itself a `*mut FrameRef`
 /// (a clone of the Python frame's handle). The capsule's `void*` is
 /// therefore `*mut *mut molrs_ffi::FrameRef`.

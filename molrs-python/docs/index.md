@@ -71,14 +71,13 @@ doc comments.
     console.log(writeXyzStr(frame3d));
     ```
 
-## What's new in 0.16
+## Highlights
 
-molrs 0.16 holds every force field in one force-field IR, which adopts the
-LAMMPS standard:
+molrs holds every force field in one force-field IR (LAMMPS standard):
 
 - **One set of styles** with LAMMPS's energy expressions, factors and
   units; every angle-valued parameter is in degrees. Urey–Bradley, CMAP,
-  CHARMM 1-4 interactions and per-pair overrides are new. See
+  CHARMM 1-4 interactions and per-pair overrides are supported. See
   [Force-field IR](guides/forcefield-ir.md).
 - **Engines read and written whole.** LAMMPS, GROMACS (whole topologies),
   OpenMM XML and AMBER prmtop (chamber too) convert to the IR exactly or
@@ -86,16 +85,14 @@ LAMMPS standard:
 - **The IR is a protocol.** A style or a category registers from Rust,
   Python or molpy with nothing rebuilt; see
   [Extending the force-field IR](guides/extending-forcefield-ir.md).
-- **Records are `molrec_version` 2**; a 0.15 record is converted on read.
-
-[What's new in 0.16](release-notes.md) lists the highlights, and the
-[migration guide](migration.md) lists every breaking change from 0.15.
+- **Records** (`*.mrec`) carry frames, trajectories and force fields; see
+  [Record files](guides/records.md).
 
 ## What lives here
 
 These docs cover the molrs **binding surface**: the per-language quickstarts,
-the [record-file guide](guides/records.md), the API reference, and the
-migration guide. Task-oriented Python guides (the data model, in-process MD,
+the [record-file guide](guides/records.md), and the API reference.
+Task-oriented Python guides (the data model, in-process MD,
 SMILES and topology, neighbor search, 3D embedding, force fields, I/O, and
 trajectory analysis) live in the
 [molpy documentation](https://docs.molcrafts.org/molpy/), the Python library

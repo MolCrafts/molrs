@@ -1442,7 +1442,7 @@ c3  c3  c3  hc
     }
 
     /// Two 1-4 rows on one pair with divisors 1.2 and 1.0: a non-uniform file
-    /// is read (it used to be refused). The field takes the divisor most 1-4
+    /// is read. The field takes the divisor most 1-4
     /// rows carry — a tie here, so the first — and the frame reader gives the
     /// pair its own weights (`1/1.2 + 1/1.0`).
     #[test]
@@ -1529,7 +1529,7 @@ c3  c3  c3  hc
     }
 
     /// A negative-PN chain on an improper (types 1 → 2) is one `improper
-    /// periodic` row per term, named `<quartet>@<n>` (it used to be refused).
+    /// periodic` row per term, named `<quartet>@<n>`.
     #[test]
     fn a_multi_term_improper_is_one_type_per_term() {
         let text = GAFF_MINI
@@ -1615,7 +1615,7 @@ c3  c3  c3  hc
 
     /// An off-diagonal ICO entry that is not Lorentz–Berthelot (CHARMM NBFIX,
     /// ParmEd `changeLJPair`) is an explicit `lj/cut` cross row with the
-    /// entry's own σ/ε. It used to be refused.
+    /// entry's own σ/ε.
     #[test]
     fn decode_lj_types_keeps_nbfix_cross_terms_as_cross_rows() {
         let nbfix = GAFF_MINI

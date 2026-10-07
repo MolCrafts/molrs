@@ -1,12 +1,9 @@
 //! Vibrational-spectrum result types and shared input validation.
 //!
-//! The legacy `power_spectrum` / `ir_spectrum` / `raman_spectrum` free functions
-//! (which baked window + FFT into the raw ACF) and their inline window/FFT
-//! helpers were removed in compute-fit-03-cleanup; the window + one-sided-FFT
-//! machinery now lives in [`compute::spectroscopy`](crate::compute::spectroscopy) (a
-//! windowed transform is a fit), routing every window through
-//! [`molrs::signal`]. Only the two result types and the shared input validator
-//! remain here.
+//! The window + one-sided-FFT machinery lives in
+//! [`compute::spectroscopy`](crate::compute::spectroscopy) (a windowed
+//! transform is a fit), routing every window through [`molrs::signal`]. This
+//! file holds the two result types and the shared input validator.
 
 use ndarray::Array1;
 
@@ -16,7 +13,7 @@ use crate::compute::ComputeResult;
 
 /// Single-spectrum result (VDOS, IR).
 ///
-/// The three vibrational spectra (VDOS / IR / Raman) are now the explicit
+/// The three vibrational spectra (VDOS / IR / Raman) are the explicit
 /// composition of a **raw-ACF compute** with a **spectral
 /// [`Fit`](crate::compute::Fit) transform**,
 /// keeping "what was measured" separate from "how the analyst transforms it":

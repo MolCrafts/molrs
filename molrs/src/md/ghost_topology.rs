@@ -525,10 +525,10 @@ mod owned_potential_tests {
     /// The invariant behind the re-resolution, asserted directly: a bonded
     /// topology is always resolved against the copy list that exists now.
     ///
-    /// The re-resolution used to be conditioned on a boolean the caller set
-    /// when it rebuilt. That is a thing to remember, and a test can only catch
-    /// forgetting it if the fixture happens to reorder the list — which a small
-    /// one does not. Keyed on the generation instead, the condition *is* the
+    /// The re-resolution is keyed on the generation, not on a boolean the
+    /// caller sets when it rebuilds (a thing to remember, which a test can only
+    /// catch forgetting if the fixture happens to reorder the list). Keyed on
+    /// the generation, the condition *is* the
     /// property, and this checks it every step rather than hoping a wrong
     /// answer shows up in an energy.
     #[test]

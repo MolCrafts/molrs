@@ -74,12 +74,9 @@ not guess. (WASM `Lbfgs` takes its pairs from the `Neighbors` table it is
 constructed with, through `ff::potential::intramolecular_pairs_from_neighbors`
 — the same exclusion and 1-4 rules as `intramolecular_pairs`.)
 
-(A `Mmff94Typifier::build(&mol)` convenience used to fold all three into one call.
-It was deleted — it had, for its whole life, compiled potentials with **no
-electrostatic style at all**, because no `ForceField` ever defined
-`pair/mmff_ele`; caffeine came out 150 kcal/mol low and nothing noticed, because
-the shortcut hid the `Frame` where the missing term would have been visible.
-This is the pattern the molpack relaxer follows.)
+(The three steps stay separate on purpose: the typed `Frame` between them is
+where a missing term, such as an absent electrostatic style, is visible. This
+is the pattern the molpack relaxer follows.)
 
 This exact snippet is compile-checked as the module doctest on
 `molrs::ff::typifier::mmff`.
@@ -136,9 +133,8 @@ capsule names**:
 - `abi::abi_line()` — `major.minor` of the embedded molrs (e.g. `"0.16"`).
 - `abi::frameref_capsule_name()` / `abi::forcefield_capsule_name()` /
   `abi::regionref_capsule_name()` — `molrs.FrameRef/<line>` /
-  `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. Versioned since
-  0.14 (older lines used the unversioned `molrs.FrameRef`), so a cross-minor
-  exchange fails the capsule *name check* — a clean `ValueError` — instead of
+  `molrs.ForceFieldRef/<line>` / `molrs.RegionRef/<line>`. The line in the
+  name means a cross-minor exchange fails the capsule *name check* — a clean `ValueError` — instead of
   dereferencing a possibly drifted layout.
 - `molrs._ffi_abi_token()` (Python) — returns
   `(abi_line, version, frameref_name, forcefield_name, regionref_name)`. A
@@ -170,9 +166,7 @@ Version combinations:
 | producer (molrs wheel) | consumer (e.g. molpack) | outcome |
 |---|---|---|
 | same minor, any patch | same minor, any patch | **supported** — layout frozen by the snapshot gate |
-| ≥0.14 line X | line Y ≠ X | `ImportError` at consumer import (token mismatch) |
-| ≥0.14 | pre-handshake (≤0.13) consumer | capsule name mismatch → clean `ValueError` at first resolve |
-| ≤0.13 | ≥0.14 consumer | `ImportError` at import (wheel lacks `_ffi_abi_token`) |
+| line X | line Y ≠ X | `ImportError` at consumer import (token mismatch); a capsule resolved anyway fails the name check with a clean `ValueError` |
 
 Release ordering is unchanged: molrs ships a new minor first; molpy / molpack
 re-align and ship after ("Release before molpy" iron law).

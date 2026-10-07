@@ -417,8 +417,8 @@ impl FrameIndexBuilder for SdfIndexBuilder {
         });
 
         let bytes_seen = self.lines.bytes_seen();
-        // Trailing record without `$$$$`: legacy SdfReader supports
-        // single-record `.mol` files (no terminator). Treat the trailing
+        // Trailing record without `$$$$`: a single-record `.mol` file has
+        // no terminator. Treat the trailing
         // bytes as one final frame iff they look non-empty.
         if self.next_record_start < bytes_seen {
             let span = bytes_seen - self.next_record_start;
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(got, one_shot);
     }
 
-    /// Edge: SDF without trailing `$$$$` — legacy `.mol` file. Indexer
+    /// Edge: SDF without trailing `$$$$` — a single-record `.mol` file. Indexer
     /// should still emit one frame from `finish`.
     #[test]
     fn sdf_streaming_no_terminator() {

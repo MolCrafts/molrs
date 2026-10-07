@@ -22,10 +22,9 @@ use zarrs::node::{Node, NodeMetadata, NodePath, get_child_nodes};
 use zarrs::storage::{
     ListableStorageTraits, ReadableListableStorage, ReadableListableStorageTraits,
     ReadableStorageTraits, ReadableWritableListableStorage, ReadableWritableListableStorageTraits,
-    StorageHandle, StorePrefix, WritableStorageTraits,
+    StorageHandle, WritableStorageTraits,
 };
 
-use super::record_io::V1Upgrade;
 use molrs::core::Frame;
 use molrs::core::MolRsError;
 use molrs::core::SimBox;
@@ -73,8 +72,6 @@ const VECTORS_ARRAY: &str = "vectors";
 const ORIGIN_ARRAY: &str = "origin";
 /// The per-axis periodic flags of the `box/` section (omitted when all true).
 const BOUNDARY_ARRAY: &str = "boundary";
-/// The child molrs <= 0.13 wrote one group per frame under.
-const LEGACY_FRAMES_GROUP: &str = "frames";
 /// The `trajectory/` group attribute the pinned schema lives in.
 const SCHEMA_ATTRIBUTE: &str = "sequence_schema";
 /// The attribute every per-step meta array carries: its exact dtype tag.
@@ -351,15 +348,8 @@ pub fn dtype_from_schema_tag(tag: &str) -> Result<DType, MolRsError> {
 
 /// The column width a schema dtype tag names.
 ///
-/// Reads the thirteen concrete-width tags [`dtype_tag`] writes and the three
-/// legacy aliases (`float`, `int`, `uint`) an early store may carry.
+/// Reads the thirteen concrete-width tags [`dtype_tag`] writes.
 fn dtype_from_tag(tag: &str) -> Result<DType, MolRsError> {
-    match tag {
-        "float" => return Ok(DType::Float),
-        "int" => return Ok(DType::Int),
-        "uint" => return Ok(DType::Uint),
-        _ => {}
-    }
     SCHEMA_WIDTHS
         .iter()
         .copied()
@@ -712,8 +702,7 @@ struct ColumnSchema {
     /// Whether the column carries a [validity
     /// mask](crate::core::Block::validity), stored as a `bool` array
     /// under the section's `_validity` subgroup. Absent from the serialized
-    /// pin while false, so a pin written before masks existed deserializes as
-    /// a run of plain columns -- which is what it is.
+    /// pin while false; a pin without it deserializes as a plain column.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     nullable: bool,
     /// The column's [declared precision](molrs::core::check_precision) — on a
@@ -1590,25 +1579,6 @@ where
     Ok(schema)
 }
 
-/// Refuse a store written by molrs <= 0.13, whose `trajectory/frames/<i>/`
-/// groups this layout replaced.
-fn ensure_not_legacy<S>(store: &Arc<S>) -> Result<(), MolRsError>
-where
-    S: ?Sized + ListableStorageTraits,
-{
-    let prefix = StorePrefix::new(format!(
-        "{}/{LEGACY_FRAMES_GROUP}/",
-        TRAJECTORY_GROUP.trim_start_matches('/')
-    ))
-    .map_err(zerr)?;
-    if store.list_prefix(&prefix)?.is_empty() {
-        return Ok(());
-    }
-    Err(MolRsError::zarr(
-        "legacy layout (written by molrs <= 0.13); re-write with 0.13",
-    ))
-}
-
 /// Whether an array exists at `path`.
 fn array_exists<S>(store: &Arc<S>, path: &str) -> Result<bool, MolRsError>
 where
@@ -1674,12 +1644,7 @@ fn ensure_root_and_meta(
             .store_metadata()?;
     }
     if meta.is_some() || !group_exists(store, META_ROOT_GROUP)? {
-        // Stamped, like every other record molrs writes. Storing the
-        // producer's map verbatim made `read_meta` refuse the result, because
-        // an unstamped `meta` is how a store from before the stamped format
-        // looks — so a trajectory written *with* metadata was unreadable and
-        // one written without it was fine.
-        let attrs = crate::io::mrec::validation::stamped_meta(&meta.cloned().unwrap_or_default());
+        let attrs = meta.cloned().unwrap_or_default();
         GroupBuilder::new()
             .attributes(attrs)
             .build(store.clone(), META_ROOT_GROUP)?
@@ -3712,10 +3677,7 @@ impl MrecWriter {
     ///
     /// # Errors
     ///
-    /// A [`MolRsError::Zarr`] when the store holds the `trajectory/frames/<i>/`
-    /// layout written by molrs <= 0.13; when its `molrec_version` is not the
-    /// current one (an earlier version's store is read, not continued); when
-    /// `trajectory/` carries no
+    /// A [`MolRsError::Zarr`] when `trajectory/` carries no
     /// `sequence_schema` attribute (a foreign store can be *read* without the
     /// pin but not appended to); or when a reopened column array disagrees
     /// with the pinned schema on dtype or trailing shape.
@@ -3733,18 +3695,6 @@ impl MrecWriter {
             Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage>,
         >,
     ) -> Result<Self, MolRsError> {
-        ensure_not_legacy(&store)?;
-        // Frames appended now are current-version frames; a store of an
-        // earlier version is read (and converted), never continued.
-        let version =
-            crate::io::mrec::validation::molrec_version_of(&super::record_io::read_meta(&store)?)?;
-        if version != crate::io::mrec::MOLREC_VERSION {
-            return Err(MolRsError::zarr(format!(
-                "the store is a molrec_version {version} record; appending would mix version \
-                 {} frames into it. Read it and write a new record",
-                crate::io::mrec::MOLREC_VERSION
-            )));
-        }
         let schema = schema_of(&store)?;
         schema.check_alignments()?;
         check_aligned_not_in_system(&store, &schema)?;
@@ -3911,8 +3861,7 @@ impl MrecWriter {
 
     /// Write `meta` as the record's identity document (`meta/` attributes).
     ///
-    /// Replaces whatever the group held, with the current `molrec_version`
-    /// stamped over any the producer's map carries.
+    /// Replaces whatever the group held.
     ///
     /// # Errors
     ///
@@ -4957,9 +4906,6 @@ pub struct MrecReader {
     times: Option<Vec<F>>,
     blocks: IndexMap<String, BlockIndex>,
     cell: Option<BoxIndex>,
-    /// The conversion every frame is read through when the record is a
-    /// version-1 store (or one without `molrec_version`).
-    upgrade: Option<V1Upgrade>,
     state: Mutex<ReadState>,
 }
 
@@ -4982,10 +4928,6 @@ impl MrecReader {
     ///
     /// Every case is a [`MolRsError::Zarr`] naming the path it failed on:
     ///
-    /// - the record's `meta` carries a `molrec_version` this build does not
-    ///   support;
-    /// - the store holds the `trajectory/frames/<i>/` layout written by molrs
-    ///   <= 0.13;
     /// - a schema pin is present but is not a schema this build can
     ///   deserialize;
     /// - no pin is present and the derivation from the store fails.
@@ -5000,9 +4942,6 @@ impl MrecReader {
         // `Arc<dyn ReadableListableStorageTraits>`, so the read-only view is
         // taken here.
         let store: ReadableListableStorage = Arc::new(StorageHandle::new(store));
-        let meta = super::record_io::read_meta(&store)?;
-        let upgrade = super::record_io::read_upgrade(&store, &meta)?;
-        ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,
             None => schema_from_storage(&store)?,
@@ -5133,7 +5072,6 @@ impl MrecReader {
             times,
             blocks,
             cell,
-            upgrade,
             state: Mutex::new(ReadState::default()),
         })
     }
@@ -5308,9 +5246,6 @@ impl MrecReader {
         // must resolve, or the store is refused.
         if wanted.is_none() {
             check_local_references(&frame, &format!("trajectory frame {index}"))?;
-        }
-        if let Some(upgrade) = &self.upgrade {
-            upgrade.frame(&mut frame)?;
         }
         Ok(Some(frame))
     }
@@ -6893,7 +6828,7 @@ mod tests {
     /// is what makes exactness free (decision 8). Written for two steps so the
     /// array is a real per-step array and not a scalar attribute.
     #[test]
-    fn column_dtype_tags_are_molrec_names_and_legacy_tags_still_read() {
+    fn column_dtype_tags_are_molrec_names() {
         use super::{dtype_from_tag, dtype_tag};
         // The three domain aliases are written under molrec's concrete-width
         // spelling so a schema validates against molrec's dtype enum.
@@ -6903,11 +6838,10 @@ mod tests {
         assert_eq!(dtype_from_tag("f64").unwrap(), DType::Float);
         assert_eq!(dtype_from_tag("i32").unwrap(), DType::Int);
         assert_eq!(dtype_from_tag("u64").unwrap(), DType::Uint);
-        // Stores written by molrs < 0.14 tagged them `float`/`int`/`uint`;
-        // those must stay readable forever (e.g. the driving `growth.mrec`).
-        assert_eq!(dtype_from_tag("float").unwrap(), DType::Float);
-        assert_eq!(dtype_from_tag("int").unwrap(), DType::Int);
-        assert_eq!(dtype_from_tag("uint").unwrap(), DType::Uint);
+        // The domain alias names are not tags.
+        for alias in ["float", "int", "uint"] {
+            assert!(dtype_from_tag(alias).is_err(), "{alias}");
+        }
     }
 
     #[test]
@@ -7033,7 +6967,7 @@ mod tests {
         assert!(frame.meta.get(KEY).unwrap().as_f64().unwrap().is_nan());
         assert_eq!(frame.meta.get("count"), Some(&MetaValue::U64(u64::MAX)));
 
-        // Tamper: the fill as the `null` molrs used to write.
+        // Tamper: a `null` fill.
         let mut group = Group::open(store.clone(), TRAJ).unwrap();
         group.attributes_mut()[SCHEMA_ATTRIBUTE]["meta"][KEY]["fill"] = serde_json::Value::Null;
         group.store_metadata().unwrap();
@@ -7940,79 +7874,21 @@ mod tests {
     }
 
     // =======================================================================
-    // J. Legacy layout — loud, not silently empty
-    // =======================================================================
-
-    /// A store written by molrs <= 0.13 — the per-frame `trajectory/frames/`
-    /// groups — is refused by name, not read as an empty sequence
-    /// (decision 10's one free quadrant).
-    ///
-    /// The fixture is hand-built rather than produced by an old writer,
-    /// because the old writer is gone: what identifies the layout is the
-    /// `trajectory/frames/` group beside `trajectory/step`.
-    #[test]
-    fn a_trajectory_frames_group_is_refused_as_a_legacy_layout() {
-        let dir = TempDir::new().unwrap();
-        let store = storage_in(&dir);
-        for group in [TRAJ, "/trajectory/frames", "/trajectory/frames/0"] {
-            GroupBuilder::new()
-                .build(store.clone(), group)
-                .unwrap()
-                .store_metadata()
-                .unwrap();
-        }
-        let step = ArrayBuilder::new(vec![1], vec![1], data_type::int64(), 0i64)
-            .build(store.clone(), &format!("{TRAJ}/step"))
-            .unwrap();
-        step.store_metadata().unwrap();
-        step.store_array_subset(&ArraySubset::new_with_shape(vec![1]), &[0i64])
-            .unwrap();
-
-        let message = MrecReader::from_storage(store)
-            .err()
-            .expect("the old layout must be refused, not read as empty")
-            .to_string();
-        // The comparison glyph is the implementer's (the Design writes "≤",
-        // the task line "<="); everything around it is the pinned message.
-        assert!(
-            message.contains("legacy layout (written by molrs"),
-            "must name the layout: {message}"
-        );
-        assert!(
-            message.contains("0.13); re-write with 0.13"),
-            "must say which writer produced it and how to migrate: {message}"
-        );
-    }
-
-    // =======================================================================
     // H. The 2026-09 contract — root/meta, cadence, hints, rollback, reads
     // =======================================================================
 
     /// The streaming writer mints a record, not a bare `trajectory/`: the
     /// root group and a `meta/` group exist before the first append, and the
-    /// group carries the stamped `molrec_version` and nothing else.
+    /// group carries nothing the producer did not ask for.
     #[test]
-    fn create_writes_the_root_and_a_stamped_meta_group() {
+    fn create_writes_the_root_and_an_empty_meta_group() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
-        // Every writer stamps the version, the streaming one included.
-        assert_eq!(
-            meta.attributes()
-                .get("molrec_version")
-                .and_then(|v| v.as_u64()),
-            Some(crate::io::mrec::MOLREC_VERSION),
-            "{:?}",
-            meta.attributes()
-        );
-        assert_eq!(
-            meta.attributes().len(),
-            1,
-            "and nothing the producer did not ask for"
-        );
+        assert!(meta.attributes().is_empty(), "{:?}", meta.attributes());
         drop(writer);
     }
 
@@ -8303,7 +8179,7 @@ mod tests {
         );
     }
 
-    /// The narrow float tags are gone: a per-step meta key declared with one
+    /// There are no narrow float tags: a per-step meta key declared with one
     /// is refused, not widened to `f64`. The vector forms share this same
     /// unknown-dtype arm of [`meta_layout`].
     #[test]
@@ -8533,15 +8409,13 @@ mod tests {
         assert!(pinned.blocks[ATOMS].columns[PROBE].nullable);
     }
 
-    /// A store pinned before the flag existed still opens, with every column
-    /// plain: the field defaults rather than making the pin unreadable.
+    /// `nullable` is optional in a pin: a column that omits it is plain.
     #[test]
     fn a_schema_pin_without_nullable_deserializes_as_not_nullable() {
-        // The pin molrs <= 0.15 wrote, verbatim.
         let pinned =
             r#"{"blocks":{"atoms":{"columns":{"probe":{"dtype":"f64","trailing":[]}}}},"meta":{}}"#;
         let schema: SequenceSchema =
-            serde_json::from_str(pinned).expect("an older pin still deserializes");
+            serde_json::from_str(pinned).expect("a pin without nullable deserializes");
         assert!(!schema.blocks[ATOMS].columns[PROBE].nullable);
     }
 

@@ -383,7 +383,6 @@ pub fn register_schema(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBlockSpec>()?;
     m.add("columns", column_specs())?;
     m.add("blocks", block_specs())?;
-    m.add("VOCAB_VERSION", schema::FRAME_VOCAB_VERSION)?;
     for spec in schema::BLOCK_NAMES {
         m.add(spec.const_name, spec.value)?;
     }

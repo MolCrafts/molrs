@@ -296,8 +296,8 @@ pub(crate) fn end_pairs(
 ///
 /// [`ForceTerm`] is the three of them as one value, chosen when the kernel is
 /// built. It exists because a `Box<dyn Potential>` cannot be asked which of the
-/// two it also is — the question used to be put to `terms()`, whose job is to
-/// return a table and which allocated one per member per step to answer it.
+/// two it also is, and `terms()` is the wrong place to ask: its job is to
+/// return a table, and it allocates one per member per call.
 ///
 /// The geometry optimizer ([`crate::optimize::Lbfgs`]) depends on this trait —
 /// not the other way around.
@@ -408,10 +408,10 @@ pub trait PairDriven: Potential {
     ///   reason [`calc_energy_forces_with_pairs_virial`](PairDriven::calc_energy_forces_with_pairs_virial)
     ///   gives.
     ///
-    /// No default: this used to have one that ignored `factor`, which was right
-    /// for a potential that does not sum over the pair table and silently lost
-    /// a force field's exclusions for one that does. Only the second kind is in
-    /// this trait, so the question is now asked of every implementor.
+    /// No default: one that ignored `factor` would be right for a potential
+    /// that does not sum over the pair table and would silently lose a force
+    /// field's exclusions for one that does. Only the second kind is in this
+    /// trait, so the question is asked of every implementor.
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -830,11 +830,8 @@ pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u
 pub struct Potentials {
     /// Each member with the part it plays, settled when it was built.
     ///
-    /// This used to be a `Vec<Box<dyn Potential>>` beside a `Vec<bool>` saying
-    /// which of them held atom indices, because the role had to be recovered by
-    /// calling `terms()` — a method whose job is to return a table, and which
-    /// allocated one per bonded member per step to answer a question that was
-    /// settled at construction. [`ForceTerm`] is that answer, kept.
+    /// The role is settled at construction, so it is kept as the member's
+    /// [`ForceTerm`] variant rather than recovered per step from `terms()`.
     inner: Vec<ForceTerm>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
     /// `0` when unknown (e.g. built incrementally via [`Potentials::push`]).
@@ -966,8 +963,7 @@ impl Potential for Potentials {
 /// An aggregate is pair-driven when it is asked to be: it forwards to the
 /// members that read a pair table and evaluates the rest the ordinary way.
 ///
-/// The split used to be a `Vec<bool>` filled by calling `terms()` on every
-/// member; it is now the member's own [`ForceTerm`] variant, which its
+/// The split is the member's own [`ForceTerm`] variant, which its
 /// constructor chose.
 impl PairDriven for Potentials {
     /// Every member accumulates into the same buffer, and one member that

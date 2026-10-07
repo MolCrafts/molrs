@@ -13,8 +13,7 @@ use molrs::core::TypeName;
 /// `l-k-j-i` are the same term — and their slot order is the chain along the
 /// bonds. An [`Improper`](Self::Improper) is not: see its own note.
 ///
-/// [`BondedTerm`] used to live inside the OPLS typifier, which made it read as an
-/// OPLS thing ("the two endpoint `opls_NNN` types"). It never was: it is the query
+/// [`BondedTerm`] is not an OPLS thing: it is the query
 /// type of the generic [`ParameterInterpolator`](super::ParameterInterpolator)
 /// seam, and GAFF speaks it too. A term is its **atom-type names**, in the order
 /// the force field writes them; which force field named them is not this type's

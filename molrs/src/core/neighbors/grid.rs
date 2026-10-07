@@ -190,7 +190,7 @@ impl CellGrid {
     /// entirely; behind a call boundary it costs about 10% on an orthorhombic
     /// box (measured, 1000 points, `neighbors/cellgrid`). Inlined it is faster
     /// than an unconditional wrap on both box kinds, because the triclinic path
-    /// no longer wraps three components it is about to overwrite.
+    /// does not wrap three components it is about to overwrite.
     #[inline(always)]
     pub fn cell_of(&self, bx: &SimBox, r: [F; 3]) -> usize {
         self.flat(self.cell3(bx, r))

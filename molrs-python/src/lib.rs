@@ -59,7 +59,7 @@ mod stream;
 ///
 /// Returns ``(abi_line, version, frameref_capsule_name, forcefield_capsule_name,
 /// regionref_capsule_name)``
-/// — e.g. ``("0.14", "0.14.0", "molrs.FrameRef/0.14", "molrs.ForceFieldRef/0.14")``.
+/// — e.g. ``("0.16", "0.16.0", "molrs.FrameRef/0.16", "molrs.ForceFieldRef/0.16")``.
 ///
 /// A downstream extension that exchanges ``molrs_ffi`` handle capsules with
 /// this wheel (e.g. molpack) calls this once at import and compares

@@ -96,9 +96,8 @@ impl FromFrame for crate::core::Atomistic {
 
 /// Drain a [`FrameReader`] into a `Vec`.
 ///
-/// `FrameReader::read_all` used to live on the trait, duplicating
-/// [`TrajectoryReader`]'s job — multi-frame access is that trait's whole
-/// purpose. Formats that are genuinely indexable should use
+/// A free function rather than a `FrameReader` method: multi-frame access is
+/// [`TrajectoryReader`]'s whole purpose. Formats that are genuinely indexable should use
 /// [`TrajectoryReader::iter`]; this is for the ones that can only stream
 /// forward.
 pub fn collect_frames<R: FrameReader>(reader: &mut R) -> Result<Vec<Frame>> {

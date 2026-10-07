@@ -145,9 +145,8 @@ impl Rdf {
     ///
     /// A table without the `dist_sq` column carries no distances to bin, so it
     /// is rejected as [`ComputeError::BadShape`] — the same answer every other
-    /// distance-consuming kernel gives. It used to return quietly (guarded only
-    /// by a `debug_assert`), which meant a release build handed back an
-    /// all-zero g(r) for an indices-only list instead of saying no. Callers with
+    /// distance-consuming kernel gives, rather than an all-zero g(r) for an
+    /// indices-only list. Callers with
     /// no materialized distances want [`compute_self`](Self::compute_self) /
     /// [`compute_frame`](Self::compute_frame), which stream them.
     fn accumulate_into(&self, nlist: &Neighbors, n_r: &mut Array1<F>) -> Result<(), ComputeError> {

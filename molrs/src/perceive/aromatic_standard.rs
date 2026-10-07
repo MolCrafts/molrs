@@ -5,9 +5,7 @@
 //! names** rather than any Rust type — so it is a statement about the data
 //! model, and cannot drift with the implementation that satisfies it.
 //!
-//! These were the migration's red line — written `#[ignore]`d against a
-//! representation that did not exist yet, then un-ignored one clause at a time
-//! as it landed. They are all live now and are the standard's acceptance gate.
+//! They are the standard's acceptance gate.
 //!
 //! Run them with:
 //!
@@ -635,7 +633,7 @@ fn perception_alone_never_needs_hydrogens_added() {
 fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
     // §7, the case pyrrole and pyridine alone do not cover. Imidazole has two
     // candidate Kekulé structures, and they tie unless the penalty can see the
-    // hydrogen the graph does not draw — so the tie-break used to put the
+    // hydrogen the graph does not draw — otherwise the tie-break could put the
     // double on the [nH], giving a neutral nitrogen four bonds.
     for (name, smiles) in [
         ("imidazole", "c1c[nH]cn1"),

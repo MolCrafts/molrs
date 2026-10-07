@@ -35,21 +35,17 @@ pub type I = i32;
 
 /// An index into a block, or a stable entity identifier.
 ///
-/// Named for what it *means*, not for what it *is*. The retired alias `U` was
-/// named after a type, so one name carried two unrelated jobs: the width a
-/// column stores at, and the type a domain value happens to be. Those pull
-/// opposite ways -- a formal charge wants to be small, an identifier wants to
-/// be wide -- and one name could not serve both.
+/// Named for what it *means*, not for what it *is*: the width a column
+/// stores at and the type a domain value happens to be are separate jobs, and
+/// a formal charge wants to be small where an identifier wants to be wide.
 ///
 /// Every column this appears in is identity: `id`, `mol_id`, `type_id`,
 /// `res_id`, and the `atomi`/`atomj`/`atomk`/`atoml` relation endpoints.
-/// Sixty-four bits because an identifier that wraps is not an identifier:
-/// a value past `u32::MAX` used to be truncated rather than refused.
+/// Sixty-four bits because an identifier that wraps is not an identifier.
 ///
-/// `U` is also uranium. A text-level rename of the old alias once rewrote
-/// `Element::U`, `symbol: "U"` and the GAFF/BCC/ABCG2 `atom_type: "U"` rows
-/// along with the type references, and nothing caught it. Rename this through
-/// the compiler -- it points only at type positions -- never through a regex.
+/// Rename this through the compiler -- it points only at type positions --
+/// never through a regex: a one-letter type name also matches element
+/// symbols and force-field type rows.
 pub type Idx = u64;
 
 /// Per-axis periodic boundary condition flags.

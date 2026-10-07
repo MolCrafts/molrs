@@ -25,15 +25,6 @@ pub fn schema_document() -> Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("schema: {e}")))
 }
 
-/// Vocabulary version — what the names and dtypes *mean*.
-///
-/// Distinct from the serialization envelope version; a consumer persisting
-/// frames should record this alongside the data.
-#[wasm_bindgen(js_name = schemaVocabVersion)]
-pub fn schema_vocab_version() -> u32 {
-    schema::FRAME_VOCAB_VERSION
-}
-
 /// Declared dtype of a canonical column, named as `Block.dtype` and
 /// `schemaDocument()` name it (`"float"`, `"uint"`, `"string"`, …: core
 /// `DType::name()`), so the three compare directly.

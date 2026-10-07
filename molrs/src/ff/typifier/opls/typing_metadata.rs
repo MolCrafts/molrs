@@ -18,7 +18,7 @@ pub struct OplsTypeRow {
     /// Chemical class (the `class` attribute, e.g. `"CT"`). Bonded forces key on
     /// this class vocabulary, distinct from the `opls_NNN` type vocabulary.
     pub class: String,
-    /// SMARTS definition (the `def` attribute), or `None` for legacy rows that
+    /// SMARTS definition (the `def` attribute), or `None` for rows that
     /// carry no `def` and therefore cannot be matched automatically.
     pub def: Option<String>,
     /// Type names this row overrides (parsed from a comma-separated `overrides`

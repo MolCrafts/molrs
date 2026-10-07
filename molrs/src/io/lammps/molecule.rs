@@ -847,11 +847,11 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         "types": { "format": ["atom-id", "type"], "data": types_data },
     });
     // `units` is optional in the molecule schema: written only when the frame
-    // states it, and refused when the frame states it as anything but a string.
+    // states it, and refused when it names no preset.
     if let Some(units) = frame.meta.get(keys::UNITS) {
         let preset = keys::units_preset(units).ok_or_else(|| {
             invalid_data(format!(
-                "frame meta `{}` must name a preset (`{{\"preset\": …}}`, or a preset string) \
+                "frame meta `{}` must name a preset (`{{\"preset\": …}}`) \
                  to write the JSON `{JSON_UNITS}` field, got {units:?}",
                 keys::UNITS
             ))
@@ -1068,7 +1068,7 @@ Angles
                 "types": {"format": ["atom-id", "type"], "data": [[1, 1]]}}"#,
         )
         .unwrap();
-        let mut frame = read_lammps_molecule_json(&path).unwrap();
+        let frame = read_lammps_molecule_json(&path).unwrap();
         assert_eq!(
             frame.meta.get(keys::UNITS),
             Some(&MetaValue::Json(serde_json::json!({"preset": "real"})))
@@ -1077,9 +1077,5 @@ Angles
         write_lammps_molecule_json(&out, &frame).unwrap();
         let text = std::fs::read_to_string(&out).unwrap();
         assert!(text.contains("\"units\": \"real\""), "{text}");
-        // A legacy string `units` still writes.
-        frame.meta.insert(keys::UNITS, "metal");
-        write_lammps_molecule_json(&out, &frame).unwrap();
-        assert!(std::fs::read_to_string(&out).unwrap().contains("\"metal\""));
     }
 }

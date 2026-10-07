@@ -19,8 +19,8 @@ use crate::io::xml_attribute::{attr_str, forcefield_root};
 /// `ForceField`; the two are read from the same XML but kept separate (as MMFF's
 /// typing metadata is).
 ///
-/// Rows with no `def` are still recorded (with `def = None`); they are legacy
-/// types excluded from automatic SMARTS typing.
+/// Rows with no `def` are still recorded (with `def = None`); they are types
+/// excluded from automatic SMARTS typing.
 ///
 /// # Errors
 ///
@@ -106,8 +106,7 @@ mod tests {
 
     #[test]
     fn test_opls_typing_overrides_and_layer_defaults() {
-        // A modern row with overrides (of two declared types) + a legacy row
-        // with no `def`. (Inline edge fixture: exercises overrides splitting +
+        // A row with overrides (of two declared types) + a row with no `def`. (Inline edge fixture: exercises overrides splitting +
         // def=None + default layer.)
         let xml = r#"<ForceField name="OPLS-AA">
           <AtomTypes>
@@ -133,7 +132,7 @@ mod tests {
             vec!["opls_144".to_string(), "opls_140".to_string()]
         );
 
-        // Legacy row: no def.
+        // Row with no def.
         let r001 = meta.get("opls_001").unwrap();
         assert_eq!(r001.def, None);
     }

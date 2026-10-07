@@ -9,9 +9,7 @@
 //! compressed chunks and records their shape in a small JSON document. The
 //! Cargo feature that enables this module is still named `zarr` after that
 //! encoding; the Zarr storage engine itself is crate-private. A closed
-//! directory can be packed into a sibling `*.mrec.zip` archive. Paths ending
-//! in `.zarr` or `.zarr.zip` are refused: those were the previous scientific
-//! suffixes and are not migrated.
+//! directory can be packed into a sibling `*.mrec.zip` archive.
 //!
 //! # The doors
 //!
@@ -50,27 +48,16 @@
 //! - [`pack_mrec_zip`] / [`open_mrec_zip`] — collapse a closed directory into
 //!   one `*.mrec.zip`, and open one for reading.
 //! - [`ForceFieldSection`] — the `forcefield` section as data.
-//! - [`validation`] — the runtime check for path suffix and `meta` brand keys.
+//! - [`validation`] — the runtime check of a record's frames.
 //!   The language-neutral JSON Schema lives in molrec
 //!   (`schema/core/record.schema.json`).
 //!
 //! The path-taking doors need the `filesystem` feature.
 //!
-//! Every writer creates the record root and its `meta/` group, and stamps
-//! [`MOLREC_VERSION`] there over whatever the producer supplied — so
-//! every record written by this version carries the contract it was written
-//! in.
-//!
-//! Readers validate the key when it is present: it must be an integer `>= 1`
-//! no newer than [`MOLREC_VERSION`]. A version-1 store (molrs ≤ 0.15),
-//! and one without the key (written before version 1), is converted on read —
-//! the force-field IR's numbers whose meaning changed in version 2 are
-//! re-expressed exactly, or the store is refused (the reader's own version-1
-//! conversion, which needs no `ff`). `meta` comes back as stored. A version-1
-//! trajectory is read, never appended to.
-//!
-//! Identity of a store is the `*.mrec/` path suffix plus a Zarr root, not this
-//! key; the key says which contract wrote it.
+//! Every writer creates the record root and its `meta/` group, written as the
+//! producer supplied it; `meta` keys a reader does not recognise are kept as
+//! they are. Identity of a store is the
+//! `*.mrec/` path suffix plus a Zarr root.
 //!
 //! # Examples
 //!
@@ -101,7 +88,7 @@ pub mod validation;
 pub(crate) mod zarr_storage;
 
 pub use forcefield_section::{EndpointKey, ForceFieldSection, SectionStyle, style_block_name};
-pub use record::{MOLREC_VERSION, MolRec, Observables, RESERVED_META_KEYS};
+pub use record::{MolRec, Observables};
 pub use zarr_storage::{
     Compression, MrecReader, MrecWriter, SequenceSchema, dtype_from_schema_tag,
     section_names_storage,

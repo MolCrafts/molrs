@@ -37,4 +37,3 @@ def test_trace_is_frozen_and_built_only_through_init() -> None:
 
     with pytest.raises(AttributeError):
         trace.points = np.ones((1, 3))  # type: ignore[misc]
-    assert not hasattr(molrs.core.Trace, "from_points")

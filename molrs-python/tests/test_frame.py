@@ -310,8 +310,8 @@ class TestFrameMeta:
 
     def test_json_document_values_are_accepted(self):
         f = Frame()
-        f.meta = {"legacy": "string-only", "nested": {"tool": "molrec", "run": 3}}
-        assert f.meta["legacy"] == "string-only"
+        f.meta = {"label": "string-only", "nested": {"tool": "molrec", "run": 3}}
+        assert f.meta["label"] == "string-only"
         assert f.meta["nested"] == {"tool": "molrec", "run": 3}
         assert f.meta.dtype("nested") == "json"
 
@@ -389,7 +389,7 @@ class TestFrameMeta:
         assert "title" not in f.meta
 
     def test_narrow_float_dtypes_are_refused(self):
-        # One float: `f64`. The narrow tags are gone, not promoted.
+        # One float: `f64`. A narrow tag is refused, not promoted.
         with pytest.raises(TypeError, match="unknown metadata dtype"):
             MetaValue("f32", 300.0)
 

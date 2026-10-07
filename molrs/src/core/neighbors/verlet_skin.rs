@@ -93,7 +93,7 @@ pub struct SkinPair {
 /// as a jump of one cell.
 ///
 /// A displacement that *does* reach half the smallest perpendicular width still
-/// raises, but the meaning has changed: the minimum image can no longer tell
+/// raises, and means something else: the minimum image cannot tell
 /// which copy it came from, so the number is not a displacement at all. That is
 /// a blow-up or a cell change, not a wrap.
 ///
@@ -800,7 +800,7 @@ mod tests {
         );
         assert!(
             !msg.contains("unwrapped"),
-            "the old contract is gone; wrapped coordinates are expected: {msg}"
+            "wrapped coordinates are expected: {msg}"
         );
     }
 

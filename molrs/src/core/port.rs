@@ -589,7 +589,7 @@ mod tests {
         assert_eq!(port.handle, o);
     }
 
-    /// Amended 2026-09-26 (spec assembly-06 §1): a world port is
+    /// Spec assembly-06 §1: a world port is
     /// resolved by its (anchor, handle) pair (the port map
     /// `port_on` resolves), so a pair holds one port.
     #[test]

@@ -25,10 +25,7 @@ This module holds the rest:
   :meth:`ForceFieldSection.to_forcefield` map it onto a force field)
 * :func:`section_names` — which sections a store holds
 * :func:`pack_mrec_zip` — collapse a closed store into one ``*.mrec.zip``
-* :data:`MOLREC_VERSION` / :data:`RESERVED_META_KEYS` — the record
-  contract's version and the ``meta`` keys it reserves
-* :mod:`molrs.io.mrec.validation` — runtime check for path suffix and
-  ``meta`` keys
+* :mod:`molrs.io.mrec.validation` — runtime check of a record's frames
 
 The names are those of ``molrs::io::mrec`` — ``MrecReader``, ``MrecWriter``,
 ``SequenceSchema``, ``section_names``.
@@ -38,8 +35,6 @@ from ..._native import mrec as _mrec
 from . import validation
 
 ForceFieldSection = _mrec.ForceFieldSection
-MOLREC_VERSION = _mrec.MOLREC_VERSION
-RESERVED_META_KEYS = _mrec.RESERVED_META_KEYS
 MrecReader = _mrec.MrecReader
 MrecWriter = _mrec.MrecWriter
 SequenceSchema = _mrec.SequenceSchema
@@ -47,8 +42,6 @@ pack_mrec_zip = _mrec.pack_mrec_zip
 section_names = _mrec.section_names
 
 __all__ = [
-    "MOLREC_VERSION",
-    "RESERVED_META_KEYS",
     "ForceFieldSection",
     "MrecReader",
     "MrecWriter",

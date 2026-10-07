@@ -31,7 +31,7 @@ pub struct PublisherConfig {
     /// When full, [`Publisher::send`] drops the oldest buffered frame so the
     /// producer never blocks.
     pub buffer_size: usize,
-    /// Reserved maximum stream rate in Hz. Not enforced in v1 (no-op).
+    /// Reserved maximum stream rate in Hz. Not enforced (no-op).
     pub max_frame_rate: f64,
     /// Shared secret a client must present before it receives anything.
     ///

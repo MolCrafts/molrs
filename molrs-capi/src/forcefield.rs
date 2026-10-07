@@ -863,8 +863,8 @@ mod tests {
         assert_eq!(json, expected);
     }
 
-    /// JSON that is no section is refused whole: an unknown top-level key,
-    /// a missing `document`, and the retired C-API-only document.
+    /// JSON that is no section is refused whole: an unknown top-level key
+    /// and a missing `document`.
     #[test]
     fn json_that_is_no_section_is_refused() {
         let mut ff = ForceField::new("rt");
@@ -875,8 +875,5 @@ mod tests {
         doc["bogus"] = 1.into();
         assert!(ff_from_json_string(&doc.to_string()).is_err());
         assert!(ff_from_json_string(r#"{"tables": {}}"#).is_err());
-        let retired = r#"{"name": "doc", "styles": [{"category": "bond",
-            "name": "harmonic", "params": {}, "str_params": {}, "types": []}]}"#;
-        assert!(ff_from_json_string(retired).is_err());
     }
 }

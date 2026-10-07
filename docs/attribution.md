@@ -22,16 +22,14 @@ for molrs.**
 
 ## Bundled data files
 
-Parameter data is no longer bundled as *text*: since `chem-perceive-14` every
-force-field table molrs ships is typed Rust under `molrs/src/ff/params/`, and the
-XML it used to be parsed from is deleted. The origin and licence of the numbers
-are unchanged by that — they travel with the numbers, so the rows below name the
-tables that hold them now.
+Every force-field table molrs ships is typed Rust under `molrs/src/ff/params/`.
+The origin and licence of the numbers travel with them; the rows below name the
+tables that hold them.
 
 | File | Origin | License |
 |---|---|---|
-| `molrs/src/ff/params/oplsaa.rs` (was `molrs/data/oplsaa.xml`) | OPLS-AA atom types & typing definitions from **foyer** | `MIT` (foyer) |
-| `molrs/src/ff/params/mmff.rs` (was `molrs/src/ff/mmff/tables.rs` + `molrs/data/mmff94{,s}.xml`) | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
+| `molrs/src/ff/params/oplsaa.rs` | OPLS-AA atom types & typing definitions from **foyer** | `MIT` (foyer) |
+| `molrs/src/ff/params/mmff.rs` | ported from **RDKit** `Code/ForceField/MMFF/Params.cpp` (MMFF94/94s tables) | `BSD-3-Clause` (RDKit); MMFF94 parameters © Merck / T. A. Halgren, *J. Comput. Chem.* **17**, 490 (1996) |
 
 ## Formula / method references (papers, no code copied)
 

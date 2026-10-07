@@ -46,9 +46,6 @@ const DUMP_COLUMN_ALIASES: &[(&str, &str)] = &[
     // field holding type *labels* is the exception the dump reader and writer
     // handle themselves: it is the canonical string `type`.
     ("type", keys::TYPE_ID),
-    // Legacy / alternate spellings we normalise on read
-    ("molecule", keys::MOL_ID),
-    ("molecule_id", keys::MOL_ID),
     // Forces (already short names; kept as-is) — listed only if renamed
     // EFF package: spin was renamed to espin in LAMMPS (15Sep2022)
     ("spin", "espin"),

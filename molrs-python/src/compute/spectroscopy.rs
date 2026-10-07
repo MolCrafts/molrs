@@ -32,8 +32,7 @@ fn spectrum_dict<'py>(
 }
 
 /// Velocity power spectrum (VDOS) transform of a **raw velocity ACF**
-/// (CosineSq window + zero-padded forward FFT). Reproduces the legacy
-/// `power_spectrum` bit-for-bit on the raw ACF that function builds internally.
+/// (CosineSq window + zero-padded forward FFT).
 #[pyclass(module = "molrs.compute", name = "PowerSpectrum")]
 pub struct PyPowerSpectrum;
 
@@ -69,7 +68,7 @@ impl PyPowerSpectrum {
 
 /// Infrared absorption spectrum transform of a **raw dipole-flux ACF**
 /// (same window+FFT pipeline as [`PowerSpectrum`](PyPowerSpectrum); only the
-/// supplied ACF differs). Reproduces the legacy `ir_spectrum` bit-for-bit.
+/// supplied ACF differs).
 #[pyclass(module = "molrs.compute", name = "IrSpectrum")]
 pub struct PyIrSpectrum;
 
@@ -105,7 +104,7 @@ impl PyIrSpectrum {
 
 /// Raman spectrum transform of **raw isotropic + anisotropic ACFs**
 /// (one CosineSq window per ACF, FFT both, then the cross-section + Bose
-/// prefactors). Reproduces the legacy `raman_spectrum` bit-for-bit.
+/// prefactors).
 #[pyclass(module = "molrs.compute", name = "RamanSpectrum")]
 pub struct PyRamanSpectrum {
     inner: RamanSpectrum,
@@ -181,9 +180,7 @@ fn dielectric_dict<'py>(
 
 /// Einstein–Helfand ε(ω) transform of a **raw fluctuation dipole ACF** (the
 /// [`DebyeRelaxation`](PyDebyeRelaxation) ACF): one-sided cos² taper +
-/// derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor. Reproduces the legacy
-/// `einstein_helfand_spectrum` bit-for-bit on the raw ACF that function built
-/// internally.
+/// derivative-FT + the `4π·KAPPA/(3·V·k_B·T)` prefactor.
 #[pyclass(module = "molrs.compute", name = "EinsteinHelfandSpectrum")]
 
 pub struct PyEinsteinHelfandSpectrum {
@@ -232,9 +229,7 @@ impl PyEinsteinHelfandSpectrum {
 
 /// Green–Kubo ε(ω) transform of a **raw current ACF** (the
 /// [`GreenKuboConductivity`](PyGreenKuboConductivity) ACF over the post-NaN
-/// series): window + FFT → σ(ω) → ε(ω). Reproduces the legacy
-/// `green_kubo_spectrum` bit-for-bit on the raw ACF that function built
-/// internally.
+/// series): window + FFT → σ(ω) → ε(ω).
 #[pyclass(module = "molrs.compute", name = "GreenKuboSpectrum")]
 pub struct PyGreenKuboSpectrum {
     inner: GreenKuboSpectrum,

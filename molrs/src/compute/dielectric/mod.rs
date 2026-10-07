@@ -390,13 +390,10 @@ pub fn decompose_current(
     Ok((j_water, j_ion))
 }
 
-// The Einstein–Helfand ionic conductivity is now the explicit composition of
+// The Einstein–Helfand ionic conductivity is the explicit composition of
 // the raw [`EinsteinConductivity`](crate::compute::EinsteinConductivity) collective-dipole
 // MSD compute with the [`LinearFit`](crate::compute::LinearFit) slope and a
-// caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor. The legacy bundled
-// `ConductivityResult` + `einstein_helfand_conductivity` free function (which
-// baked the OLS slope and σ into the raw result) were removed in
-// compute-fit-03-cleanup.
+// caller-applied `slope / (6·V·k_B·T)` MD→SI prefactor.
 
 /// Per-axis static dielectric constant result (MDAnalysis-compatible).
 ///
@@ -425,11 +422,6 @@ pub struct StaticDielectricResult {
 mod tests {
     use super::*;
     use ndarray::{Axis, arr1};
-
-    // The conductivity MSD-exactness and Nernst–Einstein scientific-regression
-    // tests moved to `compute::transport` alongside the
-    // `EinsteinConductivity` + `LinearFit` composition that replaced the removed
-    // `einstein_helfand_conductivity` free function.
 
     #[test]
     fn test_dipole_moment_two_charges() {

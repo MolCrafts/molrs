@@ -195,13 +195,13 @@ def test_base_only_string_has_no_templates() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backward compatibility and one spelling per fact
+# SmilesError is a ValueError, with one spelling per fact
 # ---------------------------------------------------------------------------
 
 
-def test_value_error_still_catches_a_smiles_error() -> None:
-    """Every ``pytest.raises(ValueError)` already written against this surface
-    (``test_cgsmiles.py``, ``test_smiles_emit.py``) keeps catching."""
+def test_a_smiles_error_is_a_value_error() -> None:
+    """``SmilesError`` subclasses ``ValueError``, so ``except ValueError``
+    catches it."""
     with pytest.raises(ValueError) as excinfo:
         molrs.io.cgsmiles.CgSmilesIr(UNTERMINATED_BLOCK)
 

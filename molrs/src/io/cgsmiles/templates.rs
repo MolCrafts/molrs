@@ -31,7 +31,7 @@
 //! `[<]OCC[>]`, parsed by
 //! [`SmilesIr::from_fragment`](crate::io::smiles::SmilesIr::from_fragment) — is
 //! built by [`SmilesIr::to_template`], the same conversion a table entry goes
-//! through; a caller no longer wraps the body in a one-bead `CGsmiles` string
+//! through; a caller does not wrap the body in a one-bead `CGsmiles` string
 //! only to index the one template back out.
 
 use std::collections::BTreeMap;

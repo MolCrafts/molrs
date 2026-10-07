@@ -47,33 +47,31 @@ use crate::ff::params::OplsRuleRow;
 /// 5. **Preconditions.** Hydrogens are explicit atoms; `r<n>` is the size of
 ///    the atom's *smallest* ring (RDKit/Daylight), not any chordless cycle.
 ///
-/// # Changes from the moved foyer table
+/// # Differences from foyer's rules
 ///
-/// The 157 `def` / `overrides` pairs moved here from the foyer-derived
-/// `oplsaa.rs` table (spec opls-gromacs-02) and were rewritten to the
-/// conventions above (spec opls-gromacs-03). No rule declares an explicit
-/// priority. Every override of the moved table is kept; the changes are:
+/// 157 of the `def` / `overrides` pairs derive from foyer's OPLS-AA rules,
+/// written to the conventions above. No rule declares an explicit priority.
+/// Every foyer override is kept; the differences are:
 ///
-/// - **New:** opls_150 (diene `=CH-CH=`) `[C;X3;H1](=[C;X3])-[C;X3]=[C;X3]`,
+/// - **Added:** opls_150 (diene `=CH-CH=`) `[C;X3;H1](=[C;X3])-[C;X3]=[C;X3]`,
 ///   overriding opls_142; opls_178 (diene `=CR-CR=`)
 ///   `[C;X3;H0](=[C;X3])(-[#6])-[C;X3]=[C;X3]`, overriding opls_141. Both are
 ///   for conjugated dienes only, so methacrylate's α-carbon stays opls_141.
-/// - **New:** opls_928 (alkyne C2 whose R carries one H)
-///   `[C;X2](-[C;X4;H1])#[#6]`, overriding nothing. The moved opls_927 lost
-///   its override of opls_928 in opls-gromacs-02 because opls_928 had no
-///   rule; it is not restored: by their `.atp` descriptions opls_927 (R with 2
-///   or 3 H, `-[#6](-[#1])-[#1]`) and opls_928 (R with 1 H) are disjoint, so
-///   they are never candidates on the same atom. R is sp3 (`X4`) because the
+/// - **Added:** opls_928 (alkyne C2 whose R carries one H)
+///   `[C;X2](-[C;X4;H1])#[#6]`, overriding nothing. opls_927 does not override
+///   opls_928: by their `.atp` descriptions opls_927 (R with 2 or 3 H,
+///   `-[#6](-[#1])-[#1]`) and opls_928 (R with 1 H) are disjoint, so they are
+///   never candidates on the same atom. R is sp3 (`X4`) because the
 ///   description sends C3 to the alkane types opls_135–139.
-/// - **Dropped term:** opls_542 (pyrrole N) no longer ends in a bare `H`,
-///   which the foyer rule bonded to a ring carbon rather than to N; the ring
+/// - **Dropped term:** opls_542 (pyrrole N) does not end in a bare `H`, which
+///   the foyer rule bonded to a ring carbon rather than to N; the ring
 ///   `[n;X3;r5]1:[c;X3;r5]:…:1` alone identifies it.
 ///
 /// Overrides between an aliphatic and an aromatic rule (opls_145 over
 /// opls_141/142, opls_522/523/533/544 over opls_142, the aromatic H types over
-/// opls_144) and those of opls_151/264 over the ion opls_401 can no longer
-/// meet a co-matching candidate under the case and `X0` conventions; they are
-/// kept, harmless, as the moved table's record.
+/// opls_144) and those of opls_151/264 over the ion opls_401 cannot meet a
+/// co-matching candidate under the case and `X0` conventions; they are kept,
+/// harmless, as foyer's overrides.
 #[rustfmt::skip]
 pub const OPLSAA_TYPING: &[OplsRuleRow] = &[
     OplsRuleRow { name: "opls_135", def: "[C;X4](-[#6])(-[#1])(-[#1])-[#1]", overrides: &[] }, // alkane CH3

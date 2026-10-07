@@ -9,10 +9,8 @@ documentation = false
 # dependencies, so the header states it here.
 after_includes = "typedef double F;"
 
-# (No [defines]: the numeric-width cargo features were removed long ago —
-# widths are fixed, F is double unconditionally — so there is nothing for
-# cbindgen to map onto a C macro; the old mapping died with the dead CMake
-# switch of the same name.)
+# (No [defines]: widths are fixed and F is double unconditionally, so there is
+# no cargo feature for cbindgen to map onto a C macro.)
 
 [export]
 prefix = ""

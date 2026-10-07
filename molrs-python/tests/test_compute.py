@@ -271,23 +271,7 @@ class TestAcf:
 
 
 class TestRustNames:
-    """Every ``molrs.compute`` name is the Rust name (wave S4)."""
-
-    def test_namespace_classes_are_functions_or_rust_classes(self):
-        for gone in (
-            "Dielectric",
-            "Persist",
-            "Onsager",
-            "AngleDistribution",
-            "DihedralDistribution",
-            "DistanceDistribution",
-            "kramers_kronig",
-            "conductivity_sum_rule",
-            "route_agreement",
-            "voronoi_domains",
-            "voronoi_voids",
-        ):
-            assert not hasattr(molrs.compute, gone), gone
+    """Every ``molrs.compute`` name is the Rust name."""
 
     def test_dielectric_functions(self):
         charges = np.array([1.0, -1.0])

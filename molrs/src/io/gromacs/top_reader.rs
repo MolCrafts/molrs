@@ -2412,8 +2412,7 @@ mod tests {
     }
 
     /// A `[ nonbond_params ]` row is an explicit `lj/cut` cross row, in molrs
-    /// units: σ = 0.3 nm = 3 Å, ε = 0.4184 kJ/mol = 0.1 kcal/mol. The section
-    /// used to be refused.
+    /// units: σ = 0.3 nm = 3 Å, ε = 0.4184 kJ/mol = 0.1 kcal/mol.
     #[test]
     fn nonbond_params_is_an_explicit_lj_cut_cross_row() {
         let text = format!(

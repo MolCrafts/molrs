@@ -326,10 +326,10 @@ mod tests {
     }
 
     #[test]
-    fn dependency_on_legacy_nodef_type_is_dropped() {
+    fn dependency_on_a_type_without_def_is_dropped() {
         // %opls_999 references a type with no def -> not a dependency edge.
         let meta = meta_with(&[
-            ("opls_999", None), // legacy no-def
+            ("opls_999", None), // no def
             ("opls_500", Some("H[C;%opls_999]")),
         ]);
         let a = OplsDependencyAnalyzer::new(&meta);

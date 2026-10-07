@@ -199,7 +199,7 @@ impl ForceProvider for SelfPairedForces {
 /// counters, while the answer depended on none of it. Only a
 /// [`ForceTerm::Pair`] can be bound this way — a bonded member is never handed
 /// the table — and [`ForceTerm::binds_a_fixed_pair_list`] already knows that, so
-/// this no longer has to ask each kernel twice.
+/// this does not ask each kernel twice.
 ///
 /// It stays a run-time check rather than a type: a kernel built from a pair
 /// list and the same kernel keyed on the atoms are one Rust type in molrs (the

@@ -2,8 +2,8 @@
 
 Frame and Trajectory are the in-memory objects; the whole-record doors are
 paired in ``molrs.io``, the store machinery in ``molrs.io.mrec``. Schema checks
-live in ``molrs::io::mrec::schema`` and are
-bound, not reimplemented, at ``molrs.io.mrec.validation``.
+live in ``molrs::io::mrec::validation`` and are bound, not reimplemented, at
+``molrs.io.mrec.validation``.
 """
 
 from __future__ import annotations
@@ -62,11 +62,8 @@ class TestFrameDoors:
         molrs.io.write_mrec_frame(path, _coords_frame())
         _assert_coords(molrs.io.read_mrec_frame(path))
         assert molrs.io.mrec.section_names(path) == frozenset({"meta", "frame"})
-        meta = molrs.io.read_mrec_meta(path)
-        molrs.io.mrec.validation.validate_meta(meta)
-        # Every record is stamped on write, so a producer that handed in
-        # nothing still gets the version.
-        assert meta == {"molrec_version": molrs.io.mrec.MOLREC_VERSION}
+        # A producer that handed in nothing gets an empty identity document.
+        assert molrs.io.read_mrec_meta(path) == {}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
@@ -94,43 +91,14 @@ class TestTrajectoryDoors:
 
 
 class TestSchema:
-    def test_version_constant_comes_from_molrs(self) -> None:
-        assert molrs.io.mrec.MOLREC_VERSION == 2
-        assert molrs.io.mrec.MOLREC_VERSION == molrs._native.mrec.MOLREC_VERSION
-        assert molrs.io.mrec.RESERVED_META_KEYS == ["molrec_version"]
-
-    def test_a_missing_molrec_version_is_accepted(self) -> None:
-        # Absent is a store from before version 1 -- a foreign store, or one
-        # written before molrs stamped the key -- and opens (read by version
-        # 1's rules). The retired brand keys are neither checked nor a
-        # stand-in for the version.
-        molrs.io.mrec.validation.validate_meta(
-            {"record_schema_version": 99, "format_name": "mrec"}
-        )
-        molrs.io.mrec.validation.validate_meta({})
-
-    def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:
-        for bad in (0, 3, "1", None, 1.5):
-            with pytest.raises(ValueError, match="molrec_version"):
-                molrs.io.mrec.validation.validate_meta({"molrec_version": bad})
-        molrs.io.mrec.validation.validate_meta({"molrec_version": 1})
-        molrs.io.mrec.validation.validate_meta({"molrec_version": 2})
-
-    def test_a_store_without_molrec_version_reads(self, tmp_path: Path) -> None:
-        import json
-
-        path = tmp_path / "foreign.mrec"
-        molrs.io.write_mrec_frame(path, _coords_frame(), meta={"producer": "other"})
-        meta_json = path / "meta" / "zarr.json"
-        doc = json.loads(meta_json.read_text())
-        del doc["attributes"]["molrec_version"]
-        meta_json.write_text(json.dumps(doc))
-        assert molrs.io.read_mrec_meta(path) == {"producer": "other"}
-        _assert_coords(molrs.io.read_mrec_frame(path))
-
-    def test_retired_path_is_refused(self) -> None:
-        with pytest.raises(Exception, match="\\.mrec"):
-            molrs.io.mrec.validation.validate_path("water.zarr")
+    def test_a_molrec_version_key_is_an_ordinary_meta_key(self, tmp_path: Path) -> None:
+        # Written as given, read back unchanged, checked by no door.
+        for value in (99, "1", None):
+            path = tmp_path / f"record-{value}.mrec"
+            meta = {"producer": "other", "molrec_version": value}
+            molrs.io.write_mrec_frame(path, _coords_frame(), meta=meta)
+            assert molrs.io.read_mrec_meta(path) == meta
+            _assert_coords(molrs.io.read_mrec_frame(path))
 
     def test_empty_frame_passes(self) -> None:
         molrs.io.mrec.validation.validate_frame(molrs.core.Frame())
@@ -142,8 +110,6 @@ class TestMrecSurface:
 
         assert MrecReader is molrs.io.mrec.MrecReader
         assert MrecWriter is molrs.io.mrec.MrecWriter
-        assert not hasattr(molrs.io.mrec, "TrajectoryReader")
-        assert not hasattr(molrs.io.mrec, "TrajectoryWriter")
 
     def test_a_trajectory_door_returns_its_formats_reader(self, water_dcd: Path) -> None:
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
@@ -166,15 +132,9 @@ class TestMrecSurface:
         ]
         assert not [n for n in dir(molrs.io.mrec) if n.startswith(("read", "write"))]
 
-    def test_no_frame_reader(self) -> None:
-        assert hasattr(molrs.io.mrec, "FrameReader") is False
-
     def test_no_make_helpers(self) -> None:
         makers = [name for name in dir(molrs.io.mrec) if name.startswith("make_")]
         assert makers == []
-
-    def test_no_god_reader(self) -> None:
-        assert not hasattr(molrs.io.mrec, "Reader")
 
 
 class TestCanonicalWidths:
@@ -262,8 +222,7 @@ class TestMetaArgument:
             path, molrs.core.Trajectory([frame]), meta=frame.meta["run"]
         )
         meta = molrs.io.read_mrec_meta(path)
-        assert meta["engine"] == "md"
-        assert meta["molrec_version"] == molrs.io.mrec.MOLREC_VERSION
+        assert meta == {"engine": "md", "seeds": [1, 2]}
         assert len(molrs.io.read_mrec_trajectory(path)) == 1
 
     def test_frame_sequence_writer_accepts_a_document(self, tmp_path: Path) -> None:
@@ -592,53 +551,3 @@ class TestForceFieldSection:
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
         assert name == "pair.lj%2Fcut%2Fcoul%2Flong"
-
-
-#: Records the published molrs 0.15.0 wrote (molrec_version 1), and the
-#: energies and forces it computed for them (molrs/src/io/mrec/zarr_storage/testdata/v1).
-V1_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/mrec/zarr_storage/testdata/v1"
-
-
-def _v1_record(tmp_path: Path, name: str) -> Path:
-    import zipfile
-
-    path = tmp_path / f"{name}.mrec"
-    with zipfile.ZipFile(V1_FIXTURES / f"{name}.mrec.zip") as packed:
-        packed.extractall(path)
-    return path
-
-
-class TestMolrecVersion1:
-    """A molrs 0.15 record reads as a version-2 record that prices as molrs
-    0.15.0 priced it, through the Python doors."""
-
-    @pytest.mark.parametrize(
-        "name", ["mmff", "classic", "variants", "fourier-lj", "class2-metal"]
-    )
-    def test_prices_as_molrs_0_15(self, tmp_path: Path, name: str) -> None:
-        import json
-
-        want = json.loads((V1_FIXTURES / "energies.json").read_text())[name]
-        path = _v1_record(tmp_path, name)
-        section = molrs.io.read_mrec_forcefield(path)
-        assert section.document["units"]["angle"] == "degree"
-        ff = section.to_forcefield()
-        system = molrs.io.read_mrec_system(path)
-        energy, forces = molrs.ff.compile.PotentialCompiler(ff).compile(system).calc_energy_forces(system)
-        assert energy == pytest.approx(want["energy"], rel=1e-10, abs=1e-10)
-        np.testing.assert_allclose(
-            np.asarray(forces).ravel(), want["forces"], rtol=1e-10, atol=1e-10
-        )
-        assert molrs.io.read_mrec_meta(path)["molrec_version"] == 1
-
-    def test_a_converted_record_is_written_as_version_2(self, tmp_path: Path) -> None:
-        path = _v1_record(tmp_path, "mmff")
-        again = tmp_path / "again.mrec"
-        molrs.io.write_mrec_system(
-            again,
-            molrs.io.read_mrec_system(path),
-            forcefield=molrs.io.read_mrec_forcefield(path),
-        )
-        assert molrs.io.read_mrec_meta(again)["molrec_version"] == 2
-        theta0 = molrs.io.read_mrec_system(again)["angles"]["theta0"]
-        assert np.all((theta0 > 90.0) & (theta0 < 180.0))

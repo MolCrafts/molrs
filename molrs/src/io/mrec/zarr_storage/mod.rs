@@ -98,7 +98,6 @@ mod pack;
 #[cfg(feature = "filesystem")]
 mod positional_write;
 mod record_io;
-mod record_v1;
 mod sequence;
 // Built where it is registered (no C `zstd`), and for the tests that hold it
 // to the C encoder's frames.

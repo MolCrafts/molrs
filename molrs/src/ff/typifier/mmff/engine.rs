@@ -30,11 +30,8 @@
 //! It matches a graph and it owns a library. Turning the typed graph and the
 //! typing output into [`Potentials`](crate::ff::potential::Potentials) is
 //! `PotentialCompiler::new(typing.forcefield()).compile(&frame)` — the same call
-//! every other force field in molrs goes through. There used to be a `build(mol)`
-//! convenience that did typify → `to_frame` → `intramolecular_pairs` →
-//! `PotentialCompiler::compile` behind one method name, which made MMFF the only
-//! typifier in the crate that could also compile; it is gone. A typifier's
-//! contract is `assign`.
+//! every other force field in molrs goes through. A typifier does not compile;
+//! its contract is `assign`.
 
 use std::sync::Arc;
 

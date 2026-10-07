@@ -1197,8 +1197,7 @@ impl PyFrame {
         // `pointer_checked` validates the capsule name and rejects a null
         // payload in one step, returning the `*mut *mut FrameRef`. The name
         // carries the ABI line, so a producer on another molrs minor line
-        // (including pre-0.14 unversioned `molrs.FrameRef` capsules) fails
-        // here cleanly instead of being dereferenced.
+        // (or a capsule without the ABI line in its name) fails here cleanly instead of being dereferenced.
         let expected = molrs_ffi::abi::frameref_capsule_name();
         let ptr = capsule.pointer_checked(Some(expected)).map_err(|err| {
             pyo3::exceptions::PyValueError::new_err(format!(
@@ -1513,7 +1512,7 @@ pub(crate) fn py_to_json(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<Jso
         return Ok(JsonValue::from(i.extract::<u64>()?));
     }
     if let Ok(f) = value.cast::<PyFloat>() {
-        // A JSON document is finite: a NaN here used to become `null`, a
+        // A JSON document is finite: writing a NaN as `null` would be a
         // silent loss. A non-finite float belongs in a typed meta value
         // (`f64`), not inside a document.
         let v = f.extract::<f64>()?;

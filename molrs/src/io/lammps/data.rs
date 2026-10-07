@@ -1639,16 +1639,11 @@ fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
 /// Does the atoms block have an int or float column for this data-file field?
 fn frame_has_atom_field(frame: &impl FrameAccess, field: DataField) -> bool {
     let key = field_column_key(field);
-    // Core fields checked separately; mol accepts legacy name.
     if field == DataField::Mol {
         return frame
             .column("atoms", keys::MOL_ID)
             .and_then(|c| c.as_uint())
-            .is_some()
-            || frame
-                .column("atoms", "molecule_id")
-                .and_then(|c| c.as_int())
-                .is_some();
+            .is_some();
     }
     // Mass may be resolved from element without a mass column.
     if field == DataField::Mass {
@@ -1740,18 +1735,12 @@ impl<'a> AtomColumn<'a> {
                         .ok_or_else(|| invalid_data(format!("Missing integer column '{key}'")))?,
                 ),
             },
-            DataField::Mol => match frame
-                .column("atoms", keys::MOL_ID)
-                .and_then(|c| c.as_uint())
-            {
-                Some(col) => Self::Uint(col),
-                None => Self::Int(
-                    frame
-                        .column("atoms", "molecule_id")
-                        .and_then(|c| c.as_int())
-                        .ok_or_else(|| invalid_data("Missing mol_id column"))?,
-                ),
-            },
+            DataField::Mol => Self::Uint(
+                frame
+                    .column("atoms", keys::MOL_ID)
+                    .and_then(|c| c.as_uint())
+                    .ok_or_else(|| invalid_data("Missing mol_id column"))?,
+            ),
             _ => Self::Float(
                 frame
                     .column("atoms", key)
@@ -2995,7 +2984,6 @@ mod atom_style_tests {
         use crate::io::lammps::columns::{canonical_dump_column, native_dump_column};
         assert_eq!(canonical_dump_column("q"), keys::CHARGE);
         assert_eq!(canonical_dump_column("mol"), keys::MOL_ID);
-        assert_eq!(canonical_dump_column("molecule"), keys::MOL_ID);
         assert_eq!(native_dump_column(keys::CHARGE), "q");
         assert_eq!(native_dump_column(keys::MOL_ID), "mol");
         assert_eq!(canonical_dump_column("spin"), "espin");

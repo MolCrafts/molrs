@@ -461,10 +461,9 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
     // fit), because a `dump local` column like `batom1` has no spec and its
     // type is genuinely a property of the data.
     let mut col_types: Vec<ColumnType> = col_names.iter().map(|n| seed_column_type(n)).collect();
-    // Buffers follow the seeded type. Previously every column started Integer
-    // so only `int_cols` was pre-allocated and the promotion path allocated the
-    // others; seeding from the vocabulary means a column can *begin* as Float
-    // or String, and its buffer has to exist before the first row.
+    // Buffers follow the seeded type: seeding from the vocabulary means a
+    // column can *begin* as Float or String, and its buffer has to exist
+    // before the first row.
     let mut int_cols: Vec<Option<Vec<i64>>> = col_types
         .iter()
         .map(|t| matches!(t, ColumnType::Integer).then(|| Vec::with_capacity(nrows)))
@@ -598,15 +597,15 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 
     // ENTRIES (`dump local`) lands in "entries", not "bonds".
     //
-    // It used to be called "bonds", which claimed the canonical bonds contract
-    // — `atomi`/`atomj`, 0-indexed into `atoms` — while carrying whatever
-    // columns the file happened to name (`batom1`/`batom2`, angles, pair
-    // distances, …). Worse, as the note above records, those endpoints point
+    // Calling it "bonds" would claim the canonical bonds contract —
+    // `atomi`/`atomj`, 0-indexed into `atoms` — while carrying whatever
+    // columns the file happens to name (`batom1`/`batom2`, angles, pair
+    // distances, …). And, as the note above records, those endpoints point
     // at "the atom written at file row K" with a 0-/1-based offset the *user*
     // resolves, so they are not 0-based row indices at all.
     //
     // A block that does not satisfy a contract must not take its name; the
-    // schema check on read is what made this visible. Column names stay
+    // schema check on read enforces this. Column names stay
     // as-is, and downstream stays gated on the canonical endpoints, so a
     // consumer that wants bonds still gets nothing here — it just gets
     // nothing under an honest name.
@@ -2149,7 +2148,7 @@ ITEM: ATOMS id type x y z
     }
 
     #[test]
-    fn streaming_single_shot_matches_legacy() {
+    fn streaming_single_shot_indexes_every_frame() {
         let bytes = MULTI_DUMP.as_bytes();
         let entries = build_index_in_chunks(bytes, bytes.len());
         assert_eq!(entries.len(), 2);

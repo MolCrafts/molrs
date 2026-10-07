@@ -2215,7 +2215,7 @@ TF  LI  XX
     /// The hand-written chamber prmtop of the force-field reader's tests.
     const CHAMBER_MINI: &str = include_str!("testdata/chamber_mini.parm7");
 
-    /// A chamber (CHARMM) prmtop reads (it used to be refused): its charges
+    /// A chamber (CHARMM) prmtop reads: its charges
     /// are de-scaled by CHARMM's √332.0716, its CHARMM impropers join the
     /// `impropers` block in file order (centre first, no 1-4), and its CMAP
     /// crossterm is a `cmaps` row named by its five atom types.

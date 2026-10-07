@@ -158,10 +158,6 @@ def test_translate_rotate_and_scale_are_methods_of_the_two_leaves():
         assert callable(cls.translate)
         assert callable(cls.rotate)
         assert callable(cls.scale)
-    assert not hasattr(molrs, "translate")
-    assert not hasattr(molrs, "rotate")
-    assert not hasattr(molrs, "align_direction")
-    assert not hasattr(molrs, "scale")
 
 
 LEAVES = [molrs.core.Atomistic, molrs.core.CoarseGrain]
@@ -245,10 +241,6 @@ def test_translate_operates_on_leaf_own_graph_not_empty_base():
     h = a.add_atom("C", 1.0, 0.0, 0.0)
     a.translate([10.0, 0.0, 0.0])
     assert a.get(h, molrs.core.keys.X) == 11.0
-
-
-def test_generic_graph_has_no_translate():
-    assert not hasattr(molrs.core.MolGraph, "translate")
 
 
 def test_perceive_aromaticity_pipeline():
@@ -494,7 +486,6 @@ def test_to_frame_keeps_only_the_requested_atom_fields():
 
 def test_perception_is_free_functions():
     # Two verbs: `perceive_*` reports a side table, `assign_*` writes a clone.
-    assert not hasattr(molrs.perceive, "Perceive")
     mol = molrs.io.smiles.SmilesIr("C1CC1C").to_atomistic()
     info = molrs.perceive.perceive_rings(mol)
     assert info.ring_sizes() == [3]

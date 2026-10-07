@@ -12,7 +12,6 @@ imported for an annotation cannot leak into it as a second public spelling.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import re
 from pathlib import Path
@@ -112,247 +111,6 @@ def test_a_constant_is_a_value_not_a_second_door():
     assert not callables
 
 
-@pytest.mark.parametrize(
-    "gone",
-    [
-        "molrs.fields",
-        "molrs.io.raw",
-        "molrs.keys",
-        "molrs.schema",
-        "molrs.md.driver",
-        "molrs.compute.protocol",
-        "molrs.compute.density",
-        "molrs.ff.potential.protocol",
-        "molrs.io._trajectory",
-        # 0.16: one core; its vocabularies are core.keys / schema / constants.
-        "molrs.store",
-        "molrs.store.keys",
-        "molrs.store.schema",
-        "molrs.spatial",
-        "molrs.system",
-        "molrs.units",
-        # 0.16 wave S2: io is one module per format.
-        "molrs.io.trajectory",
-        "molrs.io.log",
-        "molrs.io.lammps_bond_react",
-        "molrs.io._trajectory_doors",
-        "molrs.io.mrec.schema",
-    ],
-)
-def test_retired_modules_do_not_import(gone):
-    with pytest.raises(ModuleNotFoundError):
-        __import__(gone)
-
-
-@pytest.mark.parametrize(
-    "gone",
-    [
-        # 0.16: the top level is the subsystems only.
-        "molrs.Block",
-        "molrs.Box",
-        "molrs.Frame",
-        "molrs.Atomistic",
-        "molrs.Element",
-        "molrs.Trajectory",
-        "molrs.fields",
-        # MD integrates potentials; it defines none.
-        "molrs.md.LJCut",
-        "molrs.md.Potential",
-        "molrs.md.Potentials",
-        "molrs.md.kernel",
-        # molrs.ff holds only its submodules.
-        "molrs.ff.ForceField",
-        "molrs.ff.Potential",
-        # io: no raw layer, no aliases.
-        "molrs.io.raw",
-        "molrs.io.write_smiles",
-        "molrs.io.parse_lammps_log_text",
-        # Every file reader / writer is a function at the top of molrs.io:
-        # the mrec doors are flat there ...
-        "molrs.io.mrec.read",
-        "molrs.io.mrec.write",
-        "molrs.io.mrec.read_system",
-        "molrs.io.mrec.write_system",
-        "molrs.io.mrec.read_trajectory",
-        "molrs.io.mrec.write_trajectory",
-        "molrs.io.mrec.read_forcefield",
-        "molrs.io.mrec.write_forcefield",
-        "molrs.io.mrec.read_meta",
-        "molrs.io.mrec_sections",
-        # ... and its store reader / writer are named as in Rust.
-        "molrs.io.mrec.FrameSequence",
-        "molrs.io.mrec.FrameSequenceWriter",
-        "molrs.io.mrec.TrajectoryReader",
-        "molrs.io.mrec.TrajectoryWriter",
-        # The frame-bytes codec is io's, not stream's.
-        "molrs.stream.read_frame_bytes",
-        "molrs.stream.write_frame_bytes",
-        # Force-field files are io's; ff.forcefield is the data model only.
-        "molrs.ff.forcefield.read_lammps_forcefield",
-        "molrs.ff.forcefield.read_lammps_data_coeffs",
-        "molrs.ff.forcefield.read_lammps_cmap",
-        "molrs.ff.forcefield.read_gromacs_top_forcefield",
-        "molrs.ff.forcefield.read_gromacs_system",
-        "molrs.ff.forcefield.read_amber_prmtop_forcefield",
-        "molrs.ff.forcefield.read_amber_prmtop_system",
-        "molrs.ff.forcefield.read_forcefield_xml",
-        "molrs.ff.forcefield.read_openmm_xml_forcefield",
-        "molrs.ff.forcefield.write_lammps_forcefield",
-        "molrs.ff.forcefield.write_lammps_forcefield_str",
-        "molrs.ff.forcefield.write_lammps_data_coeffs",
-        "molrs.ff.forcefield.write_lammps_cmap",
-        "molrs.ff.forcefield.write_gromacs_top_forcefield",
-        "molrs.ff.forcefield.write_gromacs_system",
-        "molrs.ff.forcefield.write_amber_frcmod",
-        "molrs.ff.forcefield.write_openmm_xml_forcefield",
-        # A class of one format is that format's submodule's.
-        "molrs.io.TrajectoryReader",
-        "molrs.io.SmilesIr",
-        "molrs.io.SmilesError",
-        "molrs.io.CgSmilesIr",
-        "molrs.io.CgGraph",
-        "molrs.io.CgNode",
-        "molrs.io.CgEdge",
-        "molrs.io.CgFragmentDef",
-        "molrs.io.ResolvedPair",
-        "molrs.io.PairEnd",
-        "molrs.io.BondingDescriptor",
-        "molrs.io.BondReactTemplate",
-        "molrs.io.LammpsLog",
-        "molrs.io.LammpsLogHeader",
-        "molrs.io.LammpsRun",
-        "molrs.io.LammpsThermo",
-        "molrs.io.LammpsWarning",
-        "molrs.io.LammpsPerformance",
-        "molrs.io.LammpsTimingBreakdown",
-        "molrs.io.LammpsTimingRow",
-        "molrs.io.LammpsCpuUse",
-        "molrs.io.LammpsLoadBalance",
-        "molrs.io.LammpsLoopTime",
-        "molrs.io.LammpsMemoryUsage",
-        "molrs.io.LammpsNeighborStatistics",
-        # One core: no top-level store / spatial / system / units.
-        "molrs.store",
-        "molrs.spatial",
-        "molrs.system",
-        "molrs.units",
-        # The graph is MolGraph, as in Rust.
-        "molrs.core.Graph",
-        # Constants are core.constants'; ff.params holds tables only.
-        "molrs.core.AMBER_COULOMB",
-        "molrs.ff.params.AMBER_SCEE",
-        "molrs.ff.params.AMBER_SCNB",
-        # The record's version is io.mrec's, not its schema checker's.
-        "molrs.io.mrec.validation.MOLREC_VERSION",
-        "molrs.io.mrec.validation.RESERVED_META_KEYS",
-        # The force-field <-> section mapping is the section's.
-        "molrs.ff.forcefield.ForceField.to_section",
-        "molrs.ff.forcefield.ForceField.from_section",
-        # Wave S2: no format dispatch; every door names its format.
-        "molrs.io.read_frame",
-        "molrs.io.write_frame",
-        "molrs.io.read_frame_bytes",
-        "molrs.io.write_frame_bytes",
-        # ... in-memory doors are read_<fmt>_str / _bytes ...
-        "molrs.io.read_smiles",
-        "molrs.io.write_smarts",
-        "molrs.io.smiles.SmilesIr.write_smiles",
-        "molrs.io.smiles.SmilesIr.write_smarts",
-        "molrs.io.read_block_csv",
-        "molrs.io.write_block_csv",
-        # ... family formats carry the family's name ...
-        "molrs.io.read_chgcar",
-        "molrs.io.read_ac",
-        "molrs.io.read_prep",
-        "molrs.io.write_prep",
-        "molrs.io.write_bond_react_map",
-        "molrs.io.read_mrec",
-        "molrs.io.write_mrec",
-        "molrs.io.mrec.pack",
-        # ... force-field doors name the format, never `_ff` ...
-        "molrs.io.read_amber_prmtop_ff",
-        "molrs.io.read_gromacs_top_ff",
-        "molrs.io.write_gromacs_top_ff",
-        "molrs.io.read_forcefield_xml",
-        "molrs.io.write_forcefield_xml",
-        "molrs.io.read_opls_xml",
-        # ... and a door that returns a ForceField says so.
-        "molrs.io.read_lammps_cmap",
-        "molrs.io.write_lammps_cmap",
-        # ... and a class lives in its own format's module.
-        "molrs.io.smiles.CGSmilesIR",
-        "molrs.io.smiles.CGGraph",
-        # Acronyms are cased as words: the line-notation IRs and records.
-        "molrs.io.smiles.SmilesIR",
-        "molrs.io.cgsmiles.CGSmilesIR",
-        "molrs.io.cgsmiles.CGGraph",
-        "molrs.io.cgsmiles.CGNode",
-        "molrs.io.cgsmiles.CGEdge",
-        "molrs.io.cgsmiles.CGFragmentDef",
-        "molrs.core.CGBond",
-        # Acronyms are cased as words in every subpackage; counts are n_*.
-        "molrs.md.MD",
-        "molrs.md.MDState",
-        "molrs.compute.KMeans",
-        "molrs.compute.KMeansResult",
-        "molrs.perceive.SmartsPattern.num_query_atoms",
-        # Second doors on a class.
-        "molrs.core.Trajectory.from_frames",
-        "molrs.core.Trajectory.count_frames",
-        "molrs.perceive.SmartsMatch.as_list",
-        "molrs.perceive.SmartsMatch.as_dict",
-    ],
-)
-def test_retired_names_are_absent(gone):
-    owner_path, _, name = gone.rpartition(".")
-    owner: object = molrs
-    for part in owner_path.split(".")[1:]:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, name), gone
-
-
-@pytest.mark.parametrize(
-    "gone",
-    [
-        # Kernels are <Category><Style>; the explicit-term door names its job.
-        "molrs.ff.potential.LJCut",
-        "molrs.ff.potential.kernel",
-        "molrs.ff.potential.TypedPotentials",
-        "molrs.ff.potential.PairLjCut.eval",
-        "molrs.ff.potential.PairLjCut.eval_table",
-        "molrs.ff.potential.PairLjCut.eval_pairs",
-        "molrs.ff.potential.PairLjCut.pair_eval",
-        # The IR's Python names are the Rust ones; refusals end in Error.
-        "molrs.ff.ir.Param",
-        "molrs.ff.ir.StyleInfo",
-        "molrs.ff.ir.CategoryInfo",
-        "molrs.ff.ir.unregister",
-        "molrs.ff.ir.Arity",
-        "molrs.ff.ir.Dim",
-        "molrs.ff.ir.Sealed",
-        # One accessor per question on the force-field model.
-        "molrs.ff.forcefield.Type",
-        "molrs.ff.forcefield.Style.types",
-        # Typifiers: acronyms cased as words, assign -> TypeAssignment.
-        "molrs.ff.typifier.Match",
-        "molrs.ff.typifier.OPLSAATypifier",
-        "molrs.ff.typifier.MMFF94Typifier",
-        "molrs.ff.typifier.MMFF94STypifier",
-        "molrs.ff.typifier.Typifier.match",
-        "molrs.ff.typifier.Typifier.library",
-        # CL&Pol scaling is its own module; its table is a params table.
-        "molrs.ff.scale_lj",
-        "molrs.ff.clpol_scaling.fragment_scaling_data",
-    ],
-)
-def test_force_field_names_retired_by_wave_s3_are_absent(gone):
-    owner_path, _, name = gone.rpartition(".")
-    owner: object = molrs
-    for part in owner_path.split(".")[1:]:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, name), gone
-
-
 # --- One shape per file-format factory --------------------------------------
 #
 # A factory that reads or writes a file format is either a function at the
@@ -417,8 +175,6 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
     assert not [n for n in molrs.ff.forcefield.__all__ if _factory_name(n)]
     assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher"}
     assert set(molrs.io.mrec.__all__) == {
-        "MOLREC_VERSION",
-        "RESERVED_META_KEYS",
         "ForceFieldSection",
         "MrecReader",
         "MrecWriter",
@@ -470,7 +226,6 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.cgsmiles.CgSmilesIr",
         "molrs.io.lammps.LammpsLog",
         "molrs.io.lammps.BondReactTemplate",
-        "molrs.io.mrec.MOLREC_VERSION",
         "molrs.io.mrec.ForceFieldSection",
         "molrs.core.Frame",
         "molrs.core.Block",
@@ -493,7 +248,7 @@ def test_the_one_path_exists(path):
     assert path in _objects()
 
 
-# --- Wave S2: every door names its format -----------------------------------
+# --- Every door names its format --------------------------------------------
 
 _DOOR = re.compile(r"^(read|write)_[a-z0-9]+(_[a-z0-9]+)*$")
 
@@ -557,8 +312,7 @@ def test_memory_doors_end_in_str_or_bytes():
     ],
 )
 def test_a_trajectory_door_is_its_formats_reader(door, reader):
-    """``read_<fmt>_trajectory`` returns ``molrs.io.<fmt>.<Fmt>Reader``, and the
-    generic concatenating reader is gone."""
+    """``read_<fmt>_trajectory`` returns ``molrs.io.<fmt>.<Fmt>Reader``."""
     assert reader in _objects()
     assert getattr(molrs.io, door).__doc__
     module, _, name = reader.rpartition(".")
@@ -644,51 +398,6 @@ def test_the_version_is_the_package_version():
     assert molrs.__version__ == version("molcrafts-molrs")
 
 
-@pytest.mark.parametrize(
-    "gone",
-    [
-        # Wave S6: the native module is molrs._native.
-        "molrs._lib",
-        # Every door names its format: gromacs_top, lammps_dump.
-        "molrs.io.read_gromacs_system",
-        "molrs.io.write_gromacs_system",
-        "molrs.io.read_lammps_trajectory",
-        "molrs.io.write_lammps_trajectory",
-        # Counts are n_*.
-        "molrs.core.Block.nrows",
-        # Unit conversions are the unit registry's, not constants.
-        "molrs.core.constants.KJ_PER_KCAL",
-        "molrs.core.constants.ANGSTROM_PER_NM",
-        "molrs.core.constants.ANGSTROM_PER_BOHR",
-        "molrs.core.constants.ANGSTROM3_PER_CM3",
-        "molrs.core.constants.ANGSTROM_M",
-        "molrs.core.constants.FEMTOSECOND_S",
-        "molrs.core.constants.CENTIMETER_PER_METER",
-        "molrs.core.constants.OPENMM_COULOMB",
-        "molrs.core.constants.GROMACS_COULOMB",
-    ],
-)
-def test_names_retired_by_wave_s6_are_absent(gone):
-    if gone == "molrs._lib":
-        with pytest.raises(ImportError):
-            importlib.import_module(gone)
-        return
-    owner_path, _, name = gone.rpartition(".")
-    owner: object = molrs
-    for part in owner_path.split(".")[1:]:
-        owner = getattr(owner, part)
-    assert not hasattr(owner, name), gone
-
-
-def test_wave_s6_names_exist():
-    assert molrs.io.read_gromacs_top_system
-    assert molrs.io.write_gromacs_top_system
-    assert molrs.io.read_lammps_dump_trajectory
-    assert molrs.io.write_lammps_dump_trajectory
-    assert molrs.core.Block().n_rows == 0
-    assert molrs.__dict__["_native"].__name__ == "molrs._native"
-
-
 def test_unit_conversions_come_from_the_unit_registry():
     units = molrs.core.UnitRegistry()
     assert units.factor("kcal", "kJ") == 4.184
@@ -700,11 +409,10 @@ def test_unit_conversions_come_from_the_unit_registry():
 
 
 def test_scripts_convert_units_through_the_registry():
-    """No engine-check script spells a conversion factor or a retired constant."""
+    """No engine-check script spells a conversion factor."""
     root = Path(__file__).parents[2] / "scripts"
-    retired = re.compile(
-        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB|GROMACS_COULOMB)\b"
-        r"|(?<![\w.])4\.184(?![\w])"
+    factor = re.compile(
+        r"(?<![\w.])4\.184(?![\w])"
         # π/180, 180/π, MMFF's mdyne·Å → kcal/mol, k_B in kcal/(mol·K) by hand
         r"|(?<![\w.])(0\.0174532|57\.29577|143\.9325|0\.001987)"
         r"|(?<![\w.])1\.987[\d_]*e-3"
@@ -717,7 +425,7 @@ def test_scripts_convert_units_through_the_registry():
             continue
         for n, line in enumerate(path.read_text().splitlines(), 1):
             code = line.split("#", 1)[0]
-            if retired.search(code):
+            if factor.search(code):
                 offenders.append(f"{path.name}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
 

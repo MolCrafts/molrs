@@ -201,8 +201,8 @@ impl MetaValue {
     }
 
     /// Decode an untagged document value by inference — the reading of a key
-    /// a frame group's `_meta_types` does not type (a store written before
-    /// typed meta, or by a tool that writes plain JSON).
+    /// a frame group's `_meta_types` does not type (one written by a tool that
+    /// writes plain JSON).
     ///
     /// JSON `true`/`false` → `bool`; an integer in `[−2⁶³, 2⁶³)` → `i64`, in
     /// `[2⁶³, 2⁶⁴)` → `u64`; any other number → `f64`; a string → `string`
@@ -480,7 +480,7 @@ mod tests {
 
     #[test]
     fn untyped_json_is_rejected() {
-        assert!(MetaValue::from_json_value(&serde_json::json!("legacy")).is_err());
+        assert!(MetaValue::from_json_value(&serde_json::json!("plain")).is_err());
     }
 
     #[test]

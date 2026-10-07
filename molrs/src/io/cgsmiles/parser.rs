@@ -870,7 +870,7 @@ impl<'a> CgParser<'a> {
 
     /// Accept `w` only at its default value.
     ///
-    /// A mapping weight is meaningful notation that molrs v1 does not model;
+    /// A mapping weight is meaningful notation that molrs does not model;
     /// refusing a non-default one is a stated choice, not a parse failure, so
     /// it names the key and the value rather than the character.
     fn check_weight(&self, value: &str, text: &str, span: Span) -> Result<(), SmilesError> {

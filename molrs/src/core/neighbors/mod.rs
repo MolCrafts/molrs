@@ -2054,12 +2054,11 @@ mod engine_tests {
         assert_eq!(lean.point_indices(), full.point_indices());
     }
 
-    /// ac-007: a cross-query is still reachable through the public surface after
-    /// the engine migration, and it stays directed — no `i < j` is imposed.
+    /// ac-007: a cross-query is reachable through the public surface, and it
+    /// is directed — no `i < j` is imposed.
     ///
-    /// `NeighborQuery::query` is the path the spec keeps for cross searches, so
-    /// this is an **already-green guard**: it passes today and must keep passing
-    /// once `NeighborList` takes over the self path. The fixture is built so
+    /// `NeighborQuery::query` is the path for cross searches; `NeighborList`
+    /// owns the self path. The fixture is built so
     /// that one pair has `i > j`, which a half-shell contract would forbid.
     ///
     /// Box: 20 Å cube, fully periodic, cutoff 1.0 Å.

@@ -10,8 +10,8 @@
 //!
 //! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is still read —
 //! by `molrs::io` — and handed to
-//! [`OplsAaTypifier::new`](super::OplsAaTypifier::new). What is gone is molrs
-//! re-parsing *its own* parameter set at runtime.
+//! [`OplsAaTypifier::new`](super::OplsAaTypifier::new). molrs does not
+//! re-parse *its own* parameter set at runtime.
 
 use std::collections::{HashMap, HashSet};
 
@@ -88,9 +88,8 @@ fn try_force_field() -> Result<ForceField, DefError> {
     //
     // But its CONSTANTS are not the kernel's job. `coul/cut` is the buffered Coulomb
     // `E = k·qᵢqⱼ/(D·(r + δ))`; OPLS is the unbuffered case (δ = 0, the semantic
-    // default) in vacuum (D = 1.0) with CODATA's k. This style used to be defined
-    // with EMPTY params and merely happened to agree with the constant the kernel
-    // held privately — the right numbers for the wrong reason. OPLS now says them.
+    // default) in vacuum (D = 1.0) with CODATA's k, and the style states them
+    // rather than leaning on a constant the kernel holds.
     let atoms = ff.def_style("atom", "full", Params::new())?;
     for row in OPLSAA_ATOMS {
         atoms.def_type(

@@ -10,21 +10,20 @@ use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use molrs::signal as sig;
 
-/// Raw collective charge-dipole MSD — the raw portion of the legacy
-/// `ConductivityResult`, with **no** fitted sigma/slope.
+/// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
 #[derive(Debug, Clone)]
 pub struct EinsteinConductivityResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
-    /// Collective-dipole MSD ⟨|**M_J**(t+τ) − **M_J**(t)|²⟩ over time origins,
-    /// identical to `ConductivityResult.msd`. Units: `(e·Å)²`.
+    /// Collective-dipole MSD ⟨|**M_J**(t+τ) − **M_J**(t)|²⟩ over time origins.
+    /// Units: `(e·Å)²`.
     pub msd: Array1<f64>,
 }
 
 impl ComputeResult for EinsteinConductivityResult {}
 
-/// Raw collective charge-dipole MSD compute. Lifts the time-origin MSD loop
-/// from the Einstein–Helfand conductivity and stops there (no OLS, no σ). The
+/// Raw collective charge-dipole MSD compute: the time-origin MSD of the
+/// Einstein–Helfand conductivity, and nothing more (no OLS, no σ). The
 /// σ = slope/(6·V·k_B·T) step is a downstream
 /// [`LinearFit`](crate::compute::LinearFit).
 #[derive(Debug, Clone, Copy, Default)]
@@ -116,9 +115,7 @@ mod tests {
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
-    /// MD→SI conductivity prefactor with the Einstein 1/6 factor, lifted from the
-    /// (removed) Einstein–Helfand conductivity free fn so the tests fold in the exact
-    /// same constant the legacy free function used.
+    /// MD→SI conductivity prefactor with the Einstein 1/6 factor.
     fn einstein_helfand_prefactor() -> f64 {
         use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
         let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
@@ -145,7 +142,7 @@ mod tests {
     #[test]
     fn einstein_conductivity_msd_matches_direct_time_origin_average() {
         // ac-009: EinsteinConductivity.msd == the direct time-origin collective-
-        // dipole MSD (the raw observable the removed bundled result also carried).
+        // dipole MSD.
         let n = 256;
         let dt = 0.5;
         let mct = 80;
@@ -213,8 +210,7 @@ mod tests {
     fn einstein_conductivity_plus_linear_fit_matches_manual_ols() {
         // ac-015: LinearFit slope on EinsteinConductivity.msd reproduces a manual
         // OLS over the same diffusive window, and the σ = slope/(6·V·k_B·T)·prefactor
-        // composition is well-defined (replaces the removed bundled
-        // Einstein–Helfand conductivity).
+        // composition is well-defined.
         use crate::compute::Fit;
         use crate::compute::LinearFit;
 
@@ -256,7 +252,7 @@ mod tests {
 
     #[test]
     fn einstein_conductivity_plus_fit_recovers_nernst_einstein() {
-        // ac-008 (scientific regression, moved from dielectric.rs): N independent
+        // ac-008 (scientific regression): N independent
         // ions of charge q on uncorrelated 3-D random walks. For independent
         // carriers EinsteinConductivity + LinearFit must reduce to the
         // Nernst–Einstein value σ = n·q²·D/(k_B·T) within the ≤0.13 ensemble

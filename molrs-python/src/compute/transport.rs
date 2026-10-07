@@ -129,8 +129,7 @@ impl PyEinsteinDiffusion {
 
 // ── EinsteinConductivity (raw collective charge-dipole MSD) ───────────────────
 
-/// Raw collective charge-dipole MSD — the raw portion of the legacy
-/// `dielectric_einstein_helfand_conductivity`, with **no** fitted sigma/slope.
+/// Raw collective charge-dipole MSD, with **no** fitted sigma/slope.
 /// `σ = slope/(6·V·k_B·T)·prefactor` is a downstream
 /// [`LinearFit`](PyLinearFit) + scale step.
 #[pyclass(module = "molrs.compute", name = "EinsteinConductivity")]
@@ -167,8 +166,7 @@ impl PyEinsteinConductivity {
 
 // ── GreenKuboConductivity (raw current ACF) ───────────────────────────────────
 
-/// Raw current autocorrelation function — the raw portion of the legacy
-/// `transport_green_kubo_conductivity`, with **no** fitted sigma. The
+/// Raw current autocorrelation function, with **no** fitted sigma. The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
 /// [`CumulativeTrapezoid`](PyCumulativeTrapezoid) + scale.
 #[pyclass(module = "molrs.compute", name = "GreenKuboConductivity")]

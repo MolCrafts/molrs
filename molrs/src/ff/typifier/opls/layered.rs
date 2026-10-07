@@ -175,7 +175,7 @@ impl LayeredTypingEngine {
 
         for (order, (name, row)) in named.into_iter().enumerate() {
             let Some(def) = row.def.as_deref() else {
-                continue; // legacy / no-def row
+                continue; // no-def row
             };
             let pattern = compile_def(def).map_err(|e| {
                 format!("OPLS type {name:?}: failed to parse SMARTS def {def:?}: {e}")

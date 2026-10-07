@@ -947,14 +947,14 @@ mod tests {
         s
     }
 
-    // ── Legacy-equivalent reference implementations (the pre-migration bodies)
-    // These rebuild the exact spectra the removed `einstein_helfand_spectrum` /
-    // `green_kubo_spectrum` free fns produced, so the Fit can be locked to them
-    // bit-for-bit (ac-001). ──────────────────────────────────────────────────
+    // ── Reference implementations ──────────────────────────────────────────
+    // Each spectrum written out inline in one function, an independent oracle
+    // the raw-compute + Fit composition is locked to bit-for-bit (ac-001).
 
-    /// Pre-migration EH spectrum (the removed `einstein_helfand_spectrum`).
+    /// Einstein–Helfand spectrum, inline: fluctuation ACF, cos² taper,
+    /// derivative, one-sided FT, prefactor.
     #[allow(clippy::too_many_arguments)]
-    fn legacy_einstein_helfand(
+    fn reference_einstein_helfand(
         dipole_moments: &Array2<f64>,
         dt: f64,
         volume: f64,
@@ -1032,11 +1032,11 @@ mod tests {
         (frequencies, eps_real, eps_imag)
     }
 
-    /// The unbiased current ACF the legacy `green_kubo_spectrum` built
-    /// internally (FFT-based, over the post-NaN `start=1` series). Returned so a
-    /// test can lock the Fit's transform tail to the legacy tail on the *same*
-    /// ACF (bit-for-bit), independent of the raw-compute estimator.
-    fn legacy_gk_acf(current: &Array2<f64>, max_lag: usize) -> Array1<f64> {
+    /// The unbiased current ACF, FFT-based, over the post-NaN `start=1`
+    /// series. Returned so a test can lock the Fit's transform tail to the
+    /// reference tail on the *same* ACF (bit-for-bit), independent of the
+    /// raw-compute estimator.
+    fn reference_gk_acf(current: &Array2<f64>, max_lag: usize) -> Array1<f64> {
         let n_frames = current.shape()[0];
         let start = 1;
         let n_eff = n_frames - start;
@@ -1055,9 +1055,9 @@ mod tests {
         acf_sum
     }
 
-    /// Pre-migration GK spectrum tail (the removed `green_kubo_spectrum`),
-    /// operating on a pre-built ACF (the `windowed_acf_spectrum` + σ→ε steps).
-    fn legacy_green_kubo_from_acf(
+    /// Green–Kubo spectrum tail on a pre-built ACF, inline: window, one-sided
+    /// FT, σ→ε.
+    fn reference_green_kubo_from_acf(
         acf: &Array1<f64>,
         dt: f64,
         volume: f64,
@@ -1095,7 +1095,7 @@ mod tests {
     }
 
     /// FFT / fused-scale paths may differ by a few ULP from the hand-rolled
-    /// legacy reference; keep a tight absolute tolerance.
+    /// reference; keep a tight absolute tolerance.
     fn assert_close_1d(got: &Array1<f64>, expected: &Array1<f64>, tol: f64, what: &str) {
         assert_eq!(got.len(), expected.len(), "{what} length");
         for k in 0..got.len() {
@@ -1110,16 +1110,16 @@ mod tests {
     }
 
     #[test]
-    fn eh_fit_reproduces_legacy_bit_for_bit() {
-        // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum reproduces
-        // the legacy einstein_helfand_spectrum output (tight ULP tolerance).
+    fn eh_fit_matches_the_reference_bit_for_bit() {
+        // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum matches the
+        // inline reference (tight ULP tolerance).
         let n = 256;
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.5);
         let mct = 50;
         let dm = rng_dipole(n, 42);
 
-        let (freq_l, re_l, im_l) = legacy_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
+        let (freq_l, re_l, im_l) = reference_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
 
         let raw = DebyeRelaxation {
             volume: vol,
@@ -1140,17 +1140,16 @@ mod tests {
 
         assert_eq!(fit.frequencies, freq_l);
         // Shared FFT primitives may reassociate by a few ULP vs the inlined
-        // legacy reference; 1e-12 absolute is still machine-precision tight.
+        // reference; 1e-12 absolute is still machine-precision tight.
         assert_close_1d(&fit.eps_real, &re_l, 1e-12, "eps_real");
         assert_close_1d(&fit.eps_imag, &im_l, 1e-12, "eps_imag");
     }
 
     #[test]
-    fn gk_fit_reproduces_legacy_bit_for_bit() {
-        // ac-001: on the SAME raw current ACF, GreenKuboSpectrum reproduces the
-        // legacy green_kubo_spectrum transform tail bit-for-bit. The raw ACF is
-        // the unbiased current ACF over the start=1 (post-NaN) series — exactly
-        // what the legacy fn built internally.
+    fn gk_fit_matches_the_reference_bit_for_bit() {
+        // ac-001: on the SAME raw current ACF, GreenKuboSpectrum matches the
+        // reference transform tail bit-for-bit. The raw ACF is the unbiased
+        // current ACF over the start=1 (post-NaN) series.
         let n = 256;
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.0);
@@ -1163,11 +1162,11 @@ mod tests {
         let start = 1;
         let effective_len = n - start;
         let max_lag = mct.min(effective_len.saturating_sub(1));
-        let raw_acf = legacy_gk_acf(&current, max_lag);
+        let raw_acf = reference_gk_acf(&current, max_lag);
 
         for window in ["hann", "blackman", "cosine_sq"] {
             let (freq_l, re_l, im_l) =
-                legacy_green_kubo_from_acf(&raw_acf, dt, vol, temp, eps_inf, window);
+                reference_green_kubo_from_acf(&raw_acf, dt, vol, temp, eps_inf, window);
 
             let fit = GreenKuboSpectrum {
                 dt,
@@ -1186,11 +1185,11 @@ mod tests {
     }
 
     #[test]
-    fn gk_raw_compute_acf_matches_legacy_fft_acf() {
+    fn gk_raw_compute_acf_matches_the_reference_fft_acf() {
         // The GreenKuboConductivity raw compute (direct-summation estimator) and
-        // the legacy FFT-based ACF agree to FP tolerance on the same series, so
-        // composing the raw compute with GreenKuboSpectrum reproduces the legacy
-        // ε(ω) within that tolerance.
+        // the reference FFT-based ACF agree to FP tolerance on the same series,
+        // so composing the raw compute with GreenKuboSpectrum matches the
+        // reference ε(ω) within that tolerance.
         let n = 256;
         let dt = 0.001;
         let mct = 50;
@@ -1201,15 +1200,15 @@ mod tests {
         let start = 1;
         let effective_len = n - start;
         let max_lag = mct.min(effective_len.saturating_sub(1));
-        let legacy = legacy_gk_acf(&current, max_lag);
+        let reference = reference_gk_acf(&current, max_lag);
 
         let post: Array2<f64> = current.slice(ndarray::s![start.., ..]).to_owned();
         let raw = GreenKuboConductivity
             .compute(&no_frames(), (&post, dt, max_lag))
             .unwrap();
-        assert_eq!(raw.jacf.len(), legacy.len());
-        for k in 0..legacy.len() {
-            assert!((raw.jacf[k] - legacy[k]).abs() < 1e-9, "k={k}");
+        assert_eq!(raw.jacf.len(), reference.len());
+        for k in 0..reference.len() {
+            assert!((raw.jacf[k] - reference[k]).abs() < 1e-9, "k={k}");
         }
     }
 

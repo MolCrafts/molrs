@@ -1235,8 +1235,8 @@ impl XyzIndexBuilder {
             XyzPhase::AwaitingNatoms => {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
-                    // Blank line — skip in the AwaitingNatoms state, matching
-                    // the legacy `read_frame_from` semantics.
+                    // Blank line — skip in the AwaitingNatoms state, as
+                    // `read_frame_from` does.
                     return Ok(());
                 }
                 let n = match trimmed.parse::<usize>() {
@@ -1807,13 +1807,12 @@ mod tests {
         assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
-    /// Legacy `XyzReader::build_index` (used by `len()` / random-access
-    /// `read_step`) must tolerate blank lines between frames and trailing
-    /// blanks — the same AwaitingNatoms rule as the streaming index.
-    /// Regression: blank lines used to surface as
-    /// `XYZ len error: invalid atom count:` through the wasm binding.
+    /// `XyzReader::build_index` (used by `len()` / random-access
+    /// `read_step`) tolerates blank lines between frames and trailing
+    /// blanks — the same AwaitingNatoms rule as the streaming index — rather
+    /// than reporting `XYZ len error: invalid atom count:`.
     #[test]
-    fn xyz_legacy_index_skips_inter_frame_and_trailing_blanks() {
+    fn xyz_random_access_index_skips_inter_frame_and_trailing_blanks() {
         use crate::io::reader::TrajectoryReader;
         use std::io::{BufReader, Cursor};
 
@@ -1852,9 +1851,9 @@ H 1 0 1
         assert!((z1[0] - 1.0).abs() < 1e-12);
     }
 
-    /// Leading blanks before the first frame must not confuse the legacy index.
+    /// Leading blanks before the first frame must not confuse the random-access index.
     #[test]
-    fn xyz_legacy_index_skips_leading_blanks() {
+    fn xyz_random_access_index_skips_leading_blanks() {
         use crate::io::reader::TrajectoryReader;
         use std::io::{BufReader, Cursor};
 

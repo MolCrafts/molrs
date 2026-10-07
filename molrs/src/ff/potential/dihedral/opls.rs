@@ -177,8 +177,8 @@ pub fn dihedral_opls_constructor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         // Every coefficient is required, as LAMMPS's `dihedral_coeff` requires
-        // all four: a missing one used to read as 0, and a mis-spelled bag
-        // (molnex wrote `c1..c4`) made a whole torsion vanish in silence.
+        // all four: reading a missing one as 0, or a mis-spelled bag
+        // (`c1..c4`), would make a whole torsion vanish in silence.
         // `Params` is flat scalars, so the multi-term `periodic` style spells
         // its terms `k{m}`/`periodicity{m}`/`phase{m}` — the same `k1..k4` keys
         // this style uses for the OPLS quartet, with a different meaning (LAMMPS

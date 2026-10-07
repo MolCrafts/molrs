@@ -14,9 +14,6 @@ import numpy as np
 import pytest
 from molrs.stream import ControlCommand
 
-pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
-
-
 def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
     return molrs.core.Frame(
         blocks={
@@ -63,10 +60,6 @@ class TestFrameWireCodec:
         payload = molrs.io.write_msgpack_frame_bytes(_frame())
         with pytest.raises(ValueError):
             molrs.io.read_json_frame_str(payload.decode("latin-1"))
-
-    def test_no_door_takes_an_encoding_name(self):
-        assert not hasattr(molrs.io, "read_frame_bytes")
-        assert not hasattr(molrs.io, "write_frame_bytes")
 
 
 class TestControlCommand:

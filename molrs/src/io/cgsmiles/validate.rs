@@ -115,7 +115,7 @@ mod tests {
     };
 
     // R5.2: `[!]` is the only syntax placing one atom in two beads, and R5.5
-    // lists it among the features v1 refuses. The walk is structural — one
+    // lists it among the features molrs refuses. The walk is structural — one
     // rule over `DescriptorKind::Shared` — so it must fire on a base-graph
     // node, on a `Graph` body and on a `Smiles` body alike.
     //

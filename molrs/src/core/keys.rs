@@ -60,9 +60,8 @@ meta_keys! {
     /// Frame meta key: the unit system the frame's numbers are in, as the
     /// force-field `units` object — `{"preset": "real"}`, or quantities such
     /// as `{"length": "nm", "energy": "kJ/mol"}` (molrec `conventions.md`,
-    /// "Units on a frame"). A bare string reads as `{"preset": <string>}`
-    /// ([`units_preset`]). Absent means the file or
-    /// caller stated none.
+    /// "Units on a frame"); [`units_preset`] reads its preset. Absent means
+    /// the file or caller stated none.
     ///
     /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
     /// (`io::lammps::molecule`); molrs converts no frame between presets.
@@ -128,13 +127,11 @@ named_keys! {
     pub const LAMMPS_UNITS: &str = "lammps_units";
 }
 
-/// The preset a frame's [`UNITS`] meta value names: the
-/// `preset` of a units object, or a bare preset string (the form molrs wrote
-/// before the object). `None` for a value that names no preset.
+/// The preset a frame's [`UNITS`] meta value names: the `preset` of a units
+/// object. `None` for a value that names no preset.
 pub fn units_preset(value: &crate::core::MetaValue) -> Option<&str> {
     use crate::core::MetaValue;
     match value {
-        MetaValue::String(preset) => Some(preset),
         MetaValue::Json(serde_json::Value::Object(object)) => {
             object.get("preset").and_then(serde_json::Value::as_str)
         }

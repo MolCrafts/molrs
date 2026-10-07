@@ -12,10 +12,9 @@
 //! coarse-grained graph from such groups is construction, not perception: it
 //! is `crate::builder::Coarsener`.
 //!
-//! Gasteiger charges used to live here. They are a *charge model*, not a
-//! perception, and they now sit with the other charge models in
-//! `crate::ff::charge` (feature `ff`) — one implementation, reached through the
-//! `ChargeModel` trait there.
+//! Gasteiger charges are a *charge model*, not a perception: they sit with the
+//! other charge models in `crate::ff::charge` (feature `ff`), reached through
+//! the `ChargeModel` trait there.
 //!
 //! # Two verbs: `perceive_*` reports, `assign_*` writes
 //!

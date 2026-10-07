@@ -1,6 +1,6 @@
 //! The vocabulary as an inspectable, serializable document: [`SchemaDocument`].
 
-use super::{EndpointTarget, FRAME_VOCAB_VERSION, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
+use super::{EndpointTarget, SCHEMA_BLOCKS, SCHEMA_COLUMNS};
 use crate::core::UnitPreset;
 use serde::{Deserialize, Serialize};
 
@@ -110,8 +110,6 @@ pub struct KeysDocument {
 pub struct SchemaDocument {
     /// Stable identity of this schema.
     pub id: String,
-    /// [`FRAME_VOCAB_VERSION`] — what the names and dtypes mean.
-    pub vocab_version: u32,
     /// Every canonical column.
     pub columns: Vec<ColumnDoc>,
     /// Every canonical block.
@@ -122,8 +120,7 @@ pub struct SchemaDocument {
 pub fn document() -> SchemaDocument {
     let real = UnitPreset::real();
     SchemaDocument {
-        id: "https://molcrafts.org/schema/frame/v1".to_string(),
-        vocab_version: FRAME_VOCAB_VERSION,
+        id: "https://molcrafts.org/schema/frame".to_string(),
         columns: SCHEMA_COLUMNS
             .iter()
             .map(|c| ColumnDoc {
@@ -177,8 +174,8 @@ impl SchemaDocument {
     pub fn to_markdown(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "# Frame schema (vocabulary v{})\n\n`{}`\n\n## Columns\n\n",
-            self.vocab_version, self.id
+            "# Frame schema\n\n`{}`\n\n## Columns\n\n",
+            self.id
         ));
         out.push_str(
             "| key | dtype | shape | dimension | unit (real) | meaning |\n\
@@ -246,7 +243,6 @@ mod tests {
         let d = document();
         assert_eq!(d.columns.len(), SCHEMA_COLUMNS.len());
         assert_eq!(d.blocks.len(), SCHEMA_BLOCKS.len());
-        assert_eq!(d.vocab_version, FRAME_VOCAB_VERSION);
     }
 
     #[test]

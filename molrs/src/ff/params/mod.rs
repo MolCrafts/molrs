@@ -6,8 +6,8 @@
 //! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
 //! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
 //! byte); [`mmff`]
-//! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
-//! carried; the OPLS-AA tables ([`OPLSAA_ATOMS`], …) are generated from GROMACS `share/top/oplsaa.ff` (a
+//! is ported from RDKit's `Params.cpp` and merged with what MMFF's XML
+//! parameter file carries; the OPLS-AA tables ([`OPLSAA_ATOMS`], …) are generated from GROMACS `share/top/oplsaa.ff` (a
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
 //! through molrs's own GROMACS reader, while the OPLS-AA SMARTS typing rules in
 //! [`OPLSAA_TYPING`] are molrs-owned and hand-maintained — GROMACS has none,

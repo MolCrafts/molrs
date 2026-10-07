@@ -12,17 +12,6 @@ import numpy as np
 import pytest
 
 
-class TestAmberAliasDeleted:
-    def test_read_prmtop_and_read_inpcrd_are_gone(self):
-        assert not hasattr(molrs.io, "read_prmtop")
-        assert not hasattr(molrs.io, "read_inpcrd")
-        assert "read_prmtop" not in molrs.io.__all__
-        assert not hasattr(molrs.io, "read_prmtop")
-        assert not hasattr(molrs._native, "read_prmtop")
-        assert callable(molrs.io.read_amber_prmtop)
-        assert callable(molrs.io.read_amber_inpcrd)
-
-
 class TestErrorMessages:
     def test_pyo3_type_error_names_the_argument(self):
         with pytest.raises(TypeError, match="center"):
@@ -241,8 +230,6 @@ class TestCanonicalNativeColumns:
             "read_lammps_molecule",
         ):
             assert getattr(molrs.io, name) is getattr(molrs._native, name), name
-        assert not hasattr(molrs, "fields")
-        assert not hasattr(molrs.io, "raw")
 
     def test_pdb_format_names_become_canonical(self, tmp_path):
         path = tmp_path / "w.pdb"

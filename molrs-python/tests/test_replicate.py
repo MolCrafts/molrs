@@ -1,6 +1,6 @@
 """FFI seam of ``replicate(template, rotations, translations, frag_ids)``.
 
-``replicate(n)`` is deleted (assembly-07). The leaf method grows *this* graph
+The leaf method grows *this* graph
 by one rigid copy of ``template`` per row of ``rotations (N,3,3)`` /
 ``translations (N,3)``, stamping ``frag_id = frag_ids[c]`` on copy ``c``.
 Column-wise copying, relation offsets and atomicity are proven by

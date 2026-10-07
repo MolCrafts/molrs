@@ -47,11 +47,7 @@ preset. Two rules are LAMMPS's own and hold in every preset:
     `{k: 76.79, theta0: 109.66}`, with no conversion in either direction.
 
 The `forcefield` section of a record states `"angle": "degree"` beside its
-preset. A record molrs ≤ 0.15 wrote is `molrec_version` 1, whose sections
-state `"angle": "radian"` (or, under `lj`, nothing) and hold the ½k harmonic
-forms; 0.16 converts its numbers to these definitions on read, exactly, or
-refuses it ([Records: molrec_version 2](../migration.md#records-molrec_version-2)).
-A section built in memory with `"angle": "radian"` beside a preset is refused
+preset. A section built in memory with `"angle": "radian"` beside a preset is refused
 (its preset and its stated angle unit disagree) rather than read in the wrong
 units.
 
@@ -75,68 +71,65 @@ the default price alike. A parameter a kernel needs that has no default is
 `MissingParam`; a value of the wrong kind or out of its domain (text for a
 number, a `mixing` outside its choices) is `BadValue`.
 
-"0.16" says what changed in 0.16 (see the [migration guide](../migration.md));
-the energy of a physical system did not change with it.
-
 ### Bonds
 
-| Style | Energy | Parameters (units) | LAMMPS | 0.16 |
-|---|---|---|---|---|
-| `harmonic` | k (r − r0)² | `k` (E/L²), `r0` (L) | `bond_style harmonic` `K r0` | `k` is LAMMPS's `K` (was ½k form: `k_new = k_old / 2`) |
-| `morse` | d0 [1 − e^(−alpha (r − r0))]² | `d0` (E), `alpha` (1/L), `r0` (L) | `bond_style morse` `D0 alpha r0` | `D` renamed `d0` |
-| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = r − r0 | `r0`, `k2`, `k3`, `k4` | `bond_style class2` `r0 K2 K3 K4` | read and written (was refused) |
-| `mmff_bond` | MMFF94 cubic-quartic stretch | per-instance `kb`, `r0` | none | unchanged (molrs's definition) |
-| `uff_bond` | ½ kb (r − r0)² (RDKit) | per-instance `kb`, `r0` | none | unchanged (molrs's definition) |
+| Style | Energy | Parameters (units) | LAMMPS |
+|---|---|---|---|
+| `harmonic` | k (r − r0)² | `k` (E/L²), `r0` (L) | `bond_style harmonic` `K r0` |
+| `morse` | d0 [1 − e^(−alpha (r − r0))]² | `d0` (E), `alpha` (1/L), `r0` (L) | `bond_style morse` `D0 alpha r0` |
+| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = r − r0 | `r0`, `k2`, `k3`, `k4` | `bond_style class2` `r0 K2 K3 K4` |
+| `mmff_bond` | MMFF94 cubic-quartic stretch | per-instance `kb`, `r0` | none |
+| `uff_bond` | ½ kb (r − r0)² (RDKit) | per-instance `kb`, `r0` | none |
 
 ### Angles
 
-| Style | Energy | Parameters (units) | LAMMPS | 0.16 |
-|---|---|---|---|---|
-| `harmonic` | k (θ − theta0)² | `k` (E/rad²), `theta0` (deg) | `angle_style harmonic` `K theta0` | `k_new = k_old / 2`; `theta0` degrees (was radians) |
-| `charmm` | k (θ − theta0)² + k_ub (r₁₃ − r_ub)² | `k` (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) | `angle_style charmm` `K theta0 K_ub r_ub` | new kernel ([Urey–Bradley](#ureybradley)) |
-| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = θ − theta0 | `theta0` (deg), `k2`, `k3`, `k4` (E/radⁿ) | `angle_style class2` `theta0 K2 K3 K4`, its `bb` / `ba` lines written at zero (a non-zero cross term is refused: the IR has none) | `theta0` degrees; read and written (was refused) |
-| `mmff_angle`, `mmff_stbn` | MMFF94 bend / stretch-bend | per-instance `ka`, `theta0` (deg), `kba_*` | none | the `theta0` column is degrees |
-| `uff_angle` | UFF Fourier / order-n bend (RDKit) | per-instance `ka`, `order`, `c0..c2` (`theta0` kept as metadata, deg) | none | `theta0` metadata degrees |
+| Style | Energy | Parameters (units) | LAMMPS |
+|---|---|---|---|
+| `harmonic` | k (θ − theta0)² | `k` (E/rad²), `theta0` (deg) | `angle_style harmonic` `K theta0` |
+| `charmm` | k (θ − theta0)² + k_ub (r₁₃ − r_ub)² | `k` (E/rad²), `theta0` (deg), `k_ub` (E/L²), `r_ub` (L) | `angle_style charmm` `K theta0 K_ub r_ub` |
+| `class2` | k2 Δ² + k3 Δ³ + k4 Δ⁴, Δ = θ − theta0 | `theta0` (deg), `k2`, `k3`, `k4` (E/radⁿ) | `angle_style class2` `theta0 K2 K3 K4`, its `bb` / `ba` lines written at zero (a non-zero cross term is refused: the IR has none) |
+| `mmff_angle`, `mmff_stbn` | MMFF94 bend / stretch-bend | per-instance `ka`, `theta0` (deg), `kba_*` | none |
+| `uff_angle` | UFF Fourier / order-n bend (RDKit) | per-instance `ka`, `order`, `c0..c2` (`theta0` kept as metadata, deg) | none |
 
 ### Dihedrals
 
-| Style | Energy | Parameters (units) | LAMMPS | 0.16 |
-|---|---|---|---|---|
-| `periodic` | Σₘ kₘ [1 + cos(nₘ φ − γₘ)] | `k<m>` (E), `periodicity<m>`, `phase<m>` (deg); or one term `k`, `periodicity`, `phase` | `dihedral_style fourier` `m K1 n1 d1 …` | phases degrees; the `dihedral fourier` alias is gone (LAMMPS `fourier` reads as `periodic`) |
-| `charmm` | k [1 + cos(n φ − d)], plus `w`·(its end atoms' 1-4 pair) | `k` (E), `periodicity`, `phase` (deg), `w` | `dihedral_style charmm` `K n d w` | `phase` degrees; `w` prices the 1-4 pair (see [1-4](#1-4-interactions)) |
-| `opls` | ½[k1(1 + cos φ) + k2(1 − cos 2φ) + k3(1 + cos 3φ) + k4(1 − cos 4φ)] | `k1..k4` (E) | `dihedral_style opls` | unchanged |
-| `multi/harmonic` | Σₙ₌₁⁵ aₙ cosⁿ⁻¹ φ | `a1..a5` (E) | `dihedral_style multi/harmonic` | unchanged |
-| `nharmonic` | Σᵢ₌₁ᴺ aᵢ cosⁱ⁻¹ φ | `a1..aN` (E), contiguous, N ≥ 1 | `dihedral_style nharmonic` `N A1 … AN` | new style |
-| `harmonic` | k [1 + sign cos(n φ)] | `k` (E), `sign` (±1), `periodicity` | `dihedral_style harmonic` `K d n` | new kernel (the LAMMPS reader read it, nothing priced it) |
-| `class2` | Σₙ₌₁³ kₙ [1 − cos(n φ − phiₙ)] | `k1, phi1, k2, phi2, k3, phi3` (E, deg) | `dihedral_style class2` `K1 phi1 K2 phi2 K3 phi3`, its `mbt`/`ebt`/`at`/`aat`/`bb13` lines written at zero (a non-zero one is refused) | phases degrees; read and written (was refused) |
-| `mmff_torsion` | ½[V1(1 + cos φ) + V2(1 − cos 2φ) + V3(1 + cos 3φ)] | per-instance `v1..v3` | none | unchanged |
-| `uff_torsion` | V/2 [1 − cosTerm cos(n φ)] (RDKit) | per-instance `V`, `order`, `cosTerm` | none | unchanged |
+| Style | Energy | Parameters (units) | LAMMPS |
+|---|---|---|---|
+| `periodic` | Σₘ kₘ [1 + cos(nₘ φ − γₘ)] | `k<m>` (E), `periodicity<m>`, `phase<m>` (deg); or one term `k`, `periodicity`, `phase` | `dihedral_style fourier` `m K1 n1 d1 …` |
+| `charmm` | k [1 + cos(n φ − d)], plus `w`·(its end atoms' 1-4 pair) | `k` (E), `periodicity`, `phase` (deg), `w` | `dihedral_style charmm` `K n d w` |
+| `opls` | ½[k1(1 + cos φ) + k2(1 − cos 2φ) + k3(1 + cos 3φ) + k4(1 − cos 4φ)] | `k1..k4` (E) | `dihedral_style opls` |
+| `multi/harmonic` | Σₙ₌₁⁵ aₙ cosⁿ⁻¹ φ | `a1..a5` (E) | `dihedral_style multi/harmonic` |
+| `nharmonic` | Σᵢ₌₁ᴺ aᵢ cosⁱ⁻¹ φ | `a1..aN` (E), contiguous, N ≥ 1 | `dihedral_style nharmonic` `N A1 … AN` |
+| `harmonic` | k [1 + sign cos(n φ)] | `k` (E), `sign` (±1), `periodicity` | `dihedral_style harmonic` `K d n` |
+| `class2` | Σₙ₌₁³ kₙ [1 − cos(n φ − phiₙ)] | `k1, phi1, k2, phi2, k3, phi3` (E, deg) | `dihedral_style class2` `K1 phi1 K2 phi2 K3 phi3`, its `mbt`/`ebt`/`at`/`aat`/`bb13` lines written at zero (a non-zero one is refused) |
+| `mmff_torsion` | ½[V1(1 + cos φ) + V2(1 − cos 2φ) + V3(1 + cos 3φ)] | per-instance `v1..v3` | none |
+| `uff_torsion` | V/2 [1 − cosTerm cos(n φ)] (RDKit) | per-instance `V`, `order`, `cosTerm` | none |
 
 ### Impropers
 
-| Style | Energy | Parameters (units) | Atom order | LAMMPS | 0.16 |
-|---|---|---|---|---|---|
-| `harmonic` | k (χ − chi0)², χ = \|φ(I,J,K,L)\| | `k` (E/rad²), `chi0` (deg) | I is the centre | `improper_style harmonic` `K chi0` | `chi0` degrees |
-| `cvff` | k [1 + sign cos(n φ(I,J,K,L))] | `k` (E), `sign` (±1), `periodicity` | I is the centre | `improper_style cvff` `K d n` | unchanged |
-| `periodic` | k [1 + cos(n φ(I,J,K,L) − γ)] | `k` (E), `periodicity`, `phase` (deg) | AMBER's: K is the centre | `improper_style cvff` (one term, γ ∈ {0°, 180°}: `d = cos γ`) | `phase` degrees; OpenMM rows re-ordered |
-| `mmff_oop` | ½·143.9325 koop χ², χ the Wilson angle of bond I→L to plane (I,J,K) | per-instance `koop` | I is the centre | none (geometry of `improper_style umbrella` / `fourier`) | centre first (was second) |
-| `uff_inversion` | K [c0 + c1 cos ω + c2 cos 2ω], ω of bond I→L to plane (I,J,K) | per-instance `K`, `c0..c2` | I is the centre | `improper_style fourier` | centre first (was second) |
+| Style | Energy | Parameters (units) | Atom order | LAMMPS |
+|---|---|---|---|---|
+| `harmonic` | k (χ − chi0)², χ = \|φ(I,J,K,L)\| | `k` (E/rad²), `chi0` (deg) | I is the centre | `improper_style harmonic` `K chi0` |
+| `cvff` | k [1 + sign cos(n φ(I,J,K,L))] | `k` (E), `sign` (±1), `periodicity` | I is the centre | `improper_style cvff` `K d n` |
+| `periodic` | k [1 + cos(n φ(I,J,K,L) − γ)] | `k` (E), `periodicity`, `phase` (deg) | AMBER's: K is the centre | `improper_style cvff` (one term, γ ∈ {0°, 180°}: `d = cos γ`) |
+| `mmff_oop` | ½·143.9325 koop χ², χ the Wilson angle of bond I→L to plane (I,J,K) | per-instance `koop` | I is the centre | none (geometry of `improper_style umbrella` / `fourier`) |
+| `uff_inversion` | K [c0 + c1 cos ω + c2 cos 2ω], ω of bond I→L to plane (I,J,K) | per-instance `K`, `c0..c2` | I is the centre | `improper_style fourier` |
 
 ### Pair styles
 
-| Style | Energy | Parameters (units) | LAMMPS | 0.16 |
-|---|---|---|---|---|
-| `lj/cut` | C ε [(σ/r)ⁿ − (σ/r)ᵐ], C = n/(n−m)·(n/m)^(m/(n−m)); 4ε[(σ/r)¹² − (σ/r)⁶] at n = 12, m = 6 | `epsilon` (E), `sigma` (L); style `cutoff`, `mixing`, `n`, `m`, `shift` | `pair_style lj/cut` (`shift`: `pair_modify shift yes`; `mixing`: `pair_modify mix`; n ≠ 12 or m ≠ 6, LAMMPS's `mie/cut`, is neither read nor written) | `pair_style lj/cut` alone reads with no Coulomb style (was `coul/cut` beside it); `pair_modify shift yes` read and written (was dropped) |
-| `lj/class2` | ε [2(σ/r)⁹ − 3(σ/r)⁶] | `epsilon`, `sigma`; style `cutoff`, `mixing` (default `sixthpower`, LAMMPS's) | `pair_style lj/class2` (LAMMPS mixes it `sixthpower` whatever `pair_modify` says: another `mixing` is refused, and it reads as `sixthpower`) | read and written (was refused) |
-| `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` | read and written (was refused) |
-| `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` | the compiled kernel read `D0`, the neighbour-driven one `d0`; both read `d0`; read and written (was refused) |
-| `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` | unchanged |
-| `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) | new |
-| `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric` (default 1), `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) | new |
-| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style is refused (`MissingParam`) until they are stated) | `lj/cut/coul/long` reads as this (was a plain `coul/cut`); the box is the frame's (was style params `box_xx` … `box_zz`) |
-| `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) | `a_thole` renamed `damp` |
-| `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | per type `charge`; style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) | unchanged |
-| `uff_lj`, `mmff_vdw` | UFF x/D LJ; MMFF buffered 14-7 | per-instance / per-type | none | unchanged |
+| Style | Energy | Parameters (units) | LAMMPS |
+|---|---|---|---|
+| `lj/cut` | C ε [(σ/r)ⁿ − (σ/r)ᵐ], C = n/(n−m)·(n/m)^(m/(n−m)); 4ε[(σ/r)¹² − (σ/r)⁶] at n = 12, m = 6 | `epsilon` (E), `sigma` (L); style `cutoff`, `mixing`, `n`, `m`, `shift` | `pair_style lj/cut` (`shift`: `pair_modify shift yes`; `mixing`: `pair_modify mix`; n ≠ 12 or m ≠ 6, LAMMPS's `mie/cut`, is neither read nor written) |
+| `lj/class2` | ε [2(σ/r)⁹ − 3(σ/r)⁶] | `epsilon`, `sigma`; style `cutoff`, `mixing` (default `sixthpower`, LAMMPS's) | `pair_style lj/class2` (LAMMPS mixes it `sixthpower` whatever `pair_modify` says: another `mixing` is refused, and it reads as `sixthpower`) |
+| `buck` | a e^(−r/rho) − c/r⁶ | `a` (E), `rho` (L), `c` (E·L⁶) | `pair_style buck` `A rho C` |
+| `morse` | d0 [(1 − e^(−alpha (r − r0)))² − 1] | `d0` (E), `alpha` (1/L), `r0` (L) | `pair_style morse` `D0 alpha r0` |
+| `coul/cut` | coulomb qᵢqⱼ / (dielectric (r + delta)) | style `coulomb` (E·L/e²), `dielectric` (default 1), `delta` (L, default 0), `cutoff` (default ∞) | `pair_style coul/cut` with `delta = 0` (the buffer is molrs's, for MMFF; the LAMMPS writer refuses `delta ≠ 0` and `dielectric ≠ 1`). LAMMPS fixes the constant (`qqr2e`) per `units` |
+| `lj/charmm` | 4ε[(σ/r)¹² − (σ/r)⁶]·S(r), S CHARMM's switch from `inner` to `cutoff` | `epsilon`, `sigma`, `epsilon14`, `sigma14` (absent → `epsilon`, `sigma`); style `inner`, `cutoff`, `mixing` (default `arithmetic`), `one_four` (`"regular"`, the default, or `"epsilon14"`: what a `special_bonds` 1-4 pair is priced at, see [1-4](#1-4-interactions)) | `pair_style lj/charmm/coul/charmm`, van-der-Waals half; `pair_coeff i j ε σ ε₁₄ σ₁₄` (`one_four = "epsilon14"` has no LAMMPS form) |
+| `coul/charmm` | coulomb qᵢqⱼ/(dielectric r)·S(r); force (C qᵢqⱼ/r²)·S(r), LAMMPS's switched force, not the gradient | style `coulomb`, `dielectric` (default 1), `inner`, `cutoff` | `pair_style lj/charmm/coul/charmm`, Coulomb half (`inner2 outer2` when its cutoffs differ) |
+| `coul/long/pme` | Ewald-summed coulomb qᵢqⱼ/r over the frame's periodic box | style `coulomb`, `cutoff`, `alpha`, `order`, `grid_*`; the cell is the frame's box (`frame.box`), as LAMMPS's kspace reads its simulation box | `pair_style lj/cut/coul/long` (the real-space half; `kspace_style` states an accuracy, not `alpha`, so the Ewald parameters are neither read nor written, and a LAMMPS-read style is refused (`MissingParam`) until they are stated) |
+| `thole` | T(r) qᵢqⱼ/r, T = 1 − (1 + s r/2) e^(−s r), s = ½(aᵢ + aⱼ)/(αᵢαⱼ)^(1/6) | per type `charge`, `alpha` (L³), `damp` | `pair_style thole` `alpha damp` (LAMMPS damps the Drude charges of the atoms; molrs's per-type `charge` is its own) |
+| `coul/tt` | fₙ(r) qᵢqⱼ/r (Tang–Toennies) | per type `charge`; style `b`, `c`, `order` | `pair_style coul/tt` (`n` = `order`) |
+| `uff_lj`, `mmff_vdw` | UFF x/D LJ; MMFF buffered 14-7 | per-instance / per-type | none |
 
 `special_bonds` (the force field's `[1-2, 1-3, 1-4]` weights for van der
 Waals and Coulomb) is LAMMPS's `special_bonds lj … coul …`.
@@ -205,12 +198,9 @@ endpoints. Where OpenMM picks the order of two peripherals of equal type by
 element and index, a caller that builds frame rows from an OpenMM-read field
 decides the same way.
 
-Up to 0.15 the OpenMM reader stored the file order, and the kernel priced
-φ(c1, c2, c3, c4) where OpenMM prices φ(c2, c3, c1, c4): every improper of an
-OpenMM-read field was priced over the wrong dihedral (0.40× OpenMM's energy
-on the regression molecule). The OpenMM writer had the mirror error, and wrote
-`cvff` rows OpenMM prices over a different dihedral; it now refuses `cvff`
-(OpenMM cannot price a dihedral that starts at the centre).
+The OpenMM reader re-orders each improper row so the kernel prices
+φ(c2, c3, c1, c4), the dihedral OpenMM prices. The OpenMM writer refuses
+`cvff` (OpenMM cannot price a dihedral that starts at the centre).
 
 ## 1-4 interactions
 
@@ -307,9 +297,8 @@ style other than a 12-6 `lj/cut` or `lj/charmm` and a plain Coulomb
 (`coul/cut` with `delta = 0`, `coul/charmm`) has no exception form, and a
 field with one beside an exception is refused. LAMMPS can express none of
 these per pair, so the LAMMPS writers refuse a frame that carries them,
-naming the columns. (molrec retired its `pair14` category for these columns
-and `epsilon14` / `sigma14`; a `pair14` table in a record is kept as an
-unknown category.)
+naming the columns. (A `pair14` table in a record is an unknown category,
+kept as such.)
 
 **Precedence**, per pair and per quantity: **per-pair override > dihedral
 charmm `w` > `special_bonds`**. Every pair that carries an override cell or
@@ -784,7 +773,7 @@ degrees stay degrees. Every Coulomb style states GROMACS's own constant
 (`molrs.core.constants.GROMACS_ONE_4PI_EPS0`, its `ONE_4PI_EPS0` from
 CODATA 2018, 138.93545764438196 kJ·nm/(mol·e²), which the unit registry
 converts to 332.06371329919205 kcal·Å/(mol·e²): 9.9·10⁻⁹ above LAMMPS
-`real`'s; 0.15 stated LAMMPS's).
+`real`'s).
 
 | GROMACS | IR |
 |---|---|
@@ -1386,17 +1375,15 @@ reader refuses `ordering="smirnoff"`).
   IR: [Cross-engine equivalence](#cross-engine-equivalence) and
   [Completeness](#completeness).
 - Each style has a hand-value test against the LAMMPS manual's formula.
-- `ff::ir_invariance` holds the 0.16 energies of GAFF-, OPLS-AA-,
+- `ff::ir_invariance` holds the energies of GAFF-, OPLS-AA-,
   MMFF94- and UFF-typed acetanilide and of a GROMACS-, OpenMM- and
-  LAMMPS-read hand molecule to the values molrs 0.15.1 computed on the same
-  inputs, term by term, at 1e-12 relative; every one matches bit for bit,
-  except the OpenMM improper (the fix above), which now equals the
-  GROMACS-read value of the same improper and the hand value of OpenMM's
-  formula, the OpenMM- and GROMACS-read Coulomb terms, which are
-  0.15.1's times the ratio of the engine's own constant to LAMMPS's, and
-  UFF's bonded terms, which follow its atom labels to RDKit's (RDKit
-  hybridization and conjugation; amide C–N at order 1) and sum to RDKit
-  2026.03's UFF energy on the same geometry to 1e-14.
+  LAMMPS-read hand molecule to pinned reference values, term by term, at
+  1e-12 relative. The OpenMM improper equals the GROMACS-read value of the
+  same improper and the hand value of OpenMM's formula; the OpenMM- and
+  GROMACS-read Coulomb terms carry the engine's own constant; UFF's bonded
+  terms follow its atom labels to RDKit's (RDKit hybridization and
+  conjugation; amide C–N at order 1) and sum to RDKit 2026.03's UFF energy
+  on the same geometry to 1e-14.
 - `cmap charmm` against LAMMPS `fix cmap` (`run 0`, CHARMM36's alanine map
   and its transpose on three crossterms of an eight-atom backbone, files
   written by molrs; `scripts/lammps_cmap_check.sh`): E = −1.25779219530854869

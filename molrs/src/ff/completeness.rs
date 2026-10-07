@@ -606,7 +606,7 @@ const MATRIX: &[Row] = &[
     },
     Row {
         item: "improper mmff_oop",
-        cells: own(&["ff/ir_invariance.rs::typed_molecules_price_as_in_0_15"]),
+        cells: own(&["ff/ir_invariance.rs::typed_molecules_price_at_the_reference_energies"]),
     },
     Row {
         item: "improper uff_inversion",

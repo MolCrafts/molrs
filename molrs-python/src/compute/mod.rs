@@ -58,8 +58,7 @@ pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::c
 /// The analyses take one materialized table per frame, so this is where the
 /// binder accepts either shape. The engine that produced a table
 /// (`NeighborList`) is deliberately not accepted: it would have to guess a
-/// column policy, and a guess that drops `disp` is exactly the silent failure
-/// this chain removed.
+/// column policy, and a guess that drops `disp` would fail silently.
 ///
 /// [`Neighbors`]: molrs::core::Neighbors
 pub(crate) fn collect_neighbors(arg: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::core::Neighbors>> {

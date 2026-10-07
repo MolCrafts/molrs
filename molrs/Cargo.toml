@@ -11,9 +11,8 @@ homepage.workspace = true
 readme = "../README.md"
 keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics"]
 categories = ["science"]
-# The generator example is a repository tool, not part of the published crate;
-# the molrs 0.15.0 records under testdata/ are read by unit tests only.
-exclude = ["examples/", "src/io/mrec/zarr_storage/testdata/"]
+# The generator example is a repository tool, not part of the published crate.
+exclude = ["examples/"]
 # No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
 # modules next to the code (`cargo test --lib`). One example target: the OPLS
 # parameter generator, a tool, not a test; excluded from the package.
@@ -146,7 +145,7 @@ flate2         = { version = "1.1", optional = true, features = ["rust_backend"]
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
 roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
-# `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
+# `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.mrec.zip` a closed
 # directory store packs into, `zarrs_zip` reads it back. Both hang on
 # `filesystem`, so a build without that feature compiles neither — which is
 # what keeps them out of the wasm graph. `zip` is built with default-features
