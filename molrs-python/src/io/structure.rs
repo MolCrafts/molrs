@@ -403,7 +403,7 @@ pub fn write_amber_prep(path: PathBuf, residue: &Bound<'_, PyAny>) -> PyResult<(
     molrs::io::write_amber_prep(path, &res).map_err(io_error_to_pyerr)
 }
 
-fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
+pub(super) fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
     let name: String = residue.get_item("name")?.extract()?;
     let atoms_list = residue.get_item("atoms")?;
     let mut atoms = Vec::new();
@@ -475,7 +475,10 @@ fn py_to_prep_residue(residue: &Bound<'_, PyAny>) -> PyResult<PrepResidue> {
     })
 }
 
-fn prep_residue_to_pydict<'py>(py: Python<'py>, res: &PrepResidue) -> PyResult<Bound<'py, PyDict>> {
+pub(super) fn prep_residue_to_pydict<'py>(
+    py: Python<'py>,
+    res: &PrepResidue,
+) -> PyResult<Bound<'py, PyDict>> {
     let value = serde_json::to_value(res)
         .map_err(|e| PyValueError::new_err(format!("failed to serialize prep residue: {e}")))?;
     match value {

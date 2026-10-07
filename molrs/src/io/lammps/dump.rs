@@ -1372,6 +1372,25 @@ pub fn write_lammps_dump_local<P: AsRef<Path>, FA: FrameAccess>(
     Ok(())
 }
 
+/// Read the first snapshot of LAMMPS dump `text` — one frame of
+/// [`read_lammps_dump_trajectory`] on text in memory.
+pub fn read_lammps_dump_str(text: &str) -> std::io::Result<Frame> {
+    LammpsDumpReader::new(std::io::Cursor::new(text.as_bytes()))
+        .read()?
+        .ok_or_else(|| invalid_data("LAMMPS dump text holds no snapshot"))
+}
+
+/// Write one frame as a LAMMPS dump snapshot in memory — one frame of
+/// [`write_lammps_dump_trajectory`], `columns` as there.
+pub fn write_lammps_dump_str(
+    frame: &impl FrameAccess,
+    columns: Option<&[&str]>,
+) -> std::io::Result<String> {
+    let mut buf = Vec::new();
+    write_lammps_dump_frame(&mut buf, frame, columns)?;
+    String::from_utf8(buf).map_err(invalid_data)
+}
+
 // ============================================================================
 // Streaming
 // ============================================================================

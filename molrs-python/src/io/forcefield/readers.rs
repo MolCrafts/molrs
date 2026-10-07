@@ -296,6 +296,60 @@ pub fn read_lammps_cmap_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
     Ok(PyForceField { inner: forcefield })
 }
 
+/// The force field of a text door's result, a reader error raised as
+/// ``ValueError``.
+fn forcefield_of(
+    read: Result<molrs::ff::forcefield::ForceField, String>,
+) -> PyResult<PyForceField> {
+    read.map(|inner| PyForceField { inner })
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
+/// Read molrs force-field XML text — :func:`read_molrs_xml_forcefield` on a
+/// string.
+#[pyfunction]
+#[pyo3(name = "read_molrs_xml_forcefield_str")]
+pub fn read_molrs_xml_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
+    forcefield_of(molrs::io::read_molrs_xml_forcefield_str(text))
+}
+
+/// Read OpenMM force-field XML text — :func:`read_openmm_xml_forcefield` on a
+/// string.
+#[pyfunction]
+#[pyo3(name = "read_openmm_xml_forcefield_str")]
+pub fn read_openmm_xml_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
+    forcefield_of(molrs::io::read_openmm_xml_forcefield_str(text))
+}
+
+/// Read a LAMMPS force-field include's text — :func:`read_lammps_forcefield`
+/// on a string.
+#[pyfunction]
+#[pyo3(name = "read_lammps_forcefield_str")]
+pub fn read_lammps_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
+    forcefield_of(molrs::io::read_lammps_forcefield_str(text))
+}
+
+/// Read an MMFF parameter-set XML file (the layout molrs ships its MMFF94
+/// tables in) into a :class:`ForceField`.
+///
+/// Raises
+/// ------
+/// ValueError
+///     On a malformed document or a table this layout does not have.
+#[pyfunction]
+#[pyo3(name = "read_mmff_xml_forcefield")]
+pub fn read_mmff_xml_forcefield_py(path: PathBuf) -> PyResult<PyForceField> {
+    forcefield_of(molrs::io::read_mmff_xml_forcefield(path_str(&path)?))
+}
+
+/// Read MMFF parameter-set XML text — :func:`read_mmff_xml_forcefield` on a
+/// string.
+#[pyfunction]
+#[pyo3(name = "read_mmff_xml_forcefield_str")]
+pub fn read_mmff_xml_forcefield_str_py(text: &str) -> PyResult<PyForceField> {
+    forcefield_of(molrs::io::read_mmff_xml_forcefield_str(text))
+}
+
 /// Register the force-field readers.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(
@@ -348,5 +402,14 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "molrs.io",
         wrap_pyfunction!(read_lammps_cmap_forcefield_py, m)?,
     )?;
+    for door in [
+        wrap_pyfunction!(read_molrs_xml_forcefield_str_py, m)?,
+        wrap_pyfunction!(read_openmm_xml_forcefield_str_py, m)?,
+        wrap_pyfunction!(read_lammps_forcefield_str_py, m)?,
+        wrap_pyfunction!(read_mmff_xml_forcefield_py, m)?,
+        wrap_pyfunction!(read_mmff_xml_forcefield_str_py, m)?,
+    ] {
+        crate::add_function(m, "molrs.io", door)?;
+    }
     Ok(())
 }

@@ -148,3 +148,54 @@ pub fn read_smiles_str(smiles: &str) -> Result<Frame, JsValue> {
             .map_err(|e| JsValue::from_str(&format!("readSmilesStr: {e}")))?,
     )
 }
+
+/// Write the molecule in `frame` (its `"atoms"` and `"bonds"`) as a SMILES
+/// string — `molrs::io::write_smiles_str` with molrs's default emit options
+/// (canonical, aromatic as marked, organic-subset hydrogens, no stereo, one
+/// component), the defaults of Python's `write_smiles_str`.
+///
+/// # Example (JavaScript)
+///
+/// ```js
+/// writeSmilesStr(readSmilesStr("OCC")); // "CCO"
+/// ```
+#[wasm_bindgen(js_name = writeSmilesStr)]
+pub fn write_smiles_str(frame: &Frame) -> Result<String, JsValue> {
+    let mol = frame.with_frame(|rs| {
+        molrs::core::Atomistic::from_frame(rs)
+            .map_err(|e| JsValue::from_str(&format!("Frame → Atomistic: {e}")))
+    })?;
+    molrs::io::write_smiles_str(&mol, &molrs::io::smiles::SmilesEmitOptions::default())
+        .map_err(|e| JsValue::from_str(&format!("SMILES writing error: {e}")))
+}
+
+/// Read the molecule a CGsmiles string states into a [`Frame`] —
+/// `molrs::io::read_cgsmiles_str`, its graph converted as `readSmilesStr`'s.
+#[wasm_bindgen(js_name = readCgsmilesStr)]
+pub fn read_cgsmiles_str(text: &str) -> Result<Frame, JsValue> {
+    let mol = molrs::io::read_cgsmiles_str(text)
+        .map_err(|e| JsValue::from_str(&format!("CGsmiles read error: {e}")))?;
+    Frame::from_rs(
+        mol.to_frame()
+            .map_err(|e| JsValue::from_str(&format!("readCgsmilesStr: {e}")))?,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn write_smiles_str_writes_the_canonical_string() {
+        let frame = read_smiles_str("OCC").expect("smiles");
+        assert_eq!(write_smiles_str(&frame).expect("write"), "CCO");
+    }
+
+    #[wasm_bindgen_test]
+    fn read_cgsmiles_str_reads_a_molecule() {
+        let frame =
+            read_cgsmiles_str("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}").expect("cgsmiles");
+        assert!(frame.get("atoms").is_ok());
+    }
+}

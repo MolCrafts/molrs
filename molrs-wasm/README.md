@@ -95,22 +95,34 @@ The binding's `io` sources mirror `molrs::io`: one module per format, holding
 that format's reader (or stream) and writer.
 
 - `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
-  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included)
+  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included);
+  `writeSmilesStr(frame)` → SMILES (molrs's default emit options);
+  `readCgsmilesStr(text)` → `Frame`
+- `readCsvBlockStr(text, delimiter?, header?)` → `Block`,
+  `writeCsvBlockStr(block, delimiter?, header?)` → CSV text
 - `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
   `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
   `parseRangeInInput` per frame)
-- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`,
-  `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader` —
-  whole-content readers of the formats with no stream
+- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader` — whole-content
+  readers, the molrs reader classes of those formats
 - `readStlBytes(bytes)` → `TriMesh`
 - `readLammpsLogStr(text, style?)` → the `LammpsLog` record (runs, thermo
   tables, timings — Rust and Python's field names); `isLammpsLog(text)` tells a
   log by its first run
-- one writer per format: `writeXyzStr`, `writePdbStr`, `writeCifStr`,
-  `writeGroStr`, `writeMol2Str`, `writeXsfStr`, `writeCubeStr`,
-  `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr` (text);
-  `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes` (binary)
+- the in-memory doors, named as molrs's `read_<fmt>_str` / `_bytes` and
+  `write_<fmt>_str` / `_bytes` (camelCased; Python's `molrs.io` has the same
+  set): `readXyzStr` / `readXyzBytes` / `writeXyzStr`, `readPdbStr` /
+  `readPdbBytes` / `writePdbStr`, `readSdfStr` / `readSdfBytes`,
+  `readGroStr` / `writeGroStr`, `readMol2Str` / `writeMol2Str`, `readCifStr` /
+  `writeCifStr`, `readXsfStr` / `writeXsfStr`, `readCubeStr` / `writeCubeStr`,
+  `readVaspPoscarStr` / `writeVaspPoscarStr`, `readVaspChgcarStr`,
+  `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr`,
+  `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`,
+  `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr(frame,
+  columns?)`; `readDcdBytes(bytes, context?)` / `writeDcdBytes`,
+  `readTrrBytes` / `writeTrrBytes`, `readXtcBytes` / `writeXtcBytes` (binary,
+  one frame)
 - `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` /
   `writeJsonFrameStr` — the `molrs::stream` wire encodings
 
@@ -124,7 +136,7 @@ that format's reader (or stream) and writer.
 ```js
 const typifier = new UffTypifier();                 // or Mmff94Typifier / Mmff94sTypifier
 const typed    = typifier.typify(frame);
-const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
+const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
 const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
 nl.build(typed);
 const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come from the NeighborList
@@ -134,6 +146,9 @@ const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come
 - **MMFF94 / MMFF94s** — Merck force fields
 - **no GFN-FF**
 - **no** free-function `intramolecularPairs` / `insertIntramolecularPairs`
+- `typifier.forcefield()` → the `ForceField` typing assigned;
+  `new PotentialCompiler(ff).compile(typedFrame)` → `Potentials` — the native
+  composition, no typifier-to-potentials shortcut
 - `Potentials.calcEnergyForces(coords)` → `{ energy, forces }`
 
 ### Analysis (`molrs::compute`)

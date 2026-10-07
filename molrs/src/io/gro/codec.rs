@@ -257,6 +257,13 @@ pub fn read_gro_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     crate::io::reader::collect_frames(&mut gr)
 }
 
+/// Read the first frame of GRO `text` — [`read_gro`] on text in memory.
+pub fn read_gro_str(text: &str) -> Result<Frame> {
+    GroReader::new(text.as_bytes())
+        .read()?
+        .ok_or_else(|| invalid_data("GRO text holds no frame"))
+}
+
 /// Read a single GRO frame from any [`BufRead`]. Returns `Ok(None)` at EOF.
 fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
     let mut buf = String::new();
@@ -552,6 +559,13 @@ pub fn write_gro_trajectory<P: AsRef<Path>>(path: P, frames: &[Frame]) -> Result
         write_frame_to(&mut w, frame)?;
     }
     w.flush()
+}
+
+/// Write a frame as GRO text — [`write_gro`] into memory (Å → nm).
+pub fn write_gro_str(frame: &Frame) -> Result<String> {
+    let mut buf = Vec::new();
+    write_frame_to(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Write a single frame in GRO format.

@@ -103,8 +103,8 @@ A region is a solid with a signed distance to its boundary: every class
 answers `contains`, `distance` (negative inside) and `bounds`, and composes
 with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
 `outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
-what `molrs.io.read_stl` reads (the WASM binding reads the same file with
-`readStlBytes` into a `TriMesh`).
+what `molrs.io.read_stl` reads (`molrs.io.read_stl_bytes` from bytes, as the
+WASM binding's `readStlBytes` does).
 
 ::: molrs.core.Sphere
 

@@ -1,10 +1,12 @@
 //! Geometry optimization — the WASM face of `molrs::optimize` (`Lbfgs`).
 //!
 //! ```js
-//! const pots   = new UffTypifier().toPotentials(typed);
-//! const nl     = new NeighborList(12.5);         // or NeighborList.bruteForce
+//! const typifier = new UffTypifier();
+//! const typed    = typifier.typify(frame);
+//! const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
+//! const nl       = new NeighborList(12.5);         // or NeighborList.bruteForce
 //! nl.build(typed);
-//! const report = new Lbfgs(pots, nl.neighbors()).minimize(typed);
+//! const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);
 //! ```
 //!
 //! The non-bonded pairs come from a [`NeighborList`](crate::core::NeighborList)

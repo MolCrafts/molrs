@@ -7,7 +7,7 @@
 //! | Module    | molrs owner | Bridge surface |
 //! |-----------|-------------|----------------|
 //! | `frame`   | `core::Frame` (via `molrs_ffi::FrameRef`) | `FrameRef`, `frame_*`, `KeyedMetaValue` |
-//! | `io`      | `io` | `read_xyz_frame` / `write_xyz_frame`, `read_mrec_frame` / `write_mrec_frame`, `read_mrec_trajectory_frame`, `MrecWriterRef` |
+//! | `io`      | `io` | `read_xyz` / `write_xyz`, `read_mrec_frame` / `write_mrec_frame`, `read_mrec_trajectory_frame`, `MrecWriterRef` |
 //! | `compute` | `compute` | `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `*Accumulator` |
 //! | `charge`  | `ff::charge` | `assign_am1_bcc_charges` |
 //! | `region`  | `core::Region` (via `molrs_ffi::RegionRef`) | `RegionRef`, `region_*` |

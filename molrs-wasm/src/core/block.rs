@@ -154,16 +154,7 @@ impl Block {
     /// Throws if the internal store allocation fails.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<Block, JsValue> {
-        let arena = molrs_ffi::FrameArenaCell::default();
-        let fid = arena.borrow_mut().frame_new();
-        arena
-            .borrow_mut()
-            .set_block(fid, "temp", RsBlock::new())
-            .map_err(js_err)?;
-        let handle = arena.borrow().get_block(fid, "temp").map_err(js_err)?;
-        Ok(Block {
-            inner: BlockRef::new(arena, handle),
-        })
+        Block::from_rs(RsBlock::new())
     }
 
     // ---- block metadata ----
@@ -852,6 +843,27 @@ impl Block {
         f: impl FnOnce(&Column) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.with(|b| b.get(key).map_or_else(|| Err(missing_column(key)), f))?
+    }
+
+    /// A standalone block holding `block` (what a Rust-side reader such as
+    /// `readCsvBlockStr` returns).
+    pub(crate) fn from_rs(block: RsBlock) -> Result<Block, JsValue> {
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let fid = arena.borrow_mut().frame_new();
+        arena
+            .borrow_mut()
+            .set_block(fid, "temp", block)
+            .map_err(js_err)?;
+        let handle = arena.borrow().get_block(fid, "temp").map_err(js_err)?;
+        Ok(Block {
+            inner: BlockRef::new(arena, handle),
+        })
+    }
+
+    /// Run `f` on the Rust block (what a Rust-side writer such as
+    /// `writeCsvBlockStr` reads).
+    pub(crate) fn with_rs<R>(&self, f: impl FnOnce(&RsBlock) -> R) -> Result<R, JsValue> {
+        self.with(f)
     }
 
     /// Insert a Rust-built array as column `key` (the path Rust-side

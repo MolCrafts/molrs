@@ -2226,6 +2226,20 @@ pub fn write_lammps_data<P: AsRef<Path>>(path: P, frame: &impl FrameAccess) -> s
     write_lammps_data_frame(&mut writer, frame)
 }
 
+/// Read LAMMPS data `text` — [`read_lammps_data`] on text in memory.
+pub fn read_lammps_data_str(text: &str) -> std::io::Result<Frame> {
+    LammpsDataReader::new(Cursor::new(text.as_bytes()))
+        .read()?
+        .ok_or_else(|| invalid_data("No frame found in LAMMPS data text"))
+}
+
+/// Write a frame as LAMMPS data text — [`write_lammps_data`] into memory.
+pub fn write_lammps_data_str(frame: &impl FrameAccess) -> std::io::Result<String> {
+    let mut buf = Vec::new();
+    write_lammps_data_frame(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(invalid_data)
+}
+
 /// [`write_lammps_data`], giving each declared atom type no row uses the mass
 /// `label_masses` holds for its label (instead of the placeholder `1`). The
 /// `fix bond/react` file set needs it: a type only a template uses is

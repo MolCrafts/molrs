@@ -294,7 +294,7 @@ pub mod ffi {
 
         // Write one frame (element + coords + typed metadata) to an XYZ file
         // (molrs XyzWriter). append=false truncates; append=true appends.
-        fn write_xyz_frame(
+        fn write_xyz(
             path: &str,
             atomic_number: &[i32],
             x: &[f64],
@@ -308,7 +308,7 @@ pub mod ffi {
         // FrameRef (atoms.{x,y,z,atomic_number} + box). `atomic_number` is
         // derived from the required ExtXYZ species column. All XYZ parsing
         // lives in molrs (io::read_xyz).
-        fn read_xyz_frame(path: &str) -> Result<Box<FrameRef>>;
+        fn read_xyz(path: &str) -> Result<Box<FrameRef>>;
 
         // Write one frame + named per-atom fields (field_data is
         // [n_fields, n_atoms]) as a `*.mrec` record whose `frame` section is

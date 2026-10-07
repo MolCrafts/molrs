@@ -30,7 +30,7 @@
 //! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: `Rdf`, `Msd`, `Cluster`, …, the free functions molrs has (`staticDielectricConstant`, …) and the compute catalog |
 //! | `conformer` | `conformer` | 3D conformer generation (`Conformer`) |
-//! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s) and the `Potentials` they compile |
+//! | `ff`        | `ff` | Typifiers (UFF, MMFF94, MMFF94s), the `ForceField` they output, `PotentialCompiler` and the `Potentials` it compiles |
 //! | `optimize`  | `optimize` | `Lbfgs` / `OptimizationReport` |
 //! | `builder`   | `builder` | `CarbonTubeBuilder` |
 //!
@@ -82,7 +82,7 @@ mod compute;
 #[cfg(feature = "conformer")]
 mod conformer;
 mod core;
-/// Force-field composition (typify / Potentials) — requires `conformer` (→ `ff`).
+/// Force-field composition (typify / forcefield / PotentialCompiler / Potentials) — requires `conformer` (→ `ff`).
 #[cfg(feature = "conformer")]
 mod ff;
 #[cfg(feature = "io")]

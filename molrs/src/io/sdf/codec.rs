@@ -312,6 +312,14 @@ pub fn read_sdf_trajectory<P: AsRef<std::path::Path>>(path: P) -> std::io::Resul
     crate::io::reader::collect_frames(&mut reader)
 }
 
+/// Read the first record of SDF / MDL molfile `text` — [`read_sdf`] on text
+/// in memory.
+pub fn read_sdf_str(text: &str) -> std::io::Result<Frame> {
+    SdfReader::new(text.as_bytes())
+        .read()?
+        .ok_or_else(|| invalid_data("SDF text holds no record"))
+}
+
 // ============================================================================
 // Streaming
 // ============================================================================

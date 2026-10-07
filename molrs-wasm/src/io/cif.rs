@@ -3,9 +3,9 @@
 //! | JS | molrs |
 //! |----|-------|
 //! | `CifReader` | `CifReader` (whole-content; the one CIF reader) |
-//! | `writeCifStr` | `CifWriter` |
+//! | `readCifStr`, `writeCifStr` | `read_cif_str`, `write_cif_str` |
 
-use molrs::io::cif::{CifReader as RsCifReader, CifWriter};
+use molrs::io::cif::CifReader as RsCifReader;
 use molrs::io::reader::Reader;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
@@ -123,8 +123,11 @@ impl CifReader {
     }
 }
 
-/// Write `frame` as CIF text.
-#[wasm_bindgen(js_name = writeCifStr)]
-pub fn write_cif_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(CifWriter, frame, "CIF")?)
-}
+read_door!(
+    /// Read the first `data_` block of CIF text.
+    readCifStr => read_cif_str(text: &str), "CIF"
+);
+write_door!(
+    /// Write `frame` as single-block CIF text.
+    writeCifStr => write_cif_str -> String, "CIF"
+);

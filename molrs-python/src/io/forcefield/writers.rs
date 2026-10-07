@@ -358,6 +358,35 @@ pub fn write_molrs_xml_forcefield_py(path: PathBuf, forcefield: &PyForceField) -
         .map_err(pyo3::exceptions::PyValueError::new_err)
 }
 
+/// Write a ForceField as AMBER frcmod text — :func:`write_amber_frcmod` into
+/// a string.
+#[pyfunction]
+#[pyo3(name = "write_amber_frcmod_str")]
+pub fn write_amber_frcmod_str_py(forcefield: &PyForceField) -> PyResult<String> {
+    molrs::io::write_amber_frcmod_str(&forcefield.inner).map_err(crate::ff::ir::write_err)
+}
+
+/// Write a ForceField as OpenMM force-field XML text —
+/// :func:`write_openmm_xml_forcefield` into a string, ``precision`` as there.
+#[pyfunction]
+#[pyo3(name = "write_openmm_xml_forcefield_str", signature = (forcefield, precision = None))]
+pub fn write_openmm_xml_forcefield_str_py(
+    forcefield: &PyForceField,
+    precision: Option<usize>,
+) -> PyResult<String> {
+    molrs::io::write_openmm_xml_forcefield_str(&forcefield.inner, precision)
+        .map_err(crate::ff::ir::write_err)
+}
+
+/// Write a ForceField as molrs force-field XML text —
+/// :func:`write_molrs_xml_forcefield` into a string.
+#[pyfunction]
+#[pyo3(name = "write_molrs_xml_forcefield_str")]
+pub fn write_molrs_xml_forcefield_str_py(forcefield: &PyForceField) -> PyResult<String> {
+    molrs::io::write_molrs_xml_forcefield_str(&forcefield.inner)
+        .map_err(pyo3::exceptions::PyValueError::new_err)
+}
+
 /// The LAMMPS write options of `precision` decimals in `units`.
 fn lammps_options(
     precision: usize,
@@ -414,5 +443,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "molrs.io",
         wrap_pyfunction!(write_lammps_cmap_forcefield_py, m)?,
     )?;
+    for door in [
+        wrap_pyfunction!(write_amber_frcmod_str_py, m)?,
+        wrap_pyfunction!(write_openmm_xml_forcefield_str_py, m)?,
+        wrap_pyfunction!(write_molrs_xml_forcefield_str_py, m)?,
+    ] {
+        crate::add_function(m, "molrs.io", door)?;
+    }
     Ok(())
 }

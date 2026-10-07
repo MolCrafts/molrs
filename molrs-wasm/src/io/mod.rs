@@ -1,48 +1,67 @@
 //! File I/O and format conversion for the WASM API.
 //!
-//! One module per format, as in `molrs::io`: each holds that format's reader
-//! (a whole-content `*Reader` class or a chunk-fed `*Stream` class, never
-//! both) and its writer export(s).
+//! One module per format, as in `molrs::io`: each holds that format's
+//! in-memory doors and its reader class (a whole-content `*Reader` class or a
+//! chunk-fed `*Stream` class, never both) where molrs has one.
 //!
 //! | Module | JS classes / functions | Format |
 //! |--------|------------------------|--------|
-//! | [`xyz`] | `XyzStream`, `writeXyzStr` | XYZ / Extended XYZ |
-//! | [`pdb`] | `PdbStream`, `writePdbStr` | Protein Data Bank |
-//! | [`gro`] | `GroReader`, `writeGroStr` | GROMACS GRO (nm ↔ Å at the molrs boundary) |
-//! | [`sdf`] | `SdfStream` | MDL SDF / MOL (read-only: molrs has no SDF writer) |
-//! | [`mol2`] | `Mol2Reader`, `writeMol2Str` | Tripos MOL2 |
-//! | [`cif`] | `CifReader`, `writeCifStr` | Crystallographic Information File |
-//! | [`vasp`] | `VaspPoscarReader`, `VaspChgcarReader`, `writeVaspPoscarStr` | VASP POSCAR / CONTCAR, CHGCAR (read-only) |
-//! | [`dcd`] | `DcdStream`, `writeDcdBytes` | DCD trajectory |
-//! | [`trr`] | `TrrStream`, `writeTrrBytes` | GROMACS TRR |
-//! | [`xtc`] | `XtcStream`, `writeXtcBytes` | GROMACS XTC |
-//! | [`lammps`] | `LammpsDataStream`, `LammpsDumpStream`, `writeLammpsDataStr`, `writeLammpsDumpStr`; `readLammpsLogStr`, `isLammpsLog` ([`lammps::log`]) | LAMMPS data, dump, run log |
-//! | [`amber`] | `AmberInpcrdReader`, `AmberAcReader` | AMBER inpcrd / restrt, Antechamber AC |
-//! | `smiles` | `readSmilesStr`, `SmilesIr.parse` | SMILES strings (`smiles` feature) |
+//! | [`xyz`] | `XyzStream`, `readXyzStr`, `readXyzBytes`, `writeXyzStr` | XYZ / Extended XYZ |
+//! | [`pdb`] | `PdbStream`, `readPdbStr`, `readPdbBytes`, `writePdbStr` | Protein Data Bank |
+//! | [`gro`] | `GroReader`, `readGroStr`, `writeGroStr` | GROMACS GRO (nm ↔ Å at the molrs boundary) |
+//! | [`sdf`] | `SdfStream`, `readSdfStr`, `readSdfBytes` | MDL SDF / MOL (read-only: molrs has no SDF writer) |
+//! | [`mol2`] | `Mol2Reader`, `readMol2Str`, `writeMol2Str` | Tripos MOL2 |
+//! | [`cif`] | `CifReader`, `readCifStr`, `writeCifStr` | Crystallographic Information File |
+//! | [`vasp`] | `VaspPoscarReader`, `readVaspPoscarStr`, `writeVaspPoscarStr`, `readVaspChgcarStr` | VASP POSCAR / CONTCAR, CHGCAR (read-only) |
+//! | [`dcd`] | `DcdStream`, `readDcdBytes`, `writeDcdBytes` | DCD trajectory |
+//! | [`trr`] | `TrrStream`, `readTrrBytes`, `writeTrrBytes` | GROMACS TRR |
+//! | [`xtc`] | `XtcStream`, `readXtcBytes`, `writeXtcBytes` | GROMACS XTC |
+//! | [`lammps`] | `LammpsDataStream`, `LammpsDumpStream`, `readLammpsDataStr`, `readLammpsDataBytes`, `writeLammpsDataStr`, `readLammpsDumpStr`, `readLammpsDumpBytes`, `writeLammpsDumpStr`; `readLammpsLogStr`, `isLammpsLog` ([`lammps::log`]) | LAMMPS data, dump, run log |
+//! | [`amber`] | `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr` | AMBER inpcrd / restrt, Antechamber AC, prmtop structure |
+//! | `smiles` | `readSmilesStr`, `writeSmilesStr`, `readCgsmilesStr`, `SmilesIr.parse` | SMILES and CGsmiles strings (`smiles` feature) |
+//! | [`csv`] | `readCsvBlockStr`, `writeCsvBlockStr` | CSV tables as a `Block` |
 //! | [`mrec`] | `MrecReader`, `readMrecFrame`, `sectionNames` | `*.mrec` scientific records (Zarr V3) |
-//! | [`cube`] | `CubeReader`, `writeCubeStr` | Gaussian Cube |
-//! | [`xsf`] | `XsfReader`, `writeXsfStr` | XCrySDen XSF |
+//! | [`cube`] | `readCubeStr`, `writeCubeStr` | Gaussian Cube |
+//! | [`xsf`] | `readXsfStr`, `writeXsfStr` | XCrySDen XSF |
 //! | [`stl`] | `readStlBytes` | STL surface meshes (ASCII or binary) — produces a `TriMesh`, not a `Frame` |
 //! | `frame_encoding` | `readMsgpackFrameBytes`, `writeMsgpackFrameBytes`, `readJsonFrameStr`, `writeJsonFrameStr` | `molrs::stream` wire encodings (`stream` feature) |
 //! | [`frame_index`] | `FrameOffset` | Shared by every `*Stream`: the chunk-fed `FrameIndexBuilder` protocol |
 //!
-//! No reader takes a file handle, since WASM has no filesystem access: a
-//! whole-content reader takes the file's text (or bytes), a stream takes
-//! chunks the host copies into its input buffer. No export picks a format
+//! Every function is a `molrs::io` door of the same name, camelCased — the
+//! in-memory doors `read_<fmt>_str` / `_bytes` and `write_<fmt>_str` /
+//! `_bytes`, which Python's `molrs.io` carries too — and calls that door; a
+//! class is a `molrs::io::<fmt>` reader class (`GroReader`, `Mol2Reader`,
+//! `CifReader`, `VaspPoscarReader`) or a chunk-fed stream over the format's
+//! `read_<fmt>_bytes`. No reader takes a file handle, since WASM has no
+//! filesystem access, so no path door is bound. No export picks a format
 //! from a string.
 
-/// Write `frame` (a [`Frame`](crate::core::frame::Frame)) through a
-/// `molrs::io` writer class into memory, returning the bytes.
-macro_rules! write_bytes {
-    ($writer:ident, $frame:expr, $what:literal) => {
-        $frame.with_frame(|rs_frame| {
-            use molrs::io::writer::{FrameWriter, Writer};
-            let mut buf: Vec<u8> = Vec::new();
-            <$writer<_> as Writer>::new(&mut buf)
-                .write(rs_frame)
-                .map_err(|e| JsValue::from_str(&format!("{} writing error: {e}", $what)))?;
-            Ok(buf)
-        })
+/// A `read_<fmt>_str` / `read_<fmt>_bytes` export: the molrs door of the
+/// same name, its frame handed to JS.
+macro_rules! read_door {
+    ($(#[$doc:meta])* $js:ident => $name:ident($input:ident: $ty:ty), $what:literal) => {
+        $(#[$doc])*
+        #[wasm_bindgen(js_name = $js)]
+        pub fn $name($input: $ty) -> Result<$crate::core::frame::Frame, JsValue> {
+            let frame = molrs::io::$name($input)
+                .map_err(|e| JsValue::from_str(&format!("{} read error: {e}", $what)))?;
+            $crate::core::frame::Frame::from_rs(frame)
+        }
+    };
+}
+
+/// A `write_<fmt>_str` / `write_<fmt>_bytes` export: the molrs door of the
+/// same name on `frame`.
+macro_rules! write_door {
+    ($(#[$doc:meta])* $js:ident => $name:ident -> $out:ty, $what:literal) => {
+        $(#[$doc])*
+        #[wasm_bindgen(js_name = $js)]
+        pub fn $name(frame: &$crate::core::frame::Frame) -> Result<$out, JsValue> {
+            frame.with_frame(|f| {
+                molrs::io::$name(f)
+                    .map_err(|e| JsValue::from_str(&format!("{} writing error: {e}", $what)))
+            })
+        }
     };
 }
 
@@ -51,6 +70,7 @@ pub mod frame_index;
 
 pub mod amber;
 pub mod cif;
+pub mod csv;
 pub mod cube;
 pub mod dcd;
 #[cfg(feature = "stream")]
@@ -72,6 +92,7 @@ pub mod xyz;
 
 pub use amber::*;
 pub use cif::*;
+pub use csv::*;
 pub use cube::*;
 pub use dcd::*;
 #[cfg(feature = "stream")]
@@ -91,18 +112,6 @@ pub use vasp::*;
 pub use xsf::*;
 pub use xtc::*;
 pub use xyz::*;
-
-use wasm_bindgen::prelude::*;
-
-/// The text a reader was built from (it was a JS string, so it is UTF-8).
-fn utf8_text(content: &[u8]) -> Result<&str, JsValue> {
-    std::str::from_utf8(content).map_err(|e| JsValue::from_str(&format!("UTF-8 error: {e}")))
-}
-
-/// Text from a writer's output bytes.
-fn utf8_string(bytes: Vec<u8>) -> Result<String, JsValue> {
-    String::from_utf8(bytes).map_err(|e| JsValue::from_str(&format!("UTF-8 conversion error: {e}")))
-}
 
 #[cfg(test)]
 mod test_support {
