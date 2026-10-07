@@ -1,0 +1,32 @@
+name: docs
+
+# The site as Cloudflare Pages builds it (`.[doc]` in a fresh venv, then
+# zensical), --strict: any warning fails. Cloudflare Pages deploys it from
+# MolCrafts itself (its Git integration), so no job here deploys.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+
+jobs:
+  build:
+    name: docs / build
+    # A pull request inside a fork was already built by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: docs
+      - uses: ./.github/actions/setup-python
+      - run: scripts/check.sh docs

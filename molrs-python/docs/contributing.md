@@ -49,7 +49,7 @@ fails is a CI job that would have failed.
   [Partners](#partners)), no path dependency points where CI has no checkout,
   and no workflow spells a partner commit of its own.
 - `mrec` — molrec's conformance suite through `molrs.io.mrec`, exactly as
-  `ci-snapshot.yml` runs it: molrec fetched at its resolved commit into a temp
+  `test.yml`'s `test / mrec` runs it: molrec fetched at its resolved commit into a temp
   dir (never your sibling's working tree), `maturin develop` into a fresh
   Python 3.12 venv, `scripts/ci-conformance.py`. Any case that does not pass
   fails it.
@@ -72,13 +72,35 @@ node — it never passes a gate it did not run). So a commit never waits for
 Slurm, and a push waits only when a compiling gate is in scope. Anywhere else
 the variable is unset and every gate runs locally, exactly as CI runs it.
 
+## CI
+
+One workflow per kind of work, each job a `scripts/check.sh` call. Every
+push of any branch runs `lint`, `test` and `docs`, on a fork as on
+MolCrafts. A pull request into `dev` or `master` runs them again only when it
+comes from another repository (a pull request inside a fork was already
+built by its push).
+
+| workflow | feature-branch push to MolCrafts | everything else: `dev`/`master`, pull requests, any push to a fork | upstream only |
+| --- | --- | --- | --- |
+| `lint.yml` | `lint / hooks` (commit hooks on every file, `partners`), `lint / clippy` (`clippy doc`) | same | — |
+| `test.yml` | fast: `test / rust` (`test`), `test / python (ubuntu-latest)` | full: `test / rust` (+ `ffi cxx ext package`), `test / python` on Linux, macOS and Windows, `test / features`, `test / capi`, `test / wasm`, `test / mrec` | — |
+| `docs.yml` | `docs / build` (`docs`) | same | Cloudflare Pages deploys the site from MolCrafts |
+| `nightly.yml` | — | — | nightly: tests, coverage and conformance snapshots to molcrafts-ci; a `nightly` branch push: wheels to `molcrafts-molrs-nightly` |
+| `release.yml` | — | dispatch: dry run (builds, uploads nothing) | `v*` tag: crates.io, npm, PyPI, GitHub Release (`docs/releasing.md`) |
+
+So a fork branch gets the full tier on its push: push to your fork, wait for
+green, then open the pull request into MolCrafts `dev`. Branches pushed to
+MolCrafts itself (Dependabot's) get the fast tier, and their pull requests the
+full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
+the full tier's jobs. Shared setup lives in `.github/actions/` (`setup-rust`,
+`setup-python`, `setup-wasm`).
+
 ## Partners
 
 molrs is judged against molrec's conformance suite (`mrec`). On `dev`,
 partners are tracked, not pinned: `.github/partners.env` names molrec's branch
-(`MOLREC_REF=dev`), and `scripts/partners.py` resolves it — for CI
-(`partners.py resolve`, appended to `$GITHUB_ENV`) and for the hooks
-(`partners.py fetch`) alike — to the first of:
+(`MOLREC_REF=dev`), and `scripts/partners.py` resolves it — for CI and the
+hooks alike (`partners.py fetch`) — to the first of:
 
 1. molrec's branch named like the one being built (CI: the pushed branch or a
    pull request's head branch; locally: the checked-out branch), looked up
@@ -97,9 +119,8 @@ same-named branches, never by skipping a gate:
 2. Push both branches to your forks, never to MolCrafts. molrs's pre-push
    `mrec` gate takes molrec's `converge/x` from your sibling clone (or your
    fork, once pushed); molrec's gates take molrs's from your fork.
-3. Run CI on the forks: the workflows run on pull requests, so open each
-   branch as a pull request inside its fork (into the fork's `dev` or
-   `master`). Each run resolves the other's `converge/x` on your fork.
+3. Run CI on the forks: each push runs the full tier there (see [CI](#ci)),
+   and each run resolves the other's `converge/x` on your fork.
 4. Only once both forks are green, open the pull requests from the forks into
    MolCrafts `dev`; their CI again resolves each other's branch on your fork.
    Merge both once green (never a red one), then delete the branches. A `dev`

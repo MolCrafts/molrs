@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The one definition of every gate. prek (.pre-commit-config.yaml) and CI
-# (.github/workflows/ci-*.yml) both call this script, and rust-toolchain.toml
+# (.github/workflows/{lint,test,docs}.yml) both call this script, and rust-toolchain.toml
 # pins the compiler for both, so a gate that passes locally is the same
 # command on the same rustc / clippy / rustdoc that CI runs.
 #
@@ -166,8 +166,9 @@ gate_wasm() {
     (cd molrs-wasm && wasm-pack test --node -- --locked)
 }
 
-# molrec's conformance suite through molrs.io.mrec, as ci-snapshot.yml's mrec
-# step runs it: molrec at the commit scripts/partners.py resolves (fetched into
+# molrec's conformance suite through molrs.io.mrec (test.yml's `test / mrec`;
+# nightly.yml's conformance snapshot runs the same suite): molrec at the
+# commit scripts/partners.py resolves (fetched into
 # a temp dir, never a sibling's working tree), the extension built by `maturin
 # develop` into a fresh venv on CI's Python, scripts/ci-conformance.py judging
 # every case. Any case that does not pass fails the gate.

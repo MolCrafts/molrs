@@ -51,23 +51,33 @@ zensical build --clean      # must end with "No issues found"
 On `dev`, `.github/partners.env` tracks molrec's `dev` (`MOLREC_REF=dev`).
 A release is judged against a fixed molrec instead: the release commit on
 `master` sets `MOLREC_REF` to the molrec tag or full commit the release was
-checked against, so the tag's CI run (`ci-snapshot.yml`'s `mrec` step)
+checked against, so the tag's run (`release.yml`, through `test / mrec`)
 fetches exactly that. When `master` is merged back into `dev`, keep
 `MOLREC_REF=dev` there.
 
 ## Publishing
 
-1. Finish the checks and review the release diff. The GitHub Release created
-   by **Publish** links to the documentation site.
-2. Run **Publish** manually on a branch for a build rehearsal. It runs CI and
-   builds artifacts without uploading to registries or creating a release.
+`.github/workflows/release.yml` holds every channel: crates.io
+(`molcrafts-molrs`), npm (`@molcrafts/molrs`), PyPI (desktop abi3 wheels and
+the Pyodide wheel), and the GitHub Release with the C API archives.
+
+| run | what it does |
+| --- | --- |
+| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`), `lint.yml` and the full `test.yml` tier, the builds, then every upload |
+| dispatch (any branch, fork or upstream) | the dry run: the same guard, gates and builds, `cargo publish --dry-run`, no upload and no Release |
+
+1. Finish the checks and review the release diff.
+2. Dispatch **release** on the branch for a rehearsal (a fork is fine).
 3. Merge the reviewed revision into `master`, then create and push `vX.Y.Z`,
    matching `[workspace.package].version` in `Cargo.toml`.
-4. Wait for **Publish** to finish: crates.io, npm, all desktop/Pyodide wheels
-   on PyPI, and C API archives with checksums on GitHub Releases.
-5. Smoke-test the published artifacts before updating downstream minor pins.
+4. Wait for **release** to finish, then smoke-test the published artifacts
+   before updating downstream minor pins.
 
-The workflow checks that the tag matches the package version and points to a
-commit on `master`. Registry publications wait for CI. To retry a partial release, rerun
-the failed tag workflow, or dispatch **Publish** against that same tag; existing
-registry versions are skipped. A branch dispatch never publishes.
+Every upload skips a version the registry already has: retry a partial
+release by re-running the tag's run. Trusted publishing on crates.io, PyPI
+and npm names the workflow file, `release.yml`, and the environments
+`release` (crates.io, npm) and `pypi`.
+
+Nightly wheels (`molcrafts-molrs-nightly` on PyPI) come from `nightly.yml`
+on a push to the `nightly` branch; see "CI" in
+`molrs-python/docs/contributing.md`.
