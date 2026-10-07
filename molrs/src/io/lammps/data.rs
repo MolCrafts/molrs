@@ -1,5 +1,6 @@
 //! LAMMPS data file format reader and writer.
 
+use crate::io::frame_columns::insert_column_of_length;
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::lammps::atom_style::{
@@ -8,7 +9,7 @@ use crate::io::lammps::atom_style::{
     normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
-use crate::io::lammps::columns::{OptCol, insert_f, insert_i, insert_str, insert_u};
+use crate::io::lammps::columns::OptCol;
 use crate::io::lammps::fields::{
     TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
@@ -236,26 +237,26 @@ impl AtomColumns {
             .collect();
 
         let mut block = Block::new();
-        insert_u(
+        insert_column_of_length(
             &mut block,
             keys::ID,
             self.id.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
-        insert_u(
+        insert_column_of_length(
             &mut block,
             keys::TYPE_ID,
             types.iter().map(|&v| v as Idx).collect(),
             n,
         )?;
-        insert_f(&mut block, keys::X, self.x, n)?;
-        insert_f(&mut block, keys::Y, self.y, n)?;
-        insert_f(&mut block, keys::Z, self.z, n)?;
+        insert_column_of_length(&mut block, keys::X, self.x, n)?;
+        insert_column_of_length(&mut block, keys::Y, self.y, n)?;
+        insert_column_of_length(&mut block, keys::Z, self.z, n)?;
 
         macro_rules! opt_i {
             ($col:expr, $key:expr) => {
                 if $col.present {
-                    insert_i(&mut block, $key, $col.data, n)?;
+                    insert_column_of_length(&mut block, $key, $col.data, n)?;
                 }
             };
         }
@@ -263,7 +264,7 @@ impl AtomColumns {
         macro_rules! opt_u {
             ($col:expr, $key:expr) => {
                 if $col.present {
-                    insert_u(
+                    insert_column_of_length(
                         &mut block,
                         $key,
                         $col.data.iter().map(|&v| v as Idx).collect(),
@@ -275,7 +276,7 @@ impl AtomColumns {
         macro_rules! opt_f {
             ($col:expr, $key:expr) => {
                 if $col.present {
-                    insert_f(&mut block, $key, $col.data, n)?;
+                    insert_column_of_length(&mut block, $key, $col.data, n)?;
                 }
             };
         }
@@ -942,9 +943,9 @@ fn insert_topology_block(
 
     let mut block = Block::new();
     for (key, col) in atom_keys.iter().zip(member_cols) {
-        insert_u(&mut block, key, col, n)?;
+        insert_column_of_length(&mut block, key, col, n)?;
     }
-    insert_u(
+    insert_column_of_length(
         &mut block,
         keys::TYPE_ID,
         types.iter().map(|&v| v as Idx).collect(),
@@ -974,7 +975,7 @@ fn insert_type_labels(block: &mut Block, labels: &HashMap<String, String>) -> st
         })
         .collect();
     let n = names.len();
-    insert_str(block, keys::TYPE, names, n)
+    insert_column_of_length(block, keys::TYPE, names, n)
 }
 
 struct ParsedData {
@@ -3372,8 +3373,8 @@ Bonds
             .unwrap();
         frame.meta.remove(keys::ATOM_TYPE_LABELS);
         let mut drudes = Block::new();
-        insert_u(&mut drudes, keys::ATOMI, vec![0], 1).unwrap();
-        insert_u(&mut drudes, keys::ATOMJ, vec![1], 1).unwrap();
+        insert_column_of_length(&mut drudes, keys::ATOMI, vec![0 as Idx], 1).unwrap();
+        insert_column_of_length(&mut drudes, keys::ATOMJ, vec![1 as Idx], 1).unwrap();
         frame.insert("drudes", drudes);
         let mut out = Vec::new();
         write_lammps_data_frame(&mut out, &frame).unwrap();

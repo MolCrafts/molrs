@@ -1,5 +1,6 @@
 //! VASP POSCAR / CONTCAR structure file reader and writer.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
@@ -72,9 +73,9 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
     // Assemble Frame
     // ---------------------------------------------------------------------
     let mut atoms = Block::new();
-    insert_float_col(&mut atoms, "x", cart_x)?;
-    insert_float_col(&mut atoms, "y", cart_y)?;
-    insert_float_col(&mut atoms, "z", cart_z)?;
+    insert_column(&mut atoms, "x", cart_x)?;
+    insert_column(&mut atoms, "y", cart_y)?;
+    insert_column(&mut atoms, "z", cart_z)?;
 
     let symbols = expand_symbols(&header.symbols, &header.counts);
     if !symbols.is_empty() {
@@ -99,15 +100,15 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
                 (x, y, z)
             },
         );
-        insert_bool_col(&mut atoms, "sd_x", sx)?;
-        insert_bool_col(&mut atoms, "sd_y", sy)?;
-        insert_bool_col(&mut atoms, "sd_z", sz)?;
+        insert_column(&mut atoms, "sd_x", sx)?;
+        insert_column(&mut atoms, "sd_y", sy)?;
+        insert_column(&mut atoms, "sd_z", sz)?;
     }
 
     if let Some((vx, vy, vz)) = velocities {
-        insert_float_col(&mut atoms, "vx", vx)?;
-        insert_float_col(&mut atoms, "vy", vy)?;
-        insert_float_col(&mut atoms, "vz", vz)?;
+        insert_column(&mut atoms, "vx", vx)?;
+        insert_column(&mut atoms, "vy", vy)?;
+        insert_column(&mut atoms, "vz", vz)?;
     }
 
     let mut frame = Frame::new();
@@ -126,24 +127,6 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 
     frame.insert("atoms", atoms);
     Ok(frame)
-}
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_bool_col(block: &mut Block, key: &str, vals: Vec<bool>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
 }
 
 /// Best-effort velocity read. Returns `None` if no velocity block present.

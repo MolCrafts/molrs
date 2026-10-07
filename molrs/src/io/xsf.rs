@@ -1,10 +1,11 @@
 //! XSF (XCrySDen Structure File) structure reader and writer.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
 
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array2, array};
 
 use molrs::core::Block;
 use molrs::core::Element;
@@ -15,33 +16,6 @@ use molrs::op::{F, I, Idx};
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 // ---------------------------------------------------------------------------
 // Reader
@@ -153,11 +127,11 @@ fn read_frame_from<R: BufRead>(mut reader: R) -> Result<Frame> {
 
     if !atomic_numbers.is_empty() {
         let mut atoms = Block::new();
-        insert_uint_col(&mut atoms, "atomic_number", atomic_numbers)?;
-        insert_str_col(&mut atoms, "element", elements)?;
-        insert_float_col(&mut atoms, "x", xs)?;
-        insert_float_col(&mut atoms, "y", ys)?;
-        insert_float_col(&mut atoms, "z", zs)?;
+        insert_column(&mut atoms, "atomic_number", atomic_numbers)?;
+        insert_column(&mut atoms, "element", elements)?;
+        insert_column(&mut atoms, "x", xs)?;
+        insert_column(&mut atoms, "y", ys)?;
+        insert_column(&mut atoms, "z", zs)?;
         frame.insert("atoms", atoms);
     }
 

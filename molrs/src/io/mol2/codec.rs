@@ -1,10 +1,9 @@
 //! The Tripos MOL2 codec.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Write};
 use std::path::Path;
-
-use ndarray::{Array1, IxDyn};
 
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -17,33 +16,6 @@ use crate::io::writer::{FrameWriter, Writer};
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
 
 // ---------------------------------------------------------------------------
 // Parsed records
@@ -299,24 +271,24 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             have_charge = true;
         }
     }
-    insert_uint_col(&mut block, "id", id.iter().map(|&v| v as Idx).collect())?;
-    insert_str_col(&mut block, "name", a_name)?;
-    insert_float_col(&mut block, "x", x)?;
-    insert_float_col(&mut block, "y", y)?;
-    insert_float_col(&mut block, "z", z)?;
-    insert_str_col(&mut block, keys::TYPE, a_type)?;
+    insert_column(&mut block, "id", id.iter().map(|&v| v as Idx).collect())?;
+    insert_column(&mut block, "name", a_name)?;
+    insert_column(&mut block, "x", x)?;
+    insert_column(&mut block, "y", y)?;
+    insert_column(&mut block, "z", z)?;
+    insert_column(&mut block, keys::TYPE, a_type)?;
     if have_subst {
         // `res_id` is unsigned in the vocabulary; a negative `subst_id`
         // (unheard of in practice) is clamped to 0.
-        insert_uint_col(
+        insert_column(
             &mut block,
             keys::RES_ID,
             subst_id.iter().map(|&v| v.max(0) as Idx).collect(),
         )?;
-        insert_str_col(&mut block, keys::RES_NAME, subst_name)?;
+        insert_column(&mut block, keys::RES_NAME, subst_name)?;
     }
     if have_charge {
-        insert_float_col(&mut block, "charge", charge)?;
+        insert_column(&mut block, "charge", charge)?;
     }
 
     let mut frame = Frame::new();
@@ -350,12 +322,12 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
             btype_src.push(b.bond_type.clone());
         }
         let mut bblock = Block::new();
-        insert_uint_col(&mut bblock, "atomi", atomi)?;
-        insert_uint_col(&mut bblock, "atomj", atomj)?;
+        insert_column(&mut bblock, "atomi", atomi)?;
+        insert_column(&mut bblock, "atomj", atomj)?;
         // SYBYL's own alphabet ("1", "2", "ar", "am") is the bond's type label,
         // so it is the string `type` column; `bond_type` is the chemical class,
         // a uint code, and two quantities never share one key.
-        insert_str_col(&mut bblock, keys::TYPE, btype)?;
+        insert_column(&mut bblock, keys::TYPE, btype)?;
 
         // …and the canonical pair it maps onto. `ar` declares delocalization
         // and no Kekulé phase, so its number is left unknown for
@@ -378,8 +350,8 @@ fn build_frame(name: String, atoms: Vec<Mol2Atom>, bonds: Vec<Mol2Bond>) -> Resu
                 _ => 1,
             })
             .collect();
-        insert_uint_col(&mut bblock, "bond_type", canonical_type)?;
-        insert_uint_col(&mut bblock, "bond_number", canonical_number)?;
+        insert_column(&mut bblock, "bond_type", canonical_type)?;
+        insert_column(&mut bblock, "bond_number", canonical_number)?;
         frame.insert("bonds", bblock);
     }
 

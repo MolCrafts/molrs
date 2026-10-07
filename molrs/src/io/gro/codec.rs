@@ -1,10 +1,11 @@
 //! The GRO codec: the GROMACS fixed-column structure / trajectory format.
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::io::{BufRead, BufWriter, Result, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use ndarray::{Array1, Array2, IxDyn, array};
+use ndarray::{Array2, array};
 
 use crate::core::UnitFactor;
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -84,18 +85,9 @@ fn substr(s: &str, start: usize, end: usize) -> &str {
     &s[start..end.min(len)]
 }
 
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
 /// Insert an unsigned column, rejecting negatives with a message that names
 /// the key — used for the canonical identifier columns.
-fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
+fn insert_uint_column_from_signed(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
     let unsigned: Vec<molrs::op::Idx> = vals
         .iter()
         .map(|&v| {
@@ -106,24 +98,7 @@ fn insert_uint_col(block: &mut Block, key: &str, vals: Vec<I>) -> Result<()> {
             })
         })
         .collect::<Result<_>>()?;
-    let n = unsigned.len();
-    block
-        .insert(
-            key,
-            Array1::from_vec(unsigned)
-                .into_shape_with_order(IxDyn(&[n]))
-                .map_err(invalid_data)?,
-        )
-        .map_err(invalid_data)
-}
-
-fn insert_str_col(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
+    insert_column(block, key, unsigned)
 }
 
 // ---------------------------------------------------------------------------
@@ -383,18 +358,18 @@ fn read_frame_from<R: BufRead>(reader: &mut R) -> Result<Option<Frame>> {
             vz.push(v[2] * NM_TO_ANGSTROM.get());
         }
     }
-    insert_uint_col(&mut block, "res_id", resid)?;
-    insert_str_col(&mut block, "res_name", resname)?;
-    insert_str_col(&mut block, "name", atom_name)?;
-    insert_str_col(&mut block, "element", element)?;
-    insert_uint_col(&mut block, "id", atom_id)?;
-    insert_float_col(&mut block, "x", x)?;
-    insert_float_col(&mut block, "y", y)?;
-    insert_float_col(&mut block, "z", z)?;
+    insert_uint_column_from_signed(&mut block, "res_id", resid)?;
+    insert_column(&mut block, "res_name", resname)?;
+    insert_column(&mut block, "name", atom_name)?;
+    insert_column(&mut block, "element", element)?;
+    insert_uint_column_from_signed(&mut block, "id", atom_id)?;
+    insert_column(&mut block, "x", x)?;
+    insert_column(&mut block, "y", y)?;
+    insert_column(&mut block, "z", z)?;
     if have_velocities == Some(true) {
-        insert_float_col(&mut block, "vx", vx)?;
-        insert_float_col(&mut block, "vy", vy)?;
-        insert_float_col(&mut block, "vz", vz)?;
+        insert_column(&mut block, "vx", vx)?;
+        insert_column(&mut block, "vy", vy)?;
+        insert_column(&mut block, "vz", vz)?;
     }
 
     let mut frame = Frame::new();

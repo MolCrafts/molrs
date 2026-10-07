@@ -1,5 +1,6 @@
 //! GROMACS XTC binary trajectory reader and writer.
 use crate::core::UnitFactor;
+use crate::io::frame_columns::insert_column;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -709,14 +710,6 @@ fn read_coords<R: Read>(r: &mut R, natoms: usize, wide_nbytes: bool) -> Result<(
     Ok((coords, precision))
 }
 
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?;
-    block.insert(key, arr).map_err(invalid_data)
-}
-
 fn build_simbox(boxv: &[f32; 9]) -> Option<Result<SimBox>> {
     if boxv.iter().all(|&v| v == 0.0) {
         return None;
@@ -750,9 +743,9 @@ fn parse_frame_here<R: Read>(r: &mut R) -> Result<Option<Frame>> {
         y.push(coords[a * DIM + 1] as F * NM_TO_ANGSTROM.get());
         z.push(coords[a * DIM + 2] as F * NM_TO_ANGSTROM.get());
     }
-    insert_float_col(&mut atoms, "x", x)?;
-    insert_float_col(&mut atoms, "y", y)?;
-    insert_float_col(&mut atoms, "z", z)?;
+    insert_column(&mut atoms, "x", x)?;
+    insert_column(&mut atoms, "y", y)?;
+    insert_column(&mut atoms, "z", z)?;
 
     let mut frame = Frame::new();
     frame.insert("atoms", atoms);

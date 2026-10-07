@@ -1,16 +1,16 @@
 //! LAMMPS dump trajectory file reader and writer.
 
+use crate::io::frame_columns::insert_column_of_length;
 use crate::io::invalid_data;
 use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_from_bounds};
-use crate::io::lammps::columns::{canonical_dump_column, insert_f, insert_str, native_dump_column};
+use crate::io::lammps::columns::{canonical_dump_column, native_dump_column};
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::core::Frame;
 use molrs::core::FrameAccess;
 use molrs::core::keys;
-use molrs::core::{Block, BlockAccess, BlockDtype, ColumnView, DType};
+use molrs::core::{Block, BlockAccess, ColumnView, DType};
 use molrs::op::{F, I, Idx};
-use ndarray::{ArrayD, IxDyn};
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -114,7 +114,7 @@ fn insert_integer_column(
                     })
                 })
                 .collect::<std::io::Result<Vec<Idx>>>()?;
-            insert_vec(block, key, values, nrows)
+            insert_column_of_length(block, key, values, nrows)
         }
         Some(DType::Bool) => {
             let values = raw
@@ -127,28 +127,18 @@ fn insert_integer_column(
                     ))),
                 })
                 .collect::<std::io::Result<Vec<bool>>>()?;
-            insert_vec(block, key, values, nrows)
+            insert_column_of_length(block, key, values, nrows)
         }
-        Some(DType::I64) => insert_vec(block, key, raw, nrows),
+        Some(DType::I64) => insert_column_of_length(block, key, raw, nrows),
         _ => match raw
             .iter()
             .map(|&v| I::try_from(v))
             .collect::<Result<Vec<I>, _>>()
         {
-            Ok(narrow) => insert_vec(block, key, narrow, nrows),
-            Err(_) => insert_vec(block, key, raw, nrows),
+            Ok(narrow) => insert_column_of_length(block, key, narrow, nrows),
+            Err(_) => insert_column_of_length(block, key, raw, nrows),
         },
     }
-}
-
-fn insert_vec<T: BlockDtype>(
-    block: &mut Block,
-    key: &str,
-    values: Vec<T>,
-    nrows: usize,
-) -> std::io::Result<()> {
-    let array = ArrayD::from_shape_vec(IxDyn(&[nrows]), values).map_err(invalid_data)?;
-    block.insert(key, array).map_err(invalid_data)
 }
 
 // ============================================================================
@@ -582,7 +572,12 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 insert_integer_column(&mut data_block, name, int_cols[i].take().unwrap(), nrows)?;
             }
             ColumnType::Float => {
-                insert_f(&mut data_block, name, float_cols[i].take().unwrap(), nrows)?;
+                insert_column_of_length(
+                    &mut data_block,
+                    name,
+                    float_cols[i].take().unwrap(),
+                    nrows,
+                )?;
             }
             ColumnType::String => {
                 // A dump's `type` field is LAMMPS's numeric ordinal, which the
@@ -596,7 +591,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
                 } else {
                     name
                 };
-                insert_str(&mut data_block, key, str_cols[i].take().unwrap(), nrows)?;
+                insert_column_of_length(&mut data_block, key, str_cols[i].take().unwrap(), nrows)?;
             }
         }
     }
@@ -2341,7 +2336,13 @@ ITEM: ATOMS id type x y z
         atoms
             .insert("mass", Array1::from_vec(vec![16.0 as F, 1.008]).into_dyn())
             .unwrap();
-        insert_str(&mut atoms, "element", vec!["O".into(), "H".into()], 2).unwrap();
+        insert_column_of_length(
+            &mut atoms,
+            "element",
+            vec!["O".to_owned(), "H".to_owned()],
+            2,
+        )
+        .unwrap();
         for (key, values) in [("x", [0.0 as F, 1.0]), ("y", [0.0, 2.0]), ("z", [0.0, 3.0])] {
             atoms
                 .insert(key, Array1::from_vec(values.to_vec()).into_dyn())
@@ -2416,10 +2417,10 @@ ITEM: ATOMS id type x y z
     }
 
     fn insert_labels(atoms: &mut Block) {
-        insert_str(
+        insert_column_of_length(
             atoms,
             keys::TYPE,
-            vec!["OW".into(), "HW".into(), "HW".into()],
+            vec!["OW".to_owned(), "HW".to_owned(), "HW".to_owned()],
             3,
         )
         .unwrap();
@@ -2564,7 +2565,7 @@ ITEM: ATOMS id type x y z
         use ndarray::Array1;
         use num_complex::Complex;
 
-        fn col<T: BlockDtype>(atoms: &mut Block, key: &str, values: Vec<T>) {
+        fn col<T: molrs::core::BlockDtype>(atoms: &mut Block, key: &str, values: Vec<T>) {
             atoms
                 .insert(key, Array1::from_vec(values).into_dyn())
                 .unwrap();

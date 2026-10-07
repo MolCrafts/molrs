@@ -1,5 +1,6 @@
 //! GROMACS TRR binary trajectory reader and writer.
 use crate::core::UnitFactor;
+use crate::io::frame_columns::insert_column;
 use crate::io::frame_index::{BinaryFrameScanner, FrameIndexBuilder, FrameOffset};
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
@@ -184,14 +185,6 @@ fn build_simbox(vals: &[f64]) -> Result<SimBox> {
     SimBox::new(h, origin, [true; 3]).map_err(|e| invalid_data(format!("TRR box: {e:?}")))
 }
 
-fn insert_float_col(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?;
-    block.insert(key, arr).map_err(invalid_data)
-}
-
 /// De-interleave an `rvec` block (`[x0,y0,z0, x1,y1,z1, …]`) into three axis
 /// columns and insert them under `kx`/`ky`/`kz`.
 fn insert_rvec_cols(
@@ -211,9 +204,9 @@ fn insert_rvec_cols(
         y.push(rvec[i * DIM + 1] as F * scale);
         z.push(rvec[i * DIM + 2] as F * scale);
     }
-    insert_float_col(block, kx, x)?;
-    insert_float_col(block, ky, y)?;
-    insert_float_col(block, kz, z)
+    insert_column(block, kx, x)?;
+    insert_column(block, ky, y)?;
+    insert_column(block, kz, z)
 }
 
 /// Parse one TRR frame starting at the **current** file position (no seek).

@@ -212,7 +212,7 @@ use std::path::{Path, PathBuf};
 use ndarray::ArrayD;
 
 use crate::core::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::combining_rule::CombiningRule;
+use crate::ff::forcefield::combining_rule::{CombiningRule, same_lj};
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::torsion::rb_polynomial;
@@ -230,9 +230,6 @@ static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
 /// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
 static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
-
-/// Two Lennard-Jones parameter pairs closer than this (relative) are one.
-const SAME_LJ: f64 = 1e-12;
 
 /// A Lennard-Jones `(ε, σ)` in molrs units.
 type Lj = (f64, f64);
@@ -1205,11 +1202,6 @@ struct BondedDef<'r> {
     table: Table,
     /// funct 9: the terms `(k, n, phase)` merged so far.
     terms: Vec<[f64; 3]>,
-}
-
-fn same_lj(a: (f64, f64), b: (f64, f64)) -> bool {
-    let close = |x: f64, y: f64| (x - y).abs() <= SAME_LJ * x.abs().max(y.abs());
-    close(a.0, b.0) && close(a.1, b.1)
 }
 
 impl Scan {

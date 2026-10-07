@@ -1,5 +1,6 @@
 //! Antechamber `.ac` file reader (ATOM / BOND sections → Frame).
 
+use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
 use std::fs;
 use std::io::Result;
@@ -77,10 +78,10 @@ pub fn read_amber_ac_str(text: &str) -> Result<Frame> {
     let mut frame = Frame::new();
     if n > 0 {
         let mut atoms = Block::new();
-        insert_uint(&mut atoms, "id", (1..=n as Idx).collect())?;
-        insert_str(&mut atoms, "name", names)?;
-        insert_str(&mut atoms, "type", types)?;
-        insert_float(&mut atoms, "charge", charges)?;
+        insert_column(&mut atoms, "id", (1..=n as Idx).collect())?;
+        insert_column(&mut atoms, "name", names)?;
+        insert_column(&mut atoms, "type", types)?;
+        insert_column(&mut atoms, "charge", charges)?;
         // xyz as (n, 3)
         let flat: Vec<F> = xyz.iter().flat_map(|r| r.iter().copied()).collect();
         let arr = Array1::from_vec(flat)
@@ -88,11 +89,11 @@ pub fn read_amber_ac_str(text: &str) -> Result<Frame> {
             .map_err(invalid_data)?
             .into_dyn();
         atoms.insert("xyz", arr).map_err(invalid_data)?;
-        insert_float(&mut atoms, "x", xyz.iter().map(|r| r[0]).collect())?;
-        insert_float(&mut atoms, "y", xyz.iter().map(|r| r[1]).collect())?;
-        insert_float(&mut atoms, "z", xyz.iter().map(|r| r[2]).collect())?;
+        insert_column(&mut atoms, "x", xyz.iter().map(|r| r[0]).collect())?;
+        insert_column(&mut atoms, "y", xyz.iter().map(|r| r[1]).collect())?;
+        insert_column(&mut atoms, "z", xyz.iter().map(|r| r[2]).collect())?;
         if elements.iter().any(|e| !e.is_empty()) {
-            insert_str(&mut atoms, "element", elements)?;
+            insert_column(&mut atoms, "element", elements)?;
         }
         frame.insert("atoms", atoms);
     }
@@ -100,10 +101,10 @@ pub fn read_amber_ac_str(text: &str) -> Result<Frame> {
     if !bond_i.is_empty() {
         let mut bonds = Block::new();
         let nb = bond_i.len();
-        insert_uint(&mut bonds, "atomi", bond_i)?;
-        insert_uint(&mut bonds, "atomj", bond_j)?;
-        insert_str(&mut bonds, "type", bond_type)?;
-        insert_uint(&mut bonds, "id", (1..=nb as Idx).collect())?;
+        insert_column(&mut bonds, "atomi", bond_i)?;
+        insert_column(&mut bonds, "atomj", bond_j)?;
+        insert_column(&mut bonds, "type", bond_type)?;
+        insert_column(&mut bonds, "id", (1..=nb as Idx).collect())?;
         frame.insert("bonds", bonds);
     }
 
@@ -143,31 +144,4 @@ fn guess_element(name: &str, atype: &str) -> String {
         }
     }
     String::new()
-}
-
-fn insert_float(block: &mut Block, key: &str, vals: Vec<F>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_uint(block: &mut Block, key: &str, vals: Vec<Idx>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
-}
-
-fn insert_str(block: &mut Block, key: &str, vals: Vec<String>) -> Result<()> {
-    let n = vals.len();
-    let arr = Array1::from_vec(vals)
-        .into_shape_with_order(IxDyn(&[n]))
-        .map_err(invalid_data)?
-        .into_dyn();
-    block.insert(key, arr).map_err(invalid_data)
 }
