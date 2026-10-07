@@ -24,7 +24,8 @@
 #
 # Needs a compute node (cargo builds), $GMX (default gmx_d: GROMACS in double
 # precision, e.g. `module load GROMACS/2025.3-gcc-2025b-eb`), $LMP (default lmp,
-# with MOLECULE and EXTRA-MOLECULE) and $PYTHON (default python3) with `pyedr`.
+# with MOLECULE and EXTRA-MOLECULE) and $PYTHON (default python3) with `pyedr` and molrs (LAMMPS's log is read
+# by molrs.io.read_lammps_log, kJ→kcal is molrs.core.constants.KJ_PER_KCAL).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 GMX=${GMX:-gmx_d}
@@ -272,24 +273,20 @@ IN
     done
 done
 
-"$PYTHON" - "$work" <<'PY'
+PYTHONPATH=scripts "$PYTHON" - "$work" <<'PY'
 import sys
 from pathlib import Path
 import pyedr
+from engine_check_tables import lammps_thermo
+from molrs.core.constants import KJ_PER_KCAL
 
 work = Path(sys.argv[1])
-KJ = 4.184
 GMX_TERMS = {
     "bond": ["Bond"], "angle": ["Angle", "U-B"], "proper": ["Proper Dih."],
     "rb": ["Ryckaert-Bell."], "improper": ["Improper Dih.", "Per. Imp. Dih."],
     "cmap": ["CMAP Dih."], "lj14": ["LJ-14"], "coul14": ["Coulomb-14"],
     "ljsr": ["LJ (SR)"], "coulsr": ["Coulomb (SR)"], "total": ["Potential"],
 }
-
-def lammps(path):
-    lines = path.read_text().splitlines()
-    i = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Step", "PotEng"])
-    return dict(zip(lines[i].split(), map(float, lines[i + 1].split())))
 
 molrs = {}
 for line in (work / "molrs.txt").read_text().splitlines():
@@ -302,11 +299,11 @@ for sys_ in ("charmm", "amber", "opls", "amber_pairs"):
     for term, names in GMX_TERMS.items():
         vals = [float(edr[n][0]) for n in names if n in edr]
         if vals:
-            gmx[term] = sum(vals) / KJ
+            gmx[term] = sum(vals) / KJ_PER_KCAL
     lmp = {}
     if sys_ != "amber_pairs":
         d = work / f"lmp-{sys_}"
-        full, sr = lammps(d / "log.full"), lammps(d / "log.sr")
+        full, sr = lammps_thermo(d / "log.full"), lammps_thermo(d / "log.sr")
         lmp = {"bond": full["E_bond"], "angle": full["E_angle"],
                "dihedral": full["E_dihed"], "improper": full["E_impro"],
                "ljsr": sr["E_vdwl"], "coulsr": sr["E_coul"],

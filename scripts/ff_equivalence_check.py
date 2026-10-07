@@ -35,31 +35,10 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-KJ = 4.184
+from engine_check_tables import element_of_mass, lammps_thermo, molecule_ids, read_energy_tsv
+
 TERMS = ["bond", "angle", "dihedral", "improper", "cmap", "vdw", "coul", "total"]
 REPO = Path(__file__).resolve().parents[1]
-
-# Standard masses, for an atom type that names no element.
-ELEMENTS = [
-    ("H", 1.008),
-    ("C", 12.011),
-    ("N", 14.007),
-    ("O", 15.999),
-    ("F", 18.998),
-    ("Na", 22.990),
-    ("Mg", 24.305),
-    ("P", 30.974),
-    ("S", 32.06),
-    ("Cl", 35.45),
-    ("K", 39.098),
-    ("Ca", 40.078),
-    ("Br", 79.904),
-    ("I", 126.90),
-]
-
-
-def element_of_mass(m: float) -> str:
-    return min(ELEMENTS, key=lambda e: abs(e[1] - m))[0]
 
 
 def sources(d: Path):
@@ -86,16 +65,6 @@ def write_tsv(path: Path, rows):
             "(kcal/(mol·Å))²) — scripts/ff_equivalence_check.sh --pin\n"
         )
         f.writelines(f"{r[0]}\t{r[1]}\t{r[2]}\t{r[3]}\t{float(r[4])!r}\n" for r in rows)
-
-
-def read_tsv(path: Path):
-    out = {}
-    for line in path.read_text().splitlines():
-        if line.startswith("#") or not line.strip():
-            continue
-        s, k, e, t, v = line.split("\t")
-        out[(s, int(k), e, t)] = float(v)
-    return out
 
 
 # ── sander ────────────────────────────────────────────────────────────────
@@ -135,24 +104,6 @@ def run_sander(d: Path):
 # ── OpenMM ────────────────────────────────────────────────────────────────
 
 
-def components(n, bonds):
-    root = list(range(n))
-
-    def find(a):
-        while root[a] != a:
-            root[a] = root[root[a]]
-            a = root[a]
-        return a
-
-    for i, j in bonds:
-        a, b = find(i), find(j)
-        root[max(a, b)] = min(a, b)
-    ids, out = {}, []
-    for a in range(n):
-        out.append(ids.setdefault(find(a), len(ids)))
-    return out
-
-
 def openmm_written(sub: Path, sysj):
     """The molrs-written XML with one residue template per molecule (atoms
     named A<i>, charges per atom), and the topology it matches."""
@@ -169,7 +120,7 @@ def openmm_written(sub: Path, sysj):
     for t in root.iter("Type"):
         t.set("element", element[t.get("name")])
     n = len(sysj["types"])
-    mol = components(n, sysj["bonds"])
+    mol = molecule_ids(n, sysj["bonds"])
     residues = ET.SubElement(root, "Residues")
     top = app.Topology()
     chain = top.addChain()
@@ -306,6 +257,7 @@ def split_system(system, bonds, impropers, foyer_geometric):
 def openmm_price(path, top, foyer, sysj):
     import openmm as mm
     import openmm.unit as u
+    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
     from openmm import app
 
     ff = app.ForceField(str(path))
@@ -322,7 +274,7 @@ def openmm_price(path, top, foyer, sysj):
     for k, x in enumerate(sysj["configs"]):
         ctx.setPositions(
             [
-                mm.Vec3(x[3 * i], x[3 * i + 1], x[3 * i + 2]) * 0.1
+                mm.Vec3(x[3 * i], x[3 * i + 1], x[3 * i + 2]) / ANGSTROM_PER_NM
                 for i in range(len(x) // 3)
             ]
         )
@@ -330,16 +282,16 @@ def openmm_price(path, top, foyer, sysj):
         for g, name in groups.items():
             e = ctx.getState(getEnergy=True, groups={g}).getPotentialEnergy()
             terms[name] = (
-                terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ
+                terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
             )
         state = ctx.getState(getEnergy=True, getForces=True)
         terms["total"] = (
-            state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole) / KJ
+            state.getPotentialEnergy().value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
         )
         f = state.getForces(asNumpy=False).value_in_unit(
             u.kilojoule_per_mole / u.angstrom
         )
-        forces = [c / KJ for v in f for c in (v.x, v.y, v.z)]
+        forces = [c / KJ_PER_KCAL for v in f for c in (v.x, v.y, v.z)]
         out.append((terms, forces))
     return out
 
@@ -348,9 +300,7 @@ def openmm_price(path, top, foyer, sysj):
 
 
 def lammps(sub: Path, k: int):
-    lines = (sub / "lammps" / f"log.{k}").read_text().splitlines()
-    i = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Step", "E_vdwl"])
-    v = dict(zip(lines[i].split(), map(float, lines[i + 1].split())))
+    v = lammps_thermo(sub / "lammps" / f"log.{k}")
     terms = {
         "bond": v["E_bond"],
         "angle": v["E_angle"],
@@ -382,7 +332,10 @@ GMX_TERMS = {
 
 
 def trr_forces(path: Path):
-    """The forces of a GROMACS .trr's first frame (XDR, single or double)."""
+    """The forces of a GROMACS .trr's first frame (XDR, single or double),
+    in kcal/(mol·Å)."""
+    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
+
     b = path.read_bytes()
     pos = 0
 
@@ -402,17 +355,18 @@ def trr_forces(path: Path):
     pos += box + vir + pres + x + v
     fmt = ">d" if real == 8 else ">f"
     return [
-        struct.unpack(fmt, b[pos + real * i : pos + real * (i + 1)])[0] / KJ / 10.0
+        struct.unpack(fmt, b[pos + real * i : pos + real * (i + 1)])[0] / KJ_PER_KCAL / ANGSTROM_PER_NM
         for i in range(3 * natoms)
     ]
 
 
 def gromacs(run: Path):
     import pyedr
+    from molrs.core.constants import KJ_PER_KCAL
 
     edr = pyedr.edr_to_dict(str(run / "sp.edr"))
     terms = {
-        t: sum(float(edr[n][0]) for n in names if n in edr) / KJ
+        t: sum(float(edr[n][0]) for n in names if n in edr) / KJ_PER_KCAL
         for t, names in GMX_TERMS.items()
     }
     return terms, trr_forces(run / "sp.trr")
@@ -449,7 +403,7 @@ def collect(d: Path, pin: Path | None):
                 rows += rows_of(name, k, "native", terms, forces, probes[k])
     if (d / "sander.tsv").exists():
         rows += [
-            (s, k, e, t, v) for (s, k, e, t), v in read_tsv(d / "sander.tsv").items()
+            (s, k, e, t, v) for (s, k, e, t), v in read_energy_tsv(d / "sander.tsv").items()
         ]
     rows.sort(
         key=lambda r: (
@@ -461,7 +415,7 @@ def collect(d: Path, pin: Path | None):
     )
     write_tsv(pin or d / "engines.tsv", rows)
 
-    molrs = read_tsv(d / "molrs.tsv")
+    molrs = read_energy_tsv(d / "molrs.tsv")
     worst = {}
     print(
         f"{'source':9s} {'k':>1s} {'engine':8s} {'term':9s} {'engine value':>24s} {'molrs':>24s} {'rel':>8s}"

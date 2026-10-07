@@ -17,9 +17,9 @@ import sys
 from pathlib import Path
 
 import molci as mci
+from molcrafts_ci.producers import detect_profile, github_source
 from molrec.report import CaseResult, Report
 from molrec.suite import ConformanceSuite
-from molcrafts_ci.producers import detect_profile, github_source
 
 _DETAIL_LIMIT = 500
 

@@ -16,56 +16,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-KJ = 4.184
-ELEMENTS = [("H", 1.008), ("C", 12.011), ("N", 14.007), ("O", 15.999), ("S", 32.06)]
-
-
-def element_of_mass(m: float) -> str:
-    return min(ELEMENTS, key=lambda e: abs(e[1] - m))[0]
-
-
-def read_tsv(path: Path):
-    out = {}
-    for line in path.read_text().splitlines():
-        if not line.strip() or line.startswith("#"):
-            continue
-        case, k, engine, term, value = line.split("\t")
-        out[(case, int(k), engine, term)] = float(value)
-    return out
+from engine_check_tables import (
+    element_of_mass,
+    lammps_thermo,
+    molecule_ids,
+    read_energy_tsv,
+)
 
 
 def lammps(sub: Path, k: int):
-    lines = (sub / f"log.{k}").read_text().splitlines()
-    i = next(i for i, l in enumerate(lines) if l.split()[:1] == ["Step"])
-    v = dict(zip(lines[i].split(), map(float, lines[i + 1].split())))
+    v = lammps_thermo(sub / f"log.{k}")
     names = {"E_bond": "bond", "E_angle": "angle", "E_vdwl": "vdw", "PotEng": "total"}
     return {t: v[k] for k, t in names.items() if k in v}
-
-
-def components(n, bonds):
-    root = list(range(n))
-
-    def find(a):
-        while root[a] != a:
-            root[a] = root[root[a]]
-            a = root[a]
-        return a
-
-    for i, j in bonds:
-        a, b = find(i), find(j)
-        root[max(a, b)] = min(a, b)
-    ids, out = {}, []
-    for a in range(n):
-        out.append(ids.setdefault(find(a), len(ids)))
-    return out
 
 
 def openmm(sub: Path, sysj):
     import openmm as mm
     import openmm.unit as u
+    from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
     from openmm import app
 
     root = ET.parse(sub / "ff.xml").getroot()
@@ -75,7 +47,7 @@ def openmm(sub: Path, sysj):
         t.set("element", element[t.get("name")])
     types, bonds = sysj["types"], sysj["bonds"]
     n = len(types)
-    mol = components(n, bonds)
+    mol = molecule_ids(n, bonds)
     residues = ET.SubElement(root, "Residues")
     top = app.Topology()
     chain = top.addChain()
@@ -117,19 +89,19 @@ def openmm(sub: Path, sysj):
     ctx = mm.Context(system, mm.VerletIntegrator(1.0), mm.Platform.getPlatformByName("Reference"))
     out = []
     for x in sysj["configs"]:
-        ctx.setPositions([mm.Vec3(x[3 * a], x[3 * a + 1], x[3 * a + 2]) * 0.1 for a in order])
+        ctx.setPositions([mm.Vec3(x[3 * a], x[3 * a + 1], x[3 * a + 2]) / ANGSTROM_PER_NM for a in order])
         terms = {}
         for g, name in groups.items():
             e = ctx.getState(getEnergy=True, groups={g}).getPotentialEnergy()
-            terms[name] = terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ
+            terms[name] = terms.get(name, 0.0) + e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
         e = ctx.getState(getEnergy=True).getPotentialEnergy()
-        terms["total"] = e.value_in_unit(u.kilojoule_per_mole) / KJ
+        terms["total"] = e.value_in_unit(u.kilojoule_per_mole) / KJ_PER_KCAL
         out.append(terms)
     return out
 
 
 def collect(d: Path, pin: Path | None):
-    molrs = read_tsv(d / "molrs.tsv")
+    molrs = read_energy_tsv(d / "molrs.tsv")
     rows = []
     for case, k, engine, term in sorted({key for key in molrs}):
         rows.append((case, k, engine, term))
@@ -157,7 +129,7 @@ def collect(d: Path, pin: Path | None):
     for key in sorted(molrs):
         m, e = molrs.get(key), engines.get(key)
         rel = abs(e - m) / max(abs(m), 1.0) if m is not None and e is not None else float("nan")
-        worst = max(worst, rel) if rel == rel else worst
+        worst = max(worst, rel) if not math.isnan(rel) else worst
         print(f"{key[0]:8s} {key[1]} {key[2]:7s} {key[3]:13s} engine {e!r:>24} molrs {m!r:>24} rel {rel:.1e}")
         if e is not None:
             lines.append("\t".join([key[0], str(key[1]), key[2], key[3], repr(e)]))

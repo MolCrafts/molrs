@@ -29,8 +29,13 @@
 # constant is its own `qqr2e`; every Coulomb term is rescaled to the force
 # field's (AMBER 332.0522173, CHARMM 332.0716), which is exact: the energy
 # is linear in it.
+#
+# $PYTHON (default python3) needs molrs installed: it reads LAMMPS's log
+# with molrs.io.read_lammps_log (scripts/engine_check_tables.py) and takes
+# `qqr2e` from molrs.core.constants.COULOMB_REAL.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+PYTHON=${PYTHON:-python3}
 fixtures=molrs/src/io/amber/testdata/prmtop
 dir=${PRMTOP_CHECK_DIR:-$(mktemp -d)}
 [ -n "${PRMTOP_CHECK_DIR:-}" ] || trap 'rm -rf "$dir"' EXIT
@@ -80,12 +85,7 @@ IN
     (cd "$case" && env $(env | grep -oE '^(PMI|PMIX|SLURM)[A-Za-z0-9_]*' | sed 's/^/-u /') \
         "${LMP:-lmp}" -in "in.$name" -log "log.$name" -screen none </dev/null) ||
         { echo "lmp failed on $case/in.$name" >&2; exit 1; }
-    python3 - "$case/log.$name" <<'PY'
-import sys
-lines = open(sys.argv[1]).read().splitlines()
-head = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Step", "PotEng"])
-print(" ".join(f"{k}={v}" for k, v in zip(lines[head].split(), lines[head + 1].split())))
-PY
+    "$PYTHON" scripts/engine_check_tables.py thermo "$case/log.$name"
 }
 
 for cdir in "$dir"/*/; do
@@ -116,5 +116,5 @@ set group all charge 0.0"
             echo -n "E0 " && run "$case" E0 "special_bonds lj 0.0 0.0 0.0 coul 0.0 0.0 0.0"
         fi
     } >"$case/runs.txt"
-    python3 scripts/prmtop_lammps_terms.py "$case/runs.txt"
+    "$PYTHON" scripts/prmtop_lammps_terms.py "$case/runs.txt"
 done
