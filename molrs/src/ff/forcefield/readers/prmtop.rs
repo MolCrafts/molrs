@@ -62,9 +62,9 @@ use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
 use crate::io::data::prmtop::{frame_from_sections, parse_flag_sections};
 use crate::io::data::prmtop_tables::{
-    Tally, TorsionRow, TorsionTables, TorsionTerm, atom_number, atom_type_names, canonical_terms,
+    TorsionRow, TorsionTables, TorsionTerm, atom_number, atom_type_names, canonical_terms,
     chamber_impropers, cmap_terms, decode_torsions, is_chamber, parse_tokens, proper_type_names,
-    section, table_value, tally, torsion_rows,
+    section, table_value, torsion_rows,
 };
 use crate::units::constants::{AMBER_COULOMB, CHARMM_COULOMB};
 use molrs::op::types::{F, Idx};
@@ -761,6 +761,20 @@ fn chamber_urey_bradleys(
             })
         })
         .collect()
+}
+
+/// A value and how many times it was seen.
+type Tally = (f64, usize);
+
+/// Count `v` in `counts` (values equal to 1e-6 relative are one value).
+fn tally(counts: &mut Vec<Tally>, v: f64) {
+    match counts
+        .iter_mut()
+        .find(|(u, _)| (u - v).abs() <= 1e-6 * u.abs().max(v.abs()))
+    {
+        Some(slot) => slot.1 += 1,
+        None => counts.push((v, 1)),
+    }
 }
 
 /// The `pairs` rows of [`AmberPrmtopFfReader::read_system_str`]: the 1-4

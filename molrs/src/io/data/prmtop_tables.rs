@@ -640,20 +640,6 @@ fn residue_labels(
     Ok(out)
 }
 
-/// A value and how many times it was seen.
-pub(crate) type Tally = (f64, usize);
-
-/// Count `v` in `counts` (values equal to 1e-6 relative are one value).
-pub(crate) fn tally(counts: &mut Vec<Tally>, v: f64) {
-    match counts
-        .iter_mut()
-        .find(|(u, _)| (u - v).abs() <= 1e-6 * u.abs().max(v.abs()))
-    {
-        Some(slot) => slot.1 += 1,
-        None => counts.push((v, 1)),
-    }
-}
-
 /// Whitespace-separated tokens of `lines`, each parsed as `T`; `Err` names the
 /// first token that does not parse.
 pub(crate) fn parse_tokens<T: std::str::FromStr>(lines: &[String]) -> Result<Vec<T>, String>
