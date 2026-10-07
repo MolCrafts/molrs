@@ -7,10 +7,11 @@
 //!
 //! # Design
 //!
-//! * **Handle-based** -- all objects live in a global, mutex-protected
-//!   store.  C callers receive opaque `MolrsFrameHandle`,
-//!   `MolrsBlockHandle`, `MolrsBoxHandle`, or `MolrsForceFieldHandle`
-//!   values (plain `repr(C)` structs that fit in two machine words).
+//! * **Handle-based** -- all objects live in one global, mutex-protected
+//!   handle registry.  C callers receive opaque `MolrsFrameHandle`,
+//!   `MolrsBlockHandle`, `MolrsBoxHandle`, `MolrsForceFieldHandle`, or
+//!   `MolrsRegionHandle` values (plain `repr(C)` structs that fit in two
+//!   machine words).
 //! * **Status codes** -- every function returns [`MolrsStatus`].  On
 //!   failure the last error message is stored in a thread-local buffer
 //!   and retrieved via [`molrs_last_error`].
@@ -21,12 +22,14 @@
 //!
 //! Widths are fixed. The header declares `typedef double F;`.
 //!
-//! | Rust | C type     | Column dtype                    |
-//! |------|------------|---------------------------------|
-//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64)  |
-//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)        |
-//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_U_INT` (u64)      |
+//! | Rust | C type     | Column dtype                 | Insert               |
+//! |------|------------|------------------------------|----------------------|
+//! | `F`  | `F` (`double`) | `MOLRS_D_TYPE_FLOAT` (f64) | `molrs_block_set_f64` |
+//! | `I`  | `int32_t`  | `MOLRS_D_TYPE_INT` (i32)     | `molrs_block_set_i32` |
+//! | `Idx`| `uint64_t` | `MOLRS_D_TYPE_UINT` (u64)    | `molrs_block_set_u64` |
 //!
+//! Each `MolrsDType` constant is `MOLRS_D_TYPE_` + the upper-cased core
+//! dtype name (`DType::name()`: `float`, `int`, `uint`, `i64`, `u8`, …).
 //! Columns of every other stored dtype are read through `molrs_block_get`,
 //! which reports the dtype as a `MolrsDType`.
 //!
@@ -52,25 +55,34 @@
 //! from C callers.  See per-function documentation for pointer validity
 //! and lifetime requirements.
 
-// All public unsafe functions now have `# Safety` sections in their rustdoc.
+// The modules are private and every C-facing item is re-exported flat here:
+// one Rust path per symbol, `molrs_capi::<name>`, as C spells it.
+mod block;
+mod error;
+mod forcefield;
+mod frame;
+mod handle;
+mod handle_registry;
+mod region;
+mod schema;
+mod simbox;
+mod smiles;
 
-pub mod block;
-pub mod error;
-pub mod forcefield;
-pub mod frame;
-pub mod handle;
-pub mod region;
-pub mod schema;
-pub mod simbox;
-mod store;
+pub use block::*;
+pub use error::{MolrsDType, MolrsStatus};
+pub use forcefield::*;
+pub use frame::*;
+pub use handle::{
+    MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsFrameHandle, MolrsRegionHandle,
+};
+pub use region::*;
+pub use schema::*;
+pub use simbox::*;
+pub use smiles::*;
 
 use std::ffi::{CStr, CString, c_char};
 
-pub use error::{MolrsDType, MolrsStatus};
-pub use frame::{MolrsMetaType, MolrsMetaValue};
-pub use handle::{MolrsBlockHandle, MolrsBoxHandle, MolrsForceFieldHandle, MolrsFrameHandle};
-
-use store::lock_store;
+use handle_registry::lock_registry;
 
 // The float scalar is molrs's own `molrs::op::F` (always `f64`); the C
 // header spells it `typedef double F` (cbindgen.toml `after_includes`, since
@@ -108,7 +120,7 @@ pub(crate) use null_check;
 // Lifecycle & Utilities
 // ---------------------------------------------------------------------------
 
-/// Initialize the global object store.
+/// Initialize the handle registry.
 ///
 /// Safe to call multiple times -- the second and subsequent calls are
 /// no-ops.  Must be called before any other `molrs_*` function.
@@ -121,12 +133,12 @@ pub(crate) use null_check;
 ///
 /// # Safety
 ///
-/// No pointer arguments.  This function only initialises the internal
-/// mutex-protected singleton and cannot violate memory safety.
+/// No pointer arguments.  This function only initialises the handle
+/// registry and cannot violate memory safety.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_init() {
-    // Force lazy initialization of the global store.
-    drop(lock_store());
+    // Force lazy initialization of the handle registry.
+    drop(lock_registry());
 }
 
 /// Report the `molcrafts-molrs` core version compiled into this library.
@@ -153,7 +165,7 @@ pub unsafe extern "C" fn molrs_version() -> *const c_char {
         .as_ptr()
 }
 
-/// Destroy all objects and reset the global store.
+/// Destroy all objects and reset the handle registry.
 ///
 /// Every handle obtained before this call becomes invalid.
 /// It is safe (but unnecessary) to call [`molrs_init`] again afterwards.
@@ -167,12 +179,12 @@ pub unsafe extern "C" fn molrs_version() -> *const c_char {
 /// # Safety
 ///
 /// After this call, any previously obtained handle (frame, block,
-/// simbox, forcefield) is dangling.  Using a stale handle will return
+/// box, force field, region) is dangling.  Using a stale handle will return
 /// `MolrsStatus::Invalid*Handle`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_shutdown() {
-    let mut store = lock_store();
-    store.clear();
+    let mut registry = lock_registry();
+    registry.clear();
 }
 
 /// Retrieve the last error message for the calling thread.
@@ -241,8 +253,8 @@ pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u
                 return MolrsStatus::Utf8Error;
             }
         };
-        let mut store = lock_store();
-        let id = store.intern(key_str);
+        let mut registry = lock_registry();
+        let id = registry.intern(key_str);
         unsafe { *out_key_id = id };
         MolrsStatus::Ok
     })
@@ -274,8 +286,8 @@ pub unsafe extern "C" fn molrs_intern_key(key: *const c_char, out_key_id: *mut u
 /// The caller must not write through or free the returned pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
-    let store = lock_store();
-    match store.interned_keys.get(key_id as usize) {
+    let registry = lock_registry();
+    match registry.interned_keys.get(key_id as usize) {
         Some(cstr) => cstr.as_ptr(),
         None => std::ptr::null(),
     }
@@ -283,8 +295,8 @@ pub unsafe extern "C" fn molrs_key_name(key_id: u32) -> *const c_char {
 
 /// Free a string that was allocated by the C API.
 ///
-/// Several functions (e.g. [`molrs_ff_to_json`](crate::forcefield::molrs_ff_to_json),
-/// [`molrs_frame_read_meta`](crate::frame::molrs_frame_read_meta))
+/// Several functions (e.g. [`molrs_forcefield_to_json`],
+/// [`molrs_frame_get_meta`])
 /// return heap-allocated C strings that the caller owns.  Pass those
 /// pointers to this function when they are no longer needed.
 ///

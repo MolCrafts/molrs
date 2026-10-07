@@ -12,7 +12,7 @@
 //! # Handles, not pointers
 //!
 //! A region is internally `Arc<dyn Region>`, a trait object. That never
-//! crosses this boundary: the store keeps a `molrs_ffi::RegionRef` — the same
+//! crosses this boundary: the handle registry keeps a `molrs_ffi::RegionRef` — the same
 //! handle type the Python capsule carries — and C receives the usual two-word
 //! [`MolrsRegionHandle`]. A composed region is an ordinary handle, so
 //! compositions nest without a special case.
@@ -39,14 +39,14 @@ use crate::handle::{
     MolrsBoxHandle, MolrsRegionHandle, handle_to_box_key, handle_to_region_key,
     region_key_to_handle,
 };
-use crate::store::lock_store;
+use crate::handle_registry::lock_registry;
 use crate::{ffi_try, null_check};
 use molrs::op::F;
 
 /// Insert a freshly built region and hand back its handle.
 fn publish(region: Arc<dyn Region + Send + Sync>, out: *mut MolrsRegionHandle) -> MolrsStatus {
-    let mut store = lock_store();
-    let key = store.regions.insert(RegionRef::new(region));
+    let mut registry = lock_registry();
+    let key = registry.regions.insert(RegionRef::new(region));
     unsafe { *out = region_key_to_handle(key) };
     MolrsStatus::Ok
 }
@@ -56,8 +56,8 @@ fn with_region<R>(
     handle: MolrsRegionHandle,
     f: impl FnOnce(&dyn Region) -> R,
 ) -> Result<R, MolrsStatus> {
-    let store = lock_store();
-    match store.regions.get(handle_to_region_key(handle)) {
+    let registry = lock_registry();
+    match registry.regions.get(handle_to_region_key(handle)) {
         Some(r) => Ok(r.with_region(f)),
         None => {
             error::set_last_error("stale or unknown region handle");
@@ -67,8 +67,8 @@ fn with_region<R>(
 }
 
 fn shared(handle: MolrsRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolrsStatus> {
-    let store = lock_store();
-    match store.regions.get(handle_to_region_key(handle)) {
+    let registry = lock_registry();
+    match registry.regions.get(handle_to_region_key(handle)) {
         Some(r) => Ok(r.region()),
         None => {
             error::set_last_error("stale or unknown region handle");
@@ -310,13 +310,13 @@ pub unsafe extern "C" fn molrs_region_sphere_union(
                 return MolrsStatus::InvalidArgument;
             }
         };
-        let store = lock_store();
-        let Some(simbox) = store.simboxes.get(handle_to_box_key(bx)) else {
+        let registry = lock_registry();
+        let Some(simbox) = registry.simboxes.get(handle_to_box_key(bx)) else {
             error::set_last_error("stale or unknown box handle");
             return MolrsStatus::InvalidBoxHandle;
         };
         let built = SphereUnion::new(centers_arr.view(), r, simbox);
-        drop(store);
+        drop(registry);
         match built {
             Ok(u) => publish(Arc::new(u), out),
             Err(e) => {
@@ -500,8 +500,8 @@ pub unsafe extern "C" fn molrs_region_bounds(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn molrs_region_drop(region: MolrsRegionHandle) -> MolrsStatus {
     ffi_try!({
-        let mut store = lock_store();
-        match store.regions.remove(handle_to_region_key(region)) {
+        let mut registry = lock_registry();
+        match registry.regions.remove(handle_to_region_key(region)) {
             Some(_) => MolrsStatus::Ok,
             None => {
                 error::set_last_error("stale or unknown region handle");
