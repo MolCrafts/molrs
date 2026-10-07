@@ -1,0 +1,122 @@
+name: test
+
+# Every test gate of scripts/check.sh, in two tiers (`tier` decides):
+#
+#   fast  a feature-branch push to MolCrafts: core Rust tests and the Python
+#         suite on Linux.
+#   full  everything else -- dev/master, pull requests, tags (release.yml),
+#         dispatches, and every push to a fork, so a fork branch is proven
+#         before its pull request is opened: + ffi/cxx/ext/package, the OS
+#         matrix, the feature matrix, C API, WASM and molrec's conformance
+#         suite (mrec).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tier:
+    name: test / tier
+    # A pull request inside a fork was already built by its push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.repository_owner == 'MolCrafts'
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.tier.outputs.full }}
+    steps:
+      - id: tier
+        run: echo "full=${{ !(github.repository_owner == 'MolCrafts' && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') && github.ref != 'refs/heads/dev' && github.ref != 'refs/heads/master') }}" | tee -a "$GITHUB_OUTPUT"
+
+  rust:
+    name: test / rust
+    needs: tier
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: rust
+      - run: scripts/check.sh test ${{ needs.tier.outputs.full == 'true' && 'ffi cxx ext package' || '' }}
+
+  # abi3-py312: one native artifact per OS, so one Python per OS.
+  python:
+    name: test / python (${{ matrix.os }})
+    needs: tier
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.tier.outputs.full == 'true' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: python
+      - uses: ./.github/actions/setup-python
+      - run: scripts/check.sh python
+
+  features:
+    name: test / features
+    needs: tier
+    if: needs.tier.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: features
+      - run: scripts/check.sh features
+
+  capi:
+    name: test / capi
+    needs: tier
+    if: needs.tier.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: capi
+      - run: scripts/check.sh capi
+
+  wasm:
+    name: test / wasm
+    needs: tier
+    if: needs.tier.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: wasm
+      - uses: ./.github/actions/setup-wasm
+      - run: scripts/check.sh wasm
+
+  # molrec's conformance suite through molrs.io's *.mrec doors, molrec at the
+  # commit scripts/partners.py resolves (molrec's dev, or its branch named
+  # like this one).
+  mrec:
+    name: test / mrec
+    needs: tier
+    if: needs.tier.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache: mrec
+      - uses: ./.github/actions/setup-python
+      - run: scripts/check.sh mrec

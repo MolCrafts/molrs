@@ -8,7 +8,7 @@
 <p><strong>Rust core for molecular modeling — data structures, I/O, and compute kernels, native and in the browser.</strong></p>
 
 <p>
-  <a href="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"><img src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI"></a>
+  <a href="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"><img src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI"></a>
   <a href="https://crates.io/crates/molcrafts-molrs"><img src="https://img.shields.io/crates/v/molcrafts-molrs?style=flat-square&logo=rust&logoColor=white" alt="crates.io"></a>
   <a href="https://docs.rs/molcrafts-molrs"><img src="https://img.shields.io/docsrs/molcrafts-molrs?style=flat-square&logo=docsdotrs&logoColor=white" alt="docs.rs"></a>
   <a href="https://pypi.org/project/molcrafts-molrs/"><img src="https://img.shields.io/pypi/v/molcrafts-molrs?style=flat-square&logo=pypi&logoColor=white&label=PyPI" alt="PyPI"></a>
