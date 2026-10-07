@@ -6,16 +6,12 @@ use crate::compute::ComputeError;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────
 //
-// MD-real and SI values are defined once in `molrs-core::units::constants`;
-// the names below are the local spellings the kernels use.
+// The Coulomb constant is `core::constants`'s (`KAPPA` locally), k_B the
+// `real` unit preset's (`UnitPreset::real().boltzmann()`).
 
 use molrs::core::constants::COULOMB_REAL as KAPPA;
 
-// Boltzmann constant in kcal/(mol·K) — MD "real" units.
-use molrs::core::constants::BOLTZMANN_REAL as K_B;
-
-/// The volume of the unit sphere, 4π/3.
-pub(crate) const FOUR_PI_OVER_3: f64 = 4.0 * std::f64::consts::PI / 3.0;
+use molrs::core::{FOUR_THIRDS_PI, UnitPreset};
 
 // ── Basic observables ─────────────────────────────────────────────────────
 
@@ -232,7 +228,8 @@ pub fn static_dielectric_constant(
         }
     }
     variance /= n;
-    let prefactor = FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+    let prefactor =
+        FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
 
     Ok(epsilon_inf + prefactor * variance)
 }
@@ -315,7 +312,8 @@ pub fn static_dielectric_constant_components(
     // isotropic prefactor because the diagonal dielectric-tensor
     // component integrates the full dipole in one direction, while the
     // isotropic ε averages over 3 directions.
-    let per_axis_prefactor = 3.0 * FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+    let per_axis_prefactor =
+        3.0 * FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
 
     for d in 0..3 {
         eps[d] = epsilon_inf + per_axis_prefactor * fluctuation[d];
@@ -498,7 +496,8 @@ mod tests {
         let eps = static_dielectric_constant(&dm, 1000.0, 300.0, 1.0).unwrap();
         // ⟨M⟩ = 0, ⟨M²⟩ = (1²+(-1)²)/2 = 1.0
         // ε(0) = 1.0 + (4π/3)*332.0637*1.0/(1000*1.9872e-3*300)
-        let expected = 1.0 + FOUR_PI_OVER_3 * KAPPA * 1.0 / (1000.0 * K_B * 300.0);
+        let expected =
+            1.0 + FOUR_THIRDS_PI * KAPPA * 1.0 / (1000.0 * UnitPreset::real().boltzmann() * 300.0);
         assert!((eps - expected).abs() < 1e-10);
     }
 

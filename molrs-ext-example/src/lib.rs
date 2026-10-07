@@ -198,7 +198,10 @@ pub fn fene() -> StyleSpec {
 /// LAMMPS `angle_style class2`'s bond-angle term
 /// `E = [n1 (r₁₂ − r1) + n2 (r₂₃ − r2)] (θ − θ0)`, `θ` the angle at the
 /// middle atom, `θ0` in degrees.
-pub const BOND_ANGLE: &str = "(n1*(distance(p1,p2)-r1)+n2*(distance(p2,p3)-r2))*(angle(p1,p2,p3)-theta0*0.017453292519943295)";
+///
+/// The expression grammar has no named constants (Lepton has none), so the
+/// degree conversion `(pi/180)` defines `pi` as the last sub-definition.
+pub const BOND_ANGLE: &str = "(n1*(distance(p1,p2)-r1)+n2*(distance(p2,p3)-r2))*(angle(p1,p2,p3)-theta0*(pi/180)); pi=3.141592653589793";
 
 /// The `bond_angle` category: an angle's three atoms, block `bond_angles`.
 pub fn bond_angle_category() -> CategorySpec {

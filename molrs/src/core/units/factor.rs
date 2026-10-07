@@ -7,19 +7,22 @@ use crate::op::F;
 
 use super::registry::UnitRegistry;
 
-/// The factor between two units, written where it is used as the pair of
-/// unit expressions it converts between and resolved once (on first use)
-/// from [`UnitRegistry::global`]:
+/// The factor between two units, named by the pair of unit expressions it
+/// converts between and resolved once (on first use) from
+/// [`UnitRegistry::global`]. molrs defines each one it uses once, in
+/// [`unit_factors`](crate::core::unit_factors):
 ///
 /// ```
 /// use molrs::core::UnitFactor;
-///
-/// static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
+/// use molrs::core::unit_factors::{KCAL_TO_KJ, NM_TO_ANGSTROM};
 ///
 /// let k_kj = 2.0 * KCAL_TO_KJ.get(); // kcal/mol → kJ/mol
 /// assert_eq!(k_kj, 8.368);
 /// assert_eq!(0.15 * NM_TO_ANGSTROM.get(), 1.5);
+///
+/// // A conversion of one's own: two unit expressions, resolved once.
+/// static HARTREE_TO_EV: UnitFactor = UnitFactor::new("hartree", "eV");
+/// assert!((HARTREE_TO_EV.get() - 27.211_386_245_988).abs() < 1e-9);
 /// ```
 ///
 /// Every unit conversion in molrs goes through the unit registry — this

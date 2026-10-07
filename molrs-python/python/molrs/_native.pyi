@@ -2194,10 +2194,10 @@ class constants:
     CHARMM_COULOMB: float
     OPENMM_ONE_4PI_EPS0: float
     GROMACS_ONE_4PI_EPS0: float
-    BOLTZMANN_REAL: float
     SPEED_OF_LIGHT: float
     SECOND_RADIATION_CONSTANT: float
-    KCAL_MOL_PER_MDYNE_ANGSTROM: float
+    MMFF_MDYNE_A_TO_KCAL_MOL: float
+    PARMCHK2_PI: float
     VACUUM_DIELECTRIC: float
     UFF_COULOMB: float
     MMFF_COULOMB: float

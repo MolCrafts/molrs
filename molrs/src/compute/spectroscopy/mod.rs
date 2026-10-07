@@ -52,13 +52,9 @@ use rustfft::num_complex::Complex64;
 use crate::compute::ComputeError;
 use crate::compute::lag_times as transport_lag_times;
 use crate::signal::forward_fft_onesided;
-use molrs::core::UnitFactor;
 use molrs::core::constants::{SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT};
+use molrs::core::unit_factors::M_PER_S_TO_CM_PER_FS;
 use molrs::signal as sig;
-
-/// m/s → cm/fs: the speed of light in the units an angular frequency in
-/// rad/fs needs to become a wavenumber in cm⁻¹.
-static M_PER_S_TO_CM_PER_FS: UnitFactor = UnitFactor::new("m/s", "cm/fs");
 
 /// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹):
 /// ν̃ = ω / (2π · c), with `c` in cm/fs.

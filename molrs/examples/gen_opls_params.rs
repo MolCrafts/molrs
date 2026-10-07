@@ -19,8 +19,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use molrs::core::UnitFactor;
 use molrs::core::constants::{COULOMB_REAL, OPLS_COULOMB_14, OPLS_LJ_14};
+use molrs::core::unit_factors::KCAL_TO_KJ;
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::forcefield::{Params, StyleDefs};
 use molrs::ff::ir::torsion::{MultiHarmonic, Opls};
@@ -65,9 +65,6 @@ const WALKED: [(&str, &str); 6] = [
 /// GROMACS prints RB coefficients with 5 decimals; a row whose ΣCₙ (its
 /// energy at φ = 180°, which the OPLS form fixes at 0) is further from 0 than
 /// six roundings has an offset the table's Fourier row cannot hold.
-/// kcal/mol → kJ/mol.
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-
 const RB_SUM_TOL_KJ: f64 = 1e-4;
 
 /// The table's own path, independent of where cargo was invoked.

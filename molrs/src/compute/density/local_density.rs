@@ -1,6 +1,7 @@
 //! Per-particle local number density in a sphere of radius `r_max`.
 
 use crate::compute::ComputeResult;
+use molrs::core::FOUR_THIRDS_PI;
 use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
@@ -9,8 +10,6 @@ use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
-
-const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
 
 /// Local-density calculator.
 ///

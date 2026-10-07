@@ -2,6 +2,7 @@
 
 use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, EXCLUSIONS};
+use std::f64::consts::PI;
 use std::sync::{Arc, Mutex};
 
 use rustfft::num_complex::Complex;
@@ -16,8 +17,6 @@ use molrs::op::F;
 // ---------------------------------------------------------------------------
 // Math helpers
 // ---------------------------------------------------------------------------
-
-const PI: F = std::f64::consts::PI;
 
 #[inline]
 fn erfc_f(x: F) -> F {

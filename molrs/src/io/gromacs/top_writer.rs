@@ -3,8 +3,8 @@
 use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::core::UnitFactor;
 use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
 use crate::ff::ir::CMAP_GRID;
@@ -14,16 +14,6 @@ use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs}
 use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 use molrs::core::Frame;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-
-/// kcal → kJ (kcal/mol → kJ/mol).
-static KCAL_TO_KJ: UnitFactor = UnitFactor::new("kcal", "kJ");
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
-/// kcal·mol⁻¹·Å⁻² → kJ·mol⁻¹·nm⁻² (a harmonic force constant).
-static KCAL_ANGSTROM2_TO_KJ_NM2: UnitFactor = UnitFactor::new("kcal/angstrom^2", "kJ/nm^2");
-/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
-#[cfg(test)]
-static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -2136,10 +2126,7 @@ mod tests {
             "pair",
             "coul/cut",
             Params::from_pairs(&[
-                (
-                    "coulomb",
-                    crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get(),
-                ),
+                ("coulomb", crate::core::constants::gromacs_coulomb_real()),
                 ("dielectric", VACUUM_DIELECTRIC),
             ]),
         )

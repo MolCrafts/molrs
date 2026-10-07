@@ -16,7 +16,7 @@ use super::error::MdError;
 /// knowledge — pass `UnitPreset::real().boltzmann() * T` for LAMMPS real.
 ///
 /// ```ignore
-/// let mb = MaxwellBoltzmann::new(molrs::core::constants::BOLTZMANN_REAL * 300.0, 0)?;
+/// let mb = MaxwellBoltzmann::new(molrs::core::UnitPreset::real().boltzmann() * 300.0, 0)?;
 /// let vel = mb.velocities(pos.view(), mass.view())?;
 /// ```
 pub struct MaxwellBoltzmann {
@@ -162,9 +162,9 @@ mod tests {
 
     #[test]
     fn kbt_from_boltzmann_real_is_the_caller_scale() {
-        use molrs::core::constants::BOLTZMANN_REAL;
-        let mb = MaxwellBoltzmann::new(BOLTZMANN_REAL * 300.0, 0).unwrap();
-        assert_eq!(mb.kbt(), BOLTZMANN_REAL * 300.0);
+        let kb = molrs::core::UnitPreset::real().boltzmann();
+        let mb = MaxwellBoltzmann::new(kb * 300.0, 0).unwrap();
+        assert_eq!(mb.kbt(), kb * 300.0);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::F;
 
-use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
+use crate::core::constants::MMFF_MDYNE_A_TO_KCAL_MOL;
 /// Cubic stretch constant (A^-1).
 const CS: f64 = -2.0;
 
@@ -38,7 +38,7 @@ impl BondMmff {
         let mut energy: F = 0.0;
         let forces = out;
         let cs = CS as F;
-        let conv = KCAL_MOL_PER_MDYNE_ANGSTROM as F;
+        let conv = MMFF_MDYNE_A_TO_KCAL_MOL as F;
 
         for idx in 0..n_terms {
             let (i, j) = atoms(idx);

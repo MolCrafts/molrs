@@ -1,6 +1,6 @@
 pub(crate) mod candidate;
 mod cascade;
-mod empirical;
+pub(crate) mod empirical;
 mod provenance;
 mod tables;
 mod term;

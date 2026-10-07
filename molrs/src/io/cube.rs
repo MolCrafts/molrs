@@ -5,10 +5,8 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, IxDyn};
 
-use crate::core::UnitFactor;
+use crate::core::unit_factors::BOHR_TO_ANGSTROM;
 
-/// bohr → Å (a cube file's length unit when N1 > 0).
-static BOHR_TO_ANGSTROM: UnitFactor = UnitFactor::new("bohr", "angstrom");
 use molrs::core::Block;
 use molrs::core::Element;
 use molrs::core::Frame;

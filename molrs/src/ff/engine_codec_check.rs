@@ -1295,8 +1295,8 @@ mod codecs {
         .unwrap();
         let p = [25.0, 1.9, 0.8, 1.4];
         for r in [1.1, 1.3, 1.45, 1.7] {
-            let (e_omm, _) = openmm
-                .eval_scalar_one(r * crate::core::UnitFactor::new("angstrom", "nm").get(), &p);
+            let (e_omm, _) =
+                openmm.eval_scalar_one(r * crate::core::unit_factors::ANGSTROM_TO_NM.get(), &p);
             let (e_ir, _) = ir.eval_scalar_one(r, &p);
             assert!(
                 (e_omm - 4.184 * e_ir).abs() <= 1e-13 * e_omm.abs(),

@@ -5,14 +5,12 @@ use molrs::core::FrameAccess;
 use molrs::core::Neighbors;
 use molrs::op::F;
 use ndarray::Array2;
-use std::f64::consts::TAU;
+use std::f64::consts::{PI, TAU};
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::compute::require_disp;
-
-const PI: F = std::f64::consts::PI;
 
 /// Bond-order diagram calculator.
 ///

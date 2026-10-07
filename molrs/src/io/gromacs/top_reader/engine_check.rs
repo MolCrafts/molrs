@@ -64,11 +64,7 @@ const TERMS: [&str; 10] = [
 const CUTOFF: F = 25.0;
 const INNER: F = 24.0;
 
-use crate::core::UnitFactor;
 use crate::ff::equivalence_check::{PAIR14, one_four_as_dihedral_weights as lammps_form};
-
-/// kJ·nm → kcal·Å (a Coulomb constant per mol·e²).
-static KJ_NM_TO_KCAL_ANGSTROM: UnitFactor = UnitFactor::new("kJ*nm", "kcal*angstrom");
 
 struct Fixture {
     name: &'static str,
@@ -460,8 +456,7 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
                 && let (Some(got), Some(want)) = (lammps_form_terms[k], lammps[k])
             {
                 // LAMMPS prices at its own Coulomb constant.
-                let ratio = COULOMB_REAL
-                    / (crate::core::constants::GROMACS_ONE_4PI_EPS0 * KJ_NM_TO_KCAL_ANGSTROM.get());
+                let ratio = COULOMB_REAL / crate::core::constants::gromacs_coulomb_real();
                 let coul = |t: &[Option<F>; 10]| t[6].unwrap_or(0.0) + t[8].unwrap_or(0.0);
                 let got = match *term {
                     "coul14" | "coulsr" => got * ratio,

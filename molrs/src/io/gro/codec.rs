@@ -6,16 +6,13 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
-use crate::core::UnitFactor;
+use crate::core::unit_factors::NM_TO_ANGSTROM;
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::op::{F, I, Idx};
-
-/// nm → Å.
-static NM_TO_ANGSTROM: UnitFactor = UnitFactor::new("nm", "angstrom");
 
 // ---------------------------------------------------------------------------
 // Helpers

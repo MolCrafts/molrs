@@ -48,7 +48,6 @@ import numpy as np
 import pytest
 from molrs.ff import ir
 
-D = 0.017453292519943295  # π/180: angle-valued parameters are stored in degrees
 PINNED = Path(__file__).with_name("ff_ir_extension_lammps.tsv")
 
 # LAMMPS `bond_style fene` (Kremer-Grest): K R0 epsilon sigma.
@@ -81,7 +80,7 @@ SMOOTH_STYLE = [
 UB = "k_ub*(distance(p1,p3)-r_ub)^2"
 BOND_ANGLE = (
     "(n1*(distance(p1,p2)-r1)+n2*(distance(p2,p3)-r2))"
-    "*(angle(p1,p2,p3)-theta0*0.017453292519943295)"
+    "*(angle(p1,p2,p3)-theta0*(pi/180)); pi=3.141592653589793"
 )
 BA_PARAMS = {"n1": "E/L/A", "n2": "E/L/A", "r1": "L", "r2": "L", "theta0": "A"}
 
@@ -168,7 +167,7 @@ def bond_angle_kernel(x, n1, n2, r1, r2, theta0):
     a, b = np.linalg.norm(u, axis=1), np.linalg.norm(v, axis=1)
     c = np.clip(np.einsum("ij,ij->i", u, v) / (a * b), -1.0, 1.0)
     stretch = n1 * (a - r1) + n2 * (b - r2)
-    bend = np.arccos(c) - theta0 * D
+    bend = np.arccos(c) - np.radians(theta0)  # angle parameters are stored in degrees
     s = np.sqrt(1 - c * c)
     ab = (a * b)[:, None]
     dtheta1 = -(v / ab - (c / a**2)[:, None] * u) / s[:, None]
@@ -760,7 +759,7 @@ def test_class2_bond_angle_is_one_energy_three_ways() -> None:
     # The hand value: the middle atom at the origin, arms 1.6 and 1.4 at
     # 100°: E = (10·0.1 − 8·0.05)·(−5°) = −π/60 — the value
     # molrs-ext-example's `bond_angle_cross_term` holds the Rust form to.
-    t = 100 * D
+    t = math.radians(100)
     hand = np.array([[[1.6, 0.0, 0.0], [0.0, 0.0, 0.0], [1.4 * math.cos(t), 1.4 * math.sin(t), 0.0]]])
     want = -math.pi / 60
     worst = 0.0

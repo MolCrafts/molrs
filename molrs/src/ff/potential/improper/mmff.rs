@@ -11,7 +11,7 @@ use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
 
-use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
+use crate::core::constants::MMFF_MDYNE_A_TO_KCAL_MOL;
 
 /// MMFF94 out-of-plane bending: E = 0.5*143.9325*koop*chi^2 (Wilson angle)
 ///
@@ -43,7 +43,7 @@ impl ImproperMmff {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let forces = out;
-        let conv = KCAL_MOL_PER_MDYNE_ANGSTROM as F;
+        let conv = MMFF_MDYNE_A_TO_KCAL_MOL as F;
 
         for idx in 0..n_terms {
             // Stored centre first; the Wilson math below names the centre `j`.

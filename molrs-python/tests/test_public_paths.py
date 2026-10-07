@@ -708,8 +708,14 @@ def test_scripts_convert_units_through_the_registry():
     """No engine-check script spells a conversion factor or a retired constant."""
     root = Path(__file__).parents[2] / "scripts"
     retired = re.compile(
-        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB|GROMACS_COULOMB)\b"
+        r"\b(KJ_PER_KCAL|ANGSTROM_PER_NM|ANGSTROM_PER_BOHR|ANGSTROM3_PER_CM3|OPENMM_COULOMB"
+        r"|GROMACS_COULOMB|BOLTZMANN_REAL|KCAL_MOL_PER_MDYNE_ANGSTROM)\b"
         r"|(?<![\w.])4\.184(?![\w])"
+        # π/180, 180/π, MMFF's mdyne·Å → kcal/mol, k_B in kcal/(mol·K) by hand
+        r"|(?<![\w.])(0\.0174532|57\.29577|143\.9325|0\.001987)"
+        r"|(?<![\w.])1\.987[\d_]*e-3"
+        # a degree ↔ radian conversion: `/ 180`, `* 180`, `180 /`, `180.0 *`
+        r"|[/*]\s*180(?![\d])|(?<![\w.])180(\.\d*)?\s*[/*]"
     )
     offenders = []
     for path in sorted(root.iterdir()):

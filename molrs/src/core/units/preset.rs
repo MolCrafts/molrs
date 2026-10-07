@@ -6,14 +6,9 @@ use std::sync::{Mutex, OnceLock};
 use crate::op::F;
 
 use crate::core::constants::{
-    BOLTZMANN, BOLTZMANN_REAL, COULOMB_CONSTANT, COULOMB_METAL, COULOMB_REAL, GAS_CONSTANT,
+    BOLTZMANN, COULOMB_CONSTANT, COULOMB_METAL, COULOMB_REAL, GAS_CONSTANT,
 };
-use crate::core::units::UnitFactor;
-
-/// kcal·Å → kJ·nm: [`COULOMB_REAL`] in OpenMM's units.
-static KCAL_ANGSTROM_TO_KJ_NM: UnitFactor = UnitFactor::new("kcal*angstrom", "kJ*nm");
-/// J → kJ: the molar gas constant in kJ·mol⁻¹·K⁻¹.
-static J_TO_KJ: UnitFactor = UnitFactor::new("J", "kJ");
+use crate::core::unit_factors::{J_TO_KCAL, J_TO_KJ, KCAL_ANGSTROM_TO_KJ_NM};
 
 /// The Boltzmann constant in `energy` per kelvin.
 fn boltzmann_in(energy: &str) -> F {
@@ -200,7 +195,9 @@ impl UnitPreset {
                 ("force", "kilocalorie_per_mole / angstrom"),
                 ("density", "gram / centimeter ** 3"),
             ],
-            BOLTZMANN_REAL,
+            // k_B per mole of particles: R in kcal·mol⁻¹·K⁻¹ (exact under
+            // SI-2019, not LAMMPS `real`'s rounded `boltz` 0.0019872067).
+            GAS_CONSTANT * J_TO_KCAL.get(),
             COULOMB_REAL,
         )
     }
@@ -573,7 +570,6 @@ pub fn unit_preset_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::constants::BOLTZMANN_REAL;
 
     #[test]
     fn micro_and_nano_constants_are_lammps_boltz_and_qqr2e() {
@@ -597,8 +593,10 @@ mod tests {
     }
 
     #[test]
-    fn real_boltzmann_is_bit_identical_to_the_constant() {
-        assert_eq!(UnitPreset::real().boltzmann(), BOLTZMANN_REAL);
+    fn real_boltzmann_is_the_gas_constant_in_kcal() {
+        // k_B in kcal·mol⁻¹·K⁻¹ = R / 4184 J, correctly rounded
+        // (SI-2019 exact), not LAMMPS `real`'s rounded `boltz` (0.0019872067).
+        assert_eq!(UnitPreset::real().boltzmann(), 1.987_204_258_640_831_6e-3);
     }
 
     #[test]

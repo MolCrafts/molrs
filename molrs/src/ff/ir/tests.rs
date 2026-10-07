@@ -208,7 +208,7 @@ fn builtin_params_are_lammps_coeff_order_with_dims() {
     );
     assert_eq!(
         spec("angle", "harmonic").expression.as_deref(),
-        Some("k*(theta-theta0*0.017453292519943295)^2")
+        Some("k*(theta-theta0*(pi/180))^2; pi=3.141592653589793")
     );
 }
 

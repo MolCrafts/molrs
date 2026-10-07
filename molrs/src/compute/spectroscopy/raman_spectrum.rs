@@ -185,7 +185,7 @@ mod tests {
             let val = (2.0
                 * std::f64::consts::PI
                 * 30.0
-                * crate::core::UnitFactor::new("THz", "1/fs").get()
+                * crate::core::unit_factors::THZ_TO_PER_FS.get()
                 * tf)
                 .sin();
             for c in 0..6 {

@@ -410,10 +410,6 @@ fn family(row: &Params, base: &str) -> Vec<String> {
         .collect()
 }
 
-/// `π/180` (radians per degree) as Appendix A of the protocol spells it in
-/// every built-in expression: the shortest decimal of `1f64.to_radians()`.
-pub(crate) const RADIANS_PER_DEGREE: &str = "0.017453292519943295";
-
 /// A scalar parameter of dimension `dim` (a [`ParamDimension`] spelling); the built-in
 /// table is written with it, and a test parses every spelling.
 fn p(name: &'static str, dim: &str) -> ParamSpec {
@@ -546,7 +542,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         // ---- angle
         s("angle", "harmonic")
             .params(vec![p("k", "E/A^2"), p("theta0", "A")])
-            .expression(format!("k*(theta-theta0*{RADIANS_PER_DEGREE})^2"))
+            .expression("k*(theta-theta0*(pi/180))^2; pi=3.141592653589793")
             .lammps(positional()),
         s("angle", "charmm")
             .params(vec![
@@ -555,9 +551,9 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("k_ub", "E/L^2"),
                 p("r_ub", "L"),
             ])
-            .expression(format!(
-                "k*(theta-theta0*{RADIANS_PER_DEGREE})^2+k_ub*(distance(p1,p3)-r_ub)^2"
-            ))
+            .expression(
+                "k*(theta-theta0*(pi/180))^2+k_ub*(distance(p1,p3)-r_ub)^2; pi=3.141592653589793",
+            )
             .lammps(positional()),
         s("angle", "class2")
             .params(vec![
@@ -566,7 +562,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 p("k3", "E/A^3"),
                 p("k4", "E/A^4"),
             ])
-            .expression(format!("k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*{RADIANS_PER_DEGREE}"))
+            .expression("k2*d^2+k3*d^3+k4*d^4; d=theta-theta0*(pi/180); pi=3.141592653589793")
             .lammps(custom(&lc::ANGLE_CLASS2)),
         s("angle", "mmff_angle")
             .params(vec![p("ka", "E/A^2"), p("theta0", "A"), p("linear", "1")])
@@ -599,7 +595,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 zero("phase", "A"),
                 zero("w", "1"),
             ])
-            .expression(format!("k*(1+cos(periodicity*phi-phase*{RADIANS_PER_DEGREE}))"))
+            .expression("k*(1+cos(periodicity*phi-phase*(pi/180))); pi=3.141592653589793")
             .lammps(custom(&lc::DIHEDRAL_CHARMM)),
         s("dihedral", "opls")
             .params(["k1", "k2", "k3", "k4"].map(|k| zero(k, "E")).to_vec())
@@ -627,9 +623,9 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 zero("k3", "E"),
                 zero("phi3", "A"),
             ])
-            .expression(format!(
-                "k1*(1-cos(phi-phi1*{RADIANS_PER_DEGREE}))+k2*(1-cos(2*phi-phi2*{RADIANS_PER_DEGREE}))+k3*(1-cos(3*phi-phi3*{RADIANS_PER_DEGREE}))"
-            ))
+            .expression(
+                "k1*(1-cos(phi-phi1*(pi/180)))+k2*(1-cos(2*phi-phi2*(pi/180)))+k3*(1-cos(3*phi-phi3*(pi/180))); pi=3.141592653589793",
+            )
             .lammps(custom(&lc::DIHEDRAL_CLASS2)),
         // molrec's registry style, registered by its expression alone: the
         // first built-in that is pure protocol.
@@ -645,7 +641,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         // ---- improper
         s("improper", "harmonic")
             .params(vec![p("k", "E/A^2"), zero("chi0", "A")])
-            .expression(format!("k*(chi-chi0*{RADIANS_PER_DEGREE})^2"))
+            .expression("k*(chi-chi0*(pi/180))^2; pi=3.141592653589793")
             .lammps(positional()),
         s("improper", "cvff")
             .params(vec![p("k", "E"), p("sign", "1"), p("periodicity", "1")])
@@ -653,7 +649,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .lammps(custom(&lc::SIGNED_COSINE)),
         s("improper", "periodic")
             .params(vec![p("k", "E"), p("periodicity", "1"), zero("phase", "A")])
-            .expression(format!("k*(1+cos(periodicity*phi-phase*{RADIANS_PER_DEGREE}))"))
+            .expression("k*(1+cos(periodicity*phi-phase*(pi/180))); pi=3.141592653589793")
             .lammps(custom(&lc::PERIODIC_AS_CVFF)),
         s("improper", "mmff_oop")
             .params(vec![p("koop", "E/A^2")])
@@ -785,8 +781,27 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
 
 #[cfg(test)]
 mod tests {
+    /// Lepton has no named constants: an expression that converts a
+    /// degree-valued parameter writes `(pi/180)` and defines `pi` as its
+    /// last sub-definition, the shortest decimal of `f64::consts::PI`, so
+    /// `x*(pi/180)` is `x.to_radians()` to the bit.
     #[test]
-    fn radians_per_degree_is_the_shortest_decimal_of_pi_over_180() {
-        assert_eq!(super::RADIANS_PER_DEGREE, 1f64.to_radians().to_string());
+    fn a_degree_conversion_defines_pi_as_std_pi() {
+        let pi = format!("; pi={}", std::f64::consts::PI);
+        assert_eq!(pi, "; pi=3.141592653589793");
+        assert_eq!(std::f64::consts::PI / 180.0, 1f64.to_radians());
+        let mut n = 0;
+        for spec in super::builtin_styles() {
+            let Some(expression) = spec.expression.as_deref() else {
+                continue;
+            };
+            if expression.contains("pi/180") || expression.contains("pi=") {
+                n += 1;
+                assert!(expression.contains("*(pi/180)"), "{expression}");
+                assert!(expression.ends_with(&pi), "{expression}");
+                assert_eq!(expression.matches("; pi=").count(), 1, "{expression}");
+            }
+        }
+        assert_eq!(n, 7);
     }
 }

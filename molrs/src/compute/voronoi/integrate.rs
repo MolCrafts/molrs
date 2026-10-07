@@ -8,10 +8,8 @@ use ndarray::{Array2, ArrayView2};
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
-use crate::core::UnitFactor;
+use crate::core::unit_factors::BOHR3_TO_ANGSTROM3;
 
-/// bohr³ → Å³ (a cube file's voxel volume).
-static BOHR3_TO_ANGSTROM3: UnitFactor = UnitFactor::new("bohr^3", "angstrom^3");
 use crate::op::det3;
 use crate::op::vec3::sub;
 

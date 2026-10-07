@@ -142,10 +142,9 @@ mod tests {
         // (replaces the removed bundled Green–Kubo conductivity).
         use crate::compute::CumulativeTrapezoid;
         use crate::compute::Fit;
-        use molrs::core::UnitFactor;
         use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
-        let angstrom_m = UnitFactor::new("angstrom", "m").get();
-        let femtosecond_s = UnitFactor::new("fs", "s").get();
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
 
         let n = 256;
         let dt = 0.5;
