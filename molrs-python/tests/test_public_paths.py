@@ -123,6 +123,7 @@ def test_a_constant_is_a_value_not_a_second_door():
         "molrs.compute.protocol",
         "molrs.compute.density",
         "molrs.ff.potential.protocol",
+        "molrs.io._trajectory",
     ],
 )
 def test_retired_modules_do_not_import(gone):
@@ -152,22 +153,71 @@ def test_retired_modules_do_not_import(gone):
         # io: no raw layer, no aliases.
         "molrs.io.raw",
         "molrs.io.write_smiles",
-        "molrs.io.read_frame_bytes",
-        "molrs.io.write_frame_bytes",
-        # Every *.mrec door is molrs.io.mrec's.
-        "molrs.io.read_mrec",
-        "molrs.io.write_mrec",
-        "molrs.io.read_mrec_system",
-        "molrs.io.write_mrec_system",
-        "molrs.io.read_mrec_trajectory",
-        "molrs.io.write_mrec_trajectory",
-        "molrs.io.read_mrec_forcefield",
-        "molrs.io.write_mrec_forcefield",
-        "molrs.io.read_mrec_meta",
+        "molrs.io.parse_lammps_log_text",
+        # Every file reader / writer is a function at the top of molrs.io:
+        # the mrec doors are flat there ...
+        "molrs.io.mrec.read",
+        "molrs.io.mrec.write",
+        "molrs.io.mrec.read_system",
+        "molrs.io.mrec.write_system",
+        "molrs.io.mrec.read_trajectory",
+        "molrs.io.mrec.write_trajectory",
+        "molrs.io.mrec.read_forcefield",
+        "molrs.io.mrec.write_forcefield",
+        "molrs.io.mrec.read_meta",
         "molrs.io.mrec_sections",
-        # One TrajectoryReader: the mrec cursor is FrameSequence.
+        # ... and its store reader / writer are named as in Rust.
+        "molrs.io.mrec.FrameSequence",
+        "molrs.io.mrec.FrameSequenceWriter",
         "molrs.io.mrec.TrajectoryReader",
         "molrs.io.mrec.TrajectoryWriter",
+        # The frame-bytes codec is io's, not stream's.
+        "molrs.stream.read_frame_bytes",
+        "molrs.stream.write_frame_bytes",
+        # Force-field files are io's; ff.forcefield is the data model only.
+        "molrs.ff.forcefield.read_lammps_forcefield",
+        "molrs.ff.forcefield.read_lammps_data_coeffs",
+        "molrs.ff.forcefield.read_lammps_cmap",
+        "molrs.ff.forcefield.read_gromacs_top_ff",
+        "molrs.ff.forcefield.read_gromacs_system",
+        "molrs.ff.forcefield.read_amber_prmtop_ff",
+        "molrs.ff.forcefield.read_amber_prmtop_system",
+        "molrs.ff.forcefield.read_forcefield_xml",
+        "molrs.ff.forcefield.read_opls_xml",
+        "molrs.ff.forcefield.write_lammps_forcefield",
+        "molrs.ff.forcefield.write_lammps_forcefield_str",
+        "molrs.ff.forcefield.write_lammps_data_coeffs",
+        "molrs.ff.forcefield.write_lammps_cmap",
+        "molrs.ff.forcefield.write_gromacs_top_ff",
+        "molrs.ff.forcefield.write_gromacs_system",
+        "molrs.ff.forcefield.write_amber_frcmod",
+        "molrs.ff.forcefield.write_forcefield_xml",
+        # A class of one format is that format's submodule's.
+        "molrs.io.TrajectoryReader",
+        "molrs.io.SmilesIR",
+        "molrs.io.SmilesError",
+        "molrs.io.CGSmilesIR",
+        "molrs.io.CGGraph",
+        "molrs.io.CGNode",
+        "molrs.io.CGEdge",
+        "molrs.io.CGFragmentDef",
+        "molrs.io.ResolvedPair",
+        "molrs.io.PairEnd",
+        "molrs.io.BondingDescriptor",
+        "molrs.io.BondReactTemplate",
+        "molrs.io.LammpsLog",
+        "molrs.io.LammpsLogHeader",
+        "molrs.io.LammpsRun",
+        "molrs.io.LammpsThermo",
+        "molrs.io.LammpsWarning",
+        "molrs.io.LammpsPerformance",
+        "molrs.io.LammpsTimingBreakdown",
+        "molrs.io.LammpsTimingRow",
+        "molrs.io.LammpsCpuUse",
+        "molrs.io.LammpsLoadBalance",
+        "molrs.io.LammpsLoopTime",
+        "molrs.io.LammpsMemoryUsage",
+        "molrs.io.LammpsNeighborStatistics",
         # Second doors on a class.
         "molrs.store.Trajectory.from_frames",
         "molrs.store.Trajectory.count_frames",
@@ -181,6 +231,104 @@ def test_retired_names_are_absent(gone):
     for part in owner_path.split(".")[1:]:
         owner = getattr(owner, part)
     assert not hasattr(owner, name), gone
+
+
+# --- One shape per file-format factory --------------------------------------
+#
+# A factory that reads or writes a file format is either a function at the
+# top of molrs.io (``read_<fmt>[_<what>]`` / ``write_<fmt>[_<what>]``) or a
+# class of the format's own submodule (``molrs.io.<fmt>.<Fmt>Reader`` /
+# ``<Fmt>Writer``). Nothing else may carry those names.
+
+
+def _factory_name(name: str) -> bool:
+    return name.startswith(("read_", "write_"))
+
+
+def test_read_and_write_functions_live_at_the_top_of_io():
+    stray = sorted(
+        path
+        for path, value in _objects().items()
+        if callable(value)
+        and _factory_name(path.rpartition(".")[2])
+        and path.rpartition(".")[0] != "molrs.io"
+    )
+    assert not stray
+
+
+def test_no_class_hides_a_read_or_write_factory():
+    """A ``read_*`` / ``write_*`` static or class method is a second door
+    onto a format: the door is a function of molrs.io."""
+    doors = []
+    for path, value in _objects().items():
+        if not inspect.isclass(value):
+            continue
+        for name, attr in vars(value).items():
+            if _factory_name(name) and isinstance(attr, (staticmethod, classmethod)):
+                doors.append(f"{path}.{name}")
+    assert not doors
+
+
+def test_readers_and_writers_are_classes_of_a_format_submodule():
+    stray = []
+    for path, value in _objects().items():
+        if not inspect.isclass(value) or not value.__name__.endswith(("Reader", "Writer")):
+            continue
+        owner = path.rpartition(".")[0]
+        if not (owner.startswith("molrs.io.") and owner.count(".") == 2):
+            stray.append(path)
+    assert not stray
+
+
+def test_the_top_of_io_is_functions_and_format_submodules():
+    """A class belongs to one format, so it lives in that format's
+    submodule; the top of molrs.io holds the read / write functions."""
+    classes = [
+        name for name in molrs.io.__all__ if inspect.isclass(getattr(molrs.io, name))
+    ]
+    assert not classes
+    functions = [
+        name for name in molrs.io.__all__ if inspect.isroutine(getattr(molrs.io, name))
+    ]
+    assert all(_factory_name(name) for name in functions), functions
+
+
+def test_forcefield_is_the_data_model_and_stream_the_transport():
+    assert not [n for n in molrs.ff.forcefield.__all__ if _factory_name(n)]
+    assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher"}
+    assert set(molrs.io.mrec.__all__) == {
+        "ForceFieldSection",
+        "MrecReader",
+        "MrecWriter",
+        "SequenceSchema",
+        "pack",
+        "schema",
+        "section_names",
+    }
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "molrs.io.read_smiles",
+        "molrs.io.read_mrec",
+        "molrs.io.write_mrec_trajectory",
+        "molrs.io.read_frame_bytes",
+        "molrs.io.write_frame_bytes",
+        "molrs.io.read_lammps_forcefield",
+        "molrs.io.write_forcefield_xml",
+        "molrs.io.read_lammps_log_str",
+        "molrs.io.trajectory.TrajectoryReader",
+        "molrs.io.mrec.MrecReader",
+        "molrs.io.mrec.MrecWriter",
+        "molrs.io.smiles.SmilesIR",
+        "molrs.io.smiles.CGSmilesIR",
+        "molrs.io.log.LammpsLog",
+        "molrs.io.lammps_bond_react.BondReactTemplate",
+    ],
+)
+def test_the_one_path_exists(path):
+    assert path in _objects()
 
 
 def test_find_matches_has_no_mapped_shortcut():

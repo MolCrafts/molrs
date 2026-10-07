@@ -1,8 +1,8 @@
 //! Writers that serialize a molrs [`ForceField`] into an *external* format.
 //!
-//! Symmetric to [`crate::ff::forcefield::readers`]: a writer owns the translation
-//! from molrs's convention — LAMMPS's (molrs-python docs, "Force-field
-//! conventions") — back to the foreign one.
+//! Symmetric to [`crate::io::forcefield::readers`]: a writer owns the translation
+//! from the force-field IR (adopts the LAMMPS standard; molrs-python docs,
+//! "Force-field IR") back to the foreign one.
 //! The inverse of each reader lands here so unit conversion stays at one
 //! boundary pair and never leaks into kernels or call sites.
 //!
@@ -50,8 +50,8 @@ pub trait ForceFieldWriter {
 ///
 /// ```
 /// use molrs::ff::forcefield::{ForceField, Params};
-/// use molrs::ff::forcefield::writers::ForceFieldWriter;
-/// use molrs::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
+/// use molrs::io::forcefield::writers::ForceFieldWriter;
+/// use molrs::io::forcefield::writers::gromacs::GromacsTopFfWriter;
 /// use molrs::ff::ir::IrError;
 ///
 /// let mut ff = ForceField::new("t");

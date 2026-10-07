@@ -105,7 +105,7 @@ def test_placers_and_orienter_take_no_arguments() -> None:
 
 
 def test_growth_placer_builds_a_topology_without_positions() -> None:
-    sites = molrs.io.CGSmilesIR("{[#M]|3}").to_coarsegrain()
+    sites = molrs.io.smiles.CGSmilesIR("{[#M]|3}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(
         sites, molrs.system.Atomistic
     )
@@ -116,13 +116,13 @@ def test_growth_placer_builds_a_topology_without_positions() -> None:
 
 
 def test_an_orienter_on_a_site_graph_without_positions_is_a_value_error() -> None:
-    sites = molrs.io.CGSmilesIR("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.smiles.CGSmilesIR("{[#M]|2}").to_coarsegrain()
     with pytest.raises(ValueError, match="needs site positions"):
         Assembler({"M": _monomer()}, GrowthPlacer(), AxisOrienter()).assemble(sites)
 
 
 def test_the_world_is_a_bare_graph_unless_a_class_is_named() -> None:
-    sites = molrs.io.CGSmilesIR("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.smiles.CGSmilesIR("{[#M]|2}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites)
 
     assert type(world) is molrs.system.Graph
@@ -130,6 +130,6 @@ def test_the_world_is_a_bare_graph_unless_a_class_is_named() -> None:
 
 
 def test_a_class_that_is_no_graph_is_a_type_error() -> None:
-    sites = molrs.io.CGSmilesIR("{[#M]|2}").to_coarsegrain()
+    sites = molrs.io.smiles.CGSmilesIR("{[#M]|2}").to_coarsegrain()
     with pytest.raises(TypeError, match="graph class"):
         Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites, dict)

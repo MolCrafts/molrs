@@ -20,11 +20,11 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
-use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{
+use crate::io::forcefield::readers::prmtop::AmberPrmtopFfReader;
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;

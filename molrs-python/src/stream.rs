@@ -5,7 +5,7 @@
 //! call never blocks on network I/O: frames go through a bounded buffer that
 //! drops the oldest payload when a client cannot keep up, so a slow viewer
 //! slows nothing down. Viewers dial the socket and read the payloads back with
-//! [`Frame.from_bytes`](crate::core::store::frame::PyFrame).
+//! `molrs.io.read_frame_bytes` ([`crate::io`]).
 //!
 //! Traffic in the other direction is [`PyControlCommand`]: a viewer asks the
 //! producer to pause, change rate, or restrict the atom subset. The producer
@@ -25,7 +25,6 @@ use pyo3::types::PyBytes;
 
 use molrs::stream::ControlCommand;
 
-use crate::core::store::frame::PyFrame;
 use crate::error::py_value_err;
 
 /// Resolve a wire-encoding name onto [`MessageFormat`].
@@ -386,48 +385,10 @@ mod server {
     }
 }
 
-/// Rebuild a :class:`Frame` from streaming wire bytes.
-///
-/// This is the encoding ``molrs::stream::Publisher`` puts on the wire, so a
-/// consumer decodes a live stream with this and never re-derives the layout.
-///
-/// Parameters
-/// ----------
-/// data : bytes
-///     A payload produced by :func:`write_frame_bytes` or by a Rust
-///     ``Publisher``.
-/// format : {"msgpack", "json"}
-///     Wire encoding the payload was written with.
-#[pyfunction]
-#[pyo3(signature = (data, format = "msgpack"))]
-pub fn read_frame_bytes(data: &[u8], format: &str) -> PyResult<PyFrame> {
-    let fmt = message_format(format)?;
-    let frame = molrs::stream::bytes_to_frame(data, fmt).map_err(py_value_err)?;
-    PyFrame::from_core_frame(frame)
-}
-
-/// Encode a :class:`Frame` as streaming wire bytes. The inverse of
-/// :func:`read_frame_bytes`.
-#[pyfunction]
-#[pyo3(signature = (frame, format = "msgpack"))]
-pub fn write_frame_bytes<'py>(
-    py: Python<'py>,
-    frame: &PyFrame,
-    format: &str,
-) -> PyResult<Bound<'py, PyBytes>> {
-    let fmt = message_format(format)?;
-    let bytes = frame
-        .with_frame(|f| molrs::stream::frame_to_bytes(f, fmt))?
-        .map_err(py_value_err)?;
-    Ok(PyBytes::new(py, &bytes))
-}
-
 /// Register `molrs.stream`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyControlCommand>()?;
     #[cfg(not(target_arch = "wasm32"))]
     m.add_class::<PyPublisher>()?;
-    crate::add_function(m, "molrs.stream", wrap_pyfunction!(read_frame_bytes, m)?)?;
-    crate::add_function(m, "molrs.stream", wrap_pyfunction!(write_frame_bytes, m)?)?;
     Ok(())
 }

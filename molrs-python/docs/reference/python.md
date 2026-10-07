@@ -28,9 +28,13 @@ and the docs build.
 | `molrs.units` | `molrs::units` | `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Fit`, `DEFAULT_GAP_TOL` |
 | `molrs.perceive` | `molrs::perceive` | `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
-| `molrs.io` | `molrs::io` | structure and trajectory readers / writers, `TrajectoryReader`, `SmilesIR`, `CGSmilesIR`, `SmilesError`, the LAMMPS log |
-| `molrs.io.mrec` | `molrs::io::mrec` | every `*.mrec` door: `read` / `write` and their `system` / `trajectory` / `forcefield` partners, `read_meta`, `section_names`, `FrameSequence`, `SequenceSchema`, `FrameSequenceWriter`, `ForceFieldSection`, `pack`, `schema` |
-| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles, the force-field file readers and writers |
+| `molrs.io` | `molrs::io` | every file reader and writer, as a function: structure, trajectory and force-field files, `*.mrec` records (`read_mrec` / `write_mrec` and partners), frame bytes, `read_smiles`, the LAMMPS log |
+| `molrs.io.trajectory` | `molrs::io::trajectory` | `TrajectoryReader` |
+| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIR`, `SmilesError`, `CGSmilesIR` and the CGsmiles records |
+| `molrs.io.log` | `molrs::io::log` | the `Lammps*` log records |
+| `molrs.io.lammps_bond_react` | `molrs::io::data::lammps_bond_react` | `BondReactTemplate` |
+| `molrs.io.mrec` | `molrs::io::mrec` | `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
+| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
@@ -43,7 +47,7 @@ and the docs build.
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
 | `molrs.compute` | `molrs::compute` | every analysis, flat, and the `Compute` protocol |
 | `molrs.signal` | `molrs::signal` | `acf_fft`, `xcorr_fft`, `apply_window`, `frequency_grid` |
-| `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand`, `read_frame_bytes`, `write_frame_bytes` |
+| `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand` |
 
 ## `molrs.store`
 
@@ -140,7 +144,7 @@ TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.write_frame
 
-::: molrs.io.TrajectoryReader
+::: molrs.io.trajectory.TrajectoryReader
 
 ::: molrs.io.read_pdb
 
@@ -170,7 +174,7 @@ TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.write_lammps_data
 
-::: molrs.io.BondReactTemplate
+::: molrs.io.lammps_bond_react.BondReactTemplate
 
 ::: molrs.io.write_bond_react_map
 
@@ -194,41 +198,77 @@ TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.write_xtc_trajectory
 
-::: molrs.io.SmilesIR
+::: molrs.io.smiles.SmilesIR
 
 ### Record files (`molrs.io.mrec`)
 
 The [Record files guide](../guides/records.md) shows these in use.
 
-::: molrs.io.mrec.read
+::: molrs.io.read_mrec
 
-::: molrs.io.mrec.write
+::: molrs.io.write_mrec
 
-::: molrs.io.mrec.read_system
+::: molrs.io.read_mrec_system
 
-::: molrs.io.mrec.write_system
+::: molrs.io.write_mrec_system
 
-::: molrs.io.mrec.read_trajectory
+::: molrs.io.read_mrec_trajectory
 
-::: molrs.io.mrec.write_trajectory
+::: molrs.io.write_mrec_trajectory
 
-::: molrs.io.mrec.read_forcefield
+::: molrs.io.read_mrec_forcefield
 
-::: molrs.io.mrec.write_forcefield
+::: molrs.io.write_mrec_forcefield
 
 ::: molrs.io.mrec.section_names
 
-::: molrs.io.mrec.read_meta
+::: molrs.io.read_mrec_meta
 
 ::: molrs.io.mrec.SequenceSchema
 
-::: molrs.io.mrec.FrameSequenceWriter
+::: molrs.io.mrec.MrecWriter
 
-::: molrs.io.mrec.FrameSequence
+::: molrs.io.mrec.MrecReader
 
 ::: molrs.io.mrec.ForceFieldSection
 
 ::: molrs.io.mrec.pack
+
+### Force-field files
+
+::: molrs.io.read_lammps_forcefield
+
+::: molrs.io.write_lammps_forcefield
+
+::: molrs.io.read_gromacs_top_ff
+
+::: molrs.io.read_gromacs_system
+
+::: molrs.io.write_gromacs_system
+
+::: molrs.io.read_amber_prmtop_ff
+
+::: molrs.io.write_amber_frcmod
+
+::: molrs.io.read_forcefield_xml
+
+::: molrs.io.read_opls_xml
+
+::: molrs.io.write_forcefield_xml
+
+### SMILES, logs and frame bytes
+
+::: molrs.io.read_smiles
+
+::: molrs.io.smiles.SmilesError
+
+::: molrs.io.read_lammps_log
+
+::: molrs.io.read_lammps_log_str
+
+::: molrs.io.read_frame_bytes
+
+::: molrs.io.write_frame_bytes
 
 ### Other formats
 
@@ -288,12 +328,6 @@ arrays (a CMAP `grid`).
 ::: molrs.ff.forcefield.PairType
 
 ::: molrs.ff.forcefield.CmapType
-
-::: molrs.ff.forcefield.read_forcefield_xml
-
-::: molrs.ff.forcefield.read_opls_xml
-
-::: molrs.ff.forcefield.write_gromacs_system
 
 ### `molrs.ff.potential`
 

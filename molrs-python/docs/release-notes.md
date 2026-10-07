@@ -173,10 +173,29 @@ does `import molrs`: `molrs.store.Frame`, `molrs.spatial.Box`,
 `molrs.system.Atomistic`, `molrs.ff.forcefield.ForceField`,
 `molrs.ff.potential.PotentialCompiler`, `molrs.compute.RDF`. `molrs.io.raw`,
 `molrs.fields` and the alias functions are gone — every reader emits the
-canonical column names. Every `*.mrec` door is `molrs.io.mrec`'s
-(`molrs.io.mrec.read`, `write`, `FrameSequence`, …), and a function's
-`__module__` names its public path as a class's does. The [migration guide](migration.md#python-paths)
-lists every old → new path.
+canonical column names. A function's `__module__` names its public path as
+a class's does. The [migration guide](migration.md#python-paths) lists every
+old → new path.
+
+Every file-format factory has one shape: a function at the top of
+`molrs.io` (`read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`) or a class
+`molrs.io.<fmt>.<Fmt>Reader` / `<Fmt>Writer`. Every file reader and writer
+is therefore `molrs.io`'s — force-field files included
+(`molrs.io.read_lammps_forcefield`, `molrs.io.write_gromacs_top_ff`, …;
+`molrs.ff.forcefield` is the `ForceField` data model only, and in Rust the
+formats are `molrs::io::forcefield`, which `ff` never depends on), the
+`*.mrec` doors (`molrs.io.read_mrec`, `write_mrec_trajectory`, …) and the
+frame-bytes codec (`molrs.io.read_frame_bytes`; `molrs.stream` is the
+transport). The record store's reader and writer are
+`molrs.io.mrec.MrecReader` / `MrecWriter` (Rust `molrs::io::mrec`'s, WASM
+`MrecReader`), the dump concatenator is
+`molrs.io.trajectory.TrajectoryReader`, and a class of one format lives in
+that format's submodule: `molrs.io.smiles` (`SmilesIR`, the CGsmiles
+records, `SmilesError`), `molrs.io.log` (the LAMMPS log records),
+`molrs.io.lammps_bond_react`. New: `molrs.io.read_smiles` (Rust
+`molrs::io::smiles::read_smiles`) reads one molecule — connectivity only —
+and refuses a `'.'`-separated set, and `read_lammps_log_str` reads a log
+from text.
 
 ### Packaging
 

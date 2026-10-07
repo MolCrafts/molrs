@@ -337,11 +337,11 @@ where
 /// shaped like the frame.
 ///
 /// Generic over the store, and asking for reads only, so the read-write store
-/// the record doors hold and the read-only one [`FrameSequence`] holds share
+/// the record doors hold and the read-only one [`MrecReader`] holds share
 /// this one dtype dispatch.
 ///
 /// [`F`]: crate::op::types::F
-/// [`FrameSequence`]: super::FrameSequence
+/// [`MrecReader`]: super::MrecReader
 pub(crate) fn read_column<S>(
     store: &Arc<S>,
     path: &str,

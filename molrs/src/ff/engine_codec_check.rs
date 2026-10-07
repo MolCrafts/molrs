@@ -25,15 +25,15 @@ use std::sync::Arc;
 use ndarray::Array1;
 use serde_json::json;
 
-use crate::ff::forcefield::lammps_units::LammpsFfUnits;
-use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{
     CategorySpec, Coordinate, Dim, EndpointOrder, LammpsForm, Mix, ParamSpec, Registry,
     SpecialClass, StyleSpec, Value,
 };
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{
+use crate::io::forcefield::lammps_units::LammpsFfUnits;
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
     forcefield::writers::xml::XmlForceFieldWriter,
 };
@@ -777,12 +777,12 @@ fn every_engine_prices_the_codec_cases_as_molrs() {
 
 mod codecs {
     use super::*;
-    use crate::ff::forcefield::readers::ForceFieldReader;
-    use crate::ff::forcefield::readers::lammps::LammpsFfReader;
-    use crate::ff::forcefield::writers::frcmod::write_amber_frcmod_str;
-    use crate::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
     use crate::ff::ir::expr::{Binding, Geometry, compile};
     use crate::ff::ir::{Engine, IrError, UnitScale, builtin_styles};
+    use crate::io::forcefield::readers::ForceFieldReader;
+    use crate::io::forcefield::readers::lammps::LammpsFfReader;
+    use crate::io::forcefield::writers::frcmod::write_amber_frcmod_str;
+    use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
 
     /// A row of `spec` a LAMMPS line holds: each parameter a value of its
     /// kind, the multiplicities and signs integers.

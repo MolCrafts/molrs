@@ -42,7 +42,6 @@ use super::{
     esc,
 };
 use crate::ff::forcefield::mixing::Mixing;
-use crate::ff::forcefield::writers::WriteError;
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::ir::expr::{self, BinOp, Definition, Expr, Func, Parsed};
 use crate::ff::ir::expression::fallback_spec;
@@ -50,6 +49,7 @@ use crate::ff::ir::{
     CategorySpec, Coordinate, EndpointOrder, Engine, Mix, ParamKind, Registry, SpecialClass,
     StyleSpec, Value,
 };
+use crate::io::forcefield::writers::WriteError;
 use molrs::op::types::F;
 
 fn refuse(style: &Style, why: impl Into<String>) -> WriteError {

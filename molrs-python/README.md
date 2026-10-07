@@ -21,7 +21,7 @@ Requires Python 3.12+.
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
-mol = molrs.io.SmilesIR("CCO").to_atomistic()
+mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
 
 # 3D coordinates
 from molrs.conformer import Conformer
@@ -54,8 +54,8 @@ symbol has one path, named after its Rust owner (`molrs.store.Frame` is
 | `molrs.spatial` | `Box`, neighbour search, regions, `TriMesh`, `Trace` |
 | `molrs.system` | `Atomistic`, `CoarseGrain`, `Graph` and their live views |
 | `molrs.units` | `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
-| `molrs.io` | Readers/writers, `TrajectoryReader`, `SmilesIR` |
-| `molrs.io.mrec` | `*.mrec` records: `read` / `write` (and `_system` / `_trajectory` / `_forcefield`), streaming `SequenceSchema`, `FrameSequenceWriter`, `FrameSequence`, `pack` |
+| `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_*` / `write_*`; per-format classes in `io.trajectory`, `io.smiles`, `io.log`, `io.lammps_bond_react`, `io.mrec` |
+| `molrs.io.mrec` | `*.mrec` store pieces: streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
 | `molrs.optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | Integrators and the `MD` driver |

@@ -30,12 +30,12 @@ class TestTopLevelEagerReaders:
 class TestLazyFacadeReaders:
     def test_trr_returns_reader(self, water_trr):
         reader = mio.read_trr_trajectory(str(water_trr))
-        assert isinstance(reader, mio.TrajectoryReader)
+        assert isinstance(reader, mio.trajectory.TrajectoryReader)
         assert reader.n_frames == len(reader) > 0
 
     def test_xtc_returns_reader(self, water_xtc):
         reader = mio.read_xtc_trajectory(str(water_xtc))
-        assert isinstance(reader, mio.TrajectoryReader)
+        assert isinstance(reader, mio.trajectory.TrajectoryReader)
         assert reader.n_frames > 0
 
     def test_random_access_matches_sequential(self, water_trr):

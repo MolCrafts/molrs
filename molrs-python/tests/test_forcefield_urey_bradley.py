@@ -74,8 +74,8 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     table = ff.to_section().table("angle", "charmm")
     assert list(table["r_ub"]) == [R_UB]
     path = tmp_path / "ff.mrec"
-    molrs.io.mrec.write_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
+    molrs.io.write_mrec_forcefield(path, ff)
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()
@@ -85,13 +85,13 @@ def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
 
 
 def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None:
-    text = molrs.ff.forcefield.write_lammps_forcefield_str(_ub_ff(), _frame())
+    text = molrs.io.write_lammps_forcefield_str(_ub_ff(), _frame())
     assert "angle_style charmm\n" in text
     assert "angle_coeff HA-CT-CT 33.430000 110.100000 22.530000 2.179000\n" in text
     path = tmp_path / "ub.ff"
     path.write_text(text)
-    back = molrs.ff.forcefield.read_lammps_forcefield(path)
+    back = molrs.io.read_lammps_forcefield(path)
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
-    data = molrs.ff.forcefield.write_lammps_data_coeffs(_ub_ff(), _frame())
+    data = molrs.io.write_lammps_data_coeffs(_ub_ff(), _frame())
     assert "Angle Coeffs # charmm" in data

@@ -10,14 +10,14 @@
 //! gzipped, so packing is concatenation plus a central directory.
 //!
 //! The parameter is a path and nothing else. There is no door that accepts a
-//! live `FrameSequenceWriter` — packing a store still being appended to would
+//! live `MrecWriter` — packing a store still being appended to would
 //! be the live single-file write this design rejects, and the signature is the
 //! only proof that needs to exist. `close(writer)` then `pack(path)` is the
 //! caller's composition.
 //!
 //! Reading is the mirror door `open_packed`, which opens the archive through
 //! `zarrs_zip`'s read-only `ZipStorageAdapter` and hands back a store to give
-//! to `FrameSequence::open` (or any other read door). No hand-written zip
+//! to `MrecReader::open` (or any other read door). No hand-written zip
 //! parser lives here.
 
 use std::ffi::OsStr;
@@ -48,7 +48,7 @@ const MREC_SUFFIX: &str = "mrec";
 /// full re-encode.
 ///
 /// The parameter is a path, never a live
-/// [`FrameSequenceWriter`](crate::io::mrec::FrameSequenceWriter): packing a
+/// [`MrecWriter`](crate::io::mrec::MrecWriter): packing a
 /// store still being appended to is the live single-file write this backend
 /// rejects. `writer.close()` followed by `pack(path)` is the caller's
 /// composition.
@@ -79,7 +79,7 @@ const MREC_SUFFIX: &str = "mrec";
 /// ```
 /// # fn main() -> Result<(), molrs::error::MolRsError> {
 /// use molrs::store::Trajectory;
-/// use molrs::io::mrec::{FrameSequence, open_packed, pack, write_trajectory_file};
+/// use molrs::io::mrec::{MrecReader, open_packed, pack, write_trajectory_file};
 ///
 /// let dir = tempfile::tempdir().unwrap();
 /// let store = dir.path().join("traj.mrec");
@@ -93,7 +93,7 @@ const MREC_SUFFIX: &str = "mrec";
 /// assert!(zip.ends_with("traj.mrec.zip"));
 /// assert!(!store.exists(), "pack removes the directory it consumed");
 ///
-/// let mut seq = FrameSequence::open(open_packed(&zip)?)?;
+/// let mut seq = MrecReader::open(open_packed(&zip)?)?;
 /// assert_eq!(seq.to_trajectory()?.len(), 1);
 /// # Ok(())
 /// # }
@@ -148,7 +148,7 @@ pub fn pack(store_path: impl AsRef<Path>) -> Result<PathBuf, MolRsError> {
 ///
 /// Paths whose file name ends in `.zarr` or `.zarr.zip` are refused. The
 /// returned store is readable and listable and nothing more, which is exactly
-/// what a read function such as [`crate::io::mrec::FrameSequence::open`] asks
+/// what a read function such as [`crate::io::mrec::MrecReader::open`] asks
 /// for. Stored entries are read through the adapter's byte-range fast path, so
 /// a frame costs the bytes of that frame rather than the bytes of the archive.
 ///
@@ -229,7 +229,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{open_packed, pack};
-    use crate::io::zarr::{FrameSequence, read_trajectory_file, write_trajectory_file};
+    use crate::io::zarr::{MrecReader, read_trajectory_file, write_trajectory_file};
 
     /// The one block every fixture frame carries.
     const ATOMS: &str = "atoms";
@@ -362,7 +362,7 @@ mod tests {
         let before = read_trajectory_file(&store_path).expect("the directory store reads");
 
         let zip_path = pack(&store_path).expect("packing a closed store succeeds");
-        let sequence = FrameSequence::open(open_packed(&zip_path).expect("the zip opens"))
+        let sequence = MrecReader::open(open_packed(&zip_path).expect("the zip opens"))
             .expect("the packed sequence opens");
         let after = sequence.to_trajectory().expect("the packed sequence reads");
 

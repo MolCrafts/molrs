@@ -67,8 +67,9 @@ compute   = ["signal"]
 # Radical (Laguerre) Voronoi tessellation + domain/void analysis. Native
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
-# `ff` reads force-field files through `io`'s format parsers (prmtop sections)
-# and types atoms with `perceive::smarts`, which compiles from `io::smiles`.
+# `ff` types atoms with `perceive::smarts`, which compiles from `io::smiles`.
+# With `ff` on, `io::forcefield` (the force-field file formats, over
+# `roxmltree` for XML) compiles too; `ff` itself reads no file.
 ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
 conformer = ["ff"]
@@ -138,7 +139,7 @@ ruzstd         = { version = "0.9", optional = true, default-features = false, f
 inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
-roxmltree      = { version = "0.21", optional = true }                                              # ff (XML force-field readers)
+roxmltree      = { version = "0.21", optional = true }                                              # ff (io::forcefield's XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
 # `io/zarr/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
 # directory store packs into, `zarrs_zip` reads it back. Both hang on

@@ -1,7 +1,5 @@
-//! The [`ForceField`] data model, and force-field files mapped to and from
-//! it: [`readers`], [`writers`] and [`xml`]. Structure and trajectory formats
-//! are `io`'s; a force-field file is here because what it reads into is a
-//! force field, not a frame.
+//! The [`ForceField`] data model. Force-field files are mapped to and from it
+//! by [`crate::io::forcefield`]; no file format is here.
 //!
 //! Provides a declarative layer for defining atom types, bond types, pair types,
 //! etc. with their parameters. A [`ForceField`] holds [`Style`]s, each of which
@@ -10,15 +8,11 @@
 //! [`PotentialCompiler`](super::potential::PotentialCompiler).
 
 pub(crate) mod lammps_codecs;
-pub mod lammps_units;
 pub mod mixing;
 pub mod one_four;
 pub mod param_columns;
-pub mod readers;
 pub mod section;
 pub mod torsion;
-pub mod writers;
-pub mod xml;
 
 use std::collections::HashMap;
 use std::sync::Arc;

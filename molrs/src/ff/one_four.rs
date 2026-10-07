@@ -19,11 +19,11 @@
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::lammps::LammpsFfReader;
 use crate::ff::forcefield::{ForceField, SpecialBonds};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::io::forcefield::readers::ForceFieldReader;
+use crate::io::forcefield::readers::lammps::LammpsFfReader;
 use molrs::op::types::{F, Idx};
 use molrs::store::Block;
 use molrs::store::Frame;
@@ -813,8 +813,8 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 /// the LAMMPS reader and writer are the identity on `lj/charmm/coul/charmm`.
 #[test]
 fn lammps_round_trip_and_override_refusal() {
-    use crate::ff::forcefield::writers::ForceFieldWriter;
-    use crate::ff::forcefield::writers::lammps::{LammpsFfWriter, refuse_pair_overrides};
+    use crate::io::forcefield::writers::ForceFieldWriter;
+    use crate::io::forcefield::writers::lammps::{LammpsFfWriter, refuse_pair_overrides};
     use molrs::store::type_labels::TypeLabels;
 
     let ff = read(CHARMM, "0.5");

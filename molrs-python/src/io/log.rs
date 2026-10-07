@@ -8,7 +8,7 @@ use crate::path::path_str;
 use molrs::io::log::{
     LammpsCpuUse, LammpsLoadBalance, LammpsLog, LammpsLogHeader, LammpsLoopTime, LammpsMemoryUsage,
     LammpsNeighborStatistics, LammpsPerformance, LammpsRun, LammpsThermo, LammpsTimingBreakdown,
-    LammpsTimingRow, LammpsWarning, parse_lammps_log_text as parse_lammps_log_text_rs,
+    LammpsTimingRow, LammpsWarning, read_lammps_log_str as read_lammps_log_str_rs,
     read_lammps_log_with_style as read_lammps_log_rs,
 };
 use numpy::{PyArray1, PyArray2};
@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 /// Header lines that precede the first run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsLogHeader",
     frozen,
     skip_from_py_object
@@ -52,7 +52,7 @@ impl PyLammpsLogHeader {
 
 /// The ``Per MPI rank memory allocation`` line of a run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsMemoryUsage",
     frozen,
     skip_from_py_object
@@ -95,7 +95,7 @@ impl PyLammpsMemoryUsage {
 /// One run's thermo table: ``columns`` names the fields, ``rows`` is the
 /// ``(n_rows, n_columns)`` float64 array, and ``thermo["Step"]`` is a column.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsThermo",
     frozen,
     skip_from_py_object
@@ -167,7 +167,7 @@ impl PyLammpsThermo {
 
 /// The ``Loop time of ...`` line of a run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsLoopTime",
     frozen,
     skip_from_py_object
@@ -209,7 +209,7 @@ impl PyLammpsLoopTime {
 
 /// The ``Performance: ...`` line of a run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsPerformance",
     frozen,
     skip_from_py_object
@@ -255,7 +255,7 @@ impl PyLammpsPerformance {
 
 /// The ``... % CPU use with N MPI tasks x M OpenMP threads`` line of a run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsCpuUse",
     frozen,
     skip_from_py_object
@@ -293,7 +293,7 @@ impl PyLammpsCpuUse {
 
 /// One row of an MPI-task or thread timing breakdown.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsTimingRow",
     frozen,
     skip_from_py_object
@@ -343,7 +343,7 @@ impl PyLammpsTimingRow {
 
 /// A timing breakdown table (``MPI task timing breakdown`` or thread timing).
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsTimingBreakdown",
     frozen,
     skip_from_py_object
@@ -385,7 +385,7 @@ impl PyLammpsTimingBreakdown {
 
 /// One ``Nlocal`` / ``Nghost`` / ``Neighs`` load-balance block.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsLoadBalance",
     frozen,
     skip_from_py_object
@@ -431,7 +431,7 @@ impl PyLammpsLoadBalance {
 
 /// The neighbor-list statistics block of a run.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsNeighborStatistics",
     frozen,
     skip_from_py_object
@@ -479,7 +479,7 @@ impl PyLammpsNeighborStatistics {
 
 /// A ``WARNING:`` line, with where it appeared.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.log",
     name = "LammpsWarning",
     frozen,
     skip_from_py_object
@@ -516,7 +516,12 @@ impl PyLammpsWarning {
 }
 
 /// One ``run`` command: its setup lines, thermo table, timing and warnings.
-#[pyclass(module = "molrs.io", name = "LammpsRun", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.log",
+    name = "LammpsRun",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyLammpsRun {
     inner: LammpsRun,
@@ -628,7 +633,12 @@ impl PyLammpsRun {
 }
 
 /// A parsed LAMMPS log: header, one `LammpsRun` per ``run``, and warnings.
-#[pyclass(module = "molrs.io", name = "LammpsLog", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.log",
+    name = "LammpsLog",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyLammpsLog {
     inner: LammpsLog,
@@ -762,8 +772,8 @@ pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
 #[cfg(feature = "fs")]
 #[pyfunction]
 #[pyo3(signature = (text, path = "<string>", style = "default"))]
-pub fn parse_lammps_log_text(text: &str, path: &str, style: &str) -> PyLammpsLog {
-    PyLammpsLog::new(parse_lammps_log_text_rs(text, path, style))
+pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> PyLammpsLog {
+    PyLammpsLog::new(read_lammps_log_str_rs(text, path, style))
 }
 
 #[cfg(feature = "fs")]
@@ -792,7 +802,7 @@ pub(crate) fn lammps_log_to_pydict<'py>(
 /// Register the LAMMPS log doors and the views they hand out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log, m)?)?;
-    crate::add_function(m, "molrs.io", wrap_pyfunction!(parse_lammps_log_text, m)?)?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_lammps_log_str, m)?)?;
     m.add_class::<PyLammpsLog>()?;
     m.add_class::<PyLammpsRun>()?;
     m.add_class::<PyLammpsThermo>()?;

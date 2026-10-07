@@ -100,13 +100,16 @@ macro_rules! mmff_front_door {
                 Self(MmffEngine::embedded($variant))
             }
 
-            #[doc = concat!("Create a typifier from a caller-supplied `", $set, "` XML string.")]
+            #[doc = concat!("Create a typifier over a caller's own `", $set, "` parameter set.")]
             ///
-            /// Parses both typing metadata ([`MMFFParams`]) and potential parameters
-            /// ([`ForceField`]) in one call. The variant is pinned by *this type* —
-            /// it is never an argument.
-            pub fn from_xml_str(xml: &str) -> Result<Self, String> {
-                MmffEngine::from_xml_str($variant, xml).map(Self)
+            /// `params` is the typing metadata and `ff` the force field it
+            /// prices with; reading both out of an MMFF XML file is
+            /// [`read_mmff_params_xml_str`](crate::io::forcefield::xml::read_mmff_params_xml_str)
+            /// and
+            /// [`read_forcefield_xml_str`](crate::io::forcefield::xml::read_forcefield_xml_str).
+            /// The variant is pinned by *this type* — it is never an argument.
+            pub fn from_parts(params: MMFFParams, ff: ForceField) -> Self {
+                Self(MmffEngine::from_parts($variant, params, ff))
             }
 
             /// The MMFF typing metadata (atom-type properties, equivalences).

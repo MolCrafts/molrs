@@ -18,7 +18,7 @@
 //! * **OpenMM XML** — an expression style needs no codec: its expression is
 //!   the `Custom*Force` energy, rewritten so the parameters stay in IR units
 //!   (`4.184*(E[r → 10*r])`); see
-//!   [`XmlForceFieldWriter`](crate::ff::forcefield::writers::xml::XmlForceFieldWriter).
+//!   [`XmlForceFieldWriter`](crate::io::forcefield::writers::xml::XmlForceFieldWriter).
 //! * **GROMACS, AMBER prmtop and frcmod** hold the built-in styles they have
 //!   directives for and refuse every other style.
 //!

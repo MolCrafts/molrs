@@ -15,7 +15,7 @@
 //! **projection** back (`from_series`), which reproduces the series — every
 //! coefficient, the constant `a₀` included — or refuses with a
 //! [`TorsionRefusal`] naming the condition that prevents it. The forms, in
-//! the force-field IR (LAMMPS standard) (parameters as stored, phases in
+//! the force-field IR (adopts the LAMMPS standard; parameters as stored, phases in
 //! degrees):
 //!
 //! | form | style | energy | image condition |

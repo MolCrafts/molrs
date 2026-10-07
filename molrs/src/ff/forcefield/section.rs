@@ -603,9 +603,9 @@ impl ForceField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::readers::ForceFieldReader;
     use crate::ff::forcefield::tests::assert_same_definitions;
     use crate::ff::typifier::Typifier;
+    use crate::io::forcefield::readers::ForceFieldReader;
 
     /// `ff` with its units declared: what `from_section(to_section(ff))`
     /// gives back.
@@ -716,7 +716,7 @@ mod tests {
                     dihedral_coeff c3-c3-oh-ho 2 0.16 3 0.0 0.25 1 0.0\n\
                     improper_style harmonic\n\
                     improper_coeff c3-oh-c3-c3 1.1 180.0\n";
-        let ff = crate::ff::forcefield::readers::lammps::LammpsFfReader::new()
+        let ff = crate::io::forcefield::readers::lammps::LammpsFfReader::new()
             .read_str(text)
             .unwrap();
         // The cross pair_coeff (NBFIX) is a pair row with itom != jtom.
@@ -742,7 +742,7 @@ mod tests {
                     [ bondtypes ]\nCT HC 1 0.109 284512.0\n\
                     [ angletypes ]\nHC CT HC 1 107.8 276.144\n\
                     [ dihedraltypes ]\nX CT CT X 1 0.0 0.6276 3\n";
-        let ff = crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::new()
+        let ff = crate::io::forcefield::readers::gromacs::GromacsTopFfReader::new()
             .read_str(text)
             .unwrap();
         // The GROMACS bond_type is the atom table's `class`.
@@ -772,7 +772,7 @@ mod tests {
     <Atom type="opls_140" charge="0.06" sigma="0.25" epsilon="0.12552"/>
   </NonbondedForce>
 </ForceField>"#;
-        let ff = crate::ff::forcefield::readers::opls::OplsXmlReader::new()
+        let ff = crate::io::forcefield::readers::opls::OplsXmlReader::new()
             .read_str(xml)
             .unwrap();
         let section = ff.to_section().unwrap();
@@ -798,7 +798,7 @@ mod tests {
                        A 12.0 0.0 A 0.30 0.4184\n\
                        B 12.0 0.0 A 0.36 1.6736\n\
                        [ nonbond_params ]\nA B 1 0.20 3.7656\n";
-        let ff = crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::new()
+        let ff = crate::io::forcefield::readers::gromacs::GromacsTopFfReader::new()
             .read_str(gromacs)
             .unwrap();
         round_trips(&ff, "GROMACS nonbond_params");

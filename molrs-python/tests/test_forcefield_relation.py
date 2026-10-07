@@ -133,8 +133,8 @@ def test_a_relation_style_round_trips_through_a_section_a_store_and_a_pickle(
     table = ff.to_section().table("urey_bradley", "spring")
     assert list(table["k_ub"]) == [20.0, 11.0]
     path = tmp_path / "ff.mrec"
-    molrs.io.mrec.write_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
+    molrs.io.write_mrec_forcefield(path, ff)
+    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     style = back.get_style("urey_bradley", "spring")
     assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.params == {"expression": UB_EXPRESSION}

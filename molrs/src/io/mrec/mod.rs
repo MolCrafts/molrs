@@ -38,8 +38,8 @@
 //!   [`crate::store::MolRec::forcefield`] beside other sections through
 //!   [`write_record_file`].
 //! - A run too large to hold in memory: pin a [`SequenceSchema`], append with
-//!   [`FrameSequenceWriter`], read one frame at a time with [`FrameSequence`].
-//!   [`FrameSequence::open`] takes any already-open store (including an
+//!   [`MrecWriter`], read one frame at a time with [`MrecReader`].
+//!   [`MrecReader::open`] takes any already-open store (including an
 //!   in-memory one). [`open_trajectory_sequence`] is the filesystem-path
 //!   opener for that cursor.
 //! - Pack a closed directory: [`pack`] / [`open_packed`]. Those two, the
@@ -85,9 +85,7 @@
 //! ```
 
 #[doc(inline)]
-pub use super::zarr::{
-    Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype,
-};
+pub use super::zarr::{Compression, MrecReader, MrecWriter, SequenceSchema, column_dtype};
 
 /// Runtime validation of the mrec record schema (path suffix, `meta` brand).
 #[doc(inline)]

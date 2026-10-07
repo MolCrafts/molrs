@@ -1,6 +1,6 @@
 //! AMBER prmtop table helpers shared by the structure reader
 //! ([`super::prmtop`]) and the force-field reader
-//! (`ff::forcefield::readers::prmtop`): POINTERS and 20a4 name parsing, atom
+//! (`io::forcefield::readers::prmtop`): POINTERS and 20a4 name parsing, atom
 //! type names, torsions, the 1-4 list, and the CHARMM (chamber) sections, so
 //! the two readers name every row the same way.
 //!

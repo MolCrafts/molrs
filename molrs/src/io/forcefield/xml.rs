@@ -33,8 +33,12 @@
 //! electrostatic kernel; the section above is a *parameterization* of that one, and
 //! `delta = 0` degenerates it into the textbook Coulomb.
 
-use super::{ForceField, Params, SpecialBonds, Style};
+use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+use std::collections::HashMap;
+
 use crate::ff::params::mmff::encode_da;
+use crate::ff::typifier::mmff::{MMFFAtomProp, MMFFParams};
+use crate::ff::typifier::{OplsTypeRow, OplsTypingMeta};
 
 // ---------------------------------------------------------------------------
 // Public API — ForceField
@@ -52,7 +56,7 @@ pub fn read_forcefield_xml(path: &str) -> Result<ForceField, String> {
 /// - **Generic** style-based (`<BondStyle name="harmonic">…`)
 /// - **MMFF** parameter tables (`<VdWParams>`, …)
 /// - **OpenMM / OPLS-AA pack** (`<AtomTypes>`, `<HarmonicBondForce>`, …) —
-///   delegated to [`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader)
+///   delegated to [`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader)
 ///   so tip3p/oplsaa/clp no longer return an empty force field.
 pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
@@ -76,8 +80,8 @@ pub fn read_forcefield_xml_str(xml: &str) -> Result<ForceField, String> {
         )
     });
     if is_openmm_pack {
-        use crate::ff::forcefield::readers::ForceFieldReader;
-        return crate::ff::forcefield::readers::opls::OplsXmlReader::new().read_str(xml);
+        use crate::io::forcefield::readers::ForceFieldReader;
+        return crate::io::forcefield::readers::opls::OplsXmlReader::new().read_str(xml);
     }
 
     let name = root.attribute("name").unwrap_or("unnamed");
@@ -351,6 +355,142 @@ fn parse_electrostatics(ff: &mut ForceField, node: &roxmltree::Node) -> Result<(
 // Tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Typing metadata — the typifier halves of an OPLS-AA / MMFF XML
+// ---------------------------------------------------------------------------
+
+/// Parse OPLS-AA typing metadata ([`OplsTypingMeta`]) from an XML string —
+/// the typing half of a caller's OPLS-AA XML, which
+/// [`OPLSAATypifier::new`](crate::ff::typifier::OPLSAATypifier::new) takes
+/// beside the force field
+/// [`OplsXmlReader`](super::readers::opls::OplsXmlReader) reads.
+///
+/// Reads each `<Type>` of the `<AtomTypes>` section, transcribing the typing
+/// attributes the potential reader
+/// ([`OplsXmlReader`](super::readers::opls::OplsXmlReader))
+/// drops: `class`, `def` (SMARTS), `overrides` (comma list), `priority`, and
+/// `layer`. This is purely additive — it never touches the potential
+/// `ForceField`; the two are read from the same XML but kept separate (as MMFF's
+/// typing metadata is).
+///
+/// Rows with no `def` are still recorded (with `def = None`); they are legacy
+/// types excluded from automatic SMARTS typing.
+///
+/// # Errors
+///
+/// Returns `Err` if the root element is not `<ForceField>`, a `<Type>` lacks the
+/// required `name`/`class`, `priority`/`layer` is present but non-integer, or
+/// the table is not valid ([`OplsTypingMeta::validate`]: an `overrides` naming
+/// a type the XML does not declare, or overrides forming a cycle).
+pub fn read_opls_typing_xml_str(xml: &str) -> Result<OplsTypingMeta, String> {
+    let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
+
+    let root = forcefield_root(&doc)?;
+
+    let mut meta = OplsTypingMeta::new();
+
+    for child in root.children().filter(|n| n.is_element()) {
+        if child.tag_name().name() != "AtomTypes" {
+            continue;
+        }
+        for t in child
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "Type")
+        {
+            let name = attr_str(&t, "name")?.to_owned();
+            let class = attr_str(&t, "class")?.to_owned();
+            let def = t.attribute("def").map(str::to_owned);
+            let overrides = t
+                .attribute("overrides")
+                .map(parse_overrides)
+                .unwrap_or_default();
+            let priority = match t.attribute("priority") {
+                None => None,
+                Some(s) => Some(s.parse::<i64>().map_err(|_| {
+                    format!(
+                        "<Type name={:?}> attribute 'priority' is not an integer: {:?}",
+                        name, s
+                    )
+                })?),
+            };
+            let layer = match t.attribute("layer") {
+                None => 0,
+                Some(s) => s.parse::<u32>().map_err(|_| {
+                    format!(
+                        "<Type name={:?}> attribute 'layer' is not an integer: {:?}",
+                        name, s
+                    )
+                })?,
+            };
+            meta.insert(
+                name,
+                OplsTypeRow {
+                    class,
+                    def,
+                    overrides,
+                    priority,
+                    layer,
+                },
+            );
+        }
+    }
+
+    meta.validate()?;
+    Ok(meta)
+}
+
+/// Split a comma-separated `overrides` attribute into trimmed, non-empty names.
+fn parse_overrides(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Parse [`MMFFParams`] from the `<AtomProperties>` section of an MMFF XML
+/// string — the typing half of a caller's MMFF XML (the potential half is
+/// [`read_forcefield_xml_str`]); `MMFF94Typifier::from_parts` takes the two.
+pub fn read_mmff_params_xml_str(xml: &str) -> Result<MMFFParams, String> {
+    let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
+
+    let root = forcefield_root(&doc)?;
+
+    let mut props = HashMap::new();
+
+    for child in root.children().filter(|n| n.is_element()) {
+        if child.tag_name().name() == "AtomProperties" {
+            for prop_node in child
+                .children()
+                .filter(|n| n.is_element() && n.tag_name().name() == "Prop")
+            {
+                let p = parse_atom_prop(&prop_node)?;
+                props.insert(p.type_id, p);
+            }
+        }
+    }
+
+    if props.is_empty() {
+        return Err("No <AtomProperties> found in XML".to_string());
+    }
+
+    Ok(MMFFParams::new(props))
+}
+
+fn parse_atom_prop(node: &roxmltree::Node) -> Result<MMFFAtomProp, String> {
+    Ok(MMFFAtomProp {
+        type_id: attr_u32(node, "type")?,
+        atno: attr_u32(node, "atno")?,
+        crd: attr_u32(node, "crd")?,
+        val: attr_u32(node, "val")?,
+        pilp: attr_u32(node, "pilp")?,
+        mltb: attr_u32(node, "mltb")?,
+        arom: attr_u32(node, "arom")?,
+        linh: attr_u32(node, "linh")?,
+        sbmb: attr_u32(node, "sbmb")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,7 +544,7 @@ mod tests {
 
         let ff = read_forcefield_xml_str(xml).unwrap();
         let style = ff.get_style("pair", "lj/cut").unwrap();
-        assert_eq!(style.params.get("cutoff"), Some(10.0));
+        assert_eq!(style.params().get("cutoff"), Some(10.0));
         assert_eq!(ff.get_pairtypes().len(), 1);
     }
 
@@ -497,8 +637,8 @@ mod tests {
         let ff = read_forcefield_xml_str(xml).unwrap();
         assert_eq!(ff.get_styles("bond").len(), 1);
         assert_eq!(ff.get_styles("angle").len(), 2);
-        assert_eq!(ff.get_styles("dihedral")[0].name, "mmff_torsion");
-        assert_eq!(ff.get_styles("improper")[0].name, "mmff_oop");
+        assert_eq!(ff.get_styles("dihedral")[0].name(), "mmff_torsion");
+        assert_eq!(ff.get_styles("improper")[0].name(), "mmff_oop");
 
         // Declared, but table-free: every parameter comes from the Frame.
         assert!(ff.get_bondtypes().is_empty());
@@ -519,8 +659,8 @@ mod tests {
 
         let ff = read_forcefield_xml_str(xml).unwrap();
         let style = ff.get_style("pair", "mmff_vdw").unwrap();
-        assert_eq!(style.params.get("B"), Some(0.12));
-        assert_eq!(style.params.get("Beta"), Some(12.0));
+        assert_eq!(style.params().get("B"), Some(0.12));
+        assert_eq!(style.params().get("Beta"), Some(12.0));
 
         let types = ff.get_pairtypes();
         assert_eq!(types.len(), 1);
@@ -545,5 +685,98 @@ mod tests {
         "#;
         let err = read_forcefield_xml_str(xml).unwrap_err();
         assert!(err.contains("missing attribute 'name'"));
+    }
+
+    // --- typing metadata readers ---------------------------------------
+
+    // --- OPLS typing metadata reader (the inline-fixture parse is
+    //     `test_opls_typing_overrides_and_layer_defaults`; the rest are edge
+    //     cases) ------------------------------------------------------------
+
+    #[test]
+    fn test_opls_typing_overrides_and_layer_defaults() {
+        // A modern row with overrides (of two declared types) + a legacy row
+        // with no `def`. (Inline edge fixture: exercises overrides splitting +
+        // def=None + default layer.)
+        let xml = r#"<ForceField name="OPLS-AA">
+          <AtomTypes>
+            <Type name="opls_135" class="CT" element="C" mass="12.011" def="[C;X4](C)(H)(H)H"/>
+            <Type name="opls_140" class="HC" element="H" mass="1.008" def="[H][C]"/>
+            <Type name="opls_144" class="HA" element="H" mass="1.008" def="[H][#6]"/>
+            <Type name="opls_146" class="HA" element="H" mass="1.008" def="[H][c]" overrides="opls_144, opls_140"/>
+            <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
+          </AtomTypes>
+        </ForceField>"#;
+        let meta = read_opls_typing_xml_str(xml).unwrap();
+
+        let r135 = meta.get("opls_135").unwrap();
+        assert_eq!(r135.class, "CT");
+        assert_eq!(r135.def.as_deref(), Some("[C;X4](C)(H)(H)H"));
+        assert!(r135.overrides.is_empty());
+        assert_eq!(r135.layer, 0);
+        assert_eq!(r135.priority, None);
+
+        let r146 = meta.get("opls_146").unwrap();
+        assert_eq!(
+            r146.overrides,
+            vec!["opls_144".to_string(), "opls_140".to_string()]
+        );
+
+        // Legacy row: no def.
+        let r001 = meta.get("opls_001").unwrap();
+        assert_eq!(r001.def, None);
+    }
+
+    #[test]
+    fn test_opls_typing_explicit_priority_and_layer() {
+        let xml = r#"<ForceField name="OPLS-AA">
+          <AtomTypes>
+            <Type name="opls_x" class="CT" def="[C]" priority="7" layer="2"/>
+          </AtomTypes>
+        </ForceField>"#;
+        let meta = read_opls_typing_xml_str(xml).unwrap();
+        let r = meta.get("opls_x").unwrap();
+        assert_eq!(r.priority, Some(7));
+        assert_eq!(r.layer, 2);
+    }
+
+    #[test]
+    fn test_opls_typing_missing_class_errors() {
+        let xml = r#"<ForceField name="OPLS-AA">
+          <AtomTypes><Type name="opls_135" def="[C]"/></AtomTypes>
+        </ForceField>"#;
+        let err = read_opls_typing_xml_str(xml).unwrap_err();
+        assert!(err.contains("class"), "err: {err}");
+    }
+
+    #[test]
+    fn test_opls_typing_bad_priority_errors() {
+        let xml = r#"<ForceField name="OPLS-AA">
+          <AtomTypes><Type name="opls_135" class="CT" priority="high"/></AtomTypes>
+        </ForceField>"#;
+        let err = read_opls_typing_xml_str(xml).unwrap_err();
+        assert!(err.contains("priority"), "err: {err}");
+    }
+
+    #[test]
+    fn test_opls_typing_wrong_root_errors() {
+        let err = read_opls_typing_xml_str(r#"<System name="x"/>"#).unwrap_err();
+        assert!(err.contains("ForceField"), "err: {err}");
+    }
+
+    /// The MMFF atom-property section, from a caller's XML.
+    #[test]
+    fn test_mmff_params_xml() {
+        let xml = r#"
+        <ForceField name="MMFF94">
+          <AtomProperties>
+            <Prop type="1" atno="6" crd="4" val="4" pilp="0" mltb="0" arom="0" linh="0" sbmb="0" />
+          </AtomProperties>
+        </ForceField>
+        "#;
+
+        let params = read_mmff_params_xml_str(xml).unwrap();
+        let p = params.get_prop(1).expect("type 1 is in the parsed table");
+        assert_eq!((p.atno, p.crd, p.val), (6, 4, 4));
     }
 }

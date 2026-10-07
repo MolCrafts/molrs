@@ -1369,8 +1369,8 @@ c3  c3  c3  hc
             "combined lj/cut/coul/long must not be registered"
         );
 
-        let coulomb = coul.params.get("coulomb").expect("coulomb");
-        let dielectric = coul.params.get("dielectric").expect("dielectric");
+        let coulomb = coul.params().get("coulomb").expect("coulomb");
+        let dielectric = coul.params().get("dielectric").expect("dielectric");
         assert!(
             (coulomb - 332.052_217_29).abs() < 1e-10,
             "coulomb={coulomb}"
@@ -1381,19 +1381,19 @@ c3  c3  c3  hc
             // A prmtop carries no cutoff (it lives in the mdin); the caller
             // declares one.
             assert!(
-                style.params.get("cutoff").is_none(),
+                style.params().get("cutoff").is_none(),
                 "{} carries an invented cutoff",
-                style.name
+                style.name()
             );
             assert!(
-                style.params.get("cutoff_lj").is_none(),
+                style.params().get("cutoff_lj").is_none(),
                 "{} still has cutoff_lj",
-                style.name
+                style.name()
             );
             assert!(
-                style.params.get("cutoff_coul").is_none(),
+                style.params().get("cutoff_coul").is_none(),
                 "{} still has cutoff_coul",
-                style.name
+                style.name()
             );
         }
     }
@@ -1765,7 +1765,7 @@ c3  c3  c3  hc
 
     /// A five-atom chamber (CHARMM) prmtop, hand-written: every number in it
     /// is hand-chosen, so each test below is a hand value.
-    const CHAMBER_MINI: &str = include_str!("../../../io/data/testdata/chamber_mini.parm7");
+    const CHAMBER_MINI: &str = include_str!("../../data/testdata/chamber_mini.parm7");
 
     fn type_params(ff: &ForceField, category: &str, style: &str) -> Vec<(String, Params)> {
         let mut rows: Vec<(String, Params)> = ff

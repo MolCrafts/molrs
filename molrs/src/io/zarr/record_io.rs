@@ -59,9 +59,9 @@ use zarrs::storage::{
     ListableStorageTraits, ReadableStorageTraits, ReadableWritableListableStorage,
 };
 
-use crate::io::mrec::FrameSequence;
+use crate::io::mrec::MrecReader;
 #[cfg(feature = "zarr")]
-use crate::io::mrec::{FrameSequenceWriter, SequenceSchema};
+use crate::io::mrec::{MrecWriter, SequenceSchema};
 use crate::io::zarr::forcefield_io::read_stored_forcefield_if_present;
 #[cfg(feature = "zarr")]
 use crate::io::zarr::forcefield_io::write_forcefield_group;
@@ -100,7 +100,7 @@ use molrs::store::{ObservableData, ObservableKind, ObservableRecord};
 ///
 /// The writer writes the reserved `meta` key over any producer copy:
 /// [`crate::store::MOLREC_VERSION`] (`molrec_version = 2`). A trajectory section is encoded by
-/// [`crate::io::mrec::FrameSequenceWriter`]. [`write_trajectory_file`] is the
+/// [`crate::io::mrec::MrecWriter`]. [`write_trajectory_file`] is the
 /// same write, with the record shaped to carry only a trajectory.
 ///
 /// # Errors
@@ -167,9 +167,9 @@ pub fn write_record_store(
     if let Some(trajectory) = &record.trajectory {
         // The `trajectory/` layout has exactly one encoder and it is not here:
         // this door mints the schema from the frames themselves and drives
-        // `FrameSequenceWriter`. The root erase above has already emptied the
+        // `MrecWriter`. The root erase above has already emptied the
         // node, which is what `create` insists on before it will mint.
-        let mut writer = FrameSequenceWriter::create(
+        let mut writer = MrecWriter::create(
             store.clone(),
             SequenceSchema::from_frames(&trajectory.frames)?,
         )?;
@@ -569,13 +569,13 @@ pub fn read_record_store(store: ReadableWritableListableStorage) -> Result<MolRe
             "system" => record.system = Some(read_frame(&path)?),
             "frame" => record.frame = Some(read_frame(&path)?),
             "trajectory" => {
-                // One decoder, and it is not here. `FrameSequence::open`
+                // One decoder, and it is not here. `MrecReader::open`
                 // resolves the same `/trajectory` node this child is, and a
                 // store still carrying the pre-0.14 `trajectory/frames/` tree
                 // errors out of it rather than reading back as empty.
                 // Demoted on the way in: the decoder is a read door, so it is
                 // handed the store's read-only view rather than this one.
-                let sequence = FrameSequence::open(store.clone().readable_listable())?;
+                let sequence = MrecReader::open(store.clone().readable_listable())?;
                 record.trajectory = Some(sequence.to_trajectory()?);
             }
             FORCEFIELD_GROUP => {
@@ -794,7 +794,7 @@ fn read_observables(
 ///
 /// Same path rules as [`write_record_file`]: conventional suffix `.mrec`,
 /// retired `.zarr` / `.zarr.zip` refused, a second write replaces the first.
-/// The frames are encoded by [`crate::io::mrec::FrameSequenceWriter`]; no
+/// The frames are encoded by [`crate::io::mrec::MrecWriter`]; no
 /// duplicate `frame/` snapshot is written beside them. `meta` is the record's
 /// identity document, stamped with `molrec_version` like every record's.
 ///
@@ -1029,7 +1029,7 @@ pub fn section_names(path: impl AsRef<Path>) -> Result<Vec<String>, MolRsError> 
 /// Same path rules as [`read_record_file`]. A store with no `trajectory`
 /// section returns an empty [`crate::store::Trajectory`], not an error. A store still
 /// carrying the pre-0.14 `trajectory/frames/` tree is refused by name — the
-/// same failure [`crate::io::mrec::FrameSequence::open`] reports. Only `meta`
+/// same failure [`crate::io::mrec::MrecReader::open`] reports. Only `meta`
 /// and the `trajectory` section are decoded.
 ///
 /// # Errors
@@ -1046,24 +1046,24 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
     {
         return Ok(Trajectory::default());
     }
-    FrameSequence::open(store.readable_listable())?.to_trajectory()
+    MrecReader::open(store.readable_listable())?.to_trajectory()
 }
 
-/// Open a lazy [`FrameSequence`] cursor on a filesystem path.
+/// Open a lazy [`MrecReader`] cursor on a filesystem path.
 ///
 /// Same path rules as [`read_record_file`]: conventional suffix `.mrec`,
 /// retired `.zarr` / `.zarr.zip` refused. The cursor is index-only at open;
-/// each [`FrameSequence::frame`] call decodes one committed frame.
+/// each [`MrecReader::frame`] call decodes one committed frame.
 ///
 /// This is the filesystem door for a caller that does not already hold a
 /// store — Python in particular, so the binder does not take a `zarrs`
-/// dependency of its own. [`FrameSequence::open`] remains the store-taking
+/// dependency of its own. [`MrecReader::open`] remains the store-taking
 /// door (in-memory stores, packed zip adapters).
 ///
 /// # Errors
 ///
 /// The same path errors as [`read_record_file`], plus
-/// [`FrameSequence::open`]'s store errors (legacy `trajectory/frames/`
+/// [`MrecReader::open`]'s store errors (legacy `trajectory/frames/`
 /// layout, schema mismatch, missing index).
 ///
 /// # Examples
@@ -1085,11 +1085,11 @@ pub fn read_trajectory_file(path: impl AsRef<Path>) -> Result<Trajectory, MolRsE
 /// # }
 /// ```
 #[cfg(feature = "filesystem")]
-pub fn open_trajectory_sequence(path: impl AsRef<Path>) -> Result<FrameSequence, MolRsError> {
+pub fn open_trajectory_sequence(path: impl AsRef<Path>) -> Result<MrecReader, MolRsError> {
     let path = path.as_ref();
     schema::validate_path(path)?;
     let store = Arc::new(FilesystemStore::new(path).map_err(zerr)?);
-    FrameSequence::open(store)
+    MrecReader::open(store)
 }
 
 pub(in crate::io::zarr) fn zerr(e: impl std::fmt::Display) -> MolRsError {
@@ -1870,7 +1870,7 @@ mod tests {
     ///
     /// This is the seam between two rules that only look compatible:
     /// [`write_record_store`] erases the root before writing, and
-    /// `FrameSequenceWriter::create` **refuses** a path that still holds a
+    /// `MrecWriter::create` **refuses** a path that still holds a
     /// `trajectory/step` array rather than silently overwriting somebody's
     /// run. Get the order or the prefix wrong and the second write is a hard
     /// `Err`, not a wrong answer — so the pin is that it succeeds *and* that
@@ -1914,7 +1914,7 @@ mod tests {
     }
 
     /// The eager door refuses a legacy store in the same words
-    /// `FrameSequence::open` uses (ac-019's second door, decision 10).
+    /// `MrecReader::open` uses (ac-019's second door, decision 10).
     ///
     /// Both doors lead to the one decoder, so this is not a second
     /// implementation of the check — it is the pin that the record reader
@@ -1945,7 +1945,7 @@ mod tests {
             .expect_err("the old layout must be refused, not read as an empty trajectory")
             .to_string();
         // The comparison glyph is the implementer's; everything around it is
-        // the pinned message, shared with the `FrameSequence::open` door.
+        // the pinned message, shared with the `MrecReader::open` door.
         assert!(
             message.contains("legacy layout (written by molrs"),
             "must name the layout: {message}"
@@ -2013,7 +2013,7 @@ mod tests {
         let array = Array::open(store.clone(), "/frame/atoms/x").unwrap();
         let metadata = serde_json::to_string(array.metadata()).unwrap();
         assert!(metadata.contains("numcodecs.shuffle") && metadata.contains("zstd"));
-        let sequence = FrameSequence::open(store).unwrap();
+        let sequence = MrecReader::open(store).unwrap();
         for (index, values) in FIXTURE_X.iter().enumerate() {
             let frame = sequence.frame(index as u64).unwrap().unwrap();
             assert_eq!(atoms_x(&frame), rounded(values));
@@ -2499,7 +2499,7 @@ mod tests {
                 version,
                 "meta comes back as stored, a missing key missing"
             );
-            let err = FrameSequenceWriter::open(Arc::new(FilesystemStore::new(&path).unwrap()))
+            let err = MrecWriter::open(Arc::new(FilesystemStore::new(&path).unwrap()))
                 .err()
                 .expect("an earlier version's store is not appended to")
                 .to_string();

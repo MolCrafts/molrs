@@ -79,7 +79,7 @@ class TestOneClass:
             __import__("molrs.views")
 
     def test_graph_out_paths_return_the_one_class(self) -> None:
-        from_smiles = molrs.io.SmilesIR("CO").to_atomistic()
+        from_smiles = molrs.io.smiles.SmilesIR("CO").to_atomistic()
         for graph in (
             from_smiles,
             from_smiles.copy(),
@@ -104,7 +104,7 @@ class TestProps:
         assert graph.props == {"label": "x"}
 
     def test_perception_output_keeps_props(self) -> None:
-        graph = molrs.io.SmilesIR("CO").to_atomistic()
+        graph = molrs.io.smiles.SmilesIR("CO").to_atomistic()
         graph.props["label"] = "methanol"
         perceived = molrs.perceive.Perceive().find_rings(graph)
         assert perceived.props == {"label": "methanol"}

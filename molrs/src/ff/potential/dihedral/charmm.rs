@@ -207,14 +207,14 @@ mod tests {
     /// A LAMMPS-read `dihedral_style charmm` field and a frame with its one
     /// dihedral at φ = 60°.
     fn lammps_charmm(w: &str) -> (crate::ff::forcefield::ForceField, Frame) {
-        use crate::ff::forcefield::readers::ForceFieldReader;
+        use crate::io::forcefield::readers::ForceFieldReader;
         use molrs::op::types::Idx;
         use molrs::store::Block;
         use ndarray::Array1;
         let text = format!(
             "special_bonds charmm\ndihedral_style charmm\ndihedral_coeff a-b-c-d 0.2 3 180 {w}\n"
         );
-        let ff = crate::ff::forcefield::readers::lammps::LammpsFfReader::new()
+        let ff = crate::io::forcefield::readers::lammps::LammpsFfReader::new()
             .read_str(&text)
             .unwrap();
         let mut dihedrals = Block::new();

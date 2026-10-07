@@ -85,6 +85,44 @@ pub fn to_atomistic(ir: &SmilesIR) -> Result<Atomistic, SmilesError> {
     Ok(builder.mol)
 }
 
+/// Read one molecule from a SMILES string: [`parse_smiles`] then
+/// [`to_atomistic`], refusing a string that names more than one.
+///
+/// Connectivity only: hydrogens implicit in the SMILES are **not** added and
+/// no coordinates are generated — filling open valences is a perception step
+/// and 3D embedding a conformer step, both separate.
+///
+/// # Errors
+///
+/// Every [`parse_smiles`] and [`to_atomistic`] error, and
+/// [`SmilesErrorKind::MultipleComponents`] when the string holds more than one
+/// `.`-separated component: such a string is a *set* of molecules, not a
+/// molecule — read each from the parsed IR's `components`.
+///
+/// # Examples
+///
+/// ```
+/// use molrs::io::smiles::read_smiles;
+///
+/// let mol = read_smiles("CCO").unwrap();
+/// assert_eq!(mol.n_atoms(), 3);
+/// assert!(read_smiles("CCO.O").is_err());
+/// ```
+///
+/// [`parse_smiles`]: crate::io::smiles::parse_smiles
+pub fn read_smiles(smiles: &str) -> Result<Atomistic, SmilesError> {
+    let ir = crate::io::smiles::parse_smiles(smiles)?;
+    if ir.components.len() != 1 {
+        return Err(SmilesError::new(
+            SmilesErrorKind::MultipleComponents(ir.components.len()),
+            ir.span,
+            smiles,
+            Notation::Smiles,
+        ));
+    }
+    to_atomistic(&ir)
+}
+
 /// Convert a parsed SMILES **fragment** IR into an [`Atomistic`] graph plus the
 /// descriptor map.
 ///

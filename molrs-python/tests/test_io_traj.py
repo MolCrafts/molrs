@@ -13,18 +13,18 @@ import pytest
 class TestReturnsReaderNotList:
     def test_dcd_returns_reader(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
-        assert isinstance(reader, molrs.io.TrajectoryReader)
+        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
         assert reader.n_frames == len(reader) > 0
 
     def test_lammps_returns_reader(self, water_lammpstrj):
         reader = molrs.io.read_lammps_trajectory(str(water_lammpstrj))
-        assert isinstance(reader, molrs.io.TrajectoryReader)
+        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
         assert reader.n_frames > 0
 
     def test_xyz_facade_returns_reader_but_toplevel_returns_list(self, water_xyz):
         path = str(water_xyz)
         reader = molrs.io.read_xyz_trajectory(path)
-        assert isinstance(reader, molrs.io.TrajectoryReader)
+        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
         eager = molrs.io.read_xyz_trajectory(path).read_all()
         assert isinstance(eager, list)
         assert reader.n_frames == len(eager)

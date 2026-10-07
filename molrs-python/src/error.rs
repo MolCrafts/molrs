@@ -3,7 +3,7 @@
 //!
 //! Each exception is declared under the module that owns it:
 //! `molrs.store.BlockDtypeError` (a column value the Store cannot hold),
-//! `molrs.units.UnitsError` and `molrs.io.SmilesError`. A subsystem whose
+//! `molrs.units.UnitsError` and `molrs.io.smiles.SmilesError`. A subsystem whose
 //! refusals form a family of their own (`molrs.ff.ir`'s `IrError` tree)
 //! declares it beside its bindings.
 //!
@@ -35,7 +35,7 @@ create_exception!(
 );
 
 create_exception!(
-    molrs.io,
+    molrs.io.smiles,
     SmilesError,
     PyValueError,
     "Raised when a SMILES / SMARTS / CGsmiles string is refused, by the \

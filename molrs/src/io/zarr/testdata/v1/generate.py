@@ -28,7 +28,7 @@ OUT = Path(sys.argv[1])
 
 
 def molecule():
-    mol = molrs.io.SmilesIR("CC(=O)NC").to_atomistic()
+    mol = molrs.io.smiles.SmilesIR("CC(=O)NC").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(mol)
     return mol
 

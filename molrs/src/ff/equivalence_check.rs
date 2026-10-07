@@ -60,17 +60,17 @@ use std::path::Path;
 use ndarray::Array1;
 use serde_json::{Value, json};
 
-use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::gromacs::GromacsTopFfReader;
-use crate::ff::forcefield::readers::opls::OplsXmlReader;
-use crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader;
-use crate::ff::forcefield::writers::ForceFieldWriter;
-use crate::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
-use crate::ff::forcefield::writers::xml::XmlForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{
+use crate::io::forcefield::readers::ForceFieldReader;
+use crate::io::forcefield::readers::gromacs::GromacsTopFfReader;
+use crate::io::forcefield::readers::opls::OplsXmlReader;
+use crate::io::forcefield::readers::prmtop::AmberPrmtopFfReader;
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
+use crate::io::forcefield::writers::xml::XmlForceFieldWriter;
+use crate::io::{
     forcefield::readers::lammps::LammpsFfReader, forcefield::writers::lammps::LammpsFfWriter,
     forcefield::writers::lammps::LammpsWriteOptions,
 };
@@ -144,33 +144,33 @@ pub(crate) fn sources() -> Vec<Source> {
         Source {
             name: "ff14sb",
             native: Native::Sander,
-            file: "molrs/src/ff/forcefield/readers/testdata/prmtop/ff14sb.parm7",
+            file: "molrs/src/io/forcefield/readers/testdata/prmtop/ff14sb.parm7",
             load: || {
                 prmtop(
-                    include_str!("forcefield/readers/testdata/prmtop/ff14sb.parm7"),
-                    include_str!("forcefield/readers/testdata/prmtop/ff14sb.rst7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/ff14sb.parm7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/ff14sb.rst7"),
                 )
             },
         },
         Source {
             name: "gaff2",
             native: Native::Sander,
-            file: "molrs/src/ff/forcefield/readers/testdata/prmtop/gaff2.parm7",
+            file: "molrs/src/io/forcefield/readers/testdata/prmtop/gaff2.parm7",
             load: || {
                 prmtop(
-                    include_str!("forcefield/readers/testdata/prmtop/gaff2.parm7"),
-                    include_str!("forcefield/readers/testdata/prmtop/gaff2.rst7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/gaff2.parm7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/gaff2.rst7"),
                 )
             },
         },
         Source {
             name: "chamber",
             native: Native::Sander,
-            file: "molrs/src/ff/forcefield/readers/testdata/prmtop/chamber.parm7",
+            file: "molrs/src/io/forcefield/readers/testdata/prmtop/chamber.parm7",
             load: || {
                 prmtop(
-                    include_str!("forcefield/readers/testdata/prmtop/chamber.parm7"),
-                    include_str!("forcefield/readers/testdata/prmtop/chamber.rst7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/chamber.parm7"),
+                    include_str!("../io/forcefield/readers/testdata/prmtop/chamber.rst7"),
                 )
             },
         },
@@ -183,11 +183,11 @@ pub(crate) fn sources() -> Vec<Source> {
         Source {
             name: "oplsaa",
             native: Native::Gromacs,
-            file: "molrs/src/ff/forcefield/readers/gromacs/testdata/opls.top",
+            file: "molrs/src/io/forcefield/readers/gromacs/testdata/opls.top",
             load: || {
                 gromacs(
-                    include_str!("forcefield/readers/gromacs/testdata/opls.top"),
-                    include_str!("forcefield/readers/gromacs/testdata/opls.gro"),
+                    include_str!("../io/forcefield/readers/gromacs/testdata/opls.top"),
+                    include_str!("../io/forcefield/readers/gromacs/testdata/opls.gro"),
                 )
             },
         },

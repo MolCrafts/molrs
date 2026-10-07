@@ -183,7 +183,7 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
 /// A *trajectory* here is any ordered sequence of [`Frame`]s addressed by a
 /// 0-based step index. The contract is deliberately **backend-neutral**: it
 /// says nothing about files, byte offsets or seeking, so a reader over a DCD
-/// file and a reader over a Zarr store (`io::zarr`'s `FrameSequence`) implement
+/// file and a reader over a Zarr store (`io::zarr`'s `MrecReader`) implement
 /// the same three methods. That is also why [`Reader`] — which demands an
 /// underlying `BufRead` — is **not** a supertrait of this one: a store-backed
 /// reader has no byte stream to name.
@@ -381,7 +381,7 @@ mod tests {
     /// A [`TrajectoryReader`] backed by nothing at all — no file, no
     /// `BufRead`, no `Seek`.
     ///
-    /// This is the guard for the Zarr-backed `FrameSequence`: a backend whose
+    /// This is the guard for the Zarr-backed `MrecReader`: a backend whose
     /// frames come out of a store rather than a byte stream must be able to
     /// implement [`TrajectoryReader`] without an underlying reader. It
     /// deliberately does **not** `impl Reader` (which would demand

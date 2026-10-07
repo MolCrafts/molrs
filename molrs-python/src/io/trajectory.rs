@@ -4,7 +4,7 @@
 //!
 //! The readers are private plumbing (`molrs._lib`): Python reaches them
 //! through `molrs.io.read_*_trajectory`, which wraps one or several of them
-//! in `molrs.io.TrajectoryReader`.
+//! in `molrs.io.trajectory.TrajectoryReader`.
 
 use crate::core::store::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
@@ -169,7 +169,7 @@ fn traj_getitem<R: TrajectoryReader>(inner: &mut R, key: &Bound<'_, PyAny>) -> P
 ///     auto-detected by extension and decompressed into memory.
 ///
 /// Private: Python reaches it through :func:`molrs.io.read_lammps_trajectory`, which
-/// wraps one per file in a :class:`molrs.io.TrajectoryReader`.
+/// wraps one per file in a :class:`molrs.io.trajectory.TrajectoryReader`.
 #[pyclass(module = "molrs._lib", name = "LAMMPSTrajReader", unsendable)]
 pub struct PyLAMMPSTrajReader {
     inner: Option<LAMMPSTrajReader<Box<dyn ReadSeek>>>,
@@ -312,7 +312,7 @@ impl PyLAMMPSTrajReader {
 ///     Path to a ``.dcd`` file.
 ///
 /// Private: Python reaches it through :func:`molrs.io.read_dcd_trajectory`, which
-/// wraps one per file in a :class:`molrs.io.TrajectoryReader`.
+/// wraps one per file in a :class:`molrs.io.trajectory.TrajectoryReader`.
 #[pyclass(module = "molrs._lib", name = "DCDTrajReader", unsendable)]
 pub struct PyDcdTrajReader {
     inner: Option<DcdReader<Box<dyn ReadSeek>>>,
@@ -451,7 +451,7 @@ impl PyDcdTrajReader {
 ///     Path to a multi-frame ``.xyz`` file.
 ///
 /// Private: Python reaches it through :func:`molrs.io.read_xyz_trajectory`,
-/// which wraps one per file in a :class:`molrs.io.TrajectoryReader`.
+/// which wraps one per file in a :class:`molrs.io.trajectory.TrajectoryReader`.
 #[pyclass(module = "molrs._lib", name = "XYZTrajReader", unsendable)]
 pub struct PyXYZTrajReader {
     inner: Option<XYZReader<Box<dyn ReadSeek>>>,

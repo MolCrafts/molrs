@@ -8,9 +8,10 @@
 //! rules of [`crate::ff::params::oplsaa_typing`], joined to the atom rows by
 //! name.
 //!
-//! The XML readers are not gone: [`OPLSAATypifier::from_xml_str`](super::OPLSAATypifier::from_xml_str)
-//! still parses a caller's own OPLS / CL&P / CL&Pol file, layers and all. What is
-//! gone is molrs re-parsing *its own* parameter set at runtime.
+//! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is still read —
+//! by `molrs::io::forcefield` — and handed to
+//! [`OPLSAATypifier::new`](super::OPLSAATypifier::new). What is gone is molrs
+//! re-parsing *its own* parameter set at runtime.
 
 use std::collections::{HashMap, HashSet};
 

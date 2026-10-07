@@ -12,8 +12,8 @@
 //! | [`params`]         | `ff::params`         | `molrs.ff.params`      |
 //! | [`scale_lj`]       | `ff::scale_lj`       | `molrs.ff.scale_lj`    |
 //!
-//! The force-field file formats are `ff::forcefield`'s (they map files onto
-//! the force-field IR); structure and trajectory formats are `molrs.io`'s.
+//! No file format is here: force-field files, like every other file, are
+//! `molrs.io`'s (`crate::io::forcefield`).
 
 pub mod charge;
 pub mod forcefield;

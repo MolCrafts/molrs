@@ -8,13 +8,13 @@
 //!
 //! - [`Trajectory`] — the **eager in-memory carrier**. Every frame is
 //!   materialized in a `Vec<Frame>`; it does not know a store exists.
-//! - [`FrameSequence`] — the **lazy store cursor**. It opens index-only (each
+//! - [`MrecReader`] — the **lazy store cursor**. It opens index-only (each
 //!   section's `step_index` and `offset`, plus the schema) and reads **one**
-//!   frame per call. [`FrameSequence::to_trajectory`] is the named lazy → eager
+//!   frame per call. [`MrecReader::to_trajectory`] is the named lazy → eager
 //!   conversion, not a second representation.
-//! - [`FrameSequenceWriter`] — the sequence's **streaming producer**. One frame
-//!   per [`append`](FrameSequenceWriter::append); complete inner chunks land
-//!   on their own, [`flush`](FrameSequenceWriter::flush) commits whatever is
+//! - [`MrecWriter`] — the sequence's **streaming producer**. One frame
+//!   per [`append`](MrecWriter::append); complete inner chunks land
+//!   on their own, [`flush`](MrecWriter::flush) commits whatever is
 //!   still buffered.
 //!
 //! The `trajectory/` group on disk is the sequence's serialized form; none of
@@ -22,7 +22,7 @@
 //!
 //! # Error vocabulary
 //!
-//! Every [`FrameSequence`] and [`FrameSequenceWriter`] door yields
+//! Every [`MrecReader`] and [`MrecWriter`] door yields
 //! [`MolRsError`]. The three [`TrajectoryReader`] methods keep `io::Result` and
 //! convert `MolRsError` in at the boundary — **lossy, and deliberately so**:
 //! the trait is the shape every backend shares and must not be captured by one
@@ -104,8 +104,8 @@
 //! of frames of the representative row count (see [`SequenceSchema`]), so a
 //! frame decodes from exactly its own chunk and a commit at a chunk boundary
 //! rewrites nothing. The writer lands complete chunks on its own cadence
-//! ([`FrameSequenceWriter::with_flush_every`] overrides it); an explicit
-//! [`flush`](FrameSequenceWriter::flush) may land a partially filled trailing
+//! ([`MrecWriter::with_flush_every`] overrides it); an explicit
+//! [`flush`](MrecWriter::flush) may land a partially filled trailing
 //! chunk, whose superseded copy then stays in the shard as dead bytes — bounded
 //! by one chunk per column per flush, and never cleaned up, because the
 //! whole-shard rewrite that would clean it is the one write that can destroy
@@ -118,7 +118,7 @@
 //! attribute; anything a crash left longer is invisible, and a reopened
 //! writer rolls it back before appending. An explicit `flush` / `close` is durable (the touched
 //! files are synced before `step` moves) unless
-//! [`with_durable(false)`](FrameSequenceWriter::with_durable) says otherwise;
+//! [`with_durable(false)`](MrecWriter::with_durable) says otherwise;
 //! the automatic chunk-boundary landings are not synced.
 //!
 //! [`Trajectory`]: molrs::store::Trajectory
@@ -1577,7 +1577,7 @@ impl SequenceSchema {
 ///
 /// A missing pin is `Ok(None)`, not an error, because it is the one fact the
 /// two doors answer differently: [`schema_of`] refuses it, and
-/// [`FrameSequence::open`] derives from the store instead.
+/// [`MrecReader::open`] derives from the store instead.
 fn pinned_schema<S>(store: &Arc<S>) -> Result<Option<SequenceSchema>, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + 'static,
@@ -3579,7 +3579,7 @@ struct PendingFrame {
 /// [`flush`](Self::flush) commits the rest, `close(self)` ends the run.
 ///
 /// One of the three access forms of a single object — the eager in-memory
-/// carrier is `Trajectory`, the lazy store cursor is [`FrameSequence`], and
+/// carrier is `Trajectory`, the lazy store cursor is [`MrecReader`], and
 /// this is the writer that produces what that cursor reads.
 ///
 /// **No `Drop`.** Closing is [`close`](Self::close), which consumes the writer
@@ -3598,7 +3598,7 @@ struct PendingFrame {
 /// storage-backed ones arrive as the [`MolRsError::Zarr`] variant carrying a
 /// message that names the block, column, metadata key or array path that
 /// disagreed.
-pub struct FrameSequenceWriter {
+pub struct MrecWriter {
     store: ReadableWritableListableStorage,
     /// The concrete positional-write store behind `store`, when this writer
     /// was opened by path — the only store that can be asked to sync.
@@ -3653,7 +3653,7 @@ impl Attached {
     }
 }
 
-impl FrameSequenceWriter {
+impl MrecWriter {
     fn assemble(
         store: ReadableWritableListableStorage,
         #[cfg(feature = "filesystem")] positional: Option<
@@ -4693,7 +4693,7 @@ where
 // Reader
 // ---------------------------------------------------------------------------
 
-/// The index of one block section, as [`FrameSequence::open`] cached it.
+/// The index of one block section, as [`MrecReader::open`] cached it.
 enum BlockIndex {
     /// The general case: the section's own `step_index` and CSR `offset`.
     Sparse {
@@ -4908,7 +4908,7 @@ impl ColumnReader {
     }
 }
 
-/// The lazily opened arrays and caches behind a [`FrameSequence`].
+/// The lazily opened arrays and caches behind a [`MrecReader`].
 #[derive(Default)]
 struct ReadState {
     columns: BTreeMap<String, ColumnReader>,
@@ -4924,7 +4924,7 @@ struct ReadState {
 /// read.
 ///
 /// One of the three access forms of a single object — `Trajectory` is the eager
-/// in-memory carrier that materializes every frame, [`FrameSequenceWriter`] is
+/// in-memory carrier that materializes every frame, [`MrecWriter`] is
 /// the streaming producer, and this reads what that writer produced without
 /// materializing anything it was not asked for. [`to_trajectory`](Self::to_trajectory)
 /// is the named lazy → eager conversion.
@@ -4941,7 +4941,7 @@ struct ReadState {
 /// boundary — lossy, and deliberately so: the trait is the shape every
 /// trajectory backend shares and must not be captured by one backend's error
 /// type.
-pub struct FrameSequence {
+pub struct MrecReader {
     /// The read-only view of the store. A read door keeps no write capability,
     /// which is also what lets a packed `.mrec.zip` be opened through it.
     store: ReadableListableStorage,
@@ -4957,7 +4957,7 @@ pub struct FrameSequence {
     state: Mutex<ReadState>,
 }
 
-impl FrameSequence {
+impl MrecReader {
     /// Open a sequence for reading, taking only its indices.
     ///
     /// Index-only: the schema attributes plus each section's `step_index` and
@@ -5540,21 +5540,21 @@ fn latest_update(step_index: &[u64], index: u64) -> Option<usize> {
     }
 }
 
-impl TrajectoryReader for FrameSequence {
-    /// Already cached: [`FrameSequence::open`] is the index-only read, so
+impl TrajectoryReader for MrecReader {
+    /// Already cached: [`MrecReader::open`] is the index-only read, so
     /// there is nothing left for this to build.
     fn build_index(&mut self) -> std::io::Result<()> {
         Ok(())
     }
 
-    /// [`FrameSequence::frame`] behind the backend-neutral trait: the same
+    /// [`MrecReader::frame`] behind the backend-neutral trait: the same
     /// frame, and the same `Ok(None)` past the commit marker.
     fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
         self.frame(step as u64).map_err(std::io::Error::other)
     }
 
     /// Committed frames — the length of `trajectory/step` as
-    /// [`FrameSequence::open`] read it.
+    /// [`MrecReader::open`] read it.
     fn len(&mut self) -> std::io::Result<usize> {
         Ok(self.steps.len())
     }
@@ -5573,7 +5573,7 @@ impl TrajectoryReader for FrameSequence {
 /// these tests read `trajectory/step`, `trajectory/<block>/offset`,
 /// `trajectory/<block>/step_index`, `trajectory/box/step_index` and
 /// `trajectory/meta/<key>` directly through `zarrs`, in addition to reading
-/// frames back through [`FrameSequence`]. A round trip that agreed with itself
+/// frames back through [`MrecReader`]. A round trip that agreed with itself
 /// while writing a private layout would satisfy neither molrec nor molpy.
 ///
 /// **No tolerances anywhere.** Every value assertion is `assert_eq!` on the
@@ -5609,7 +5609,7 @@ mod tests {
     use crate::io::reader::TrajectoryReader;
     use crate::io::zarr::store::PositionalWriteStore;
 
-    use super::{FrameSequence, FrameSequenceWriter, SequenceSchema};
+    use super::{MrecReader, MrecWriter, SequenceSchema};
 
     // -- fixtures -----------------------------------------------------------
 
@@ -5705,7 +5705,7 @@ mod tests {
     /// Mint from the union of `frames`, append them all in order, and close.
     fn write_all(store: &ReadableWritableListableStorage, frames: &[Frame]) {
         let schema = SequenceSchema::from_frames(frames).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         for frame in frames {
             writer.append(frame).unwrap();
         }
@@ -5721,7 +5721,7 @@ mod tests {
         chunks_per_shard: u64,
     ) {
         let schema = SequenceSchema::from_frames(frames).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema)
+        let mut writer = MrecWriter::create(store.clone(), schema)
             .unwrap()
             .with_rows_per_chunk(rows_per_chunk)
             .unwrap()
@@ -5753,12 +5753,12 @@ mod tests {
             .expect("the group metadata rewrites without the attribute");
     }
 
-    fn open_sequence(store: &ReadableWritableListableStorage) -> FrameSequence {
-        FrameSequence::open(store.clone()).unwrap()
+    fn open_sequence(store: &ReadableWritableListableStorage) -> MrecReader {
+        MrecReader::open(store.clone()).unwrap()
     }
 
     /// `frame(i)`, asserting the frame is present.
-    fn frame_at(seq: &mut FrameSequence, index: u64) -> Frame {
+    fn frame_at(seq: &mut MrecReader, index: u64) -> Frame {
         seq.frame(index)
             .expect("reading a frame must not error")
             .expect("frame is present")
@@ -5766,7 +5766,7 @@ mod tests {
 
     /// The committed frame count, taken through the `TrajectoryReader` door —
     /// the surface `FrameIterator` and every generic consumer already use.
-    fn committed_len(seq: &mut FrameSequence) -> usize {
+    fn committed_len(seq: &mut MrecReader) -> usize {
         TrajectoryReader::len(seq).expect("len must not error")
     }
 
@@ -6125,12 +6125,9 @@ mod tests {
             let dir = TempDir::new().unwrap();
             let store = regular_store(&dir);
             edit_attributes(&store, &section, edit);
-            let err = FrameSequence::open(store.clone())
-                .err()
-                .unwrap()
-                .to_string();
+            let err = MrecReader::open(store.clone()).err().unwrap().to_string();
             assert!(err.contains(ATOMS), "{err}");
-            assert!(FrameSequenceWriter::open(store).is_err());
+            assert!(MrecWriter::open(store).is_err());
         }
     }
 
@@ -6156,7 +6153,7 @@ mod tests {
             a.insert("uniform_rows".into(), serde_json::json!(1));
             a.insert("dense_updates".into(), serde_json::json!(true));
         });
-        let err = FrameSequence::open(store).err().unwrap().to_string();
+        let err = MrecReader::open(store).err().unwrap().to_string();
         assert!(err.contains("ghost") && err.contains("no columns"), "{err}");
     }
 
@@ -6172,15 +6169,12 @@ mod tests {
         edit_attributes(&store, TRAJ, |a| {
             a.remove("nstep");
         });
-        let err = FrameSequence::open(store.clone())
-            .err()
-            .unwrap()
-            .to_string();
+        let err = MrecReader::open(store.clone()).err().unwrap().to_string();
         assert!(err.contains("nstep"), "{err}");
         edit_attributes(&store, TRAJ, |a| {
             a.insert("nstep".into(), serde_json::json!(-1));
         });
-        assert!(FrameSequence::open(store).is_err());
+        assert!(MrecReader::open(store).is_err());
     }
 
     /// An undefined trajectory cell is periodic on no axis: a writer refuses
@@ -6196,8 +6190,7 @@ mod tests {
         let mut frame = atoms_frame(&[1.0]);
         frame.simbox = Some(undefined([false, false, true]));
         let mut writer =
-            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
-                .unwrap();
+            MrecWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap()).unwrap();
         assert!(writer.append(&frame).is_err());
 
         let dir = TempDir::new().unwrap();
@@ -6222,7 +6215,7 @@ mod tests {
             .attributes_mut()
             .insert("boundary".into(), serde_json::json!([true, false, false]));
         group.store_metadata().unwrap();
-        let refused = match FrameSequence::open(store.clone()) {
+        let refused = match MrecReader::open(store.clone()) {
             Err(_) => true,
             Ok(seq) => seq.box_at(0).is_err(),
         };
@@ -6506,11 +6499,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let frames = ragged_frames();
-        let mut writer = FrameSequenceWriter::create(
-            store.clone(),
-            SequenceSchema::from_frames(&frames).unwrap(),
-        )
-        .unwrap();
+        let mut writer =
+            MrecWriter::create(store.clone(), SequenceSchema::from_frames(&frames).unwrap())
+                .unwrap();
         // Steps 0, 1, 5: not a progression, so `step` becomes an array.
         for (frame, step) in frames.iter().zip([0i64, 1, 5]) {
             writer.append_at(frame, step, None).unwrap();
@@ -6708,7 +6699,7 @@ mod tests {
         let store = store_in(&dir);
         let declared = atoms_frame(&[1.0, 2.0]);
         let schema = SequenceSchema::from_frame(&declared).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
 
         let mut extra = atoms_frame(&[3.0, 4.0]);
         extra.insert(BONDS, block_with(I, uint_column(&[0, 1])));
@@ -6726,7 +6717,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
 
         let mut wider = Block::new();
         wider.insert_column(X, float_column(&[3.0, 4.0])).unwrap();
@@ -6751,7 +6742,7 @@ mod tests {
         let mut declared = Frame::new();
         declared.insert(ATOMS, block_with(PROBE, float_column(&[1.0, 2.0])));
         let schema = SequenceSchema::from_frame(&declared).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
 
         let mut frame = Frame::new();
         frame.insert(ATOMS, block_with(PROBE, uint_column(&[3, 4])));
@@ -6777,7 +6768,7 @@ mod tests {
             ),
         );
         let schema = SequenceSchema::from_frame(&declared).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
 
         let mut widened = Frame::new();
         widened.insert(
@@ -6803,7 +6794,7 @@ mod tests {
         let mut bonded = atoms_frame(&[10.0, 11.0]);
         bonded.insert(BONDS, block_with(I, uint_column(&[0, 1])));
         let schema = SequenceSchema::from_frames(&[atoms_frame(&[1.0, 2.0]), bonded]).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
 
         writer
             .append(&atoms_frame(&[1.0, 2.0]))
@@ -6951,7 +6942,7 @@ mod tests {
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
         let schema = SequenceSchema::from_frame(&declaring).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
         writer.append(&declaring).unwrap();
 
         let message = writer
@@ -6978,7 +6969,7 @@ mod tests {
             .declare_meta_with_fill(KEY, MetaValue::F64(FILL))
             .unwrap();
 
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         writer.append(&declaring).unwrap();
         writer.append(&atoms_frame(&[2.0])).unwrap();
         writer.close().unwrap();
@@ -7010,7 +7001,7 @@ mod tests {
         schema
             .declare_meta_with_fill("count", MetaValue::U64(u64::MAX))
             .unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         writer.append(&atoms_frame(&[1.0])).unwrap();
         writer.close().unwrap();
 
@@ -7029,12 +7020,9 @@ mod tests {
         let mut group = Group::open(store.clone(), TRAJ).unwrap();
         group.attributes_mut()[SCHEMA_ATTRIBUTE]["meta"][KEY]["fill"] = serde_json::Value::Null;
         group.store_metadata().unwrap();
-        let err = FrameSequence::open(store.clone())
-            .err()
-            .unwrap()
-            .to_string();
+        let err = MrecReader::open(store.clone()).err().unwrap().to_string();
         assert!(err.contains(KEY), "{err}");
-        assert!(FrameSequenceWriter::open(store).is_err());
+        assert!(MrecWriter::open(store).is_err());
     }
 
     /// Declared meta keys read back in `declare_meta` order, not the order the
@@ -7054,11 +7042,11 @@ mod tests {
         frame.meta.insert("zeta", MetaValue::F64(1.0));
         frame.meta.insert("alpha", MetaValue::F64(2.0));
 
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         writer.append(&frame).unwrap();
         writer.close().unwrap();
 
-        let seq = FrameSequence::open(store).unwrap();
+        let seq = MrecReader::open(store).unwrap();
         let back = seq.frame(0).unwrap().expect("frame 0 is present");
         assert_eq!(
             back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
@@ -7086,7 +7074,7 @@ mod tests {
         let before = file_map(dir.path());
 
         let schema = SequenceSchema::from_frames(&frames).unwrap();
-        let message = FrameSequenceWriter::create(store, schema)
+        let message = MrecWriter::create(store, schema)
             .err()
             .expect("create must refuse an occupied store")
             .to_string();
@@ -7125,7 +7113,7 @@ mod tests {
             .store_metadata()
             .unwrap();
 
-        let message = FrameSequenceWriter::open(store)
+        let message = MrecWriter::open(store)
             .err()
             .expect("open must refuse a store that no longer matches its schema")
             .to_string();
@@ -7185,7 +7173,7 @@ mod tests {
         write_all(&store, &frames);
         strip_schema_attribute(&store);
 
-        let mut seq = FrameSequence::open(store.clone())
+        let mut seq = MrecReader::open(store.clone())
             .expect("a conforming store reads without the writer's schema pin");
         assert_eq!(
             committed_len(&mut seq),
@@ -7207,7 +7195,7 @@ mod tests {
         }
     }
 
-    /// The strict half: [`FrameSequenceWriter::open`] on that same stripped
+    /// The strict half: [`MrecWriter::open`] on that same stripped
     /// store still errs, naming [`SCHEMA_ATTRIBUTE`].
     ///
     /// A writer needs the *pinned* declaration — the fills for omitted meta keys
@@ -7221,7 +7209,7 @@ mod tests {
         write_all(&store, &ragged_frames());
         strip_schema_attribute(&store);
 
-        let message = FrameSequenceWriter::open(store)
+        let message = MrecWriter::open(store)
             .err()
             .expect("a writer may not reopen a sequence whose schema pin is gone")
             .to_string();
@@ -7248,7 +7236,7 @@ mod tests {
             .collect();
 
         let schema = SequenceSchema::from_frames(&frames).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         for frame in &frames[..3] {
             writer.append(frame).unwrap();
         }
@@ -7289,7 +7277,7 @@ mod tests {
             .collect();
 
         let schema = SequenceSchema::from_frames(&frames).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema)
+        let mut writer = MrecWriter::create(store.clone(), schema)
             .unwrap()
             .with_rows_per_chunk(4)
             .unwrap()
@@ -7302,7 +7290,7 @@ mod tests {
         let column = format!("{TRAJ}/{ATOMS}/{X}");
         let frozen = extents(&store, &column);
 
-        let mut writer = FrameSequenceWriter::open(store.clone()).unwrap();
+        let mut writer = MrecWriter::open(store.clone()).unwrap();
         for frame in &frames[2..] {
             writer.append(frame).unwrap();
         }
@@ -7363,7 +7351,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
         writer.append(&atoms_frame(&[1.0, 2.0])).unwrap();
 
         let message = writer
@@ -7386,7 +7374,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
-        FrameSequenceWriter::create(store.clone(), schema)
+        MrecWriter::create(store.clone(), schema)
             .unwrap()
             .close()
             .unwrap();
@@ -7567,7 +7555,7 @@ mod tests {
 
         let frame = atoms_frame(&[1.0, 2.0]);
         let schema = SequenceSchema::from_frame(&frame).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
         writer.append(&frame).unwrap();
         recorder.clear();
         writer.flush().unwrap();
@@ -7618,7 +7606,7 @@ mod tests {
 
         let eager_dir = TempDir::new().unwrap();
         let eager_store = store_in(&eager_dir);
-        let mut eager = FrameSequenceWriter::create(eager_store.clone(), schema)
+        let mut eager = MrecWriter::create(eager_store.clone(), schema)
             .unwrap()
             .with_rows_per_chunk(ROWS_PER_CHUNK)
             .unwrap()
@@ -7634,7 +7622,7 @@ mod tests {
 
         let lazy_dir = TempDir::new().unwrap();
         let lazy_store = store_in(&lazy_dir);
-        let mut lazy = FrameSequenceWriter::create(
+        let mut lazy = MrecWriter::create(
             lazy_store.clone(),
             SequenceSchema::from_frames(&frames).unwrap(),
         )
@@ -7720,7 +7708,7 @@ mod tests {
             )
         };
         let schema = SequenceSchema::from_frame(&frame_of(0)).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema)
+        let mut writer = MrecWriter::create(store, schema)
             .unwrap()
             .with_rows_per_chunk(ROWS)
             .unwrap()
@@ -7768,7 +7756,7 @@ mod tests {
     /// (ac-023, decision 13).
     ///
     /// Every number below is hard-coded from the layout rather than measured.
-    /// [`FrameSequenceWriter::with_chunks_per_shard`] exists for this test: a
+    /// [`MrecWriter::with_chunks_per_shard`] exists for this test: a
     /// 256 MiB shard would swallow the whole fixture, so `k` is pressed down
     /// to 4 and the store really does span several shards. With `R = 8` rows
     /// per inner chunk, one shard spans `R * k = 32` rows, and every array
@@ -7879,7 +7867,7 @@ mod tests {
     // I. Reader — one cursor, two access shapes
     // =======================================================================
 
-    /// `FrameIterator` over a `FrameSequence` yields exactly what a `frame(i)`
+    /// `FrameIterator` over a `MrecReader` yields exactly what a `frame(i)`
     /// loop yields (ac-014).
     ///
     /// This is the payoff of dropping the `Reader` supertrait from
@@ -7960,7 +7948,7 @@ mod tests {
         step.store_array_subset(&ArraySubset::new_with_shape(vec![1]), &[0i64])
             .unwrap();
 
-        let message = FrameSequence::open(store)
+        let message = MrecReader::open(store)
             .err()
             .expect("the old layout must be refused, not read as empty")
             .to_string();
@@ -7988,7 +7976,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
-        let writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let writer = MrecWriter::create(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
         // Every writer stamps the version, the streaming one included.
@@ -8016,7 +8004,7 @@ mod tests {
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let mut doc = serde_json::Map::new();
         doc.insert("creator".into(), serde_json::json!({"name": "test"}));
-        let writer = FrameSequenceWriter::create(store.clone(), schema)
+        let writer = MrecWriter::create(store.clone(), schema)
             .unwrap()
             .with_meta(&doc)
             .unwrap();
@@ -8035,7 +8023,7 @@ mod tests {
         let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
         let frame = atoms_frame(&values);
         let schema = SequenceSchema::from_frame(&frame).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema.clone()).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema.clone()).unwrap();
         writer.append(&frame).unwrap();
         // 4 MiB / 8000 B = 524, rounded up to a multiple of 3 frames per
         // 2100-row... no: 1000-row frames reach the 16 KiB floor at 3 frames
@@ -8045,7 +8033,7 @@ mod tests {
 
         let dir2 = TempDir::new().unwrap();
         let store2 = store_in(&dir2);
-        let mut writer = FrameSequenceWriter::create(store2.clone(), schema)
+        let mut writer = MrecWriter::create(store2.clone(), schema)
             .unwrap()
             .with_flush_every(2)
             .unwrap();
@@ -8118,13 +8106,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let frames = ragged_frames();
-        let mut writer = FrameSequenceWriter::create(
-            store.clone(),
-            SequenceSchema::from_frames(&frames).unwrap(),
-        )
-        .unwrap()
-        .with_flush_every(1)
-        .unwrap();
+        let mut writer =
+            MrecWriter::create(store.clone(), SequenceSchema::from_frames(&frames).unwrap())
+                .unwrap()
+                .with_flush_every(1)
+                .unwrap();
         for frame in &frames {
             writer.append(frame).unwrap();
         }
@@ -8160,7 +8146,7 @@ mod tests {
             vec![20.0, 21.0, 22.0, 23.0]
         );
 
-        let mut writer = FrameSequenceWriter::open(store.clone()).unwrap();
+        let mut writer = MrecWriter::open(store.clone()).unwrap();
         writer.append(&atoms_frame(&[30.0, 31.0])).unwrap();
         writer.close().unwrap();
 
@@ -8245,7 +8231,7 @@ mod tests {
         let mut frame = Frame::new();
         frame.insert("grid", grid);
         let schema = SequenceSchema::from_frame(&frame).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
         writer.append(&frame).unwrap();
         let mut wrong = Frame::new();
         wrong.insert("grid", block_with("rho", float_column(&[1.0, 2.0])));
@@ -8263,7 +8249,7 @@ mod tests {
         let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         schema.declare_meta("com", "f64x3").unwrap();
         schema.declare_meta("count", "i64").unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         let mut frame = atoms_frame(&[1.0]);
         frame
             .meta
@@ -8361,7 +8347,7 @@ mod tests {
         second.insert(BONDS, block_with(I, uint_column(&[0])));
         let mut third = atoms_frame(&[3.0]);
         third.insert(BONDS, block_with(I, uint_column(&[0])));
-        let mut writer = FrameSequenceWriter::create(
+        let mut writer = MrecWriter::create(
             store.clone(),
             SequenceSchema::from_frames(&[frame.clone(), second.clone()]).unwrap(),
         )
@@ -8623,7 +8609,7 @@ mod tests {
             .unwrap();
         schema.declare_nullable(ATOMS, PROBE).unwrap();
 
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         writer
             .append(&masked_frame(&[1.0, 0.0, 0.0], &MASK))
             .unwrap();
@@ -8646,7 +8632,7 @@ mod tests {
             .declare_column(ATOMS, PROBE, DType::Float, &[])
             .unwrap();
 
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         let err = writer
             .append(&masked_frame(&[1.0, 0.0, 0.0], &MASK))
             .unwrap_err()
@@ -8776,7 +8762,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&precise_frame(&[1.0], 1e-3)).unwrap();
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         // No precision stated: the pin rounds it.
         writer.append(&atoms_frame(&[1.000_1])).unwrap();
         let err = writer
@@ -8789,7 +8775,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
-        let mut writer = FrameSequenceWriter::create(store, schema).unwrap();
+        let mut writer = MrecWriter::create(store, schema).unwrap();
         assert!(writer.append(&precise_frame(&[1.0], 1e-3)).is_err());
     }
 
@@ -8824,7 +8810,7 @@ mod tests {
         let store = store_in(&dir);
         let frame = precise_frame(&[1.0, 2.0], 1e-3);
         let mut writer =
-            FrameSequenceWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
+            MrecWriter::create(store.clone(), SequenceSchema::from_frame(&frame).unwrap())
                 .unwrap()
                 .with_compression(super::Compression::Gzip(5))
                 .unwrap();
@@ -8930,7 +8916,7 @@ mod tests {
         let first = referencing_frame(3, &[2]);
         let schema = SequenceSchema::from_frame(&first).unwrap();
         assert_eq!(schema.target("refs", "site"), Some(ATOMS));
-        let mut writer = FrameSequenceWriter::create(store.clone(), schema).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), schema).unwrap();
         writer.append(&first).unwrap();
         // `atoms` shrinks to 2 rows while `refs` carries forward pointing at
         // row 2: the resolved frame breaks the reference.
@@ -9023,7 +9009,7 @@ mod tests {
     fn write_aligned(frames: &[Frame]) -> (TempDir, ReadableWritableListableStorage) {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
-        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), aligned_schema()).unwrap();
         for frame in frames {
             writer.append(frame).unwrap();
         }
@@ -9031,7 +9017,7 @@ mod tests {
         (dir, store)
     }
 
-    fn types_at(seq: &mut FrameSequence, index: u64) -> Option<Vec<String>> {
+    fn types_at(seq: &mut MrecReader, index: u64) -> Option<Vec<String>> {
         frame_at(seq, index).get(TYPES).map(|b| {
             b.get("type")
                 .and_then(|c| c.as_string())
@@ -9082,7 +9068,7 @@ mod tests {
     fn a_writer_refuses_a_frame_that_breaks_the_alignment() {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
-        let mut writer = FrameSequenceWriter::create(store.clone(), aligned_schema()).unwrap();
+        let mut writer = MrecWriter::create(store.clone(), aligned_schema()).unwrap();
         writer
             .append(&aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])))
             .unwrap();
@@ -9114,7 +9100,7 @@ mod tests {
         // The aligned block presented before its target exists.
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
-        let mut writer = FrameSequenceWriter::create(store, aligned_schema()).unwrap();
+        let mut writer = MrecWriter::create(store, aligned_schema()).unwrap();
         let mut types_only = Frame::new();
         types_only.insert(TYPES, block_with("type", string_column(&["A"])));
         assert!(writer.append(&types_only).is_err());
@@ -9127,7 +9113,7 @@ mod tests {
             aligned_frame(&[0.0, 1.0], Some(&["A", "B"])),
         ];
         let (_dir, store) = write_aligned(&frames);
-        assert!(FrameSequence::open(store.clone()).is_ok());
+        assert!(MrecReader::open(store.clone()).is_ok());
         // Tamper: `atom_types/offset` so update 1 holds 1 row instead of 2.
         let offsets = u64_array(&store, &format!("{TRAJ}/{TYPES}/offset"));
         assert_eq!(offsets, [0, 3, 5]);
@@ -9136,7 +9122,7 @@ mod tests {
             .store_array_subset(&ArraySubset::new_with_shape(vec![3]), &[0_u64, 3, 4][..])
             .unwrap();
         array.store_metadata().unwrap();
-        let err = FrameSequence::open(store).err().unwrap().to_string();
+        let err = MrecReader::open(store).err().unwrap().to_string();
         assert!(err.contains(TYPES), "{err}");
     }
 
@@ -9180,7 +9166,7 @@ mod tests {
                 .store_metadata()
                 .unwrap();
         }
-        let err = FrameSequenceWriter::create(store, aligned_schema())
+        let err = MrecWriter::create(store, aligned_schema())
             .err()
             .unwrap()
             .to_string();

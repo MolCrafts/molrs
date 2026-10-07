@@ -1,7 +1,7 @@
 //! AMBER frcmod force-field writer.
 //!
 //! The inverse of the force-field half of
-//! [`AmberPrmtopFfReader`](crate::ff::forcefield::readers::prmtop::AmberPrmtopFfReader):
+//! [`AmberPrmtopFfReader`](crate::io::forcefield::readers::prmtop::AmberPrmtopFfReader):
 //! it writes a [`ForceField`] as the six parameter sections of an AMBER
 //! frcmod file, so tleap can load a molrs force field with
 //! `loadamberparams`. the force-field IR follows the LAMMPS standard, which for these terms is

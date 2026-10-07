@@ -318,7 +318,7 @@ impl Box {
     /// Return the box tilt factors as a `NDArray` with shape `[3]`.
     ///
     /// Tilt factors `[xy, xz, yz]` define the off-diagonal elements
-    /// of the cell matrix (LAMMPS convention). For orthorhombic boxes
+    /// of the cell matrix (the LAMMPS standard). For orthorhombic boxes
     /// all tilts are zero.
     ///
     /// # Returns

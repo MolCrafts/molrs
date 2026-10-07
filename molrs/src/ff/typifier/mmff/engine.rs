@@ -65,16 +65,14 @@ pub(super) struct MmffEngine {
 }
 
 impl MmffEngine {
-    /// Parse both halves (typing metadata + force field) out of one XML string.
+    /// A caller's library: typing metadata and the force field it prices with.
     ///
     /// `variant` is supplied by the front door, never by a user.
-    pub(super) fn from_xml_str(variant: MmffVariant, xml: &str) -> Result<Self, String> {
-        let params = super::params::read_params_xml_str(xml)?;
-        let ff = crate::ff::forcefield::xml::read_forcefield_xml_str(xml)?;
-        Ok(Self {
+    pub(super) fn from_parts(variant: MmffVariant, params: MMFFParams, ff: ForceField) -> Self {
+        Self {
             variant,
             library: Arc::new(MmffLibrary { params, ff }),
-        })
+        }
     }
 
     /// One of the **shipped** parameter sets, shared from the compiled table.

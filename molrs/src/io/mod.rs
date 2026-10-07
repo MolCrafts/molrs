@@ -3,6 +3,9 @@
 //! - [`data`] — single-structure formats (PDB, XYZ, GRO, mol2, SDF, CIF,
 //!   LAMMPS data, XSF, CHGCAR/POSCAR, Cube, AMBER inpcrd / prmtop structure)
 //! - [`trajectory`] — multi-frame formats (DCD, LAMMPS dump)
+//! - [`forcefield`] — force-field files (LAMMPS, GROMACS, AMBER, OPLS /
+//!   OpenMM XML, molrs XML): read into and written from a
+//!   [`ForceField`](crate::ff::forcefield::ForceField) (feature `ff`)
 //! - [`mesh`] — surface meshes (STL); reads into a
 //!   [`TriMesh`](crate::spatial::TriMesh), not a [`Frame`](crate::store::Frame)
 //! - [`mrec`] / [`csv`] — serialization of the store types themselves, as
@@ -19,6 +22,8 @@
 
 pub mod csv;
 pub mod data;
+#[cfg(feature = "ff")]
+pub mod forcefield;
 mod format;
 /// Shared LAMMPS primitives (atom_style layouts, box bounds, helpers).
 /// Used by both the data-file and dump trajectory readers.

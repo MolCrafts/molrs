@@ -126,7 +126,7 @@ name `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.SmilesIR('O').n_components)"
+python -c "import molrs; print(molrs.io.smiles.SmilesIR('O').n_components)"
 ```
 
 **WASM / npm** is built with [wasm-pack](https://rustwasm.github.io/wasm-pack/),

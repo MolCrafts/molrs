@@ -1,16 +1,16 @@
-//! LAMMPS `fix bond/react` file sets: `molrs.io.BondReactTemplate`,
+//! LAMMPS `fix bond/react` file sets: `molrs.io.lammps_bond_react.BondReactTemplate`,
 //! `write_bond_react_map` and `write_lammps_bond_react_system`, over
 //! `molrs::io::data::lammps_bond_react`.
 
 use std::path::PathBuf;
 
-use molrs::ff::forcefield::writers::{
-    ForceFieldWriter,
-    lammps::{LammpsFfWriter, LammpsWriteOptions},
-};
 use molrs::io::data::lammps_bond_react::{
     BondReactTemplate, REACT_ID, write_bond_react_map as write_map_rs,
     write_lammps_bond_react_system as write_system_rs,
+};
+use molrs::io::forcefield::writers::{
+    ForceFieldWriter,
+    lammps::{LammpsFfWriter, LammpsWriteOptions},
 };
 use molrs::store::Frame;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -35,7 +35,7 @@ use crate::path::path_str;
 /// Serialized by :func:`write_bond_react_map` (``{name}.map``) and
 /// :func:`write_lammps_bond_react_system` (also ``{name}_pre.mol`` /
 /// ``{name}_post.mol``). https://docs.lammps.org/fix_bond_react.html
-#[pyclass(module = "molrs.io", name = "BondReactTemplate")]
+#[pyclass(module = "molrs.io.lammps_bond_react", name = "BondReactTemplate")]
 pub struct PyBondReactTemplate {
     /// Pre-reaction template.
     #[pyo3(get, set)]

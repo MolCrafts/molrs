@@ -1899,31 +1899,31 @@ mod tests {
         AngleType, AtomType, DihedralType, ImproperType, PairType, Style, StyleDefs,
     };
     fn pair_types(s: &Style) -> &[PairType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Pair(v) => v,
             _ => unreachable!(),
         }
     }
     fn improper_types(s: &Style) -> &[ImproperType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Improper(v) => v,
             _ => unreachable!(),
         }
     }
     fn atom_types(s: &Style) -> &[AtomType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Atom(v) => v,
             _ => unreachable!(),
         }
     }
     fn angle_types(s: &Style) -> &[AngleType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Angle(v) => v,
             _ => unreachable!(),
         }
     }
     fn dihedral_types(s: &Style) -> &[DihedralType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Dihedral(v) => v,
             _ => unreachable!(),
         }

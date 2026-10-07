@@ -11,7 +11,7 @@ use std::io::BufWriter;
 
 use molrs::io::data::xyz::write_xyz_frame;
 use molrs::io::mrec::{
-    FrameSequenceWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
+    MrecWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
 };
 use molrs::spatial::SimBox;
 use molrs::store::{Block, Frame, Trajectory};
@@ -167,16 +167,16 @@ pub(crate) fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
     Ok(Box::new(FrameRef(inner)))
 }
 
-/// The engine's streaming trajectory writer: a `FrameSequenceWriter` behind
+/// The engine's streaming trajectory writer: a `MrecWriter` behind
 /// an opaque CXX handle. `None` once closed, so a use after close is an error
 /// rather than a panic across the seam.
-pub struct TrajectoryWriterRef(Option<FrameSequenceWriter>);
+pub struct TrajectoryWriterRef(Option<MrecWriter>);
 
 fn configure_writer(
-    writer: FrameSequenceWriter,
+    writer: MrecWriter,
     flush_every: u64,
     durable: bool,
-) -> Result<FrameSequenceWriter, String> {
+) -> Result<MrecWriter, String> {
     let writer = writer.with_durable(durable);
     if flush_every == 0 {
         return Ok(writer);
@@ -199,7 +199,7 @@ pub(crate) fn trajectory_writer_create(
         .with(SequenceSchema::from_frame)
         .map_err(|e| format!("trajectory_writer_create: {e}"))?
         .map_err(|e| format!("trajectory_writer_create: {e}"))?;
-    let writer = FrameSequenceWriter::create_at(path, schema)
+    let writer = MrecWriter::create_at(path, schema)
         .map_err(|e| format!("trajectory_writer_create: {e}"))?;
     Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
         writer,
@@ -215,8 +215,7 @@ pub(crate) fn trajectory_writer_open(
     flush_every: u64,
     durable: bool,
 ) -> Result<Box<TrajectoryWriterRef>, String> {
-    let writer =
-        FrameSequenceWriter::open_at(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
+    let writer = MrecWriter::open_at(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
     Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
         writer,
         flush_every,
@@ -256,7 +255,7 @@ pub(crate) fn trajectory_writer_flush(writer: &mut TrajectoryWriterRef) -> Resul
 
 /// Frames committed so far (0 for a closed writer).
 pub(crate) fn trajectory_writer_committed(writer: &TrajectoryWriterRef) -> u64 {
-    writer.0.as_ref().map_or(0, FrameSequenceWriter::committed)
+    writer.0.as_ref().map_or(0, MrecWriter::committed)
 }
 
 /// Commit whatever is buffered and release the writer.

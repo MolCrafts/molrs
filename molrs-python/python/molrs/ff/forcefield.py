@@ -1,21 +1,14 @@
-"""The force-field container and its file formats — ``molrs::ff::forcefield``.
+"""The force-field data model — ``molrs::ff::forcefield``.
 
-:class:`ForceField` holds styles (one per category and LAMMPS style name)
-and the types defined under them; :class:`Style` / :class:`Type` and their
-per-category subclasses are live handles onto it. The readers and writers map
-each engine's force-field files onto that IR (structure and trajectory formats
-are :mod:`molrs.io`'s):
+:class:`ForceField` holds styles (one per category and style name, in the
+force-field IR, which adopts the LAMMPS standard) and the types defined under
+them; :class:`Style` / :class:`Type` and their per-category subclasses are
+live handles onto it.
 
-* readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
-  :func:`read_lammps_cmap`, :func:`read_gromacs_top_ff`,
-  :func:`read_gromacs_system`, :func:`read_amber_prmtop_ff`,
-  :func:`read_amber_prmtop_system`,
-  :func:`read_forcefield_xml`, :func:`read_opls_xml`
-* writers — :func:`write_lammps_forcefield`,
-  :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
-  :func:`write_lammps_cmap`, :func:`write_gromacs_top_ff`,
-  :func:`write_gromacs_system`, :func:`write_amber_frcmod`,
-  :func:`write_forcefield_xml`
+No file format is here. Every force-field file reader and writer —
+``read_lammps_forcefield``, ``read_gromacs_top_ff``, ``write_amber_frcmod``,
+``write_forcefield_xml`` and the rest — is a function at the top of
+:mod:`molrs.io`, as every other file reader and writer is.
 """
 
 from .._lib import (
@@ -38,23 +31,6 @@ from .._lib import (
     RelationType,
     Style,
     Type,
-    read_amber_prmtop_ff,
-    read_amber_prmtop_system,
-    read_forcefield_xml,
-    read_gromacs_system,
-    read_gromacs_top_ff,
-    read_lammps_cmap,
-    read_lammps_data_coeffs,
-    read_lammps_forcefield,
-    read_opls_xml,
-    write_amber_frcmod,
-    write_forcefield_xml,
-    write_gromacs_system,
-    write_gromacs_top_ff,
-    write_lammps_cmap,
-    write_lammps_data_coeffs,
-    write_lammps_forcefield,
-    write_lammps_forcefield_str,
 )
 
 __all__ = [
@@ -77,21 +53,4 @@ __all__ = [
     "RelationType",
     "Style",
     "Type",
-    "read_amber_prmtop_ff",
-    "read_amber_prmtop_system",
-    "read_forcefield_xml",
-    "read_gromacs_system",
-    "read_gromacs_top_ff",
-    "read_lammps_cmap",
-    "read_lammps_data_coeffs",
-    "read_lammps_forcefield",
-    "read_opls_xml",
-    "write_amber_frcmod",
-    "write_forcefield_xml",
-    "write_gromacs_system",
-    "write_gromacs_top_ff",
-    "write_lammps_cmap",
-    "write_lammps_data_coeffs",
-    "write_lammps_forcefield",
-    "write_lammps_forcefield_str",
 ]

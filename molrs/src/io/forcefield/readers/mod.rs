@@ -1,10 +1,10 @@
 //! Readers that parse *external* force-field formats into a molrs
 //! [`ForceField`].
 //!
-//! These differ from [`crate::ff::forcefield::xml`], which reads molrs's own native
+//! These differ from [`crate::io::forcefield::xml`], which reads molrs's own native
 //! schema. A reader here owns the translation from a foreign format — element
 //! and attribute names, **and unit and factor normalization** — into the
-//! force-field IR (LAMMPS standard): every style's energy expression, factors
+//! force-field IR (adopts the LAMMPS standard): every style's energy expression, factors
 //! (no hidden ½) and parameter units are the LAMMPS style's, angle-valued
 //! parameters in degrees, in a LAMMPS unit preset (`real` for every reader but
 //! the LAMMPS one, which keeps the file's `units`). The resulting `ForceField`
@@ -30,7 +30,7 @@ mod prmtop_check;
 use crate::ff::forcefield::ForceField;
 
 /// Parse a force-field definition from an external format into a molrs
-/// [`ForceField`], normalized to molrs's (LAMMPS's) convention.
+/// [`ForceField`], normalized to the force-field IR (adopts the LAMMPS standard).
 ///
 /// Implementors own format-specific element/attribute mapping and unit
 /// conversion. Reading is **total**: a malformed document or a missing required

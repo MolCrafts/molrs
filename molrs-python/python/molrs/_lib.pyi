@@ -3809,8 +3809,10 @@ class VectorObservable:
     def target(self) -> str | None: ...
 
 class mrec:
-    """The ``_lib.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: every
-    door onto a ``*.mrec`` scientific record."""
+    """The ``_lib.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: the
+    record store's reader, writer, schema and force-field section. The
+    whole-record doors are flat (``read_mrec`` / ``write_mrec`` and
+    partners), as :mod:`molrs.io`'s."""
 
     class ForceFieldSection:
         """The ``forcefield`` section of a ``*.mrec`` record: the document and one
@@ -3833,47 +3835,12 @@ class mrec:
         def validate(self) -> None: ...
 
     @staticmethod
-    def write(
-        path: PathInput,
-        frame: Frame,
-        system: Frame | None = None,
-        meta: _AbcMapping[str, Any] | None = None,
-        forcefield: ForceField | ForceFieldSection | None = None,
-    ) -> None: ...
-    @staticmethod
-    def write_system(
-        path: PathInput,
-        system: Frame,
-        meta: _AbcMapping[str, Any] | None = None,
-        forcefield: ForceField | ForceFieldSection | None = None,
-    ) -> None: ...
-    @staticmethod
-    def write_forcefield(
-        path: PathInput,
-        forcefield: ForceField | ForceFieldSection,
-        meta: _AbcMapping[str, Any] | None = None,
-    ) -> None: ...
-    @staticmethod
-    def read_forcefield(path: PathInput) -> ForceFieldSection | None: ...
-    @staticmethod
-    def write_trajectory(
-        path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
-    ) -> None: ...
-    @staticmethod
-    def read(path: PathInput) -> Frame: ...
-    @staticmethod
-    def read_system(path: PathInput) -> Frame: ...
-    @staticmethod
-    def read_trajectory(path: PathInput) -> Trajectory: ...
-    @staticmethod
-    def read_meta(path: PathInput) -> dict[str, Any]: ...
-    @staticmethod
     def section_names(path: PathInput) -> frozenset[str]: ...
 
-    class FrameSequence:
+    class MrecReader:
         """Lazy one-frame cursor over a ``*.mrec`` trajectory (directory or zip).
 
-        ``molrs.io.mrec.FrameSequence``; iterating it walks every frame.
+        ``molrs.io.mrec.MrecReader``; iterating it walks every frame.
         """
 
         def __init__(self, path: PathInput) -> None: ...
@@ -3930,10 +3897,10 @@ class mrec:
         def column_names(self, block: str) -> list[str] | None: ...
         def meta_keys(self) -> list[tuple[str, str]]: ...
 
-    class FrameSequenceWriter:
+    class MrecWriter:
         """Append-first writer for a ``*.mrec`` trajectory store.
 
-        ``molrs.io.mrec.FrameSequenceWriter``.
+        ``molrs.io.mrec.MrecWriter``.
         """
 
         def __init__(
@@ -3949,7 +3916,7 @@ class mrec:
         @staticmethod
         def open(
             path: PathInput, *, flush_every: int | None = ..., durable: bool = ...
-        ) -> FrameSequenceWriter: ...
+        ) -> MrecWriter: ...
         def append(
             self, frame: Frame, step: int | None = ..., time: float | None = ...
         ) -> None: ...
@@ -3988,6 +3955,35 @@ class mrec:
 # The structural protocol stating that contract is pure Python and is declared
 # in `molrs/compute/protocol.py`.
 # ---------------------------------------------------------------------------
+
+# --- *.mrec whole-record doors (molrs.io) ---------------------------------
+
+def write_mrec(
+    path: PathInput,
+    frame: Frame,
+    system: Frame | None = None,
+    meta: _AbcMapping[str, Any] | None = None,
+    forcefield: ForceField | mrec.ForceFieldSection | None = None,
+) -> None: ...
+def write_mrec_system(
+    path: PathInput,
+    system: Frame,
+    meta: _AbcMapping[str, Any] | None = None,
+    forcefield: ForceField | mrec.ForceFieldSection | None = None,
+) -> None: ...
+def write_mrec_forcefield(
+    path: PathInput,
+    forcefield: ForceField | mrec.ForceFieldSection,
+    meta: _AbcMapping[str, Any] | None = None,
+) -> None: ...
+def write_mrec_trajectory(
+    path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
+) -> None: ...
+def read_mrec(path: PathInput) -> Frame: ...
+def read_mrec_system(path: PathInput) -> Frame: ...
+def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
+def read_mrec_forcefield(path: PathInput) -> mrec.ForceFieldSection | None: ...
+def read_mrec_meta(path: PathInput) -> dict[str, Any]: ...
 
 class RDFResult:
     """Radial distribution function g(r). Accumulated across all input frames."""
@@ -5169,7 +5165,7 @@ class RingInfo:
 
     Examples
     --------
-    >>> rings = molrs.perceive.RingInfo(molrs.io.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.RingInfo(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()
@@ -5256,7 +5252,7 @@ class Dielectric:
         per_particle_current: ArrayF, water_mask: ArrayBool
     ) -> tuple[ArrayF, ArrayF]: ...
 
-def parse_lammps_log_text(
+def read_lammps_log_str(
     text: str, path: str = "<string>", style: str = "default"
 ) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
@@ -5381,6 +5377,11 @@ def write_mol2(path: PathInput, frame: Frame) -> None:
 
 def write_prep(path: PathInput, residue: dict[str, Any]):
     """Write an Amber prep residue from a nested dict."""
+
+def read_smiles(smiles: str) -> Atomistic:
+    """One molecule from a SMILES string: connectivity only, no implicit H, no
+    coordinates. A ``'.'``-separated set raises ``SmilesError`` (a
+    ``ValueError``) naming ``SmilesIR(s).components()``."""
 
 def write_smarts(
     mol,

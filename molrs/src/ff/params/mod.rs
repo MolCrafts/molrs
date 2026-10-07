@@ -43,9 +43,10 @@
 //! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
 //! and conventions** — degrees, and AMBER's un-halved force constants — because
 //! the table is a transcription of the file, not a force field. That is also
-//! molrs's (LAMMPS's) convention for every bonded term; what the code that
-//! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it still
-//! converts (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::GaffTypifier`].
+//! what the force-field IR (adopts the LAMMPS standard) holds for every
+//! bonded term; what the code that populates a
+//! [`ForceField`](crate::ff::forcefield::ForceField) from it still converts
+//! (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::GaffTypifier`].
 
 pub mod amber;
 pub mod atomtype_abcg2;

@@ -9,7 +9,7 @@
 //! (`ff-ir-02-protocol` §8): a positional style's coefficients are its
 //! spec's `params` in order, so a style registered at run time with a LAMMPS
 //! form reads with nothing else written. Inverse of
-//! [`LammpsFfWriter`](crate::ff::forcefield::writers::lammps::LammpsFfWriter), e.g.:
+//! [`LammpsFfWriter`](crate::io::forcefield::writers::lammps::LammpsFfWriter), e.g.:
 //!
 //! ```text
 //! pair_style lj/cut/coul/cut 10.0 10.0
@@ -112,11 +112,11 @@
 
 use super::ForceFieldReader;
 use crate::ff::constants::VACUUM_DIELECTRIC;
-use crate::ff::forcefield::lammps_units::parse_style;
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global};
 use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
+use crate::io::forcefield::lammps_units::parse_style;
 use molrs::store::FrameAccess;
 use molrs::store::type_labels::{TypeLabels, TypeName};
 use molrs::units::constants::{COULOMB_METAL, COULOMB_REAL};
@@ -560,7 +560,7 @@ pub struct LammpsCmapFile {
 /// refused, as are a non-numeric token and a file with no map.
 ///
 /// ```
-/// use molrs::ff::forcefield::readers::lammps::read_lammps_cmap_str;
+/// use molrs::io::forcefield::readers::lammps::read_lammps_cmap_str;
 ///
 /// let text = format!("# UNITS: real\n# map 1\n{}", "0.5\n".repeat(576));
 /// let file = read_lammps_cmap_str(&text).unwrap();
@@ -1476,7 +1476,7 @@ fn add_bonded(
 /// missing coefficient, an extra one, or a non-numeric token.
 ///
 /// ```
-/// use molrs::ff::forcefield::readers::lammps::lammps_coeff_params;
+/// use molrs::io::forcefield::readers::lammps::lammps_coeff_params;
 ///
 /// let p = lammps_coeff_params("bond", "harmonic", &["450", "0.9572"], "real").unwrap();
 /// assert_eq!(p.get("k"), Some(450.0));
@@ -1703,13 +1703,13 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
 "#;
 
     fn angle_types(s: &Style) -> &[AngleType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Angle(v) => v,
             _ => unreachable!(),
         }
     }
     fn dihedral_types(s: &Style) -> &[DihedralType] {
-        match &s.defs {
+        match s.defs() {
             StyleDefs::Dihedral(v) => v,
             _ => unreachable!(),
         }
@@ -1761,12 +1761,12 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         // The cutoffs on the `pair_style` line belong to the force field: without
         // them a written-back include is not a runnable LAMMPS input.
         assert!(
-            (lj.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            (lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
             "lj cutoff"
         );
         let coul = ff.get_style("pair", "coul/cut").unwrap();
         assert!(
-            (coul.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
+            (coul.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12,
             "coulomb cutoff"
         );
 
@@ -1945,12 +1945,12 @@ pair_coeff c3 c3 lj/cut 0.1078 3.39771
 ";
         let ff = LammpsFfReader::new().read_str(text).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert!((lj.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!((lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
         let pt = lj.get_pairtype("c3", None).unwrap();
         assert!((pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9);
         assert!((pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9);
         let coul = ff.get_style("pair", "coul/cut").unwrap();
-        assert!((coul.params.get("cutoff").unwrap_or(0.0) - 12.0).abs() < 1e-12);
+        assert!((coul.params().get("cutoff").unwrap_or(0.0) - 12.0).abs() < 1e-12);
     }
 
     /// A hybrid line whose sub-styles carry no cutoff (`hybrid lj/cut coul/cut`)
@@ -1968,9 +1968,9 @@ pair_coeff OH OH 0.1521 3.1508
 ";
         let ff = LammpsFfReader::new().read_str(text).unwrap();
         let lj = ff.get_style("pair", "lj/charmm").unwrap();
-        assert_eq!(lj.params.get("inner"), Some(8.0));
-        assert_eq!(lj.params.get("cutoff"), Some(10.0));
-        assert_eq!(lj.params.get_str("mixing"), Some("arithmetic"));
+        assert_eq!(lj.params().get("inner"), Some(8.0));
+        assert_eq!(lj.params().get("cutoff"), Some(10.0));
+        assert_eq!(lj.params().get_str("mixing"), Some("arithmetic"));
         let ct = &lj.get_pairtype("CT", None).unwrap().params;
         assert_eq!(
             (ct.get("epsilon14"), ct.get("sigma14")),
@@ -1982,14 +1982,14 @@ pair_coeff OH OH 0.1521 3.1508
             (Some(0.1521), Some(3.1508))
         );
         let coul = ff.get_style("pair", "coul/charmm").unwrap();
-        assert_eq!(coul.params.get("inner"), Some(8.0));
-        assert_eq!(coul.params.get("cutoff"), Some(10.0));
+        assert_eq!(coul.params().get("inner"), Some(8.0));
+        assert_eq!(coul.params().get("cutoff"), Some(10.0));
 
         let four = text.replace("8.0 10.0", "8.0 10.0 9.0 12.0");
         let ff = LammpsFfReader::new().read_str(&four).unwrap();
         let coul = ff.get_style("pair", "coul/charmm").unwrap();
-        assert_eq!(coul.params.get("inner"), Some(9.0));
-        assert_eq!(coul.params.get("cutoff"), Some(12.0));
+        assert_eq!(coul.params().get("inner"), Some(9.0));
+        assert_eq!(coul.params().get("cutoff"), Some(12.0));
 
         for bad in [
             text.replace("8.0 10.0", "10.0"),
@@ -2008,7 +2008,7 @@ pair_coeff c3 c3 lj/cut 0.1078 3.39771
 ";
         let ff = LammpsFfReader::new().read_str(text).unwrap();
         let lj = ff.get_style("pair", "lj/cut").unwrap();
-        assert!(lj.params.get("cutoff").is_none(), "no lj cutoff recorded");
+        assert!(lj.params().get("cutoff").is_none(), "no lj cutoff recorded");
         assert!(
             (lj.get_pairtype("c3", None)
                 .unwrap()
@@ -2194,8 +2194,8 @@ Angles
     /// field's `* Coeffs`) -> force field gives the same force field.
     #[test]
     fn data_coeffs_round_trip_through_a_written_data_file() {
-        use crate::ff::forcefield::writers::ForceFieldWriter;
-        use crate::ff::forcefield::writers::lammps::LammpsFfWriter;
+        use crate::io::forcefield::writers::ForceFieldWriter;
+        use crate::io::forcefield::writers::lammps::LammpsFfWriter;
         use crate::io::writer::FrameWriter;
         let frame = data_frame(LABELLED_DATA);
         let ff = LammpsFfReader::new()
@@ -2547,7 +2547,7 @@ dihedral_coeff 10-10-10-10 0.2 1.0 180.0
 
     // ── fix cmap ────────────────────────────────────────────────────────────
 
-    const ALANINE: &str = include_str!("../../potential/cmap/testdata/charmm36_alanine.cmap");
+    const ALANINE: &str = include_str!("../../../ff/potential/cmap/testdata/charmm36_alanine.cmap");
 
     /// CHARMM's own file: the `# <φ>` comments are skipped, the 576 numbers
     /// fill the map φ-major, and `UNITS:real` (one word) is no tag, as for

@@ -112,10 +112,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{ForceFieldWriter, WriteError};
-use crate::ff::forcefield::lammps_units::{LammpsFfUnits, parse_style};
-use crate::ff::forcefield::readers::lammps::{
-    CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX,
-};
 use crate::ff::forcefield::{
     AngleType, BondType, CmapType, DihedralType, ForceField, ImproperType, PairType, Params, Style,
     StyleDefs,
@@ -123,6 +119,10 @@ use crate::ff::forcefield::{
 use crate::ff::ir::{
     Engine, LammpsCodec, LammpsCoeffs, Mix, Registry, RegistryRef, StyleSpec, Token, UnitScale,
     with_global,
+};
+use crate::io::forcefield::lammps_units::{LammpsFfUnits, parse_style};
+use crate::io::forcefield::readers::lammps::{
+    CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX,
 };
 use molrs::store::type_labels::{TypeLabels, TypeName};
 use ndarray::ArrayD;
@@ -220,7 +220,7 @@ fn lammps_name(spec: &StyleSpec) -> String {
 /// Render one type's molrs params as the numbers of its LAMMPS coefficient
 /// line, through the style's codec in the process-wide registry — the
 /// inverse of
-/// [`lammps_coeff_params`](crate::ff::forcefield::readers::lammps::lammps_coeff_params)
+/// [`lammps_coeff_params`](crate::io::forcefield::readers::lammps::lammps_coeff_params)
 /// and what every `*_coeff` line and `* Coeffs` row this writer emits is.
 ///
 /// The result is the coefficients **after** the type field(s) of the main
@@ -239,7 +239,7 @@ fn lammps_name(spec: &StyleSpec) -> String {
 ///
 /// ```
 /// use molrs::ff::forcefield::Params;
-/// use molrs::ff::forcefield::writers::lammps::lammps_coeff_values;
+/// use molrs::io::forcefield::writers::lammps::lammps_coeff_values;
 ///
 /// let p = Params::from_pairs(&[("k", 450.0), ("r0", 0.9572)]);
 /// assert_eq!(lammps_coeff_values("bond", "harmonic", &p, "real").unwrap(), [450.0, 0.9572]);
@@ -1274,7 +1274,7 @@ pub fn refuse_pair_overrides(frame: &molrs::store::Frame) -> Result<(), String> 
 /// own files) is written back as the very lines it was read from (less the
 /// blank CHARMM ends a short line with).
 ///
-/// [`read_lammps_cmap_str`](crate::ff::forcefield::readers::lammps::read_lammps_cmap_str)
+/// [`read_lammps_cmap_str`](crate::io::forcefield::readers::lammps::read_lammps_cmap_str)
 /// reads it back; a value survives bit for bit once `precision` decimals
 /// reach past its 17th significant digit.
 ///
@@ -1322,7 +1322,7 @@ fn fmt_num(v: f64, precision: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader};
+    use crate::io::forcefield::readers::{ForceFieldReader, lammps::LammpsFfReader};
 
     /// Same GAFF2-shaped mini include the reader tests pin.
     const MINI: &str = r#"
@@ -1425,7 +1425,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert!((bt.params.get("r0").unwrap() - 1.5354).abs() < 1e-9);
 
         let angle = ff2.get_style("angle", "harmonic").unwrap();
-        let StyleDefs::Angle(atypes) = &angle.defs else {
+        let StyleDefs::Angle(atypes) = angle.defs() else {
             panic!("not angle");
         };
         let at = &atypes[0];
@@ -1433,7 +1433,7 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert_eq!(at.params.get("theta0"), Some(109.66));
 
         let dih = ff2.get_style("dihedral", "periodic").unwrap();
-        let StyleDefs::Dihedral(dtypes) = &dih.defs else {
+        let StyleDefs::Dihedral(dtypes) = dih.defs() else {
             panic!("not dihedral");
         };
         let dt = &dtypes[0];
@@ -1445,9 +1445,9 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         let pt = lj.get_pairtype("c3", None).unwrap();
         assert!((pt.params.get("epsilon").unwrap() - 0.1078).abs() < 1e-9);
         assert!((pt.params.get("sigma").unwrap() - 3.39771).abs() < 1e-9);
-        assert!((lj.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!((lj.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
         let coul = ff2.get_style("pair", "coul/cut").unwrap();
-        assert!((coul.params.get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
+        assert!((coul.params().get("cutoff").unwrap_or(0.0) - 10.0).abs() < 1e-12);
     }
 
     #[test]
@@ -1680,7 +1680,7 @@ pair_coeff c3 c3 0.107800 3.397710
         assert!(text.contains("units metal\n"), "metal header:\n{text}");
 
         // 0.1078 kcal/mol → eV through lj hub
-        let sys = crate::ff::forcefield::lammps_units::LammpsFfUnits::canonical().unwrap();
+        let sys = crate::io::forcefield::lammps_units::LammpsFfUnits::canonical().unwrap();
         let eps_ev = sys.energy(0.1078, "real", "metal").unwrap();
         let expected = format!("pair_coeff c3 c3 {:.6}", eps_ev);
         assert!(text.contains(&expected), "expected {expected} in:\n{text}");
@@ -2461,7 +2461,7 @@ pair_coeff c3 c3 0.107800 3.397710
     /// and the tokens come back as written.
     #[test]
     fn lammps_coeff_values_round_trips_through_lammps_coeff_params() {
-        use crate::ff::forcefield::readers::lammps::lammps_coeff_params;
+        use crate::io::forcefield::readers::lammps::lammps_coeff_params;
         // (category, LAMMPS style, molrs style, tokens)
         let cases: &[(&str, &str, &str, &[&str])] = &[
             ("bond", "harmonic", "harmonic", &["450", "0.9572"]),
@@ -2583,7 +2583,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// `read_data_coeffs` reads it back to the same force field.
     #[test]
     fn angle_charmm_hybrid_data_coeffs_round_trip() {
-        use crate::ff::forcefield::readers::lammps::LammpsTypeLabelMaps;
+        use crate::io::forcefield::readers::lammps::LammpsTypeLabelMaps;
         let ff = LammpsFfReader::new().read_str(UB_HYBRID).unwrap();
         let names = ["CT-CT-CT", "HA-CT-CT", "HA-CT-HA"];
         let labels = labels_of(&[("angles", &names)]);
@@ -2643,7 +2643,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
 
     // ── fix cmap ────────────────────────────────────────────────────────────
 
-    const ALANINE: &str = include_str!("../../potential/cmap/testdata/charmm36_alanine.cmap");
+    const ALANINE: &str = include_str!("../../../ff/potential/cmap/testdata/charmm36_alanine.cmap");
 
     /// The numbers of a CHARMM cmap file, as its lines: comments dropped.
     fn number_lines(text: &str) -> Vec<&str> {
@@ -2668,7 +2668,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
     /// line it was read from, and the text reads back to the same bits.
     #[test]
     fn a_charmm_cmap_file_is_written_back_line_for_line() {
-        use crate::ff::forcefield::readers::lammps::read_lammps_cmap_str;
+        use crate::io::forcefield::readers::lammps::read_lammps_cmap_str;
         let map = read_lammps_cmap_str(ALANINE).unwrap().maps.remove(0);
         let ff = cmap_ff(&[("ala", map.clone())]);
         let labels = labels_of(&[("cmaps", &["ala", "ala"])]);
@@ -2702,7 +2702,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         };
         let writer = LammpsFfWriter::with_options(&labels, options);
         let text = writer.write_cmap_str(&ff).unwrap();
-        let maps = crate::ff::forcefield::readers::lammps::read_lammps_cmap_str(&text)
+        let maps = crate::io::forcefield::readers::lammps::read_lammps_cmap_str(&text)
             .unwrap()
             .maps;
         assert_eq!(maps, vec![a.clone(), b]);
@@ -2730,7 +2730,7 @@ angle_coeff HA-CT-HA charmm 35.500000 108.400000 5.400000 1.802000
         let text = LammpsFfWriter::with_options(&labels, metal)
             .write_cmap_str(&ff)
             .unwrap();
-        let file = crate::ff::forcefield::readers::lammps::read_lammps_cmap_str(&text).unwrap();
+        let file = crate::io::forcefield::readers::lammps::read_lammps_cmap_str(&text).unwrap();
         assert_eq!(file.units.as_deref(), Some("metal"));
         let ev = file.maps[0][[0, 1]];
         assert!((ev - 0.01 * 0.0433641).abs() < 1e-8, "{ev}");

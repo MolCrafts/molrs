@@ -4,7 +4,7 @@ The core is an ECS *world*: entities are stable opaque handles, components live
 in aligned columns, and topology is kind-tagged relations. Rigid-body moves
 (translate, rotate, scale) are methods of the leaves and return the leaf; chemical
 perception has owners (`molrs.perceive.Perceive` / `RingInfo`,
-`molrs.ff.charge.*`, `molrs.io.SmilesIR`) and is reached through them, never
+`molrs.ff.charge.*`, `molrs.io.smiles.SmilesIR`) and is reached through them, never
 through a method on the graph classes. Leaves (`Atomistic`/`CoarseGrain`) hold a
 core leaf from construction and subclass `Graph`; they are never *converted*
 from a `MolGraph`.
@@ -223,7 +223,7 @@ def test_rotate_about_a_degenerate_axis_is_a_value_error(cls, axis):
 
 def test_find_rings_system():
     bz = molrs.perceive.Perceive().find_hydrogens(
-        molrs.io.SmilesIR("C1=CC=CC=C1").to_atomistic()
+        molrs.io.smiles.SmilesIR("C1=CC=CC=C1").to_atomistic()
     )
     rings = molrs.perceive.RingInfo(bz).rings()
     assert len(rings) == 1
@@ -232,7 +232,7 @@ def test_find_rings_system():
 
 def test_gasteiger_charges_system():
     eth = molrs.perceive.Perceive().find_hydrogens(
-        molrs.io.SmilesIR("CO").to_atomistic()
+        molrs.io.smiles.SmilesIR("CO").to_atomistic()
     )
     charges = np.asarray(molrs.ff.charge.GasteigerModel().assign(eth))
     # One charge per atom, hydrogens included, and neutral methanol sums to ~0.
@@ -254,7 +254,7 @@ def test_generic_graph_has_no_translate():
 def test_perceive_aromaticity_pipeline():
     # Aromaticity perception needs explicit hydrogens (pi-electron counting).
     perceive = molrs.perceive.Perceive()
-    bz = perceive.find_hydrogens(molrs.io.SmilesIR("C1=CC=CC=C1").to_atomistic())
+    bz = perceive.find_hydrogens(molrs.io.smiles.SmilesIR("C1=CC=CC=C1").to_atomistic())
     bz = perceive.find_aromaticity(bz)
     aromatic = [h for h in bz.entities() if bz.get(h, "is_aromatic")]
     assert len(aromatic) == 6
@@ -332,7 +332,7 @@ def test_adopt_moves_storage_and_empties_source():
 def test_adopt_on_leaf_moves_its_own_store():
     # adopt must move the *leaf's* backing store, not an empty base graph —
     # regression for adopt being a no-op on Atomistic/CoarseGrain.
-    src = molrs.io.SmilesIR("CCO").to_atomistic()
+    src = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     n = src.n_atoms
     assert n == 3
 

@@ -10,7 +10,7 @@
 //! | [`writer`] | `writeFrame(frame, format)` | Write XYZ, PDB, LAMMPS dump |
 //! | [`log`] | `readLammpsLogThermo`, `isLammpsLog` | LAMMPS log thermo tables |
 //! | `smiles` | `parseSMILES` → `SmilesIR` | SMILES strings (`smiles` feature) |
-//! | [`zarr`] | `TrajectoryReader` | Read frame-sequence Zarr V3 archives |
+//! | [`zarr`] | `MrecReader` | Read frame-sequence Zarr V3 archives |
 //! | [`mesh`] | `readSTL(bytes)` | STL surface meshes (ASCII or binary) — produces a `Mesh`, not a `Frame` |
 //!
 //! No reader takes a file handle, since WASM has no filesystem access: a

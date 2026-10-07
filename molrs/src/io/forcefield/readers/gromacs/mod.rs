@@ -291,7 +291,7 @@ const NO_IR_FORM: &[&str] = &[
 /// # Examples
 ///
 /// ```
-/// use molrs::ff::{forcefield::readers::ForceFieldReader, forcefield::readers::gromacs::GromacsTopFfReader};
+/// use molrs::io::{forcefield::readers::ForceFieldReader, forcefield::readers::gromacs::GromacsTopFfReader};
 ///
 /// let text = "\
 /// [ defaults ]

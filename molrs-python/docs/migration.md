@@ -175,7 +175,7 @@ number exactly on read, or refuses the record by name.
 
 - **Readers accept versions 1 and 2 and refuse a newer one.** A store
   without `molrec_version` predates version 1 and is read by version 1's
-  rules. `molrs.io.mrec.read_meta` (and `MolRec.meta` in Rust) hands `meta` back as
+  rules. `molrs.io.read_mrec_meta` (and `MolRec.meta` in Rust) hands `meta` back as
   stored, so a converted record still says `molrec_version: 1`.
 - **Writers always stamp 2.** A producer's `molrec_version` in `meta` is
   overwritten (0.15 kept it, and refused an unsupported one). Writing a
@@ -208,7 +208,7 @@ number exactly on read, or refuses the record by name.
   multi-term `improper periodic`, an `expression` on a converted style, an
   unknown `angle` / `dihedral` / `improper` style that carries parameters, an
   angle unit other than the radian and the degree, and a version-1 trajectory
-  opened for appending (`FrameSequenceWriter.open` on an existing 0.15 store: read it
+  opened for appending (`MrecWriter.open` on an existing 0.15 store: read it
   and write a new record).
 - **Unchanged:** `dihedral charmm` `w` (the same 1-4 weight in both
   versions; 0.16 prices it), every other style's numbers, `special_bonds`,
@@ -228,7 +228,7 @@ number exactly on read, or refuses the record by name.
   is `None`, and a `pair14` table is kept as
   unknown content (no arity or restatement check). No reader produced it.
 - **`ForceFieldSection.validate` refuses a `pair lj/charmm` `one_four`**
-  other than `"regular"` / `"epsilon14"`, so `molrs.io.mrec.read_forcefield` refuses
+  other than `"regular"` / `"epsilon14"`, so `molrs.io.read_mrec_forcefield` refuses
   such a record before anything turns it into a `ForceField`.
 
 Every 0.15 test record (`molrs/src/io/zarr/testdata/v1`, written by the
@@ -379,7 +379,7 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   `LammpsFfWriter::write_cmap_str` and `lammps_cmap_str` write one (CHARMM's
   own file comes back line for line); `CmapGrid` / `CmapCharmm` are the
   kernel. Python: `molrs.ff.typifier.assign_cmaps`,
-  `molrs.ff.forcefield.read_lammps_cmap` / `write_lammps_cmap`.
+  `molrs.io.read_lammps_cmap` / `write_lammps_cmap`.
 
 ### Array parameters
 
@@ -498,7 +498,7 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   ff = read_lammps_data_coeffs(frame.meta["lammps_coeffs_text"], units="real",
                                atom_labels={1: "c3", 2: "hc"}, ...)
   # 0.16
-  ff = molrs.ff.forcefield.read_lammps_data_coeffs(frame)
+  ff = molrs.io.read_lammps_data_coeffs(frame)
   ```
   In Rust, `LammpsFfReader::read_data_coeffs(&frame, units: Option<&str>)`
   replaces `read_data_coeffs(text, &LammpsTypeLabelMaps, units)`;
@@ -701,7 +701,7 @@ OPLS-AA dipeptide (`scripts/gromacs_engine_check.sh`).
   energies of a GROMACS-read field are 9.9·10⁻⁹ larger than in 0.15, and
   equal GROMACS's.
 - **Whole topologies read: `GromacsTopFfReader::read_system` / Python
-  `molrs.ff.forcefield.read_gromacs_system`** read the molecule sections too, into the
+  `molrs.io.read_gromacs_system`** read the molecule sections too, into the
   force field and a typed frame (0-based indices): GROMACS's own type lookup,
   rows with their own parameters as types `<labels>@gmx_<n>`, `[ pairs ]`
   rows with parameters as per-pair overrides, the nrexcl pair list (every
@@ -744,7 +744,7 @@ field they return change where they did. AMBER stays read-only. See
 - **Non-uniform `SCEE` / `SCNB` read.** 0.15 refused two divisors among the
   1-4 rows. `special_bonds` is now the divisor most 1-4 rows carry (it was
   the one value), and the frame `AmberPrmtopFfReader::read_system` / Python
-  `molrs.ff.forcefield.read_amber_prmtop_system` returns (with the force
+  `molrs.io.read_amber_prmtop_system` returns (with the force
   field, as `read_gromacs_system` does) gains a `pairs` block — only when
   some pair is weighted otherwise —
   listing those 1-4 pairs with `coul_scale` / `lj_scale` cells (the
@@ -1020,6 +1020,8 @@ The rule, applied crate-wide:
 | `molrs::io::smiles::{smiles, chem::ast, error}::…` | `molrs::io::smiles::…` |
 | `molrs::io::log::lammps::…`, `molrs::io::mesh::stl::…` | `molrs::io::log::…`, `molrs::io::mesh::…` |
 | `molrs::io::mrec::schema::{MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::store::{MOLREC_VERSION, RESERVED_META_KEYS}` |
+| `molrs::io::mrec::{FrameSequence, FrameSequenceWriter}` | `molrs::io::mrec::{MrecReader, MrecWriter}` (Python `molrs.io.mrec.MrecReader` / `MrecWriter`, WASM `MrecReader`) |
+| `molrs::io::log::parse_lammps_log_text` | `molrs::io::log::read_lammps_log_str` |
 | `molrs::md::{error, forces, integrators, maxwell, pairs, types}::…` | `molrs::md::…` (also `com_velocity`) |
 | `molrs::optimize::lbfgs::…`, `perceive::{builder, subgraph}::…`, `signal::{acf, grid, window}::…`, `stream::message::…` | `molrs::optimize::…`, `molrs::perceive::…`, `molrs::signal::…` (also `SignalError`), `molrs::stream::…` |
 
@@ -1066,8 +1068,8 @@ The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
 reader assumes them. `io::data::prmtop` (the structure reader) holds no 1-4
 weight at all: the per-pair `"pairs"` block (`coul_scale` / `lj_scale` from
 `SCEE` / `SCNB`) is force-field meaning and comes from
-`ff::forcefield::readers::prmtop::AmberPrmtopFfReader::{read_system,
-read_system_str}` (Python `molrs.ff.forcefield.read_amber_prmtop_system`),
+`io::forcefield::readers::prmtop::AmberPrmtopFfReader::{read_system,
+read_system_str}` (Python `molrs.io.read_amber_prmtop_system`),
 which return `(ForceField, Frame)` like `GromacsTopFfReader::read_system`
 (Python `read_gromacs_system`); `io::data::prmtop::read_amber_prmtop` now
 never has a `"pairs"` block, and the refusal of a 1-4 row on a bonded /
@@ -1080,21 +1082,26 @@ and the naming helpers both readers share are internal.
 
 #### Force fields (`ff`)
 
-`ir` is the force-field IR (LAMMPS standard) and its registry, `forcefield`
-the `ForceField` model and force-field files, `potential` the kernels,
+`ir` is the force-field IR (adopts the LAMMPS standard) and its registry,
+`forcefield` the `ForceField` data model, `potential` the kernels,
 `typifier` typing, `charge` the charge models, `params` the shipped tables.
+No file format is `ff`'s: every file reader and writer is `io`'s, and the
+force-field files are `molrs::io::forcefield` (`readers`, `writers`, `xml`,
+`lammps_units`; 0.15 `molrs::ff::forcefield::{readers, writers, xml,
+lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
+`io` only in its test-only engine checks.
 
 - **No re-exports at `molrs::ff`.** Each name is at its owner:
   - `ForceField`, `SpecialBonds` → `ff::forcefield::`;
-    `read_forcefield_xml[_str]` → `ff::forcefield::xml::`.
-  - `ForceFieldReader` → `ff::forcefield::readers::`; `LammpsFfReader`,
+    `read_forcefield_xml[_str]` → `io::forcefield::xml::`.
+  - `ForceFieldReader` → `io::forcefield::readers::`; `LammpsFfReader`,
     `GromacsTopFfReader`, `OplsXmlReader`, `AmberPrmtopFfReader` /
-    `read_amber_prmtop_ff` → `ff::forcefield::readers::{lammps, gromacs,
+    `read_amber_prmtop_ff` → `io::forcefield::readers::{lammps, gromacs,
     opls, prmtop}::`.
-  - `ForceFieldWriter`, `WriteError` → `ff::forcefield::writers::`;
+  - `ForceFieldWriter`, `WriteError` → `io::forcefield::writers::`;
     `LammpsFfWriter` / `LammpsWriteOptions`, `GromacsTopFfWriter`,
     `AmberFrcmodFfWriter` / `write_amber_frcmod[_str]`, `XmlForceFieldWriter` /
-    `write_forcefield_xml[_str]` → `ff::forcefield::writers::{lammps,
+    `write_forcefield_xml[_str]` → `io::forcefield::writers::{lammps,
     gromacs, frcmod, xml}::`.
   - `BccModel`, `BccParameterSet`, `ChargeError`, `ChargeModel`,
     `MullikenModel` → `ff::charge::`.
@@ -1151,9 +1158,15 @@ the `ForceField` model and force-field files, `potential` the kernels,
 - **No amide bond order.** UFF and the ETKDG 1-2 bounds price an amide C–N
   at its graph order 1, as RDKit 2026.03 does (`ff::params::uff::AMIDE_BOND_ORDER`,
   1.41, is removed; a UFF amide bond's type is `C_R-N_R@1`).
-- **`ff::forcefield::xml::{read_mmff_params_xml_str, read_opls_typing_xml_str}`
-  are removed** (each typifier reads its own metadata): use
-  `MMFF94Typifier::from_xml_str` / `OPLSAATypifier::from_xml_str`.
+- **A typifier reads no file.** The typing-metadata readers are
+  `io::forcefield::xml::{read_mmff_params_xml_str, read_opls_typing_xml_str}`
+  (the latter refuses a dangling or cyclic `overrides`), and a caller's own
+  XML builds a typifier from what they read:
+  `MMFF94Typifier::from_parts(read_mmff_params_xml_str(xml)?,
+  read_forcefield_xml_str(xml)?)` (`MMFF94STypifier` alike) and
+  `OPLSAATypifier::new(read_opls_typing_xml_str(xml)?,
+  OplsXmlReader::new().read_str(xml)?)`. There is no
+  `from_xml_str` constructor. Python's `OPLSAATypifier(xml)` is unchanged.
 - **BCC tables are the charge model's.** `ff::typifier::{BccParameterSet,
   BCCCorrectionTable, BCCCorrector}` are removed: `BccParameterSet` is at
   `ff::charge::BccParameterSet` only, and the corrections are applied by
@@ -1184,24 +1197,25 @@ the `ForceField` model and force-field files, `potential` the kernels,
   to `Conformer::generate`); its distance-geometry objectives are internal,
   and the stages minimize with the crate's L-BFGS engine instead of a
   steepest-descent of their own, so embedded geometries differ.
-- Removed from `io` (force-field formats belong to `ff::forcefield`):
+- Force-field formats moved within `io`, to `io::forcefield` (structure
+  formats stay in `io::data`):
   - `molrs::io::data::top::*` (`read_top`, `read_top_frame`, `write_top`,
-    `TopReader`, `TopFrameWriter`) → `ff::forcefield::readers::gromacs::
-    read_system` / `ff::forcefield::writers::gromacs::write_system_str`
+    `TopReader`, `TopFrameWriter`) → `io::forcefield::readers::gromacs::
+    read_system` / `io::forcefield::writers::gromacs::write_system_str`
     (0-based indices). Python: `molrs.io.read_top` →
-    `molrs.ff.forcefield.read_gromacs_system`; `molrs.io.write_top` →
-    `molrs.ff.forcefield.write_gromacs_system`.
+    `molrs.io.read_gromacs_system`; `molrs.io.write_top` →
+    `molrs.io.write_gromacs_system`.
   - `molrs::io::data::frcmod::*` (`read_frcmod`, `parse_frcmod`,
-    `format_frcmod`, `write_frcmod`, `FrcmodFile`) → `ff::forcefield::
+    `format_frcmod`, `write_frcmod`, `FrcmodFile`) → `io::forcefield::
     writers::frcmod::write_amber_frcmod`. Python: `molrs.io.read_frcmod`,
     `parse_frcmod`, `write_frcmod` removed
-    (`molrs.ff.forcefield.write_amber_frcmod` writes one).
+    (`molrs.io.write_amber_frcmod` writes one).
   - `molrs::io::data::prmtop_tables::decode_{bond,angle,dihedral,nonbond}_params`
     and their row aliases, and `io::data::prmtop::read_amber_prmtop_sections`;
     `parse_pointers` / `parse_a4_names` are crate-private. Python:
     `molrs.io.prmtop_parse_pointers`, `prmtop_parse_a4_names`,
     `prmtop_decode_*`, `read_amber_prmtop_sections` removed
-    (`molrs.ff.forcefield.read_amber_prmtop_ff` reads the parameters).
+    (`molrs.io.read_amber_prmtop_ff` reads the parameters).
 - One SMARTS parser: `molrs::io::smiles::parse_smarts`, which
   `perceive::smarts::SmartsPattern` now compiles from. Its IR gains
   `AtomPrimitive::{AtomicNumber, RingSizeRange, RingBondCount, ContextLabel}`;
@@ -1279,27 +1293,41 @@ it any more.
   own: `ff::potential::pair::LJCut` is `molrs.ff.potential.LJCut`,
   `perceive::smarts::Reaction` is `molrs.perceive.Reaction`,
   `spatial::{neighbors, region}` are `molrs.spatial`, and the
-  `io::{data, trajectory, smiles, log, mesh, csv}` formats are `molrs.io`.
+  `io::{data, trajectory, mesh, csv}` formats' functions are `molrs.io`.
   Kept as modules: the vocabularies `molrs.store.keys` and
-  `molrs.store.schema`, `molrs.io.mrec` (every `*.mrec` door, including
-  `ForceFieldSection`) and `molrs.ff.ir`.
-- **Every `*.mrec` door is `molrs.io.mrec`'s**, named without the repeated
-  `mrec`: `read` / `write`, `read_system` / `write_system`,
-  `read_trajectory` / `write_trajectory`, `read_forcefield` /
-  `write_forcefield`, `read_meta`, `section_names` (Rust
-  `molrs::io::mrec::section_names`). The lazy store cursor and its writer
-  take their Rust names, `FrameSequence` and `FrameSequenceWriter`, so
-  `molrs.io.TrajectoryReader` (the LAMMPS / XYZ / DCD / TRR / XTC dump
-  concatenator) is the only `TrajectoryReader`.
+  `molrs.store.schema`, `molrs.ff.ir`, and one submodule of `molrs.io` per
+  format that owns classes (below).
+- **Every file-format factory has one shape** — a function at the top of
+  `molrs.io`, `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, or a class
+  `molrs.io.<fmt>.<Fmt>Reader` / `<Fmt>Writer`. So every file reader and
+  writer is `molrs.io`'s: structure and trajectory files, force-field files
+  (`molrs.ff.read_lammps_forcefield` and the rest, 0.15, are
+  `molrs.io.read_lammps_forcefield`, …; they are not `molrs.ff.forcefield`'s,
+  which is the `ForceField` data model only), the `*.mrec` doors
+  (`molrs.io.read_mrec` / `write_mrec` and their `_system` / `_trajectory` /
+  `_forcefield` partners, `read_mrec_meta`, as in 0.15), the frame-bytes
+  codec (`molrs.io.read_frame_bytes` / `write_frame_bytes`, as in 0.15; not
+  `molrs.stream`'s, which is the transport) and the new
+  `molrs.io.read_smiles`. A reader of in-memory text carries `_str`:
+  `molrs.io.parse_lammps_log_text` is `molrs.io.read_lammps_log_str`.
+- **A class that belongs to one format is that format's submodule's**:
+  `molrs.io.trajectory.TrajectoryReader` (the LAMMPS / XYZ / DCD / TRR / XTC
+  dump concatenator), `molrs.io.mrec` (`MrecReader` / `MrecWriter` — the
+  lazy store cursor and its writer, named as Rust's
+  `molrs::io::mrec::{MrecReader, MrecWriter}` — `SequenceSchema`,
+  `ForceFieldSection`, `section_names`, `pack`, `schema`),
+  `molrs.io.smiles` (`SmilesIR`, `SmilesError` and the CGsmiles records,
+  `molrs::io::smiles`'s), `molrs.io.log` (the `Lammps*` log records,
+  `molrs::io::log`'s) and `molrs.io.lammps_bond_react`
+  (`BondReactTemplate`). The top of `molrs.io` holds functions only.
 - **One door per fact on a class.** `SmartsPattern.find_matches(mol,
   mapped=True)` is gone (each `SmartsMatch.mapping` is the
   `{map_number: atom}` dict it returned), and so are `SmartsMatch.as_list()`
   / `as_dict()` (`atoms` / `mapping`), `Trajectory.from_frames` (the
   constructor) and `Trajectory.count_frames()` (`len(traj)`).
 - `molrs.ff` holds only its submodules, one per `molrs::ff` submodule:
-  `forcefield` (the `ForceField`, its handles, and the force-field file
-  readers and writers), `potential`, `typifier`, `charge`, `ir`, `params`,
-  `scale_lj`.
+  `forcefield` (the `ForceField` data model and its handles; no file
+  format), `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj`.
 - `molrs.compute` is flat, as `molrs::compute` is; the domain subpackages
   (`molrs.compute.density`, …) are gone.
 - Removed, with no second spelling left behind: `molrs.io.raw` and
@@ -1312,7 +1340,7 @@ it any more.
   `list[Frame]` readers behind `molrs.io.raw.read_{dcd,trr,xtc,xyz,lammps}_trajectory`
   (`molrs.io.read_*_trajectory(path).read_all()`), the native `*TrajReader`
   classes as public names (`molrs.io.read_*_trajectory` wraps them in
-  `molrs.io.TrajectoryReader`), `Atomistic.max_ring_system_size()`
+  `molrs.io.trajectory.TrajectoryReader`), `Atomistic.max_ring_system_size()`
   (`molrs.perceive.RingInfo(mol).max_ring_system_size()`), and the
   `molrs.md` lazy loader.
 - The protocol and driver modules are private: `molrs.compute.Compute`,
@@ -1433,22 +1461,22 @@ it any more.
 | `molrs.ff.fragment_scaling_data` | `molrs.ff.scale_lj.fragment_scaling_data` |
 | `molrs.ff.intramolecular_pairs` | `molrs.ff.potential.intramolecular_pairs` |
 | `molrs.ff.potential.protocol.Potential` | `molrs.ff.potential.Potential` |
-| `molrs.ff.read_amber_prmtop_ff` | `molrs.ff.forcefield.read_amber_prmtop_ff` |
-| `molrs.ff.read_forcefield_xml` | `molrs.ff.forcefield.read_forcefield_xml` |
-| `molrs.ff.read_gromacs_system` | `molrs.ff.forcefield.read_gromacs_system` |
-| `molrs.ff.read_gromacs_top_ff` | `molrs.ff.forcefield.read_gromacs_top_ff` |
-| `molrs.ff.read_lammps_cmap` | `molrs.ff.forcefield.read_lammps_cmap` |
-| `molrs.ff.read_lammps_data_coeffs` | `molrs.ff.forcefield.read_lammps_data_coeffs` |
-| `molrs.ff.read_lammps_forcefield` | `molrs.ff.forcefield.read_lammps_forcefield` |
-| `molrs.ff.read_opls_xml` | `molrs.ff.forcefield.read_opls_xml` |
-| `molrs.ff.write_amber_frcmod` | `molrs.ff.forcefield.write_amber_frcmod` |
-| `molrs.ff.write_forcefield_xml` | `molrs.ff.forcefield.write_forcefield_xml` |
-| `molrs.ff.write_gromacs_system` | `molrs.ff.forcefield.write_gromacs_system` |
-| `molrs.ff.write_gromacs_top_ff` | `molrs.ff.forcefield.write_gromacs_top_ff` |
-| `molrs.ff.write_lammps_cmap` | `molrs.ff.forcefield.write_lammps_cmap` |
-| `molrs.ff.write_lammps_data_coeffs` | `molrs.ff.forcefield.write_lammps_data_coeffs` |
-| `molrs.ff.write_lammps_forcefield` | `molrs.ff.forcefield.write_lammps_forcefield` |
-| `molrs.ff.write_lammps_forcefield_str` | `molrs.ff.forcefield.write_lammps_forcefield_str` |
+| `molrs.ff.read_amber_prmtop_ff` | `molrs.io.read_amber_prmtop_ff` |
+| `molrs.ff.read_forcefield_xml` | `molrs.io.read_forcefield_xml` |
+| `molrs.ff.read_gromacs_system` | `molrs.io.read_gromacs_system` |
+| `molrs.ff.read_gromacs_top_ff` | `molrs.io.read_gromacs_top_ff` |
+| `molrs.ff.read_lammps_cmap` | `molrs.io.read_lammps_cmap` |
+| `molrs.ff.read_lammps_data_coeffs` | `molrs.io.read_lammps_data_coeffs` |
+| `molrs.ff.read_lammps_forcefield` | `molrs.io.read_lammps_forcefield` |
+| `molrs.ff.read_opls_xml` | `molrs.io.read_opls_xml` |
+| `molrs.ff.write_amber_frcmod` | `molrs.io.write_amber_frcmod` |
+| `molrs.ff.write_forcefield_xml` | `molrs.io.write_forcefield_xml` |
+| `molrs.ff.write_gromacs_system` | `molrs.io.write_gromacs_system` |
+| `molrs.ff.write_gromacs_top_ff` | `molrs.io.write_gromacs_top_ff` |
+| `molrs.ff.write_lammps_cmap` | `molrs.io.write_lammps_cmap` |
+| `molrs.ff.write_lammps_data_coeffs` | `molrs.io.write_lammps_data_coeffs` |
+| `molrs.ff.write_lammps_forcefield` | `molrs.io.write_lammps_forcefield` |
+| `molrs.ff.write_lammps_forcefield_str` | `molrs.io.write_lammps_forcefield_str` |
 | `molrs.ff.potential.protocol` | private; `Potential` is `molrs.ff.potential.Potential` |
 | `molrs._lib.TypedPotentials (only path)` | `molrs.ff.potential.TypedPotentials` |
 
@@ -1460,12 +1488,12 @@ it any more.
 | `molrs.fields.LammpsFieldFormatter` | removed (readers emit canonical names) |
 | `molrs.fields.PdbFieldFormatter` | removed (readers emit canonical names) |
 | `molrs.io.raw` | removed — every reader in `molrs.io` emits canonical names |
-| `molrs.io.raw.DCDTrajReader` | removed: `molrs.io.read_dcd_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
-| `molrs.io.raw.LAMMPSTrajReader` | removed: `molrs.io.read_lammps_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
-| `molrs.io.raw.TRRTrajReader` | removed: `molrs.io.read_trr_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
-| `molrs.io.raw.XTCTrajReader` | removed: `molrs.io.read_xtc_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
-| `molrs.io.raw.XYZTrajReader` | removed: `molrs.io.read_xyz_trajectory(path)` (a `molrs.io.TrajectoryReader`) |
-| `molrs.io.raw.parse_lammps_log_text` | `molrs.io.parse_lammps_log_text` |
+| `molrs.io.raw.DCDTrajReader` | removed: `molrs.io.read_dcd_trajectory(path)` (a `molrs.io.trajectory.TrajectoryReader`) |
+| `molrs.io.raw.LAMMPSTrajReader` | removed: `molrs.io.read_lammps_trajectory(path)` (a `molrs.io.trajectory.TrajectoryReader`) |
+| `molrs.io.raw.TRRTrajReader` | removed: `molrs.io.read_trr_trajectory(path)` (a `molrs.io.trajectory.TrajectoryReader`) |
+| `molrs.io.raw.XTCTrajReader` | removed: `molrs.io.read_xtc_trajectory(path)` (a `molrs.io.trajectory.TrajectoryReader`) |
+| `molrs.io.raw.XYZTrajReader` | removed: `molrs.io.read_xyz_trajectory(path)` (a `molrs.io.trajectory.TrajectoryReader`) |
+| `molrs.io.raw.parse_lammps_log_text`, `molrs.io.parse_lammps_log_text` | `molrs.io.read_lammps_log_str` |
 | `molrs.io.raw.read_amber_inpcrd` | `molrs.io.read_amber_inpcrd` |
 | `molrs.io.raw.read_amber_prmtop` | `molrs.io.read_amber_prmtop` |
 | `molrs.io.raw.read_chgcar` | `molrs.io.read_chgcar` |
@@ -1501,22 +1529,17 @@ it any more.
 | `molrs.io.raw.write_xtc_trajectory` | `molrs.io.write_xtc_trajectory` |
 | `molrs.io.raw.write_xyz` | `molrs.io.write_xyz` |
 | `molrs.io.raw.write_xyz_trajectory` | `molrs.io.write_xyz_trajectory` |
-| `molrs.io.read_frame_bytes` | `molrs.stream.read_frame_bytes` |
-| `molrs.io.write_frame_bytes` | `molrs.stream.write_frame_bytes` |
-| `molrs.io.write_smiles` | removed: `molrs.io.SmilesIR.from_atomistic(mol, **flags).write_smiles()` |
+| `molrs.io.write_smiles` | removed: `molrs.io.smiles.SmilesIR.from_atomistic(mol, **flags).write_smiles()` |
 | `molrs.fields` | removed — the Rust readers emit canonical column names |
-| `molrs.io.read_mrec` | `molrs.io.mrec.read` |
-| `molrs.io.write_mrec` | `molrs.io.mrec.write` |
-| `molrs.io.read_mrec_system` | `molrs.io.mrec.read_system` |
-| `molrs.io.write_mrec_system` | `molrs.io.mrec.write_system` |
-| `molrs.io.read_mrec_trajectory` | `molrs.io.mrec.read_trajectory` |
-| `molrs.io.write_mrec_trajectory` | `molrs.io.mrec.write_trajectory` |
-| `molrs.io.read_mrec_forcefield` | `molrs.io.mrec.read_forcefield` |
-| `molrs.io.write_mrec_forcefield` | `molrs.io.mrec.write_forcefield` |
-| `molrs.io.read_mrec_meta` | `molrs.io.mrec.read_meta` |
 | `molrs.io.mrec_sections` | `molrs.io.mrec.section_names` |
-| `molrs.io.mrec.TrajectoryReader` | `molrs.io.mrec.FrameSequence` |
-| `molrs.io.mrec.TrajectoryWriter` | `molrs.io.mrec.FrameSequenceWriter` |
+| `molrs.io.mrec.TrajectoryReader` | `molrs.io.mrec.MrecReader` |
+| `molrs.io.mrec.TrajectoryWriter` | `molrs.io.mrec.MrecWriter` |
+| `molrs.io.TrajectoryReader` | `molrs.io.trajectory.TrajectoryReader` |
+| `molrs.io.SmilesIR`, `molrs.SmilesIR` | `molrs.io.smiles.SmilesIR` |
+| `molrs.io.SmilesError` | `molrs.io.smiles.SmilesError` |
+| `molrs.io.CGSmilesIR`, `CGGraph`, `CGNode`, `CGEdge`, `CGFragmentDef`, `ResolvedPair`, `PairEnd`, `BondingDescriptor` | `molrs.io.smiles.…` (the same names) |
+| `molrs.io.LammpsLog`, `LammpsLogHeader`, `LammpsRun`, `LammpsThermo`, `LammpsWarning`, `LammpsPerformance`, `LammpsTimingBreakdown`, `LammpsTimingRow`, `LammpsCpuUse`, `LammpsLoadBalance`, `LammpsLoopTime`, `LammpsMemoryUsage`, `LammpsNeighborStatistics` | `molrs.io.log.…` (the same names) |
+| — | `molrs.io.read_smiles(smiles)`: one molecule, connectivity only (a `'.'`-separated set is refused, naming `SmilesIR(s).components()`) |
 
 **Analysis: `molrs.compute` is flat, as the Rust facade is**
 
@@ -1659,6 +1682,7 @@ The JS namespace stays flat. What changes for callers:
 | `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::system::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
 | `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XYZStream` / `PDBStream` / `SDFStream` / `LAMMPSStream` / `LAMMPSTrajStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
 | `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DCDStream` / `TRRStream` / `XTCStream` |
+| `new TrajectoryReader(files)` / `TrajectoryReader.fromZip` / `.fromStore` (a `*.mrec` store) | `new MrecReader(files)` / `MrecReader.fromZip` / `.fromStore`: named as Rust's `molrs::io::mrec::MrecReader` |
 | `new LBFGS(pots)` (an internal O(N²) topology pair list, N ≤ 2000) | `new LBFGS(pots, nl.neighbors())`: the table is required and comes from a `NeighborList` (or `NeighborList.bruteForce`); the force field's `special_bonds` decide whether 1-2 / 1-3 pairs are kept, as `intramolecular_pairs` does |
 
 **The analysis classes drop the `Wasm` prefix**, so every compute class is
@@ -1888,11 +1912,11 @@ the bullet says so):
   `UnitPreset.register(name, units, boltzmann=, coulomb=, overwrite=False)`,
   `preset_names` / `UnitPreset.names()`, `replace_preset`, and the
   `boltzmann_constant` (`k_B`) unit.
-- `molrs.ff.forcefield.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
+- `molrs.io.write_gromacs_system(path, forcefield, frame, *, precision=6)`,
   the Python door of `GromacsTopFfWriter::write_system_str` and the inverse
   of `read_gromacs_system`.
 - CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
-  `ff::forcefield::readers::clpol::read_alpha_ff`, and
+  `io::forcefield::readers::clpol::read_alpha_ff`, and
   `molrs.ff.params.clpol_polarizability(path=None)`.
 - `molrs.spatial.Box(h=None, origin=None, pbc=None, cell_defined=None)`
   takes a `(3, 3)` matrix, a `(3,)` diagonal or any array-like of either;

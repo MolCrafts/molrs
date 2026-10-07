@@ -165,18 +165,18 @@ from bytes. `readMrecFrame(files)` / `readMrecFrameFromZip(bytes)` return the
 sections. Every reader decodes `zstd` and `shuffle`, so columns written with
 a declared precision read as they do natively.
 
-`TrajectoryReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
+`MrecReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
 per call; consecutive frames of the same chunk are slices, not decodes.
 
 ```js
-import { TrajectoryReader } from "@molcrafts/molrs";
+import { MrecReader } from "@molcrafts/molrs";
 
 // (a) every file in memory
-const reader = new TrajectoryReader(files);            // Map<path, Uint8Array>
+const reader = new MrecReader(files);            // Map<path, Uint8Array>
 // (b) a packed store
-const zipped = TrajectoryReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
+const zipped = MrecReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
 // (c) served on demand — only touched chunks cross into wasm
-const lazy = TrajectoryReader.fromStore({
+const lazy = MrecReader.fromStore({
   get: (key) => ...,                                   // Uint8Array | null
   getRange: (key, offset, length) => ...,              // length -1 = to end
   size: (key) => ...,                                  // number | null

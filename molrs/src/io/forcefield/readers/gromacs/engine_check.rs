@@ -42,11 +42,11 @@ use std::io::Cursor;
 use std::path::Path;
 
 use super::GromacsTopFfReader;
-use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
 use crate::ff::potential::pair::exceptions;
-use crate::ff::{
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
 use molrs::io::data::gro::read_gro_frame;
@@ -474,7 +474,7 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
 #[test]
 fn per_pair_parameters_are_refused_by_the_lammps_writer() {
     let (_, frame, _) = load(&FIXTURES[3]);
-    let err = crate::ff::forcefield::writers::lammps::refuse_pair_overrides(&frame)
+    let err = crate::io::forcefield::writers::lammps::refuse_pair_overrides(&frame)
         .expect_err("overrides");
     assert!(err.contains("epsilon"), "{err}");
 }
@@ -484,8 +484,8 @@ fn per_pair_parameters_are_refused_by_the_lammps_writer() {
 /// style, type name, endpoint and parameter (to 1e-12, the decimal print).
 #[test]
 fn fixture_directives_survive_write_then_read() {
-    use crate::ff::forcefield::readers::ForceFieldReader;
-    use crate::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
+    use crate::io::forcefield::readers::ForceFieldReader;
+    use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
     let reader = [
         "constrainttypes",
         "moleculetype",

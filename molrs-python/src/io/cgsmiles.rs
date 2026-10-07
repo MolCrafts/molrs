@@ -10,7 +10,7 @@
 //! is ordinary atomistic SMILES. Reference: Grünewald et al., *J. Chem. Inf.
 //! Model.* (2025), DOI 10.1021/acs.jcim.5c00064.
 //!
-//! [`PyCGSmilesIR`] is the single front door: `molrs.io.CGSmilesIR(text)`
+//! [`PyCGSmilesIR`] is the single front door: `molrs.io.smiles.CGSmilesIR(text)`
 //! parses, and every other class here is a read-only view over one record of
 //! the value it returns — a resolution level, a node, an edge, a fragment
 //! definition, a resolved descriptor pair, one end of such a pair, or a
@@ -18,10 +18,10 @@
 //! none of them has a constructor on the Python side.
 //!
 //! There is deliberately **no** `CGSmilesReader`: in this binding "Reader"
-//! means a lazy, path-backed trajectory cursor (`molrs.io.TrajectoryReader`),
+//! means a lazy, path-backed trajectory cursor (`molrs.io.trajectory.TrajectoryReader`),
 //! and a text-in / IR-out parser is not that object. The
 //! reader-shaped API belongs to molpy, wrapping this class the way its
-//! `SmilesReader` wraps `molrs.io.SmilesIR`.
+//! `SmilesReader` wraps `molrs.io.smiles.SmilesIR`.
 //!
 //! # Values at the boundary
 //!
@@ -138,7 +138,7 @@ fn descriptor_kind_name(kind: DescriptorKind) -> &'static str {
 ///     ``"single"`` — except between two atoms both *written* aromatic, where
 ///     it is ``"aromatic"``; see :attr:`ResolvedPair.kind`.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.smiles",
     name = "BondingDescriptor",
     frozen,
     skip_from_py_object
@@ -210,7 +210,12 @@ impl PyBondingDescriptor {
 ///     Index into the *previous* level's ``nodes`` of the node this one was
 ///     instantiated from; ``None`` in ``levels[0]`` and in every fragment
 ///     body, which is a template rather than an instance.
-#[pyclass(module = "molrs.io", name = "CGNode", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.smiles",
+    name = "CGNode",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyCGNode {
     inner: CGNode,
@@ -286,7 +291,12 @@ impl PyCGNode {
 ///     the edge itself. Every derived edge has multiplicity ``1``: one
 ///     resolved pair is one bond, so a coarse edge of multiplicity *n*
 ///     induces *n* separate derived edges rather than one multiple edge.
-#[pyclass(module = "molrs.io", name = "CGEdge", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.smiles",
+    name = "CGEdge",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyCGEdge {
     inner: CGEdge,
@@ -347,7 +357,12 @@ impl PyCGEdge {
 ///     that index is what an edge's ``i`` / ``j`` name.
 /// edges : list of CGEdge
 ///     The bonds between them, each naming two indices into ``nodes``.
-#[pyclass(module = "molrs.io", name = "CGGraph", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.smiles",
+    name = "CGGraph",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyCGGraph {
     inner: CGGraph,
@@ -412,7 +427,7 @@ impl PyCGGraph {
 ///     ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES,
 ///     because the entry's span is the text the IR records.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.smiles",
     name = "CGFragmentDef",
     frozen,
     skip_from_py_object
@@ -498,7 +513,12 @@ impl PyCGFragmentDef {
 ///     and within one atom in written order. There is no Python object for
 ///     that map; the index is what :meth:`CGSmilesIR.to_atomistic` resolves
 ///     against the converted body.
-#[pyclass(module = "molrs.io", name = "PairEnd", frozen, skip_from_py_object)]
+#[pyclass(
+    module = "molrs.io.smiles",
+    name = "PairEnd",
+    frozen,
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyPairEnd {
     inner: PairEnd,
@@ -572,7 +592,7 @@ impl PyPairEnd {
 ///     neither wrote one and both port atoms are written aromatic, and
 ///     ``"single"`` otherwise.
 #[pyclass(
-    module = "molrs.io",
+    module = "molrs.io.smiles",
     name = "ResolvedPair",
     frozen,
     skip_from_py_object
@@ -663,12 +683,12 @@ impl PyResolvedPair {
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+/// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
 /// >>> len(ir.levels[0].nodes)
 /// 5
 /// >>> ir.to_atomistic().n_atoms
 /// 11
-#[pyclass(module = "molrs.io", name = "CGSmilesIR")]
+#[pyclass(module = "molrs.io.smiles", name = "CGSmilesIR")]
 pub struct PyCGSmilesIR {
     inner: CGSmilesIR,
     /// The string that was parsed, kept for `__repr__` and for slicing a
@@ -701,7 +721,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.io.CGSmilesIR("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
+    /// >>> molrs.io.smiles.CGSmilesIR("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
     /// 2
     #[new]
     fn new(text: &str) -> PyResult<Self> {
@@ -834,7 +854,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> ir.to_atomistic().n_atoms
     /// 11
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -870,7 +890,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> sorted(ir.templates())
     /// ['OH', 'PEO']
     /// >>> ir.templates()["PEO"].n_ports
@@ -915,7 +935,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> cg = molrs.io.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+    /// >>> cg = molrs.io.smiles.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
     /// >>> cg.n_beads
     /// 4
     fn to_coarsegrain(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {

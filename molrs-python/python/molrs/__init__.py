@@ -17,8 +17,9 @@ so the Python path and the Rust path are the same words
 * :mod:`molrs.perceive` — chemical perception: rings, aromaticity,
   hydrogens, stereochemistry, SMARTS matching and reactions, coarse-grained
   bead-pattern matching.
-* :mod:`molrs.io` — structure and trajectory file formats, SMILES and
-  CGsmiles text, ``*.mrec`` records.
+* :mod:`molrs.io` — every file reader and writer: structure, trajectory and
+  force-field files, SMILES and CGsmiles text, ``*.mrec`` records, frame
+  bytes.
 * :mod:`molrs.ff` — force fields, one submodule per Rust owner
   (``forcefield``, ``potential``, ``typifier``, ``charge``, ``ir``,
   ``params``, ``scale_lj``).
@@ -30,10 +31,10 @@ so the Python path and the Rust path are the same words
   coarse-graining.
 * :mod:`molrs.compute` — trajectory analysis.
 * :mod:`molrs.signal` — FFT autocorrelation, windows, frequency grids.
-* :mod:`molrs.stream` — live Frame streaming and its wire encoding.
+* :mod:`molrs.stream` — live Frame streaming (the transport).
 
-Each name has exactly one spelling — ``molrs.io.SmilesIR`` and nothing else —
-so there is one thing to learn, document, and grep for.
+Each name has exactly one spelling — ``molrs.io.smiles.SmilesIR`` and nothing
+else — so there is one thing to learn, document, and grep for.
 """
 
 from . import (

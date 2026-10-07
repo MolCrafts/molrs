@@ -348,7 +348,7 @@ impl WritableStorageTraits for PositionalWriteStore {
 /// hand it a store whose root disagrees with the paths it writes at, and the
 /// two path-taking write doors reach it in one call. `Arc<PositionalWriteStore>`
 /// must coerce to `ReadableWritableListableStorage`, which is the shape
-/// `FrameSequenceWriter` binds an array to.
+/// `MrecWriter` binds an array to.
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use std::sync::Arc;

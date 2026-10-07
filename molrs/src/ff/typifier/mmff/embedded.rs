@@ -8,8 +8,9 @@
 //! [`MmffVariant`] their front door pins. Nothing
 //! here is a number: every value comes from the table.
 //!
-//! The XML reader is not gone — [`MMFF94Typifier::from_xml_str`] still parses a
-//! caller-supplied parameter set — but the *shipped* set is no longer text.
+//! A caller's own parameter set still comes from XML — `molrs::io::forcefield::xml`
+//! reads it and [`MMFF94Typifier::from_parts`] takes it — but the *shipped*
+//! set is no longer text.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};

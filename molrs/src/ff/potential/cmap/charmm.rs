@@ -472,9 +472,9 @@ pub fn cmap_charmm_ctor(
 pub(crate) mod tests {
     use super::*;
     use crate::ff::forcefield::ForceField;
-    use crate::ff::forcefield::readers::lammps::read_lammps_cmap_str;
     use crate::ff::potential::PotentialCompiler;
     use crate::ff::potential::geometry::compute_dihedral;
+    use crate::io::forcefield::readers::lammps::read_lammps_cmap_str;
     use molrs::op::types::Idx;
     use molrs::store::Block;
     use ndarray::Array1;

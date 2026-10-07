@@ -198,7 +198,7 @@ pub fn read_lammps_log_with_style<P: AsRef<Path>>(
 ) -> std::io::Result<LammpsLog> {
     let path = path.as_ref();
     let text = fs::read_to_string(path)?;
-    Ok(parse_lammps_log_text(
+    Ok(read_lammps_log_str(
         &text,
         path.to_string_lossy().as_ref(),
         style,
@@ -209,7 +209,7 @@ pub fn read_lammps_log_with_style<P: AsRef<Path>>(
 ///
 /// `path` is recorded on the result for callers that still want a path field
 /// (e.g. Python dataclasses); it is not opened.
-pub fn parse_lammps_log_text(text: &str, path: &str, style: &str) -> LammpsLog {
+pub fn read_lammps_log_str(text: &str, path: &str, style: &str) -> LammpsLog {
     let lines: Vec<&str> = text.lines().collect();
     let run_ranges = find_run_ranges(&lines);
     let mut header_end = run_ranges.first().map(|(s, _)| *s).unwrap_or(lines.len());
@@ -877,7 +877,7 @@ Total wall time: 0:00:01
 
     #[test]
     fn parses_nested_run_structure() {
-        let log = parse_lammps_log_text(sample_full_log(), "log.lammps", "default");
+        let log = read_lammps_log_str(sample_full_log(), "log.lammps", "default");
         assert_eq!(log.version.as_deref(), Some("LAMMPS (1 Jan 2026)"));
         assert_eq!(log.total_wall_time.as_deref(), Some("0:00:01"));
         assert_eq!(log.runs.len(), 1);
@@ -945,7 +945,7 @@ Step Temp PotEng
 30 315.0 -1030.0
 Loop time of 0.1 on 1 procs
 ";
-        let log = parse_lammps_log_text(text, "two.log", "default");
+        let log = read_lammps_log_str(text, "two.log", "default");
         assert_eq!(log.runs.len(), 2);
         assert_eq!(log.runs[0].thermo.as_ref().unwrap().rows[0][0], 0.0);
         assert_eq!(log.runs[1].thermo.as_ref().unwrap().rows[0][0], 20.0);
@@ -954,7 +954,7 @@ Loop time of 0.1 on 1 procs
     #[test]
     fn handles_no_thermo_block() {
         let text = "LAMMPS (1 Jan 2026)\n# nothing happened\n";
-        let log = parse_lammps_log_text(text, "empty.log", "default");
+        let log = read_lammps_log_str(text, "empty.log", "default");
         assert!(log.runs.is_empty());
         assert!(log.version.as_ref().unwrap().starts_with("LAMMPS"));
     }
@@ -1001,7 +1001,7 @@ Per MPI rank memory allocation (min/avg/max) = 1 | 1 | 1 Mbytes
 Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
 Total wall time: 0:00:02
 ";
-        let log = parse_lammps_log_text(text, "append.log", "default");
+        let log = read_lammps_log_str(text, "append.log", "default");
         assert_eq!(log.runs.len(), 2, "both invocations' runs survive");
         for run in &log.runs {
             let thermo = run.thermo.as_ref().expect("thermo");

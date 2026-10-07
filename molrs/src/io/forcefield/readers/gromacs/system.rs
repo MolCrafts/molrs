@@ -1088,7 +1088,7 @@ SOL  2
     /// reads them.
     #[test]
     fn only_read_system_reads_molecules() {
-        use crate::ff::forcefield::readers::ForceFieldReader;
+        use crate::io::forcefield::readers::ForceFieldReader;
         let err = GromacsTopFfReader::new()
             .read_str(&format!("{DIRECTIVES}{MOLECULES}"))
             .expect_err("molecules");

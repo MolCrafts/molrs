@@ -44,13 +44,13 @@ use std::path::Path;
 use ndarray::Array1;
 use serde_json::Value;
 
-use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::opls::OplsXmlReader;
-use crate::ff::forcefield::writers::ForceFieldWriter;
-use crate::ff::forcefield::writers::xml::XmlForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::ff::{
+use crate::io::forcefield::readers::ForceFieldReader;
+use crate::io::forcefield::readers::opls::OplsXmlReader;
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::forcefield::writers::xml::XmlForceFieldWriter;
+use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
 use molrs::io::data::lammps_data::write_lammps_data;

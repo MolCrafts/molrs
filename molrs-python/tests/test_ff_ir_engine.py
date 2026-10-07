@@ -66,12 +66,12 @@ def test_a_positional_style_writes_and_reads_as_its_lammps_style(
     (info,) = [s for s in ir.styles("bond") if s.name == "fene/py"]
     assert info.lammps == "positional:fene"
     ff, frame = chain("fene/py")
-    text = molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
+    text = molrs.io.write_lammps_forcefield_str(ff, frame)
     assert "bond_style fene\n" in text
     assert "bond_coeff B-B 30.000000 1.500000 1.000000 1.000000\n" in text
     path = tmp_path / "fene.ff"
     path.write_text(text)
-    back = molrs.ff.forcefield.read_lammps_forcefield(path)
+    back = molrs.io.read_lammps_forcefield(path)
     assert back.get_style("bond", "fene/py") is not None
     assert energy(back, frame) == pytest.approx(energy(ff, frame), rel=1e-12)
 
@@ -90,10 +90,10 @@ def test_without_a_lammps_form_lammps_refuses_by_name(registered) -> None:
     registered.append(("bond", "fene/none"))
     ff, frame = chain("fene/none")
     with pytest.raises(ValueError, match=r"LAMMPS has no form for bond `fene/none`.*LEPTON"):
-        molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
+        molrs.io.write_lammps_forcefield_str(ff, frame)
     # A form given afterwards: the style writes.
     ir.register_engine_form("lammps", "bond", "fene/none", "positional:fene")
-    assert "bond_style fene\n" in molrs.ff.forcefield.write_lammps_forcefield_str(ff, frame)
+    assert "bond_style fene\n" in molrs.io.write_lammps_forcefield_str(ff, frame)
 
 
 def test_register_engine_form_refuses_by_variant(registered) -> None:

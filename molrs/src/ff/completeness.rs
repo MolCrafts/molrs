@@ -62,20 +62,20 @@ const BACK: &str = "ff/equivalence_check.rs::every_written_file_reads_back_as_wr
 const RECORD: &str = "ff/completeness.rs::every_registered_style_persists_through_a_record";
 const RECORD_SRC: &str = "ff/equivalence_check.rs::every_source_persists_through_a_record";
 const RT_L: &str =
-    "ff/forcefield/writers/lammps.rs::lammps_coeff_values_round_trips_through_lammps_coeff_params";
+    "io/forcefield/writers/lammps.rs::lammps_coeff_values_round_trips_through_lammps_coeff_params";
 const RT_O: &str = "ff/openmm_check.rs::read_write_read_is_the_identity";
 const OMM: &str = "ff/openmm_check.rs::every_term_is_openmm_s";
-const GMX: &str = "ff/forcefield/readers/gromacs/engine_check.rs::gromacs_read_systems_price_as_gromacs_and_lammps";
+const GMX: &str = "io/forcefield/readers/gromacs/engine_check.rs::gromacs_read_systems_price_as_gromacs_and_lammps";
 const GMX_RT: &str =
-    "ff/forcefield/readers/gromacs/engine_check.rs::fixture_directives_survive_write_then_read";
-const GMX_SYS: &str = "ff/forcefield/writers/gromacs.rs::a_system_reads_back_as_written";
-const PRMTOP: &str = "ff/forcefield/readers/prmtop_check.rs::each_term_matches_sander_and_lammps";
+    "io/forcefield/readers/gromacs/engine_check.rs::fixture_directives_survive_write_then_read";
+const GMX_SYS: &str = "io/forcefield/writers/gromacs.rs::a_system_reads_back_as_written";
+const PRMTOP: &str = "io/forcefield/readers/prmtop_check.rs::each_term_matches_sander_and_lammps";
 const SERIES: &str = "ff/forcefield/torsion.rs::registered_kernels_price_the_series";
 const NO_OMM: &str =
-    "ff/forcefield/writers/xml.rs::styles_without_an_openmm_form_are_refused_by_name";
-const NO_LMP: &str = "ff/forcefield/writers/lammps.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
+    "io/forcefield/writers/xml.rs::styles_without_an_openmm_form_are_refused_by_name";
+const NO_LMP: &str = "io/forcefield/writers/lammps.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
 const NO_LMP_PAIR: &str =
-    "ff/forcefield/readers/lammps.rs::data_coeffs_unsupported_pair_hint_is_an_error";
+    "io/forcefield/readers/lammps.rs::data_coeffs_unsupported_pair_hint_is_an_error";
 // The engine codecs (WP8).
 const CODEC_RT: &str = "ff/engine_codec_check.rs::every_builtin_codec_reads_back_what_it_writes";
 const CODEC_FILE: &str =
@@ -89,7 +89,7 @@ const OMM_REWRITE: &str =
 const RUNTIME_LMP: &str =
     "ff/engine_codec_check.rs::a_runtime_positional_style_reads_and_writes_through_its_registry";
 const NO_CUSTOM_READ: &str =
-    "ff/forcefield/readers/opls.rs::other_custom_forces_are_refused_by_name";
+    "io/forcefield/readers/opls.rs::other_custom_forces_are_refused_by_name";
 const PERSIST_CUSTOM: &str = "ff/ir/tests.rs::custom_styles_persist_to_a_fresh_process";
 
 /// A style of molrs's own definition (MMFF94, UFF, …): no engine format has
@@ -149,7 +149,7 @@ const fn positional_pair(kernel: &'static [&'static str]) -> [Cell; 9] {
         Exact(kernel),
         Exact(&[
             CODEC_FILE,
-            "ff/forcefield/readers/lammps.rs::data_coeffs_pair_morse_hint_reads_through_its_codec",
+            "io/forcefield/readers/lammps.rs::data_coeffs_pair_morse_hint_reads_through_its_codec",
         ]),
         Exact(&[CODEC_FILE, CODEC_ENG]),
         Na("OpenMM has no tag of its form"),
@@ -177,19 +177,19 @@ const MATRIX: &[Row] = &[
             Exact(&[RT_L, EQUIV]),
             Exact(&[RT_L, BACK]),
             Exact(&[
-                "ff/forcefield/readers/opls.rs::reads_all_sections_with_molrs_units",
+                "io/forcefield/readers/opls.rs::reads_all_sections_with_molrs_units",
                 OMM,
             ]),
             Exact(&[
-                "ff/forcefield/writers/xml.rs::what_is_written_reads_back_with_the_same_styles_and_parameters",
+                "io/forcefield/writers/xml.rs::what_is_written_reads_back_with_the_same_styles_and_parameters",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::bondtypes_funct_1_is_bond_harmonic_in_molrs_units",
+                "io/forcefield/readers/gromacs/mod.rs::bondtypes_funct_1_is_bond_harmonic_in_molrs_units",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::bond_harmonic_is_bondtypes_code_1",
+                "io/forcefield/writers/gromacs.rs::bond_harmonic_is_bondtypes_code_1",
                 EQUIV,
             ]),
             Exact(&[PRMTOP, EQUIV]),
@@ -208,9 +208,9 @@ const MATRIX: &[Row] = &[
             ),
             Exact(&[CODEC_ENG]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::bondtypes_funct_3_is_bond_morse_in_molrs_units",
+                "io/forcefield/readers/gromacs/mod.rs::bondtypes_funct_3_is_bond_morse_in_molrs_units",
             ]),
-            Exact(&["ff/forcefield/writers/gromacs.rs::bond_morse_is_bondtypes_code_3"]),
+            Exact(&["io/forcefield/writers/gromacs.rs::bond_morse_is_bondtypes_code_3"]),
             Na("AMBER bonds are harmonic"),
             Exact(&[RECORD]),
         ],
@@ -241,15 +241,15 @@ const MATRIX: &[Row] = &[
             Exact(&[RT_L, BACK]),
             Exact(&[OMM]),
             Exact(&[
-                "ff/forcefield/writers/xml.rs::what_is_written_reads_back_with_the_same_styles_and_parameters",
+                "io/forcefield/writers/xml.rs::what_is_written_reads_back_with_the_same_styles_and_parameters",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::angletypes_funct_1_is_angle_harmonic_in_molrs_units",
+                "io/forcefield/readers/gromacs/mod.rs::angletypes_funct_1_is_angle_harmonic_in_molrs_units",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::angle_harmonic_is_angletypes_code_1",
+                "io/forcefield/writers/gromacs.rs::angle_harmonic_is_angletypes_code_1",
                 EQUIV,
             ]),
             Exact(&[PRMTOP, EQUIV]),
@@ -263,30 +263,30 @@ const MATRIX: &[Row] = &[
                 "ff/potential/angle/charmm.rs::three_atom_urey_bradley_agrees_with_lammps_run_0",
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::angle_charmm_hybrid_reads_and_writes_back_identically",
+                "io/forcefield/writers/lammps.rs::angle_charmm_hybrid_reads_and_writes_back_identically",
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::angle_charmm_hybrid_reads_and_writes_back_identically",
+                "io/forcefield/writers/lammps.rs::angle_charmm_hybrid_reads_and_writes_back_identically",
                 EQUIV,
             ]),
             ExactWhere(
                 "a wildcard Urey–Bradley row is refused",
                 &[
-                    "ff/forcefield/readers/opls.rs::urey_bradley_joins_its_angle_as_angle_charmm",
+                    "io/forcefield/readers/opls.rs::urey_bradley_joins_its_angle_as_angle_charmm",
                     OMM,
                 ],
             ),
             Exact(&[RT_O, EQUIV]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::angletypes_funct_5_is_angle_charmm",
+                "io/forcefield/readers/gromacs/mod.rs::angletypes_funct_5_is_angle_charmm",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::angle_charmm_is_angletypes_code_5",
+                "io/forcefield/writers/gromacs.rs::angle_charmm_is_angletypes_code_5",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::chamber_angles_are_angle_charmm_with_their_urey_bradley",
+                "io/forcefield/readers/prmtop.rs::chamber_angles_are_angle_charmm_with_their_urey_bradley",
                 PRMTOP,
                 EQUIV,
             ]),
@@ -325,31 +325,31 @@ const MATRIX: &[Row] = &[
                 SERIES,
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::periodic_dihedral_is_written_as_fourier",
+                "io/forcefield/writers/lammps.rs::periodic_dihedral_is_written_as_fourier",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::periodic_dihedral_is_written_as_fourier",
+                "io/forcefield/writers/lammps.rs::periodic_dihedral_is_written_as_fourier",
                 BACK,
             ]),
             Exact(&[
-                "ff/forcefield/readers/opls.rs::openmm_periodic_proper_reads_as_multi_term_periodic",
+                "io/forcefield/readers/opls.rs::openmm_periodic_proper_reads_as_multi_term_periodic",
                 OMM,
             ]),
             Exact(&[
-                "ff/forcefield/writers/xml.rs::periodic_propers_round_trip_term_for_term",
+                "io/forcefield/writers/xml.rs::periodic_propers_round_trip_term_for_term",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::consecutive_funct_9_rows_are_one_multi_term_type",
+                "io/forcefield/readers/gromacs/mod.rs::consecutive_funct_9_rows_are_one_multi_term_type",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::multi_term_dihedral_periodic_is_funct_9_rows",
+                "io/forcefield/writers/gromacs.rs::multi_term_dihedral_periodic_is_funct_9_rows",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::multiterm_expansion",
+                "io/forcefield/readers/prmtop.rs::multiterm_expansion",
                 PRMTOP,
                 EQUIV,
             ]),
@@ -363,22 +363,22 @@ const MATRIX: &[Row] = &[
                 "ff/potential/dihedral/charmm.rs::a_zero_weight_compiles_to_the_lammps_energy",
                 "ff/one_four.rs::charmm_weights_of_one_match_lammps",
             ]),
-            Exact(&["ff/forcefield/readers/lammps.rs::dihedral_charmm_reads_its_own_layout"]),
+            Exact(&["io/forcefield/readers/lammps.rs::dihedral_charmm_reads_its_own_layout"]),
             Exact(&[RT_L, EQUIV]),
             Na("OpenMM has no per-dihedral 1-4 weight"),
             ExactWhere(
                 "w = 0 (a periodic term); w ≠ 0 refused",
                 &[
-                    "ff/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms",
-                    "ff/forcefield/writers/xml.rs::a_charmm_dihedral_with_a_weight_is_refused",
+                    "io/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms",
+                    "io/forcefield/writers/xml.rs::a_charmm_dihedral_with_a_weight_is_refused",
                 ],
             ),
             Na("GROMACS prices a 1-4 pair by [ pairs ], never by a dihedral"),
             ExactWhere(
                 "w = 0 (funct 9); w > 0 refused",
                 &[
-                    "ff/forcefield/writers/gromacs.rs::dihedral_charmm_with_w_0_is_dihedraltypes_code_9",
-                    "ff/forcefield/writers/gromacs.rs::dihedral_charmm_is_an_error",
+                    "io/forcefield/writers/gromacs.rs::dihedral_charmm_with_w_0_is_dihedraltypes_code_9",
+                    "io/forcefield/writers/gromacs.rs::dihedral_charmm_is_an_error",
                 ],
             ),
             Na("AMBER torsions are periodic rows"),
@@ -389,17 +389,17 @@ const MATRIX: &[Row] = &[
         item: "dihedral opls",
         cells: [
             Exact(&["ff/potential/dihedral/opls.rs::per_term_phase", SERIES]),
-            Exact(&["ff/forcefield/readers/lammps.rs::dihedral_opls_four_coeffs"]),
+            Exact(&["io/forcefield/readers/lammps.rs::dihedral_opls_four_coeffs"]),
             Exact(&[RT_L]),
-            Exact(&["ff/forcefield/readers/opls.rs::clp_fourier_proper_still_reads_as_opls"]),
+            Exact(&["io/forcefield/readers/opls.rs::clp_fourier_proper_still_reads_as_opls"]),
             ExactWhere(
                 "as RB, which reads back as multi/harmonic: the same series, constant included",
-                &["ff/forcefield/writers/xml.rs::opls_fourier_torsion_is_written_as_rb_in_kj"],
+                &["io/forcefield/writers/xml.rs::opls_fourier_torsion_is_written_as_rb_in_kj"],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_5_is_dihedral_opls",
+                "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_5_is_dihedral_opls",
             ]),
-            Exact(&["ff/forcefield/writers/gromacs.rs::dihedral_opls_is_dihedraltypes_code_5"]),
+            Exact(&["io/forcefield/writers/gromacs.rs::dihedral_opls_is_dihedraltypes_code_5"]),
             Na("AMBER torsions are periodic rows"),
             Exact(&[RECORD]),
         ],
@@ -413,17 +413,17 @@ const MATRIX: &[Row] = &[
             ]),
             Exact(&[RT_L, EQUIV]),
             Exact(&[RT_L, BACK]),
-            Exact(&["ff/forcefield/readers/opls.rs::rb_row_reads_as_multi_harmonic_in_kcal"]),
+            Exact(&["io/forcefield/readers/opls.rs::rb_row_reads_as_multi_harmonic_in_kcal"]),
             Exact(&[
-                "ff/forcefield/writers/xml.rs::polynomial_torsions_round_trip_through_rb",
+                "io/forcefield/writers/xml.rs::polynomial_torsions_round_trip_through_rb",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_3_is_dihedral_multi_harmonic",
+                "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_3_is_dihedral_multi_harmonic",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::dihedral_multi_harmonic_is_dihedraltypes_code_3",
+                "io/forcefield/writers/gromacs.rs::dihedral_multi_harmonic_is_dihedraltypes_code_3",
                 EQUIV,
             ]),
             Na("AMBER torsions are periodic rows"),
@@ -439,18 +439,18 @@ const MATRIX: &[Row] = &[
             ]),
             Exact(&[RT_L]),
             Exact(&[RT_L]),
-            Exact(&["ff/forcefield/readers/opls.rs::rb_row_with_c5_reads_as_nharmonic"]),
+            Exact(&["io/forcefield/readers/opls.rs::rb_row_with_c5_reads_as_nharmonic"]),
             ExactWhere(
                 "N ≤ 6 (RB's C0 … C5); above refused",
-                &["ff/forcefield/writers/xml.rs::polynomial_torsions_round_trip_through_rb"],
+                &["io/forcefield/writers/xml.rs::polynomial_torsions_round_trip_through_rb"],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_3_with_c5_is_dihedral_nharmonic",
+                "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_3_with_c5_is_dihedral_nharmonic",
             ]),
             ExactWhere(
                 "N ≤ 6; above refused",
                 &[
-                    "ff/forcefield/writers/gromacs.rs::dihedral_nharmonic_is_dihedraltypes_code_3_up_to_six_terms",
+                    "io/forcefield/writers/gromacs.rs::dihedral_nharmonic_is_dihedraltypes_code_3_up_to_six_terms",
                 ],
             ),
             Na("AMBER torsions are periodic rows"),
@@ -467,10 +467,10 @@ const MATRIX: &[Row] = &[
             Exact(&[RT_L]),
             Exact(&[RT_L]),
             Na("OpenMM's periodic torsion reads as dihedral periodic"),
-            Exact(&["ff/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms"]),
+            Exact(&["io/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms"]),
             Na("GROMACS's periodic rows read as dihedral periodic"),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::signed_cosines_are_periodic_rows_at_0_or_180",
+                "io/forcefield/writers/gromacs.rs::signed_cosines_are_periodic_rows_at_0_or_180",
             ]),
             Na("AMBER torsions are periodic rows"),
             Exact(&[RECORD]),
@@ -483,10 +483,10 @@ const MATRIX: &[Row] = &[
             ExactWhere(CLASS2_LMP, &[CODEC_FILE, CLASS2_X]),
             ExactWhere(CLASS2_LMP, &[CODEC_FILE, CLASS2_X]),
             Na("OpenMM's periodic torsion reads as dihedral periodic"),
-            Exact(&["ff/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms"]),
+            Exact(&["io/forcefield/writers/xml.rs::cosine_torsions_are_written_as_periodic_terms"]),
             Na("GROMACS's periodic rows read as dihedral periodic"),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::dihedral_class2_is_funct_9_at_its_phase_plus_180",
+                "io/forcefield/writers/gromacs.rs::dihedral_class2_is_funct_9_at_its_phase_plus_180",
             ]),
             Na("AMBER torsions are periodic rows"),
             Exact(&[RECORD]),
@@ -506,7 +506,7 @@ const MATRIX: &[Row] = &[
         cells: [
             Exact(&[
                 "ff/potential/improper/harmonic.rs::energy_minimum_at_chi0",
-                "ff/forcefield/readers/lammps.rs::a_lammps_improper_evaluates_at_the_lammps_energy",
+                "io/forcefield/readers/lammps.rs::a_lammps_improper_evaluates_at_the_lammps_energy",
             ]),
             Exact(&[RT_L, EQUIV]),
             ExactWhere(
@@ -516,34 +516,34 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "CustomTorsionForce k(θ−θ0)² at θ0 = 0, or k(|θ|−θ0)²; another signed θ0 refused",
                 &[
-                    "ff/forcefield/readers/opls.rs::custom_torsion_harmonic_improper_reads_as_improper_harmonic",
-                    "ff/forcefield/readers/opls.rs::signed_harmonic_improper_off_zero_is_refused_and_abs_form_reads",
+                    "io/forcefield/readers/opls.rs::custom_torsion_harmonic_improper_reads_as_improper_harmonic",
+                    "io/forcefield/readers/opls.rs::signed_harmonic_improper_off_zero_is_refused_and_abs_form_reads",
                     OMM,
                 ],
             ),
             ExactWhere(
                 "a wildcard endpoint refused (OpenMM would re-order the atoms)",
                 &[
-                    "ff/forcefield/writers/xml.rs::harmonic_improper_round_trips_through_custom_torsion",
+                    "io/forcefield/writers/xml.rs::harmonic_improper_round_trips_through_custom_torsion",
                     EQUIV,
                 ],
             ),
             ExactWhere(
                 "funct 2 at ξ0 ∈ {0°, 180°}; another ξ0 refused",
                 &[
-                    "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_2_at_zero_is_improper_harmonic",
-                    "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_2_off_zero_is_an_error",
+                    "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_2_at_zero_is_improper_harmonic",
+                    "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_2_off_zero_is_an_error",
                 ],
             ),
             ExactWhere(
                 "chi0 ∈ {0°, 180°}; another refused",
                 &[
-                    "ff/forcefield/writers/gromacs.rs::improper_harmonic_is_dihedraltypes_code_2",
+                    "io/forcefield/writers/gromacs.rs::improper_harmonic_is_dihedraltypes_code_2",
                     EQUIV,
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::chamber_impropers_are_improper_harmonic_in_file_order",
+                "io/forcefield/readers/prmtop.rs::chamber_impropers_are_improper_harmonic_in_file_order",
                 PRMTOP,
                 EQUIV,
             ]),
@@ -560,13 +560,13 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "the CustomTorsionForce of its expression with ordering=\"charmm\", which prices the row's dihedral, its centre first",
                 &[
-                    "ff/forcefield/writers/xml.rs::a_cvff_improper_is_a_charmm_ordered_custom_torsion",
+                    "io/forcefield/writers/xml.rs::a_cvff_improper_is_a_charmm_ordered_custom_torsion",
                     CODEC_ENG,
                 ],
             ),
             Na("GROMACS's periodic improper reads as improper periodic"),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::signed_cosines_are_periodic_rows_at_0_or_180",
+                "io/forcefield/writers/gromacs.rs::signed_cosines_are_periodic_rows_at_0_or_180",
             ]),
             Na("AMBER impropers read as improper periodic"),
             Exact(&[RECORD]),
@@ -582,32 +582,32 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "as cvff, at a phase of 0° or 180°; another refused",
                 &[
-                    "ff/forcefield/writers/lammps.rs::periodic_improper_is_written_as_cvff",
-                    "ff/forcefield/writers/lammps.rs::periodic_improper_with_other_phase_is_refused",
+                    "io/forcefield/writers/lammps.rs::periodic_improper_is_written_as_cvff",
+                    "io/forcefield/writers/lammps.rs::periodic_improper_with_other_phase_is_refused",
                     EQUIV,
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/opls.rs::openmm_improper_reads_as_periodic_improper",
+                "io/forcefield/readers/opls.rs::openmm_improper_reads_as_periodic_improper",
                 OMM,
             ]),
             ExactWhere(
                 "OpenMM orders the two outer atoms it finds first by element and index (its AMBER rule); a system whose stored order differs prices another dihedral",
                 &[
-                    "ff/forcefield/writers/xml.rs::a_periodic_improper_round_trips_through_openmm_order",
+                    "io/forcefield/writers/xml.rs::a_periodic_improper_round_trips_through_openmm_order",
                     EQUIV,
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_4_is_improper_periodic",
+                "io/forcefield/readers/gromacs/mod.rs::dihedraltypes_funct_4_is_improper_periodic",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::improper_periodic_is_dihedraltypes_code_4",
+                "io/forcefield/writers/gromacs.rs::improper_periodic_is_dihedraltypes_code_4",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::an_improper_keeps_its_central_atom_third",
+                "io/forcefield/readers/prmtop.rs::an_improper_keeps_its_central_atom_third",
                 PRMTOP,
                 EQUIV,
             ]),
@@ -628,17 +628,17 @@ const MATRIX: &[Row] = &[
         cells: [
             Exact(&["ff/potential/cmap/lammps_check.rs::energy_and_forces_are_lammps_fix_cmap"]),
             Exact(&[
-                "ff/forcefield/readers/lammps.rs::an_include_reads_its_fix_cmap_file",
+                "io/forcefield/readers/lammps.rs::an_include_reads_its_fix_cmap_file",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::a_charmm_cmap_file_is_written_back_line_for_line",
+                "io/forcefield/writers/lammps.rs::a_charmm_cmap_file_is_written_back_line_for_line",
                 BACK,
             ]),
             ExactWhere(
                 "odd N refused; OpenMM takes its node slopes from periodic splines (≤ 10⁻⁷ kcal/mol off the IR's)",
                 &[
-                    "ff/forcefield/readers/opls.rs::cmap_map_is_shifted_by_half_and_transposed_into_phi_major",
+                    "io/forcefield/readers/opls.rs::cmap_map_is_shifted_by_half_and_transposed_into_phi_major",
                     OMM,
                 ],
             ),
@@ -647,15 +647,15 @@ const MATRIX: &[Row] = &[
                 &[RT_O, EQUIV],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::cmaptypes_is_a_cmap_charmm_grid_in_kcal",
+                "io/forcefield/readers/gromacs/mod.rs::cmaptypes_is_a_cmap_charmm_grid_in_kcal",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::cmap_charmm_is_a_cmaptypes_row",
+                "io/forcefield/writers/gromacs.rs::cmap_charmm_is_a_cmaptypes_row",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::chamber_cmap_is_a_cmap_charmm_type",
+                "io/forcefield/readers/prmtop.rs::chamber_cmap_is_a_cmap_charmm_type",
                 PRMTOP,
                 EQUIV,
             ]),
@@ -674,31 +674,31 @@ const MATRIX: &[Row] = &[
                 "ff/potential/mod.rs::lj_cut_combines_distinct_types_lorentz_berthelot",
             ]),
             Exact(&[
-                "ff/forcefield/readers/lammps.rs::a_bare_lj_cut_has_no_coulomb_style",
+                "io/forcefield/readers/lammps.rs::a_bare_lj_cut_has_no_coulomb_style",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::round_trip_preserves_molrs_params",
+                "io/forcefield/writers/lammps.rs::round_trip_preserves_molrs_params",
                 BACK,
             ]),
             Exact(&[
-                "ff/forcefield/readers/opls.rs::reads_all_sections_with_molrs_units",
+                "io/forcefield/readers/opls.rs::reads_all_sections_with_molrs_units",
                 OMM,
             ]),
             Exact(&[
-                "ff/forcefield/writers/xml.rs::opls_torsions_and_pairs_round_trip_through_the_openmm_units",
+                "io/forcefield/writers/xml.rs::opls_torsions_and_pairs_round_trip_through_the_openmm_units",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::atomtypes_row_splits_into_atom_full_and_an_lj_cut_self_row",
+                "io/forcefield/readers/gromacs/mod.rs::atomtypes_row_splits_into_atom_full_and_an_lj_cut_self_row",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::atomtypes_row_joins_atom_full_and_the_lj_cut_self_row",
+                "io/forcefield/writers/gromacs.rs::atomtypes_row_joins_atom_full_and_the_lj_cut_self_row",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::decode_lj_types_self_terms_match_closed_form",
+                "io/forcefield/readers/prmtop.rs::decode_lj_types_self_terms_match_closed_form",
                 PRMTOP,
             ]),
             Exact(&[RECORD, RECORD_SRC]),
@@ -710,23 +710,23 @@ const MATRIX: &[Row] = &[
             Exact(&[
                 "ff/potential/pair/charmm.rs::lj_hand_values_inside_across_and_beyond_the_switch",
             ]),
-            Exact(&["ff/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
+            Exact(&["io/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
             Exact(&[
                 "ff/one_four.rs::lammps_round_trip_and_override_refusal",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/opls.rs::lennard_jones_force_reads_as_lj_charmm",
+                "io/forcefield/readers/opls.rs::lennard_jones_force_reads_as_lj_charmm",
                 OMM,
             ]),
             Exact(&[RT_O, EQUIV]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::a_self_pairtype_is_lj_charmm_epsilon14",
+                "io/forcefield/readers/gromacs/mod.rs::a_self_pairtype_is_lj_charmm_epsilon14",
                 GMX,
             ]),
             Exact(&[GMX_RT, EQUIV]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::chamber_lennard_jones_is_lj_charmm_with_its_1_4_table",
+                "io/forcefield/readers/prmtop.rs::chamber_lennard_jones_is_lj_charmm_with_its_1_4_table",
                 PRMTOP,
             ]),
             Exact(&[RECORD, RECORD_SRC]),
@@ -736,24 +736,24 @@ const MATRIX: &[Row] = &[
         item: "pair coul/cut",
         cells: [
             Exact(&["ff/potential/pair/coul_cut.rs::energy_and_sign"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::reads_lammps_units", EQUIV]),
+            Exact(&["io/forcefield/readers/lammps.rs::reads_lammps_units", EQUIV]),
             ExactWhere(
                 "delta = 0 and dielectric = 1; the Coulomb constant is LAMMPS's own",
                 &[
-                    "ff/forcefield/writers/lammps.rs::a_buffered_coulomb_is_refused",
+                    "io/forcefield/writers/lammps.rs::a_buffered_coulomb_is_refused",
                     EQUIV,
                 ],
             ),
             Exact(&[OMM]),
             ExactWhere("the Coulomb constant is OpenMM's own", &[EQUIV]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::atomtypes_declare_coul_cut_with_its_constants",
+                "io/forcefield/readers/gromacs/mod.rs::atomtypes_declare_coul_cut_with_its_constants",
                 GMX,
             ]),
             ExactWhere(
                 "the Coulomb constant is GROMACS's own",
                 &[
-                    "ff/forcefield/writers/gromacs.rs::a_stated_coulomb_constant_is_not_written",
+                    "io/forcefield/writers/gromacs.rs::a_stated_coulomb_constant_is_not_written",
                     EQUIV,
                 ],
             ),
@@ -768,7 +768,7 @@ const MATRIX: &[Row] = &[
         item: "pair coul/charmm",
         cells: [
             Exact(&["ff/potential/pair/charmm.rs::coulomb_hand_values_and_lammps_switched_force"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
+            Exact(&["io/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
             Exact(&[EQUIV]),
             Exact(&[OMM]),
             Exact(&[EQUIV]),
@@ -785,12 +785,12 @@ const MATRIX: &[Row] = &[
             ExactWhere(
                 "lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated",
                 &[
-                    "ff/forcefield/readers/lammps.rs::lj_cut_coul_long_is_coul_long_pme_without_its_ewald_parameters",
+                    "io/forcefield/readers/lammps.rs::lj_cut_coul_long_is_coul_long_pme_without_its_ewald_parameters",
                 ],
             ),
             ExactWhere(
                 "the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)",
-                &["ff/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name"],
+                &["io/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name"],
             ),
             Na("the long-range method is a createSystem argument"),
             Refused("the long-range method is a createSystem argument", &[]),
@@ -860,9 +860,9 @@ const MATRIX: &[Row] = &[
         item: "special_bonds",
         cells: [
             Exact(&["ff/potential/mod.rs::lj_cut_applies_special_bonds_14_scaling"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::special_bonds_presets_and_absent_line"]),
+            Exact(&["io/forcefield/readers/lammps.rs::special_bonds_presets_and_absent_line"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::default_write_keeps_special_bonds",
+                "io/forcefield/writers/lammps.rs::default_write_keeps_special_bonds",
                 EQUIV,
             ]),
             ExactWhere("[0, 0, s] (OpenMM's 14scale)", &[OMM]),
@@ -870,20 +870,20 @@ const MATRIX: &[Row] = &[
                 "[0, 0, s]; another refused",
                 &[
                     EQUIV,
-                    "ff/forcefield/writers/xml.rs::regular_one_four_with_own_14_parameters_is_refused",
+                    "io/forcefield/writers/xml.rs::regular_one_four_with_own_14_parameters_is_refused",
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::fudge_factors_are_the_1_4_special_bond_weights",
+                "io/forcefield/readers/gromacs/mod.rs::fudge_factors_are_the_1_4_special_bond_weights",
             ]),
             ExactWhere(
                 "[0, 0, s]; another refused",
                 &[
-                    "ff/forcefield/writers/gromacs.rs::nonzero_1_3_special_bond_weight_is_an_error",
+                    "io/forcefield/writers/gromacs.rs::nonzero_1_3_special_bond_weight_is_an_error",
                     EQUIV,
                 ],
             ),
-            Exact(&["ff/forcefield/readers/prmtop.rs::special_bonds_are_reciprocal_divisors"]),
+            Exact(&["io/forcefield/readers/prmtop.rs::special_bonds_are_reciprocal_divisors"]),
             Exact(&[
                 "ff/forcefield/section.rs::a_lammps_read_force_field_round_trips",
                 RECORD_SRC,
@@ -901,13 +901,13 @@ const MATRIX: &[Row] = &[
             Refused(
                 "LAMMPS has no per-pair 1-4 parameters",
                 &[
-                    "ff/forcefield/readers/gromacs/engine_check.rs::per_pair_parameters_are_refused_by_the_lammps_writer",
+                    "io/forcefield/readers/gromacs/engine_check.rs::per_pair_parameters_are_refused_by_the_lammps_writer",
                 ],
             ),
             Na("a ForceField XML holds no per-pair exception"),
             Na("a ForceField XML holds no per-pair exception"),
             Exact(&[
-                "ff/forcefield/readers/gromacs/system.rs::a_funct_2_pair_carries_its_charges",
+                "io/forcefield/readers/gromacs/system.rs::a_funct_2_pair_carries_its_charges",
                 GMX,
             ]),
             Exact(&[GMX_SYS]),
@@ -945,20 +945,20 @@ const MATRIX: &[Row] = &[
         item: "mixing arithmetic",
         cells: [
             Exact(&["ff/potential/mod.rs::lj_cut_combines_distinct_types_lorentz_berthelot"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::pair_modify_shift_is_the_lj_cut_shift"]),
+            Exact(&["io/forcefield/readers/lammps.rs::pair_modify_shift_is_the_lj_cut_shift"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::combined_undeclared_lj_cut_writes_pair_modify_mix_arithmetic",
+                "io/forcefield/writers/lammps.rs::combined_undeclared_lj_cut_writes_pair_modify_mix_arithmetic",
             ]),
             Exact(&[OMM]),
             Exact(&[EQUIV]),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::comb_rule_2_declares_arithmetic_mixing_on_lj_cut",
+                "io/forcefield/readers/gromacs/mod.rs::comb_rule_2_declares_arithmetic_mixing_on_lj_cut",
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::arithmetic_mixing_writes_comb_rule_2",
+                "io/forcefield/writers/gromacs.rs::arithmetic_mixing_writes_comb_rule_2",
                 EQUIV,
             ]),
-            Exact(&["ff/forcefield/readers/prmtop.rs::the_lj_style_states_arithmetic_mixing"]),
+            Exact(&["io/forcefield/readers/prmtop.rs::the_lj_style_states_arithmetic_mixing"]),
             Exact(&[RECORD_SRC]),
         ],
     },
@@ -967,10 +967,10 @@ const MATRIX: &[Row] = &[
         cells: [
             Exact(&["ff/potential/pair/lj_cut.rs::without_a_cross_row_the_pair_is_mixed"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::declared_geometric_lj_cut_writes_pair_modify_mix_geometric",
+                "io/forcefield/writers/lammps.rs::declared_geometric_lj_cut_writes_pair_modify_mix_geometric",
             ]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::declared_geometric_lj_cut_writes_pair_modify_mix_geometric",
+                "io/forcefield/writers/lammps.rs::declared_geometric_lj_cut_writes_pair_modify_mix_geometric",
                 EQUIV,
             ]),
             ExactWhere(
@@ -982,11 +982,11 @@ const MATRIX: &[Row] = &[
                 &[EQUIV],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::comb_rule_3_declares_geometric_mixing_on_lj_cut",
+                "io/forcefield/readers/gromacs/mod.rs::comb_rule_3_declares_geometric_mixing_on_lj_cut",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::geometric_mixing_writes_comb_rule_3",
+                "io/forcefield/writers/gromacs.rs::geometric_mixing_writes_comb_rule_3",
                 EQUIV,
             ]),
             Na("AMBER mixes arithmetically"),
@@ -997,14 +997,14 @@ const MATRIX: &[Row] = &[
         item: "mixing sixthpower",
         cells: [
             Exact(&["ff/forcefield/mixing.rs::sixthpower_is_the_waldman_hagler_rule"]),
-            Exact(&["ff/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
-            Exact(&["ff/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
+            Exact(&["io/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
+            Exact(&["io/forcefield/writers/lammps.rs::sixthpower_mixing_is_read_and_written_back"]),
             Na("OpenMM mixes arithmetically"),
             Refused("OpenMM mixes arithmetically", &[]),
             Na("GROMACS comb-rules are C6/C12, arithmetic, geometric"),
             Refused(
                 "no GROMACS comb-rule",
-                &["ff/forcefield/writers/gromacs.rs::sixthpower_mixing_is_an_error"],
+                &["io/forcefield/writers/gromacs.rs::sixthpower_mixing_is_an_error"],
             ),
             Na("AMBER mixes arithmetically"),
             Exact(&[RECORD]),
@@ -1017,29 +1017,29 @@ const MATRIX: &[Row] = &[
                 "ff/potential/pair/lj_cut.rs::an_explicit_cross_row_overrides_the_mixing_rule",
                 "ff/potential/pair/charmm.rs::epsilon14_mixes_like_epsilon_and_a_cross_row_wins",
             ]),
-            Exact(&["ff/forcefield/readers/lammps.rs::a_cross_pair_coeff_is_kept_as_a_pair_type"]),
+            Exact(&["io/forcefield/readers/lammps.rs::a_cross_pair_coeff_is_kept_as_a_pair_type"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::label_writer_writes_cross_pair_only_when_both_endpoints_used",
+                "io/forcefield/writers/lammps.rs::label_writer_writes_cross_pair_only_when_both_endpoints_used",
                 EQUIV,
             ]),
             Exact(&[OMM]),
             ExactWhere(
                 "a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)",
                 &[
-                    "ff/forcefield/writers/xml.rs::an_lj_cross_row_is_an_nbfix_pair",
+                    "io/forcefield/writers/xml.rs::an_lj_cross_row_is_an_nbfix_pair",
                     EQUIV,
                 ],
             ),
             Exact(&[
-                "ff/forcefield/readers/gromacs/mod.rs::nonbond_params_is_an_explicit_lj_cut_cross_row",
+                "io/forcefield/readers/gromacs/mod.rs::nonbond_params_is_an_explicit_lj_cut_cross_row",
                 GMX,
             ]),
             Exact(&[
-                "ff/forcefield/writers/gromacs.rs::explicit_lj_cut_cross_row_is_a_nonbond_params_row",
+                "io/forcefield/writers/gromacs.rs::explicit_lj_cut_cross_row_is_a_nonbond_params_row",
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/readers/prmtop.rs::decode_lj_types_keeps_nbfix_cross_terms_as_cross_rows",
+                "io/forcefield/readers/prmtop.rs::decode_lj_types_keeps_nbfix_cross_terms_as_cross_rows",
             ]),
             Exact(&[
                 "ff/forcefield/section.rs::explicit_cross_rows_round_trip_and_still_override_mixing",
@@ -1050,14 +1050,14 @@ const MATRIX: &[Row] = &[
         item: "lj/cut shift",
         cells: [
             Exact(&["ff/potential/pair/lj_cut.rs::a_typed_kernel_stops_at_its_cutoff"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::pair_modify_shift_is_the_lj_cut_shift"]),
+            Exact(&["io/forcefield/readers/lammps.rs::pair_modify_shift_is_the_lj_cut_shift"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name",
+                "io/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name",
             ]),
             Na("OpenMM's NonbondedForce has no shifted Lennard-Jones"),
             Refused(
                 "OpenMM's NonbondedForce has no shifted Lennard-Jones",
-                &["ff/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
+                &["io/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
             ),
             Na("a modifier is an .mdp setting"),
             Refused("a modifier is an .mdp setting", &[]),
@@ -1072,12 +1072,12 @@ const MATRIX: &[Row] = &[
             Refused("pair_style mie/cut is not read", &[NO_LMP_PAIR]),
             Refused(
                 "pair_style mie/cut is not written",
-                &["ff/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name"],
+                &["io/forcefield/writers/lammps.rs::pair_settings_are_written_or_refused_by_name"],
             ),
             Na("OpenMM's Lennard-Jones is 12-6"),
             Refused(
                 "OpenMM's Lennard-Jones is 12-6",
-                &["ff/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
+                &["io/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
             ),
             Na("GROMACS's Lennard-Jones is 12-6"),
             Refused("GROMACS's Lennard-Jones is 12-6", &[]),
@@ -1089,7 +1089,7 @@ const MATRIX: &[Row] = &[
         item: "Coulomb constant",
         cells: [
             Exact(&["ff/potential/pair/coul_cut.rs::energy_and_sign"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::metal_units_are_kept_and_declared"]),
+            Exact(&["io/forcefield/readers/lammps.rs::metal_units_are_kept_and_declared"]),
             Na(
                 "LAMMPS fixes qqr2e per units: priced at LAMMPS's (an AMBER field 3.5·10⁻⁵ above its own)",
             ),
@@ -1108,9 +1108,9 @@ const MATRIX: &[Row] = &[
                 "ff/potential/pair/lj_cut.rs::a_typed_kernel_stops_at_its_cutoff",
                 "ff/potential/pair/charmm.rs::lj_hand_values_inside_across_and_beyond_the_switch",
             ]),
-            Exact(&["ff/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
+            Exact(&["io/forcefield/readers/lammps.rs::reads_lj_charmm_coul_charmm"]),
             Exact(&[
-                "ff/forcefield/writers/lammps.rs::a_pair_style_without_a_cutoff_is_refused_not_defaulted",
+                "io/forcefield/writers/lammps.rs::a_pair_style_without_a_cutoff_is_refused_not_defaulted",
             ]),
             Na("a createSystem argument"),
             Na("a createSystem argument"),
@@ -1123,18 +1123,18 @@ const MATRIX: &[Row] = &[
     Row {
         item: "units presets (real, metal, lj)",
         cells: [
-            Exact(&["ff/forcefield/writers/lammps.rs::metal_write_converts_energy_via_lj_hub"]),
-            Exact(&["ff/forcefield/readers/lammps.rs::metal_units_are_kept_and_declared"]),
-            Exact(&["ff/forcefield/writers/lammps.rs::metal_write_converts_energy_via_lj_hub"]),
+            Exact(&["io/forcefield/writers/lammps.rs::metal_write_converts_energy_via_lj_hub"]),
+            Exact(&["io/forcefield/readers/lammps.rs::metal_units_are_kept_and_declared"]),
+            Exact(&["io/forcefield/writers/lammps.rs::metal_write_converts_energy_via_lj_hub"]),
             Na("OpenMM's units read as real"),
             Refused(
                 "the conversions are from real",
-                &["ff/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
+                &["io/forcefield/writers/xml.rs::other_units_and_a_shifted_lj_are_refused"],
             ),
             Na("GROMACS's units read as real"),
             Refused(
                 "the conversions are from real",
-                &["ff/forcefield/writers/gromacs.rs::units_other_than_real_are_refused"],
+                &["io/forcefield/writers/gromacs.rs::units_other_than_real_are_refused"],
             ),
             Na("a prmtop reads as real"),
             Exact(&[

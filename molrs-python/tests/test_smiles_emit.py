@@ -7,25 +7,25 @@ import pytest
 
 
 def test_write_smiles_round_trip():
-    mol = molrs.io.SmilesIR("CCO").to_atomistic()
-    ir2 = molrs.io.SmilesIR.from_atomistic(mol, canonical=True)
+    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
+    ir2 = molrs.io.smiles.SmilesIR.from_atomistic(mol, canonical=True)
     s = ir2.write_smiles()
     assert isinstance(s, str) and s
-    molrs.io.SmilesIR(s)  # re-parse
+    molrs.io.smiles.SmilesIR(s)  # re-parse
 
 
 def test_write_smiles_has_one_spelling():
     # Emitting is `SmilesIR.from_atomistic(mol, ...).write_smiles()`; the
     # module-level alias of it is gone.
     assert not hasattr(molrs.io, "write_smiles")
-    mol = molrs.io.SmilesIR("c1ccccc1").to_atomistic()
-    s = molrs.io.SmilesIR.from_atomistic(mol, canonical=True).write_smiles()
+    mol = molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic()
+    s = molrs.io.smiles.SmilesIR.from_atomistic(mol, canonical=True).write_smiles()
     assert s
-    molrs.io.SmilesIR(s)
+    molrs.io.smiles.SmilesIR(s)
 
 
 def test_write_smarts_matches():
-    mol = molrs.io.SmilesIR("CCO").to_atomistic()
+    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     # first heavy atom handle from atoms iteration
     atoms = list(mol.atoms) if hasattr(mol, "atoms") else []
     if atoms:
@@ -43,7 +43,7 @@ def test_write_smarts_matches():
 
 
 def test_atomistic_has_no_to_smiles():
-    mol = molrs.io.SmilesIR("CCO").to_atomistic()
+    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     assert not hasattr(mol, "to_smiles")
     assert not hasattr(mol, "from_smiles")
     assert not hasattr(mol, "to_smarts")
@@ -51,13 +51,13 @@ def test_atomistic_has_no_to_smiles():
 
 
 def test_bad_aromatic_flag():
-    mol = molrs.io.SmilesIR("CCO").to_atomistic()
+    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     with pytest.raises((ValueError, TypeError)):
-        molrs.io.SmilesIR.from_atomistic(mol, aromatic="nope")
+        molrs.io.smiles.SmilesIR.from_atomistic(mol, aromatic="nope")
 
 
 def test_bad_neighbor_style():
-    mol = molrs.io.SmilesIR("CCO").to_atomistic()
+    mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
     center = mol.canonical_order()[0]
     with pytest.raises((ValueError, TypeError)):
         molrs.io.write_smarts(mol, center, neighbor_style="x")

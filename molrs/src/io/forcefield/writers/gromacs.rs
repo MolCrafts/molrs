@@ -1,7 +1,7 @@
 //! GROMACS force-field directive writer.
 //!
 //! The inverse of
-//! [`GromacsTopFfReader`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader):
+//! [`GromacsTopFfReader`](crate::io::forcefield::readers::gromacs::GromacsTopFfReader):
 //! it writes a [`ForceField`] as GROMACS force-field **directives**, converting
 //! the force-field IR (LAMMPS's definitions: `real` — Å, kcal/mol, degrees, e;
 //! LAMMPS's un-halved `K`) to GROMACS's (nm, kJ/mol, degrees, e; ½k) at this
@@ -97,7 +97,7 @@
 //!
 //! [`GromacsTopFfWriter::write_system_str`] writes a force field **and** a
 //! typed frame as one `.top`, the inverse of
-//! [`GromacsTopFfReader::read_system_str`](crate::ff::forcefield::readers::gromacs::GromacsTopFfReader::read_system_str):
+//! [`GromacsTopFfReader::read_system_str`](crate::io::forcefield::readers::gromacs::GromacsTopFfReader::read_system_str):
 //! `[ defaults ]`, `[ atomtypes ]`, `[ nonbond_params ]`, `[ pairtypes ]`
 //! and `[ cmaptypes ]` as above, then one `[ moleculetype ]` (`nrexcl` 3) per
 //! molecule (bond-graph component, a run of consecutive atoms), with each
@@ -1321,9 +1321,9 @@ impl GromacsTopFfWriter {
 mod tests {
     use super::*;
     use crate::ff::constants::VACUUM_DIELECTRIC;
-    use crate::ff::forcefield::readers::{ForceFieldReader, gromacs::GromacsTopFfReader};
-    use crate::ff::forcefield::writers::ForceFieldWriter;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
+    use crate::io::forcefield::readers::{ForceFieldReader, gromacs::GromacsTopFfReader};
+    use crate::io::forcefield::writers::ForceFieldWriter;
     use crate::units::constants::GROMACS_COULOMB;
 
     // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------

@@ -16,7 +16,8 @@
 //!   [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity)
 //!   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
 //!   alike, while the caller's bond types and bond numbers are never changed.
-//!   Typifiers built by [`OPLSAATypifier::from_xml_str`] do the same.
+//!   Typifiers built by [`OPLSAATypifier::new`] over a caller's own file do
+//!   the same.
 //! - **Ranking.** A type on a higher `layer`, or on the same layer overriding
 //!   another (directly or transitively), dominates it: it wins on an atom where
 //!   both match, and a later dependency level never replaces it. Candidates
@@ -51,7 +52,6 @@ use std::collections::HashSet;
 use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 
 use crate::ff::typifier::{BondedTerm, ParameterInterpolator, Parmchk2Estimator};
 use crate::ff::typifier::{Match, Typifier};
@@ -71,10 +71,12 @@ use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
 ///
-/// Primary constructor [`from_xml_str`](Self::from_xml_str) parses both the
-/// typing metadata ([`OplsTypingMeta`]) and the potential parameters
-/// ([`ForceField`]) from a single OPLS-AA XML string, then precomputes the
-/// bonded candidate tables once.
+/// [`oplsaa`](Self::oplsaa) is the shipped set; [`new`](Self::new) takes a
+/// caller's typing metadata ([`OplsTypingMeta`]) and potential parameters
+/// ([`ForceField`]) — read from one OPLS-AA XML file by
+/// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
+/// and [`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader) —
+/// and precomputes the bonded candidate tables once.
 pub struct OPLSAATypifier {
     meta: OplsTypingMeta,
     ff: ForceField,
@@ -86,26 +88,6 @@ pub struct OPLSAATypifier {
 }
 
 impl OPLSAATypifier {
-    /// Build a typifier from an OPLS-AA / GROMACS XML string.
-    ///
-    /// Reads typing metadata and potential parameters in one call. The two are
-    /// read by independent parsers from the same XML and never share state.
-    /// The bonded candidate tables are built once from the parsed force field.
-    /// Defaults to strict bonded matching (an unmatched bonded term is an error).
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if either parse fails, and — so that an invalid typifier
-    /// is never constructed — if a type's `overrides` names a type the XML does
-    /// not declare (naming both) or the overrides form a cycle (naming its
-    /// members).
-    pub fn from_xml_str(xml: &str) -> Result<Self, String> {
-        let meta = meta::read_typing_xml_str(xml)?;
-        layered::Dominance::new(&meta)?;
-        let ff = OplsXmlReader::new().read_str(xml)?;
-        Ok(Self::new(meta, ff))
-    }
-
     /// Build a typifier over the shipped canonical OPLS-AA parameter set.
     ///
     /// The parameters ([`crate::ff::params::OPLSAA_ATOMS`] and its sibling tables) are generated from
@@ -175,8 +157,12 @@ impl OPLSAATypifier {
         Self::new(embedded::typing_meta(), embedded::force_field())
     }
 
-    /// Construct directly from already-parsed metadata and force field
-    /// (strict bonded matching).
+    /// Construct from already-parsed metadata and force field (strict bonded
+    /// matching). The bonded candidate tables are built once from `ff`.
+    ///
+    /// `meta` is taken as valid ([`OplsTypingMeta::validate`]); the XML reader
+    /// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
+    /// refuses a table that is not.
     pub fn new(meta: OplsTypingMeta, ff: ForceField) -> Self {
         let tables = CandidateTables::build(&ff, &meta);
         Self {
@@ -368,18 +354,20 @@ mod tests {
         )
     }
 
-    /// `from_xml_str` refuses a dangling override at construction: `opls_a`
-    /// overrides `opls_missing`, which the XML never declares, so no typifier
-    /// is built and the error names both. The same XML without the attribute
-    /// builds.
+    /// The OPLS typing reader refuses a dangling override: `opls_a` overrides
+    /// `opls_missing`, which the XML never declares, so no table — and so no
+    /// typifier — is built, and the error names both. The same XML without
+    /// the attribute builds.
     #[test]
-    fn from_xml_str_refuses_a_dangling_override() {
-        assert!(
-            OPLSAATypifier::from_xml_str(&one_type_xml(None)).is_ok(),
-            "the XML without the override builds"
-        );
-        let Err(e) = OPLSAATypifier::from_xml_str(&one_type_xml(Some("opls_missing"))) else {
-            panic!("a dangling override must refuse construction");
+    fn a_dangling_override_refuses_the_typing_table() {
+        use crate::io::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
+        use crate::io::forcefield::xml::read_opls_typing_xml_str;
+        let xml = one_type_xml(None);
+        let meta = read_opls_typing_xml_str(&xml).expect("the XML without the override reads");
+        let ff = OplsXmlReader::new().read_str(&xml).unwrap();
+        let _ = OPLSAATypifier::new(meta, ff);
+        let Err(e) = read_opls_typing_xml_str(&one_type_xml(Some("opls_missing"))) else {
+            panic!("a dangling override must refuse the table");
         };
         assert!(e.contains("opls_a"), "err names the overriding type: {e}");
         assert!(e.contains("opls_missing"), "err names the absent type: {e}");

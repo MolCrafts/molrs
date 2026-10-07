@@ -13,7 +13,10 @@ conversions — exactly as a built-in does. The built-ins are themselves
 registrations of the same form, sealed.
 
 Everything below lives in `molrs::ff::ir` (Rust) and `molrs.ff.ir`
-(Python); molpy re-exports the Python module.
+(Python); molpy re-exports the Python module. The engine files a registered
+style is read from and written to are `molrs.io`'s (`read_lammps_forcefield`,
+`write_forcefield_xml`, `write_mrec`, …; Rust `molrs::io::forcefield`), the
+one owner of every file reader and writer.
 
 ## The form
 
@@ -389,7 +392,7 @@ typifier = BeadSpring()
 frame = typifier.typify(chain).to_frame()  # chain: an mp.Atomistic of bonded beads
 ff = typifier.forcefield()
 energy, forces = mp.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
-mp.io.mrec.write("chain.mrec", frame, forcefield=ff)  # the expression travels along
+mp.io.write_mrec("chain.mrec", frame, forcefield=ff)  # the expression travels along
 ```
 
 ## How this is checked

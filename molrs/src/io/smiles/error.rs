@@ -167,6 +167,11 @@ pub enum SmilesErrorKind {
     /// `C.[$]`, whose second `.`-separated component contains no atom for the
     /// descriptor to bind to.
     DanglingDescriptor,
+    /// [`read_smiles`](crate::io::smiles::read_smiles) reads one molecule, and
+    /// the string names more: `.` separates components, so `CCO.O` is a *set*
+    /// of two molecules. The payload is the component count. The message says
+    /// how to take them apart (`SmilesIR(s).components()`).
+    MultipleComponents(usize),
     /// A `CGsmiles` atom-level annotation — a weight `[C;0.5]`, a chirality
     /// `[C;1;S]`, or wildcard overloading `[*;s=C,0]` — was written. The
     /// fragment dialect does not support these, and this error names the
@@ -386,6 +391,11 @@ impl SmilesErrorKind {
             SmilesErrorKind::InvalidDescriptorOrder(k) => {
                 format!("bond order {k:?} cannot annotate a bonding descriptor")
             }
+            SmilesErrorKind::MultipleComponents(n) => format!(
+                "read_smiles reads one molecule and this string names {n} \
+                 '.'-separated components; take them apart with \
+                 SmilesIR(s).components()"
+            ),
             SmilesErrorKind::DanglingDescriptor => {
                 "bonding descriptor has no atom to bind to".to_owned()
             }

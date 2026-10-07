@@ -11,13 +11,13 @@ between the graph representation (`Atomistic`) and the table representation
 
 ## 1. Parse a Molecule
 
-`molrs.io.SmilesIR` returns an intermediate representation. Convert it to
+`molrs.io.smiles.SmilesIR` returns an intermediate representation. Convert it to
 `Atomistic` when you want a graph with atoms and bonds.
 
 ```python
 import molrs
 
-ir = molrs.io.SmilesIR("CCO")  # ethanol
+ir = molrs.io.smiles.SmilesIR("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
@@ -217,7 +217,7 @@ and column at its dtype, typed metadata, the box, the force field, and whole
 trajectories:
 
 ```python
-molrs.io.mrec.write("ethanol.mrec", typed_frame, forcefield=ff)
+molrs.io.write_mrec("ethanol.mrec", typed_frame, forcefield=ff)
 print(sorted(molrs.io.mrec.section_names("ethanol.mrec")))
 ```
 
@@ -232,4 +232,4 @@ This quickstart crossed the main molrs boundaries:
 - `RDF` consumed an explicit neighbor list.
 - `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
-- `write_xyz` and `mrec.write` wrote the result to disk.
+- `write_xyz` and `write_mrec` wrote the result to disk.

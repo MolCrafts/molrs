@@ -28,8 +28,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use molrs::ff::forcefield::writers::ForceFieldWriter;
-use molrs::ff::forcefield::writers::gromacs::GromacsTopFfWriter;
 use molrs::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use molrs::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, EndpointOrder, Engine, FormCodec, IrError, Kernel,
@@ -37,11 +35,13 @@ use molrs::ff::ir::{
 };
 use molrs::ff::potential::generic::{ParamCols, ScalarForm};
 use molrs::ff::potential::{CompileError, Member, PotentialCompiler, intramolecular_pairs};
-use molrs::ff::{
+use molrs::io::data::lammps_data::write_lammps_data;
+use molrs::io::forcefield::writers::ForceFieldWriter;
+use molrs::io::forcefield::writers::gromacs::GromacsTopFfWriter;
+use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
+use molrs::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
-use molrs::io::data::lammps_data::write_lammps_data;
-use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
 use molrs::spatial::SimBox;
 use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::store::type_labels::TypeLabels;

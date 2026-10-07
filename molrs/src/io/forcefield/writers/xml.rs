@@ -1,5 +1,5 @@
 //! OpenMM force-field XML writer — the inverse of
-//! [`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader).
+//! [`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader).
 //!
 //! The schema is OpenMM's, and so are the units and factors: lengths in
 //! **nm**, energies in **kJ/mol**, angles and phases in **radians**, harmonic
@@ -82,13 +82,13 @@ mod custom;
 use super::{ForceFieldWriter, WriteError};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{OneFour, has_own_one_four};
-use crate::ff::forcefield::readers::opls::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 use crate::ff::forcefield::torsion::{
     Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine, torsion_series,
 };
 use crate::ff::forcefield::{ForceField, Params, Style, StyleDefs};
 use crate::ff::ir::{Registry, RegistryRef};
 use crate::ff::potential::cmap::charmm::GRID;
+use crate::io::forcefield::readers::opls::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///
@@ -295,7 +295,7 @@ impl XmlForceFieldWriter {
                 custom::bonded(self, reg, style, ends, out)?;
                 continue;
             }
-            match (style.category(), &style.defs) {
+            match (style.category(), style.defs()) {
                 ("bond", StyleDefs::Bond(types)) => {
                     for t in types {
                         let what = format!("bond harmonic {}", t.name);
@@ -945,10 +945,10 @@ pub fn write_forcefield_xml_str(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::readers::ForceFieldReader;
-    use crate::ff::forcefield::readers::opls::OplsXmlReader;
-    use crate::ff::forcefield::xml::read_forcefield_xml_str;
     use crate::ff::forcefield::{ForceField, Params, Style};
+    use crate::io::forcefield::readers::ForceFieldReader;
+    use crate::io::forcefield::readers::opls::OplsXmlReader;
+    use crate::io::forcefield::xml::read_forcefield_xml_str;
 
     fn style<'a>(ff: &'a ForceField, category: &str) -> &'a Style {
         ff.styles()
@@ -959,7 +959,7 @@ mod tests {
 
     fn type_params(style: &Style, name: &str) -> Params {
         style
-            .defs
+            .defs()
             .collect_type_params()
             .into_iter()
             .find(|(n, _)| n == name)
@@ -1009,7 +1009,7 @@ mod tests {
         let back = read_forcefield_xml_str(&write(&ff)).unwrap();
         assert_eq!(back.name, "tiny");
         let bond = style(&back, "bond");
-        assert_eq!(bond.name, "harmonic");
+        assert_eq!(bond.name(), "harmonic");
         let bt = type_params(bond, "CT-CT");
         close(bt.get("k").unwrap(), 268.0, "k");
         close(bt.get("r0").unwrap(), 1.529, "r0");
@@ -1021,7 +1021,7 @@ mod tests {
     /// The torsion series of the only dihedral type of `ff`.
     fn series(ff: &ForceField) -> crate::ff::forcefield::torsion::FourierSeries {
         let s = style(ff, "dihedral");
-        let p = &s.defs.collect_type_params()[0].1;
+        let p = &s.defs().collect_type_params()[0].1;
         torsion_series("dihedral", s.name(), s.params(), p).unwrap()
     }
 
@@ -1170,10 +1170,10 @@ mod tests {
         ff.styles()
             .iter()
             .filter(|s| s.category() == "improper")
-            .flat_map(|s| match &s.defs {
+            .flat_map(|s| match s.defs() {
                 StyleDefs::Improper(v) => v
                     .iter()
-                    .map(|t| (format!("{}:{}", s.name, t.name), t.params.clone()))
+                    .map(|t| (format!("{}:{}", s.name(), t.name), t.params.clone()))
                     .collect::<Vec<_>>(),
                 _ => Vec::new(),
             })

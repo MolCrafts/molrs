@@ -24,11 +24,11 @@
 //! a trajectory.
 //!
 //! A long run that cannot be held in memory goes through the streaming trio:
-//! [`SequenceSchema`] pins what the run will write, [`FrameSequenceWriter`]
-//! appends and commits frame by frame, and [`FrameSequence`] reads one frame at
+//! [`SequenceSchema`] pins what the run will write, [`MrecWriter`]
+//! appends and commits frame by frame, and [`MrecReader`] reads one frame at
 //! a time back out. Their shared on-disk layout, and the three-names rule that
 //! keeps them apart from the eager in-memory `Trajectory` carrier, are
-//! documented on [`FrameSequence`] and [`FrameSequenceWriter`] themselves.
+//! documented on [`MrecReader`] and [`MrecWriter`] themselves.
 //!
 //! A store nobody is appending to any more can be collapsed into one file with
 //! `pack`, and read back through `open_packed`. Every path-taking door — the
@@ -120,7 +120,7 @@ pub use record_io::{
 pub use record_io::{
     read_frame_section_store, read_record_store, section_names_store, write_record_store,
 };
-pub use sequence::{Compression, FrameSequence, FrameSequenceWriter, SequenceSchema, column_dtype};
+pub use sequence::{Compression, MrecReader, MrecWriter, SequenceSchema, column_dtype};
 
 /// Mechanics pins for `zarrs` 0.23.13 — the append fast path the
 /// `trajectory/` frame sequence is built on.

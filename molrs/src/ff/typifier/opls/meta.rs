@@ -8,9 +8,9 @@
 //! joined from the molrs-owned rules of
 //! [`crate::ff::params::oplsaa_typing`]; for a caller's own OPLS / CL&P XML, the
 //! potential reader
-//! ([`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader))
+//! ([`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader))
 //! drops the `def` / `overrides` / `priority` / `layer` attributes and
-//! `read_typing_xml_str`
+//! [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
 //! reads them into the [`OplsTypingMeta`] table here.
 //!
 //! # How the fields rank candidates
@@ -30,8 +30,6 @@
 
 use std::collections::HashMap;
 
-use crate::ff::forcefield::xml::{attr_str, forcefield_root};
-
 /// One `<Type>` row of an OPLS-AA `<AtomTypes>` section, holding the typing
 /// metadata (not the potential parameters).
 ///
@@ -40,7 +38,7 @@ use crate::ff::forcefield::xml::{attr_str, forcefield_root};
 /// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking `class`
 /// from the matching [`OplsAtomRow`](crate::ff::params::OplsAtomRow) and
 /// `layer` 0, while
-/// `read_typing_xml_str`
+/// [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
 /// builds them from XML attributes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OplsTypeRow {
@@ -106,163 +104,15 @@ impl OplsTypingMeta {
     pub fn iter(&self) -> impl Iterator<Item = (&String, &OplsTypeRow)> {
         self.rows.iter()
     }
-}
 
-/// Parse OPLS-AA typing metadata ([`OplsTypingMeta`]) from an XML string.
-///
-/// Reads each `<Type>` of the `<AtomTypes>` section, transcribing the typing
-/// attributes the potential reader
-/// ([`OplsXmlReader`](crate::ff::forcefield::readers::opls::OplsXmlReader))
-/// drops: `class`, `def` (SMARTS), `overrides` (comma list), `priority`, and
-/// `layer`. This is purely additive — it never touches the potential
-/// `ForceField`; the two are read from the same XML but kept separate (as MMFF's
-/// typing metadata is).
-///
-/// Rows with no `def` are still recorded (with `def = None`); they are legacy
-/// types excluded from automatic SMARTS typing.
-///
-/// # Errors
-///
-/// Returns `Err` if the root element is not `<ForceField>`, a `<Type>` lacks the
-/// required `name`/`class`, or `priority`/`layer` is present but non-integer.
-pub(crate) fn read_typing_xml_str(xml: &str) -> Result<OplsTypingMeta, String> {
-    let doc = roxmltree::Document::parse(xml).map_err(|e| format!("XML parse error: {}", e))?;
-
-    let root = forcefield_root(&doc)?;
-
-    let mut meta = OplsTypingMeta::new();
-
-    for child in root.children().filter(|n| n.is_element()) {
-        if child.tag_name().name() != "AtomTypes" {
-            continue;
-        }
-        for t in child
-            .children()
-            .filter(|n| n.is_element() && n.tag_name().name() == "Type")
-        {
-            let name = attr_str(&t, "name")?.to_owned();
-            let class = attr_str(&t, "class")?.to_owned();
-            let def = t.attribute("def").map(str::to_owned);
-            let overrides = t
-                .attribute("overrides")
-                .map(parse_overrides)
-                .unwrap_or_default();
-            let priority = match t.attribute("priority") {
-                None => None,
-                Some(s) => Some(s.parse::<i64>().map_err(|_| {
-                    format!(
-                        "<Type name={:?}> attribute 'priority' is not an integer: {:?}",
-                        name, s
-                    )
-                })?),
-            };
-            let layer = match t.attribute("layer") {
-                None => 0,
-                Some(s) => s.parse::<u32>().map_err(|_| {
-                    format!(
-                        "<Type name={:?}> attribute 'layer' is not an integer: {:?}",
-                        name, s
-                    )
-                })?,
-            };
-            meta.insert(
-                name,
-                OplsTypeRow {
-                    class,
-                    def,
-                    overrides,
-                    priority,
-                    layer,
-                },
-            );
-        }
-    }
-
-    Ok(meta)
-}
-
-/// Split a comma-separated `overrides` attribute into trimmed, non-empty names.
-fn parse_overrides(raw: &str) -> Vec<String> {
-    raw.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // --- OPLS typing metadata reader (the inline-fixture parse is
-    //     `test_opls_typing_overrides_and_layer_defaults`; the rest are edge
-    //     cases) ------------------------------------------------------------
-
-    #[test]
-    fn test_opls_typing_overrides_and_layer_defaults() {
-        // A modern row with overrides + a legacy row with no `def`. (Inline
-        // edge fixture: exercises overrides splitting + def=None + default layer.)
-        let xml = r#"<ForceField name="OPLS-AA">
-          <AtomTypes>
-            <Type name="opls_135" class="CT" element="C" mass="12.011" def="[C;X4](C)(H)(H)H"/>
-            <Type name="opls_146" class="HA" element="H" mass="1.008" def="[H][c]" overrides="opls_144, opls_140"/>
-            <Type name="opls_001" class="opls_001" element="C" mass="12.011"/>
-          </AtomTypes>
-        </ForceField>"#;
-        let meta = read_typing_xml_str(xml).unwrap();
-
-        let r135 = meta.get("opls_135").unwrap();
-        assert_eq!(r135.class, "CT");
-        assert_eq!(r135.def.as_deref(), Some("[C;X4](C)(H)(H)H"));
-        assert!(r135.overrides.is_empty());
-        assert_eq!(r135.layer, 0);
-        assert_eq!(r135.priority, None);
-
-        let r146 = meta.get("opls_146").unwrap();
-        assert_eq!(
-            r146.overrides,
-            vec!["opls_144".to_string(), "opls_140".to_string()]
-        );
-
-        // Legacy row: no def.
-        let r001 = meta.get("opls_001").unwrap();
-        assert_eq!(r001.def, None);
-    }
-
-    #[test]
-    fn test_opls_typing_explicit_priority_and_layer() {
-        let xml = r#"<ForceField name="OPLS-AA">
-          <AtomTypes>
-            <Type name="opls_x" class="CT" def="[C]" priority="7" layer="2"/>
-          </AtomTypes>
-        </ForceField>"#;
-        let meta = read_typing_xml_str(xml).unwrap();
-        let r = meta.get("opls_x").unwrap();
-        assert_eq!(r.priority, Some(7));
-        assert_eq!(r.layer, 2);
-    }
-
-    #[test]
-    fn test_opls_typing_missing_class_errors() {
-        let xml = r#"<ForceField name="OPLS-AA">
-          <AtomTypes><Type name="opls_135" def="[C]"/></AtomTypes>
-        </ForceField>"#;
-        let err = read_typing_xml_str(xml).unwrap_err();
-        assert!(err.contains("class"), "err: {err}");
-    }
-
-    #[test]
-    fn test_opls_typing_bad_priority_errors() {
-        let xml = r#"<ForceField name="OPLS-AA">
-          <AtomTypes><Type name="opls_135" class="CT" priority="high"/></AtomTypes>
-        </ForceField>"#;
-        let err = read_typing_xml_str(xml).unwrap_err();
-        assert!(err.contains("priority"), "err: {err}");
-    }
-
-    #[test]
-    fn test_opls_typing_wrong_root_errors() {
-        let err = read_typing_xml_str(r#"<System name="x"/>"#).unwrap_err();
-        assert!(err.contains("ForceField"), "err: {err}");
+    /// Check that every `overrides` names a type this table declares and that
+    /// the overrides form no cycle — the invariant a typifier ranks by.
+    ///
+    /// # Errors
+    ///
+    /// A dangling override (naming both types) or a cycle (naming its
+    /// members).
+    pub fn validate(&self) -> Result<(), String> {
+        super::layered::Dominance::new(self).map(|_| ())
     }
 }

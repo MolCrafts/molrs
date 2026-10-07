@@ -2,7 +2,7 @@
 //!
 //! A thermo table is the one thing a running simulation emits that a chart
 //! wants, and it arrives as text — so the browser can read it directly rather
-//! than asking a server to convert it first. `parse_lammps_log_text` takes a
+//! than asking a server to convert it first. `read_lammps_log_str` takes a
 //! `&str` and touches no filesystem, which is what makes this WASM-clean.
 //!
 //! | JS function | Format |
@@ -13,7 +13,7 @@
 //! it knows how many points the chart can show, and slicing a `Float64Array`
 //! in JS costs nothing next to re-parsing.
 
-use molrs::io::log::parse_lammps_log_text;
+use molrs::io::log::read_lammps_log_str;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -46,7 +46,7 @@ pub struct ThermoTable {
 /// ```
 #[wasm_bindgen(js_name = readLammpsLogThermo)]
 pub fn read_lammps_log_thermo(text: &str) -> Result<JsValue, JsValue> {
-    let parsed = parse_lammps_log_text(text, "", "default");
+    let parsed = read_lammps_log_str(text, "", "default");
     let tables: Vec<ThermoTable> = parsed
         .runs
         .into_iter()

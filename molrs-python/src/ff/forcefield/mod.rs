@@ -1,8 +1,8 @@
 //! Python bindings for `molrs::ff::forcefield` (`molrs.ff.forcefield`): the
 //! [`ForceField`] container, its style / type handles ([`handles`]), its
 //! IR-form conversions ([`forms`]) and per-row parameter columns
-//! ([`param_columns`]), and the force-field file readers ([`readers`]) and
-//! writers ([`writers`]).
+//! ([`param_columns`]). Force-field files are `molrs.io`'s
+//! ([`crate::io::forcefield`]).
 //!
 //! The Python `dict` ↔ [`Params`](molrs::ff::forcefield::Params) conversions
 //! every force-field binding uses ([`params_from_dict`], [`params_to_dict`],
@@ -11,8 +11,6 @@
 mod forms;
 pub mod handles;
 mod param_columns;
-pub mod readers;
-pub mod writers;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::intern;
@@ -489,12 +487,9 @@ impl PyForceField {
     }
 }
 
-/// Register `molrs.ff.forcefield`: the container, its handles, the readers
-/// and the writers.
+/// Register `molrs.ff.forcefield`: the container and its handles.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyForceField>()?;
     handles::register(m)?;
-    readers::register(m)?;
-    writers::register(m)?;
     Ok(())
 }

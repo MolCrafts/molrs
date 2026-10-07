@@ -117,7 +117,7 @@ pub fn read_xyz(path: PathBuf) -> PyResult<PyFrame> {
 /// ``impropers``) carries the numeric ``type_id`` and the string ``type``: the
 /// file's type label, or the id spelled as a label when the file has no
 /// ``* Type Labels`` section. The ``* Coeffs`` sections are kept verbatim in
-/// ``frame.meta["lammps_coeffs_text"]`` (``molrs.ff.forcefield.read_lammps_data_coeffs(frame)``
+/// ``frame.meta["lammps_coeffs_text"]`` (``molrs.io.read_lammps_data_coeffs(frame)``
 /// reads them into a force field); the type-label inventories,
 /// header counts, unit style and the box axes the header named are in
 /// ``frame.meta`` too.
@@ -727,7 +727,7 @@ pub fn write_xyz_trajectory(path: PathBuf, frames: Vec<PyRef<'_, PyFrame>>) -> P
 /// its box.
 ///
 /// Atoms, topology, ``Masses`` and the ``* Type Labels`` sections are
-/// written; ``* Coeffs`` are not (:func:`molrs.ff.forcefield.write_lammps_data_coeffs`
+/// written; ``* Coeffs`` are not (:func:`molrs.io.write_lammps_data_coeffs`
 /// returns them for the same labels). A system with Drude particles (a
 /// ``drudes`` block, or atoms whose ``vsite`` is ``"drude"``) gets a header
 /// comment with the ``fix drude`` C/D/N flags in atom-type order.

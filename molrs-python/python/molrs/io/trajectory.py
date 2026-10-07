@@ -1,31 +1,22 @@
-"""The lazy multi-file trajectory reader behind ``molrs.io.read_*_trajectory``.
+"""Trajectory files read lazily — :class:`TrajectoryReader`.
 
-Private: :mod:`molrs.io` is these names' public path.
+``molrs.io.read_lammps_trajectory``, ``read_xyz_trajectory``,
+``read_dcd_trajectory``, ``read_trr_trajectory`` and ``read_xtc_trajectory``
+open one (or several, concatenated) files as a :class:`TrajectoryReader`; the
+functions are :mod:`molrs.io`'s, the reader class is this module's.
 """
 
-from __future__ import annotations
+from collections.abc import Iterator as _Iterator
+from collections.abc import Sequence as _Sequence
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+from typing import Any as _Any
+from typing import Self as _Self
+from typing import overload as _overload
 
-from collections.abc import Iterator, Sequence
-from os import PathLike
-from typing import TYPE_CHECKING, Any, Self, overload
-
-from .._lib import DCDTrajReader as _DCDTrajReader
-from .._lib import LAMMPSTrajReader as _LAMMPSTrajReader
-from .._lib import TRRTrajReader as _TRRTrajReader
-from .._lib import XTCTrajReader as _XTCTrajReader
-from .._lib import XYZTrajReader as _XYZTrajReader
-
-if TYPE_CHECKING:
+if _TYPE_CHECKING:
     from ..store import Frame
 
-PathInput = str | PathLike[str]
-
-
-def _as_paths(file: PathInput | Sequence[PathInput]) -> list[PathInput]:
-    """Normalise a single path or a sequence of paths to a list."""
-    if isinstance(file, (str, PathLike)):
-        return [file]
-    return list(file)
+__all__ = ["TrajectoryReader"]
 
 
 class TrajectoryReader:
@@ -40,7 +31,7 @@ class TrajectoryReader:
     lazy iteration, ``close()``, and use as a context manager.
     """
 
-    def __init__(self, readers: Sequence[Any]) -> None:
+    def __init__(self, readers: _Sequence[_Any]) -> None:
         self._readers = list(readers)
         self._counts: list[int] | None = None
 
@@ -49,7 +40,7 @@ class TrajectoryReader:
             self._counts = [r.n_frames for r in self._readers]
         return self._counts
 
-    def _locate(self, index: int) -> tuple[Any, int]:
+    def _locate(self, index: int) -> tuple[_Any, int]:
         counts = self._ensure_counts()
         total = sum(counts)
         if index < 0:
@@ -66,25 +57,25 @@ class TrajectoryReader:
     def n_frames(self) -> int:
         return sum(self._ensure_counts())
 
-    def read_frame(self, index: int) -> Frame:
+    def read_frame(self, index: int) -> "Frame":
         """Read a single frame (supports negative indexing)."""
         reader, local = self._locate(index)
         return reader.read_frame(local)
 
-    def read_frames(self, indices: Sequence[int]) -> list[Frame]:
+    def read_frames(self, indices: _Sequence[int]) -> "list[Frame]":
         """Read an explicit list of frame indices."""
         return [self.read_frame(i) for i in indices]
 
     def read_range(
         self, start: int = 0, stop: int | None = None, step: int = 1
-    ) -> list[Frame]:
+    ) -> "list[Frame]":
         """Read a contiguous range of frames, Python-slice style."""
         if step == 0:
             raise ValueError("read_range step must not be zero")
         n = self.n_frames
         return [self.read_frame(i) for i in range(*slice(start, stop, step).indices(n))]
 
-    def read_all(self) -> list[Frame]:
+    def read_all(self) -> "list[Frame]":
         """Eagerly read every frame into a list."""
         return [self.read_frame(i) for i in range(self.n_frames)]
 
@@ -96,17 +87,17 @@ class TrajectoryReader:
     def __len__(self) -> int:
         return self.n_frames
 
-    @overload
-    def __getitem__(self, key: int) -> Frame: ...
-    @overload
-    def __getitem__(self, key: slice) -> list[Frame]: ...
+    @_overload
+    def __getitem__(self, key: int) -> "Frame": ...
+    @_overload
+    def __getitem__(self, key: slice) -> "list[Frame]": ...
 
-    def __getitem__(self, key: int | slice) -> Frame | list[Frame]:
+    def __getitem__(self, key: int | slice) -> "Frame | list[Frame]":
         if isinstance(key, slice):
             return [self.read_frame(i) for i in range(*key.indices(self.n_frames))]
         return self.read_frame(key)
 
-    def __iter__(self) -> Iterator[Frame]:
+    def __iter__(self) -> "_Iterator[Frame]":
         """Sequential pass over all files, one frame at a time.
 
         Walks each native reader's own cursor, so it **does not** force a
@@ -117,7 +108,7 @@ class TrajectoryReader:
         for reader in self._readers:
             yield from reader
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> _Self:
         return self
 
     def __exit__(self, *_exc: object) -> bool:
@@ -126,35 +117,3 @@ class TrajectoryReader:
 
     def __repr__(self) -> str:
         return f"TrajectoryReader(n_frames={self.n_frames}, files={len(self._readers)})"
-
-
-def read_lammps_trajectory(traj: PathInput | Sequence[PathInput]) -> TrajectoryReader:
-    """Open one LAMMPS dump file, or several whose frames are concatenated, as
-    a lazy :class:`TrajectoryReader`."""
-    return TrajectoryReader([_LAMMPSTrajReader(p) for p in _as_paths(traj)])
-
-
-def read_xyz_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
-    """Open one XYZ trajectory, or several whose frames are concatenated, as a
-    lazy :class:`TrajectoryReader`."""
-    return TrajectoryReader([_XYZTrajReader(p) for p in _as_paths(file)])
-
-
-def read_dcd_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
-    """Open one DCD trajectory, or several whose frames are concatenated, as a
-    lazy :class:`TrajectoryReader`."""
-    return TrajectoryReader([_DCDTrajReader(p) for p in _as_paths(file)])
-
-
-def read_trr_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
-    """Open one GROMACS TRR trajectory, or several whose frames are
-    concatenated, as a lazy :class:`TrajectoryReader`. Random access is O(1)
-    after a one-time index scan."""
-    return TrajectoryReader([_TRRTrajReader(p) for p in _as_paths(file)])
-
-
-def read_xtc_trajectory(file: PathInput | Sequence[PathInput]) -> TrajectoryReader:
-    """Open one GROMACS XTC (compressed) trajectory, or several whose frames
-    are concatenated, as a lazy :class:`TrajectoryReader`. Random access is
-    O(1) after a one-time index scan."""
-    return TrajectoryReader([_XTCTrajReader(p) for p in _as_paths(file)])

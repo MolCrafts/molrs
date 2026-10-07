@@ -2,12 +2,12 @@
 //!
 //! Three ways to hand the reader its bytes, in increasing laziness:
 //!
-//! - **`new TrajectoryReader(files)`** — a `Map<path, Uint8Array>` of every
+//! - **`new MrecReader(files)`** — a `Map<path, Uint8Array>` of every
 //!   file, copied once into an in-memory store. Simple; the whole store is
 //!   resident.
-//! - **`TrajectoryReader.fromZip(bytes)`** — one packed `*.mrec.zip`, whose
+//! - **`MrecReader.fromZip(bytes)`** — one packed `*.mrec.zip`, whose
 //!   stored entries are unpacked into the same in-memory store.
-//! - **`TrajectoryReader.fromStore(host)`** — a host object that serves keys
+//! - **`MrecReader.fromStore(host)`** — a host object that serves keys
 //!   on demand: `get(key)`, `getRange(key, offset, length)`, `size(key)` and
 //!   `list(prefix)`. Only the chunks a frame touches ever cross into wasm, so
 //!   a multi-gigabyte run opens in a worker that reads its files (or an HTTP
@@ -15,7 +15,7 @@
 
 use crate::core::frame::Frame;
 use crate::core::spatial::simbox::Box as JsBox;
-use molrs::io::mrec::{FrameSequence, read_frame_section_store, section_names_store};
+use molrs::io::mrec::{MrecReader, read_frame_section_store, section_names_store};
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
 use std::sync::Arc;
@@ -34,15 +34,15 @@ fn js_string_err(e: impl std::fmt::Display) -> JsValue {
 
 /// Reader for frame-sequence Zarr v3 stores.
 ///
-/// The sequence is opened **once**, in the constructor. `FrameSequence` is the
+/// The sequence is opened **once**, in the constructor. `MrecReader` is the
 /// lazy store cursor, so `readFrame` decodes exactly the frame it was asked
 /// for (keeping the last decoded chunk of every column, so consecutive frames
 /// are slices), and `countFrames` answers off the index the open already
 /// cached. Every method takes `&self`: the cursor holds caches, not a
 /// position.
-#[wasm_bindgen(js_name = TrajectoryReader)]
+#[wasm_bindgen(js_name = MrecReader)]
 pub struct RecordReader {
-    sequence: FrameSequence,
+    sequence: MrecReader,
 }
 
 impl RecordReader {
@@ -55,12 +55,12 @@ impl RecordReader {
     {
         // Index-only: the schema plus each section's step_index and offset (or
         // their hints). No frame is decoded here.
-        let sequence = FrameSequence::open(store).map_err(js_string_err)?;
+        let sequence = MrecReader::open(store).map_err(js_string_err)?;
         Ok(RecordReader { sequence })
     }
 }
 
-#[wasm_bindgen(js_class = TrajectoryReader)]
+#[wasm_bindgen(js_class = MrecReader)]
 impl RecordReader {
     /// Open a store handed over as a `Map<path, Uint8Array>` of every file.
     #[wasm_bindgen(constructor)]
@@ -457,7 +457,7 @@ impl ListableStorageTraits for HostStore {
 /// Load a `Map<path, Uint8Array>` of a record's files into an in-memory store.
 ///
 /// Shared by the record-shape doors below and shaped like the
-/// `TrajectoryReader` constructor: a record that is not a frame sequence is a
+/// `MrecReader` constructor: a record that is not a frame sequence is a
 /// snapshot, and a snapshot is small enough to hand over whole.
 fn memory_store_from(files: &js_sys::Map) -> Result<ReadableWritableListableStorage, JsValue> {
     let store = Arc::new(MemoryStore::new());
@@ -527,7 +527,7 @@ pub fn read_mrec_frame_from_zip(bytes: &[u8]) -> Result<Option<Frame>, JsValue> 
 ///
 /// The door for a record written by [`writeFrame`-shaped producers][molpack]:
 /// molpack writes a packed configuration as `meta` + `frame/`, which
-/// `TrajectoryReader` reads as a sequence of length zero. This reads the
+/// `MrecReader` reads as a sequence of length zero. This reads the
 /// snapshot it actually carries.
 ///
 /// [molpack]: https://github.com/MolCrafts/molpack

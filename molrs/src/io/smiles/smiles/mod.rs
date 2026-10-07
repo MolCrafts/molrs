@@ -21,7 +21,7 @@ pub use options::{
     AromaticEmit, HydrogenEmit, LocalSmartsOptions, MultiComponentEmit, NeighborStyle,
     SmilesEmitOptions,
 };
-pub use to_atomistic::{fragment_to_atomistic, to_atomistic};
+pub use to_atomistic::{fragment_to_atomistic, read_smiles, to_atomistic};
 pub use validate::validate_smiles;
 pub use write::{write_fragment_smiles, write_smarts, write_smiles};
 

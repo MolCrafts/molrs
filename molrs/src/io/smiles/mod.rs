@@ -15,7 +15,8 @@
 //! The serialization format itself: parse a string into an intermediate
 //! representation (IR, [`parse_smiles`]), validate it ([`validate_smiles`]),
 //! and convert it into an atomistic molecular graph ([`to_atomistic`]) and
-//! back ([`from_atomistic`], [`write_smiles`]).
+//! back ([`from_atomistic`], [`write_smiles`]). [`read_smiles`] is the
+//! one-molecule door: parse, refuse a `.`-separated set, convert.
 //!
 //! [`parse_smarts`] parses SMARTS *syntax* into the shared [`SmilesIR`]. It is
 //! the one SMARTS parser: the matching engine in [`crate::perceive::smarts`]
@@ -153,7 +154,7 @@ pub use error::{Notation, SmilesError, SmilesErrorKind};
 pub use parser::{parse_fragment_smiles, parse_smarts, parse_smiles};
 pub use smiles::{
     AromaticEmit, HydrogenEmit, LocalSmartsOptions, MultiComponentEmit, NeighborStyle,
-    SmilesEmitOptions, fragment_to_atomistic, from_atomistic, local_smarts_ir, to_atomistic,
-    validate_smiles, write_atomistic_smiles, write_fragment_smiles, write_local_smarts,
-    write_smarts, write_smiles,
+    SmilesEmitOptions, fragment_to_atomistic, from_atomistic, local_smarts_ir, read_smiles,
+    to_atomistic, validate_smiles, write_atomistic_smiles, write_fragment_smiles,
+    write_local_smarts, write_smarts, write_smiles,
 };

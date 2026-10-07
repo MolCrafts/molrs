@@ -37,7 +37,7 @@ use std::sync::OnceLock;
 
 /// Frame meta key: every `* Coeffs` section of the data file, verbatim
 /// (`PairIJ` and the class2 cross terms included). The force-field reader
-/// `ff::forcefield::readers::lammps::LammpsFfReader::read_data_coeffs` takes
+/// `io::forcefield::readers::lammps::LammpsFfReader::read_data_coeffs` takes
 /// the frame and reads this, with the type labels the `* Type Labels`
 /// sections declared.
 pub const COEFFS_TEXT_META: &str = "lammps_coeffs_text";

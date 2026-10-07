@@ -387,7 +387,7 @@ def test_write_lammps_inputs() -> None:
         out.mkdir(parents=True, exist_ok=True)
         tsv = []
         for k, (ff, f, deck, deck_frame, units) in enumerate(configs):
-            text = molrs.ff.forcefield.write_lammps_forcefield_str(deck, deck_frame, precision=17,
+            text = molrs.io.write_lammps_forcefield_str(deck, deck_frame, precision=17,
                                                          units=units)
             lines = text.splitlines(keepends=True)
             (out / "pre.lmp").write_text("".join(l for l in lines if l.startswith("units")))
@@ -461,7 +461,7 @@ def test_a_numpy_kernel_is_the_expression() -> None:
 
 
 def test_fene_is_lammps_bond_style_fene() -> None:
-    deck = molrs.ff.forcefield.write_lammps_forcefield_str(fene_ff("fene/proof"), bead_frame(),
+    deck = molrs.io.write_lammps_forcefield_str(fene_ff("fene/proof"), bead_frame(),
                                                 units="lj")
     assert "bond_style fene\n" in deck
     (coeff,) = [l for l in deck.splitlines() if l.startswith("bond_coeff B-B ")]
@@ -489,7 +489,7 @@ def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.store.Frame
 
 
 def test_a_python_pair_style_is_lammps_lj_smooth_linear_at_both_doors() -> None:
-    deck = molrs.ff.forcefield.write_lammps_forcefield_str(smooth_ff("lj/smooth/linear/proof"),
+    deck = molrs.io.write_lammps_forcefield_str(smooth_ff("lj/smooth/linear/proof"),
                                                 frame(SMOOTH_XYZ, SMOOTH_TYPES), units="real")
     (style,) = [l.split() for l in deck.splitlines() if l.startswith("pair_style ")]
     assert style[1] == "lj/smooth/linear" and float(style[2]) == SMOOTH_RC, deck
@@ -533,7 +533,7 @@ FRESH = textwrap.dedent(
 
     path, frames = sys.argv[1], json.loads(sys.argv[2])
     registered = [(s.category, s.name) for s in molrs.ff.ir.styles() if not s.builtin]
-    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.mrec.read_forcefield(path))
+    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.styles]}
     for name, spec in frames.items():
         f = molrs.store.Frame()
@@ -595,7 +595,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     process that registered nothing makes of the record."""
     ff, frames = everything()
     path = tmp_path_factory.mktemp("proof") / "everything.mrec"
-    molrs.io.mrec.write_forcefield(path, ff.to_section())
+    molrs.io.write_mrec_forcefield(path, ff.to_section())
     here = {}
     for name, spec in frames.items():
         e, f = price(ff, spec_frame(spec))
@@ -603,7 +603,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     done = subprocess.run([sys.executable, "-c", FRESH, str(path), json.dumps(frames)],
                           capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr
-    return molrs.io.mrec.read_forcefield(path).document, here, json.loads(done.stdout)
+    return molrs.io.read_mrec_forcefield(path).document, here, json.loads(done.stdout)
 
 
 def test_a_record_prices_the_same_bits_in_a_fresh_process(fresh) -> None:
@@ -666,7 +666,7 @@ def _gromacs(tmp: Path) -> None:
     ff.def_style("bond", "fene/proof").def_type(
         "B-B", t["B"], t["B"], k=K, r0=R0, epsilon=EPS, sigma=SIG
     )
-    molrs.ff.forcefield.write_gromacs_top_ff(tmp / "x.top", ff)
+    molrs.io.write_gromacs_top_ff(tmp / "x.top", ff)
 
 
 REFUSALS = [
@@ -739,8 +739,8 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
     print(f"MEASURED table/linear vs hand interpolation: {worst:.1e}")
     # Round trip: the column f64[T, N] and the energy, bit for bit.
     path = tmp_path / "table.mrec"
-    molrs.io.mrec.write_forcefield(path, ff)
-    section = molrs.io.mrec.read_forcefield(path)
+    molrs.io.write_mrec_forcefield(path, ff)
+    section = molrs.io.read_mrec_forcefield(path)
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (1, len(TABLE))
     assert column.tobytes() == TABLE.tobytes()

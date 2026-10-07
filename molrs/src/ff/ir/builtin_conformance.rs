@@ -28,14 +28,14 @@ use std::path::Path;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::lammps::LammpsFfReader;
-use crate::ff::forcefield::writers::ForceFieldWriter;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::conformance::{Rng, SEED};
 use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
 use crate::ff::potential::{Member, PotentialCompiler};
-use crate::ff::{
+use crate::io::forcefield::readers::ForceFieldReader;
+use crate::io::forcefield::readers::lammps::LammpsFfReader;
+use crate::io::forcefield::writers::ForceFieldWriter;
+use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
 use molrs::op::types::{F, Idx};

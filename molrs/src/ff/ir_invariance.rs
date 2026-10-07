@@ -32,11 +32,11 @@ use std::collections::BTreeMap;
 use ndarray::Array1;
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::forcefield::readers::ForceFieldReader;
-use crate::ff::forcefield::readers::gromacs::GromacsTopFfReader;
-use crate::ff::forcefield::readers::lammps::LammpsFfReader;
-use crate::ff::forcefield::readers::opls::OplsXmlReader;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::io::forcefield::readers::ForceFieldReader;
+use crate::io::forcefield::readers::gromacs::GromacsTopFfReader;
+use crate::io::forcefield::readers::lammps::LammpsFfReader;
+use crate::io::forcefield::readers::opls::OplsXmlReader;
 use molrs::op::types::{F, Idx};
 use molrs::store::Block;
 use molrs::store::Frame;

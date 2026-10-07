@@ -5,10 +5,9 @@
 //!
 //! Force-field files (GROMACS `.top`/`.itp`, AMBER frcmod and the prmtop
 //! parameter half, LAMMPS force-field files, OpenMM XML) map a file to the
-//! force-field IR and are read and written by `ff::forcefield::{readers,
-//! writers}`; `io` owns structure and trajectory formats. The low-level
-//! prmtop `%FLAG` parser ([`prmtop::parse_flag_sections`]) is shared with the
-//! force-field reader.
+//! force-field IR and are read and written by [`crate::io::forcefield`]
+//! (feature `ff`). The low-level prmtop `%FLAG` parser
+//! ([`prmtop::parse_flag_sections`]) is shared with the force-field reader.
 
 pub mod ac;
 pub mod chgcar;
