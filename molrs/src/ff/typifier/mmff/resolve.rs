@@ -34,14 +34,12 @@
 //!
 //! # Why this file is not in `ff/params/`
 //!
-//! An earlier draft of this header said the resolver "should travel with its
-//! tables" into `ff/params/mmff.rs`. That instruction is **superseded**
-//! (`chem-perceive-14-all-tables`): `ff/params/` is the home of *tables*, and
-//! this file holds none — it is an algorithm (`bond_type` / `angle_type` /
-//! `torsion_type`, the four-level equivalence degradation, the empirical rules).
-//! It reads [`crate::ff::params::mmff`] from one module away and belongs where it
-//! is used, with the typifier front end. Naming it `params.rs` was the same
-//! mistake in the other direction, and it is corrected here: it *resolves*.
+//! `ff/params/` is the home of *tables*, and this file holds none — it is an
+//! algorithm (`bond_type` / `angle_type` / `torsion_type`, the four-level
+//! equivalence degradation, the empirical rules). It reads
+//! [`crate::ff::params::mmff`] from one module away and belongs where it is
+//! used, with the typifier front end. Its name says what it does: it
+//! *resolves*.
 
 use super::charges::mmff_bond_type;
 use super::properties::MmffVariant;
@@ -277,7 +275,7 @@ pub(crate) fn torsion_type(
 
 /// RDKit `MMFFDefCollection::operator()` equivalence-level lookup.
 ///
-/// `MMFF_DEF` (regenerated from RDKit `defaultMMFFDef`) now covers every MMFF
+/// `MMFF_DEF` (generated from RDKit `defaultMMFFDef`) covers every MMFF
 /// atom type 1-82 / 87-99, so the 5-stage equivalence search for aromatic /
 /// charged-N / metal types reaches its wild-card defaults uniformly. Falls
 /// back to the type itself for any key absent from the table (RDKit returns a

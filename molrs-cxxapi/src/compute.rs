@@ -239,7 +239,7 @@ fn frame_and_self_nlist(
     box9: &[f64],
     r_max: f64,
 ) -> Option<(Frame, molrs::core::Neighbors)> {
-    use molrs::core::{NeighborList, NeighborsStorage};
+    use molrs::core::{NeighborColumns, NeighborList};
     if positions.is_empty() || !positions.len().is_multiple_of(3) || box9.len() != 9 {
         return None;
     }
@@ -256,7 +256,7 @@ fn frame_and_self_nlist(
         let simbox = frame.simbox.as_ref()?;
         let mut nl = NeighborList::new(r_max);
         nl.build(pos.view(), simbox);
-        nl.neighbors(NeighborsStorage::FULL)
+        nl.neighbors(NeighborColumns::FULL)
     };
     Some((frame, nlist))
 }

@@ -75,11 +75,10 @@ impl VoronoiVoidAnalysis {
         let component_of = topo.connected_components();
 
         // Cavity ids are contiguous 0-based component labels, so flat `Vec`s
-        // keyed by that label replace the `HashMap` (no hashing). Connected
-        // components are a graph invariant, so each cavity holds the same cells
-        // as the old union-find roots, and volumes are still summed in ascending
-        // `i` order → bit-identical floats; `seen` marks the labels that owned
-        // ≥ 1 probe cell.
+        // keyed by that label need no hashing. Connected components are a graph
+        // invariant, so each cavity holds the same cells under any labelling,
+        // and volumes are summed in ascending `i` order, so the floats are
+        // deterministic; `seen` marks the labels that owned ≥ 1 probe cell.
         let mut vol_of = vec![0.0 as F; n];
         let mut seen = vec![false; n];
         let mut total = 0.0;

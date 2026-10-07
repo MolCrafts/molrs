@@ -137,8 +137,8 @@ pub use topology::{Topology, TopologyError};
 
 pub use mesh::{DEGENERATE_AREA2, TriMesh};
 pub use neighbors::{
-    AabbQuery, BruteForce, CellGrid, LinkCell, NeighborList, NeighborPair, NeighborPolicy,
-    NeighborQuery, Neighbors, NeighborsStorage, QueryMode, SkinError, SkinPair, VerletSkin,
+    AabbQuery, BruteForce, CellGrid, LinkCell, NeighborColumns, NeighborList, NeighborPair,
+    NeighborPolicy, NeighborQuery, Neighbors, QueryMode, SkinError, SkinPair, VerletSkin,
     filter_rad, filter_sann,
 };
 pub use periodic::{GhostError, GhostHalo, GhostSet, ImageRange};

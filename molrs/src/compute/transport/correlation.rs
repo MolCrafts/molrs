@@ -21,8 +21,8 @@ pub fn lag_times(max_lag: usize, dt: f64) -> Array1<f64> {
 /// Unbiased time-origin normalisation with an optional overall scale:
 /// `C[k] *= scale / (n_frames − k)`.
 ///
-/// Fused multiply matches the historical VACF / JACF path bit-for-bit
-/// (`scale/(n−k)` once, not `/(n−k)` then `*scale`).
+/// The factor `scale/(n−k)` is formed once and applied with one multiply, not
+/// `/(n−k)` then `*scale`, so VACF and JACF round identically.
 #[inline]
 pub fn apply_unbiased_norm(corr: &mut Array1<f64>, n_frames: usize, scale: f64) {
     let max_lag = corr.len().saturating_sub(1);

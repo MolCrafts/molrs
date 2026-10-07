@@ -12,7 +12,7 @@ use rand::{RngExt, SeedableRng};
 use crate::ff::compile::PotentialCompiler;
 use crate::ff::forcefield::ForceField;
 use crate::ff::form_conversion::FitMetric;
-use crate::ff::ir::torsion::{CosineTerm, Opls, Periodic};
+use crate::ff::ir::torsion::{CosineTermForm, OplsForm, PeriodicForm};
 use crate::ff::ir::{FormCodec, FormRefusal, TypeParams};
 use crate::ff::ir::{IrError, ParamDimension, ParamSpec, StyleSpec};
 use crate::ff::ir::{Params, pair_key};
@@ -846,7 +846,7 @@ fn the_residual_is_monotone_in_the_metric() {
             .unwrap();
         if n >= 18 {
             let row = &out.get_style("dihedral", "opls").unwrap().type_rows()[0].2;
-            let series = Periodic::from_params(
+            let series = PeriodicForm::from_params(
                 &(r.form("dihedral", "periodic").unwrap().embed)(&TypeParams::row(
                     ff.get_style("dihedral", "periodic").unwrap().type_rows()[0]
                         .2
@@ -858,7 +858,7 @@ fn the_residual_is_monotone_in_the_metric() {
             .unwrap()
             .to_series()
             .unwrap();
-            let want = Opls::nearest(&series);
+            let want = OplsForm::nearest(&series);
             for (i, k) in want.k.iter().enumerate() {
                 let got = row.get(&format!("k{}", i + 1)).unwrap();
                 assert!((got - k).abs() < 1e-7, "n = {n}: k{} = {got} vs {k}", i + 1);
@@ -932,7 +932,7 @@ fn a_style_without_a_codec_fits_through_its_energy() {
     let (out, res) = r.fit_form(&ff, "improper", "harmonic", &metric).unwrap();
     let row = &out.get_style("improper", "harmonic").unwrap().type_rows()[0].2;
     let (k, chi0) = (row.get("k").unwrap(), row.get("chi0").unwrap());
-    let second_order = CosineTerm {
+    let second_order = CosineTermForm {
         k: 2.0,
         periodicity: 2.0,
         phase: 180.0,
@@ -995,8 +995,8 @@ fn cos3(r: &mut Registry) {
         ])))
     };
     let project = |tp: &TypeParams| -> Result<TypeParams, FormRefusal> {
-        let s = Periodic::from_params(&tp.row)?.to_series()?;
-        let t = CosineTerm::from_series(&s)?;
+        let s = PeriodicForm::from_params(&tp.row)?.to_series()?;
+        let t = CosineTermForm::from_series(&s)?;
         if t.k != 0.0 && (t.periodicity, t.phase) != (3.0, 0.0) {
             return Err(FormRefusal::new(format!(
                 "periodicity {} phase {}: cos3 is k[1 + cos 3φ]",

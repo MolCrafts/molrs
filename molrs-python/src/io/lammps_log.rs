@@ -723,18 +723,15 @@ impl PyLammpsLog {
     }
 }
 
-/// Read a LAMMPS log file into a nested plain-Python dict.
-///
-/// The shape matches molpy's ``LAMMPSLog.to_dict()`` payload so higher layers
-/// can hydrate dataclasses without re-parsing. Thermo rows are
-/// ``list[list[float]]`` (not a NumPy structured array).
+/// Read a LAMMPS log file into a :class:`LammpsLog` record
+/// (``molrs::io::read_lammps_log``).
 ///
 /// Parameters
 /// ----------
 /// path : str
 ///     Path to a LAMMPS log file (e.g. ``log.lammps``).
 /// style : str, optional
-///     Thermo style. Only ``"default"`` is currently parsed.
+///     Thermo style. Only ``"default"`` tables are parsed.
 ///
 /// Returns
 /// -------
@@ -767,7 +764,7 @@ pub fn read_lammps_log(path: PathBuf, style: &str) -> PyResult<PyLammpsLog> {
 ///     Where the text came from, recorded on the result as ``path`` (default
 ///     ``"<string>"``); never opened.
 /// style : str, optional
-///     Thermo style. Only ``"default"`` is currently parsed.
+///     Thermo style. Only ``"default"`` tables are parsed.
 ///
 /// Returns
 /// -------

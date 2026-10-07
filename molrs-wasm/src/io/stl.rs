@@ -2,13 +2,12 @@
 //!
 //! | Function | Format |
 //! |----------|--------|
-//! | [`readStlBytes`](read_stl_bytes_export) | STL, ASCII or binary (auto-detected) |
+//! | [`readStlBytes`](read_stl_bytes) | STL, ASCII or binary (auto-detected) |
 //!
 //! Unlike every other format's reader, this produces a [`TriMesh`] rather
 //! than a `Frame`: an STL carries triangles, not atoms.
 
 use crate::core::mesh::TriMesh;
-use molrs::io::read_stl_bytes;
 use wasm_bindgen::prelude::*;
 
 /// Read an STL file's bytes into a [`TriMesh`].
@@ -36,8 +35,8 @@ use wasm_bindgen::prelude::*;
 /// console.log(`${mesh.nFaces()} triangles, watertight: ${mesh.isWatertight()}`);
 /// ```
 #[wasm_bindgen(js_name = readStlBytes)]
-pub fn read_stl_bytes_export(bytes: &[u8]) -> Result<TriMesh, JsValue> {
-    read_stl_bytes(bytes)
+pub fn read_stl_bytes(bytes: &[u8]) -> Result<TriMesh, JsValue> {
+    molrs::io::read_stl_bytes(bytes)
         .map(|inner| TriMesh { inner })
         .map_err(|e| JsValue::from_str(&format!("STL reading error: {e}")))
 }
@@ -61,7 +60,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn reads_a_mesh_for_javascript() {
-        let mesh = read_stl_bytes_export(TRIANGLE.as_bytes()).unwrap();
+        let mesh = read_stl_bytes(TRIANGLE.as_bytes()).unwrap();
         assert_eq!(mesh.n_faces(), 1);
         assert_eq!(mesh.n_vertices(), 3);
         assert_eq!(mesh.faces(), vec![0, 1, 2]);
@@ -72,6 +71,6 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn surfaces_a_parse_failure_as_a_js_string() {
-        assert!(read_stl_bytes_export(b"ITEM: TIMESTEP\n0\n").is_err());
+        assert!(read_stl_bytes(b"ITEM: TIMESTEP\n0\n").is_err());
     }
 }

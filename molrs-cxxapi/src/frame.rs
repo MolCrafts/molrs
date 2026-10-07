@@ -13,14 +13,14 @@ use crate::bridge;
 // `molrs_ffi::FrameRef` is the handle type used by every molrs language
 // binding (python, wasm). It pairs a `FrameId` with the shared
 // `FrameArenaCell` (`Rc<RefCell<FrameArena>>`) that owns the frame — cloning
-// is two `Rc` bumps and keeps the arena alive. Atomiverse C++ reads/writes a `molrs.Frame` entirely through this
+// is two `Rc` bumps and keeps the arena alive. Atomiverse C++ reads/writes a `molrs.core.Frame` entirely through this
 // handle, so the SCF / MD pipeline never copies a whole frame.
 //
 // cxx `extern "Rust"` opaque types are crate-local by convention, so the
 // bridged type is a thin newtype around `molrs_ffi::FrameRef` rather than a
 // re-export. All `frame_*` functions deref through `.0`.
 
-/// CXX-bridged opaque handle to a `molrs.Frame`.
+/// CXX-bridged opaque handle to a `molrs.core.Frame`.
 ///
 /// Newtype around [`molrs_ffi::FrameRef`]; the inner handle carries the
 /// shared frame arena, so cloning this and round-tripping it through a
@@ -59,12 +59,12 @@ pub(crate) fn frame_new() -> Box<FrameRef> {
 /// cloned `*const FrameRef`, then `.clone()`s it — two cheap `Rc` bumps —
 /// producing a handle onto the *same* shared frame arena. Reads and writes
 /// through the returned handle are visible in the originating Python
-/// `molrs.Frame`.
+/// `molrs.core.Frame`.
 ///
 /// # Safety
 ///
 /// `addr` must be the pointer returned by `PyCapsule_GetPointer` on a
-/// capsule from `molrs.Frame._ffi_frameref_capsule()`, named with this
+/// capsule from `molrs.core.Frame._ffi_frameref_capsule()`, named with this
 /// build's `molrs_ffi::abi::frameref_capsule_name()` (the caller must pass
 /// that exact name to `PyCapsule_GetPointer` — query it via
 /// `molrs._ffi_abi_token()`), valid for the duration of this call. The name

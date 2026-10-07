@@ -206,13 +206,13 @@ committed are readable and `MrecWriter.open(path)` resumes appending.
 ### Packing
 
 A closed directory store packs into a single `*.mrec.zip` — one file to copy,
-upload or serve. `pack` replaces the directory with the archive and returns
-its path; `MrecReader` and the WASM readers open the archive directly.
+upload or serve. `pack_mrec_zip` replaces the directory with the archive and
+returns its path; `MrecReader` and the WASM readers open the archive directly.
 
 ```python
-from molrs.io.mrec import pack
+from molrs.io.mrec import pack_mrec_zip
 
-zipped = pack("stream.mrec")
+zipped = pack_mrec_zip("stream.mrec")
 print(zipped)
 
 with MrecReader(zipped) as reader:

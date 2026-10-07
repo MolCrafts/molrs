@@ -1,4 +1,4 @@
-//! Engine codecs against the engines (`ff-ir-02-protocol` §8, WP8): styles
+//! Engine codecs against the engines (`ff-ir-02-protocol` §8): styles
 //! the engines have no molrs arm for — registered at run time with a spec,
 //! or built in with an expression — written by molrs and priced by the
 //! engine, to relative 1e-10 of molrs's own energy.

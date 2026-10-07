@@ -543,7 +543,7 @@ The familiar chains are instances:
 In Rust:
 
 ```rust
-use molrs::ff::ir::torsion::{FourierSeries, MultiHarmonic, Opls, TorsionRefusal};
+use molrs::ff::ir::torsion::{FourierSeries, MultiHarmonicForm, OplsForm, TorsionRefusal};
 use molrs::ff::style_registry::torsion_series;
 
 // A stored row of any torsion style → its series (exact, constant included),
@@ -553,16 +553,18 @@ let series = torsion_series("dihedral", "opls", style.params(), &row)?;
 let total: FourierSeries = rows.iter().map(|r| r.to_series()).sum();
 assert_eq!(total.canonical(), other.canonical());
 // Series → a form, or the reason it cannot be.
-match MultiHarmonic::from_series(&series) {
+match MultiHarmonicForm::from_series(&series) {
     Ok(form) => form.to_params(),
     Err(TorsionRefusal::SineTerm { n, .. }) => todo!("phase off 0/180° at order {n}"),
     Err(other) => todo!("{other}"),
 };
 ```
 
-The per-form types (`Periodic`, `Charmm`, `CosineTerm`, `SignedCosine`,
-`Opls`, `Class2`, `MultiHarmonic`, `NHarmonic`, `RyckaertBellemans`,
-`ImproperHarmonic`) carry the maps one form at a time (`from_params`,
+The per-form types (`PeriodicForm`, `CharmmForm`, `CosineTermForm`,
+`SignedCosineForm`, `OplsForm`, `Class2Form`, `MultiHarmonicForm`,
+`NHarmonicForm`, `RyckaertBellemansForm`, `ImproperHarmonicForm`; the `Form`
+suffix tells a form from the kernel of the same style, such as
+`ff::potential::ImproperHarmonic`) carry the maps one form at a time (`from_params`,
 `to_params`, `to_series`, `from_series`, and `nearest` — the closest member
 of the form's image, the start of a fit). `FourierSeries::chopped(tol)`
 zeroes coefficients below a tolerance first, for input rounded on print. A

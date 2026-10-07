@@ -18,11 +18,11 @@
 //! # The seam is a push, not a pull
 //!
 //! QM charges are an **argument** — `assign(&mol, Some(&am1))`,
-//! `BccModel::correct(&mol, &am1)` — because molrs does not compute them. It used to
-//! ask for them through a backend trait, and every implementor that trait ever had
-//! ignored the molecule it was handed and returned a vector computed elsewhere; the
-//! production path had to dress a `Vec<f64>` up as a solver to get it in. The
-//! charges now go in the direction they actually travel.
+//! `BccModel::correct(&mol, &am1)` — because molrs does not compute them. A
+//! backend trait that asks for them would have implementors that ignore the
+//! molecule they are handed and return a vector computed elsewhere, a
+//! `Vec<f64>` dressed up as a solver. The charges go in the direction they
+//! actually travel.
 //!
 //! # Nothing is written into the molecule
 //!

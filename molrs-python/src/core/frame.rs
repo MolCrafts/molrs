@@ -392,7 +392,7 @@ impl PyFrameMeta {
         {
             return meta_value_to_py(py, &value, JsonForm::Frozen);
         }
-        // `dict.setdefault(k)` inserts None; so does this, now that None is a
+        // `dict.setdefault(k)` inserts None; so does this, since None is a
         // JSON null rather than a rejection.
         let value = match default {
             Some(value) => value,

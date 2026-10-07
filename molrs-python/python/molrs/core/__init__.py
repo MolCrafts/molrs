@@ -5,7 +5,7 @@ Every name is flat on :mod:`molrs.core`, as in Rust:
 * The column store and the frame: :class:`Block`, :class:`Frame` and its
   metadata (:class:`FrameMeta`, :class:`MetaValue` typed scalars,
   :class:`MetaDocument` nested documents), :class:`Trajectory` and its
-  :class:`ScalarObservable` / :class:`VectorObservable` records, and
+  :class:`ObservableRecord` records, and
   :exc:`BlockDtypeError` (a column value the store cannot hold; a
   ``TypeError``).
 * Space: :class:`Box` (the periodic / triclinic simulation cell; Rust's
@@ -43,6 +43,8 @@ from .._native import (
     Block,
     BlockDtypeError,
     Bond,
+    BondNumber,
+    BondOrder,
     Box,
     CgBond,
     CoarseGrain,
@@ -65,6 +67,7 @@ from .._native import (
     NeighborQuery,
     Neighbors,
     NodeRef,
+    ObservableRecord,
     Parallelepiped,
     Polyhedron,
     Port,
@@ -73,7 +76,6 @@ from .._native import (
     Region,
     RelationBuckets,
     RelationRef,
-    ScalarObservable,
     Sphere,
     SphereUnion,
     Topology,
@@ -84,7 +86,6 @@ from .._native import (
     UnitPreset,
     UnitRegistry,
     UnitsError,
-    VectorObservable,
     VerletSkin,
     VirtualSite,
 )
@@ -107,6 +108,8 @@ __all__ = [
     "Block",
     "BlockDtypeError",
     "Bond",
+    "BondNumber",
+    "BondOrder",
     "Box",
     "CgBond",
     "CoarseGrain",
@@ -129,6 +132,7 @@ __all__ = [
     "NeighborQuery",
     "Neighbors",
     "NodeRef",
+    "ObservableRecord",
     "Parallelepiped",
     "Polyhedron",
     "Port",
@@ -137,7 +141,6 @@ __all__ = [
     "Region",
     "RelationBuckets",
     "RelationRef",
-    "ScalarObservable",
     "Sphere",
     "SphereUnion",
     "Topology",
@@ -148,7 +151,6 @@ __all__ = [
     "UnitPreset",
     "UnitRegistry",
     "UnitsError",
-    "VectorObservable",
     "VerletSkin",
     "VirtualSite",
     "constants",

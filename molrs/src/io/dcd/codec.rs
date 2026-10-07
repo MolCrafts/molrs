@@ -133,8 +133,8 @@ fn write_marker<W: Write>(
     }
 }
 
-/// Refuse a Fortran payload bigger than this before allocating. A corrupt
-/// marker on a huge file used to request a multi-gigabyte `Vec`.
+/// Refuse a Fortran payload bigger than this before allocating, so a corrupt
+/// marker on a huge file cannot request a multi-gigabyte `Vec`.
 const MAX_DCD_RECORD_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Read one Fortran record's payload, asserting the trailing marker matches.
@@ -587,7 +587,7 @@ fn parse_header<R: BufRead + Seek>(reader: &mut R) -> std::io::Result<DcdHeader>
     if header.namnf > 0 && header.nset > 0 {
         let (xs, ys, zs, _w) = read_coord_payload(reader, &header, 0)?;
         header.fixed_seed = Some((xs, ys, zs));
-        // Reset; read_step will re-read frame 0 if requested.
+        // Reset; read_frame will re-read frame 0 if requested.
         reader.seek(SeekFrom::Start(data_offset))?;
     }
 
@@ -877,7 +877,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 /// - Optional 4D dynamics (W coordinate)
 /// - Fixed-atom subsets (frame 0 carries full coords; later frames only
 ///   the free atoms)
-/// - O(1) random access via `TrajectoryReader::read_step` (frame size is
+/// - O(1) random access via `TrajectoryReader::read_frame` (frame size is
 ///   constant, no scan needed)
 /// - Writer (NAMD-style: little-endian, 4-byte markers, cosine angles,
 ///   no fixed atoms, no 4D)
@@ -895,7 +895,7 @@ fn parse_frame_at<R: BufRead + Seek>(
 ///
 /// // Random access via TrajectoryReader
 /// let mut reader = DcdReader::open("trajectory.dcd")?;
-/// let frame_5 = reader.read_step(5)?;
+/// let frame_5 = reader.read_frame(5)?;
 ///
 /// // Write frames
 /// write_dcd_trajectory("output.dcd", &frames)?;
@@ -962,10 +962,10 @@ impl<R: BufRead + Seek> TrajectoryReader for DcdReader<R> {
         self.ensure_header()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
         self.ensure_header()?;
         let header = self.header.get().expect("header set").clone();
-        parse_frame_at(&mut self.reader, &header, step)
+        parse_frame_at(&mut self.reader, &header, index)
     }
 
     fn len(&mut self) -> std::io::Result<usize> {
@@ -1924,7 +1924,7 @@ impl FrameIndexBuilder for DcdIndexBuilder {
 
 /// Read every frame of a DCD file into memory.
 ///
-/// For large trajectories prefer [`DcdReader::open`] with [`TrajectoryReader::read_step`]
+/// For large trajectories prefer [`DcdReader::open`] with [`TrajectoryReader::read_frame`]
 /// for random access without loading all frames at once.
 pub fn read_dcd_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
@@ -2216,9 +2216,9 @@ mod tests {
         );
         let mut reader = DcdReader::new(Cursor::new(bytes));
         assert_eq!(reader.len().expect("len"), 2);
-        assert!(reader.read_step(0).expect("frame 0").is_some());
-        assert!(reader.read_step(1).expect("frame 1").is_some());
-        assert!(reader.read_step(2).expect("frame 2").is_none());
+        assert!(reader.read_frame(0).expect("frame 0").is_some());
+        assert!(reader.read_frame(1).expect("frame 1").is_some());
+        assert!(reader.read_frame(2).expect("frame 2").is_none());
     }
 
     #[test]

@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn typed_atom_ref_def_without_dependency_types_nothing() {
-        // A %opls_NNN def is now supported (layered), not skipped. With no
+        // A %opls_NNN def is supported (layered), not skipped. With no
         // matching dependency present (nothing is ever typed opls_145), the
         // `%opls_145` predicate never holds, so the def matches nothing — and
         // it is NOT an error. (Real layered typing is covered in

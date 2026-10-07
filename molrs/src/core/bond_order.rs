@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn a_fractional_prop_can_never_read_back_as_aromatic() {
-        // The old encoding must not survive as a silent alias: 1.5 rounds to 2,
+        // A fractional order is no alias for aromaticity: 1.5 rounds to 2,
         // which is Double, not Aromatic. Nothing turns 1.5 into aromaticity.
         assert_eq!(
             BondOrder::from_prop(Some(&PropValue::F64(1.5))),

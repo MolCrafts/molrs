@@ -84,7 +84,7 @@ impl MolGraph {
     /// perception downstream reads it as such. Build them with
     /// [`small_ring_closure`](crate::perceive::small_ring_closure),
     /// which bounds ring size and costs the ball rather than the parent;
-    /// [`RingInfo::ring_systems`](crate::perceive::RingInfo::ring_systems)
+    /// [`RingSet::ring_systems`](crate::perceive::RingSet::ring_systems)
     /// answers the same question globally and without a bound, so it closes on
     /// macrocycles too and can hand back the entire molecule.
     pub fn extract_ball(

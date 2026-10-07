@@ -303,7 +303,7 @@ mod tests {
     /// rather than to the mere presence of the centre-centre bond.
     #[test]
     fn identical_environments_score_one() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = paired_octahedra(20.0);
 
@@ -337,7 +337,7 @@ mod tests {
         });
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 14 },
         );
 

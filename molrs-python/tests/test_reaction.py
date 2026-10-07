@@ -115,7 +115,7 @@ def test_apply_amide_forms_bond_and_drops_leaving_group():
     assert set(binding) == {1, 2}
     touched = rxn.apply(mol, binding)
 
-    # apply now reports the touched (surviving) atom handles as a list[int]
+    # apply reports the touched (surviving) atom handles as a list[int]
     assert isinstance(touched, list)
     assert all(isinstance(t, int) for t in touched)
     # leaving atoms (ester O + alkyl C) removed -> exactly 2 fewer atoms

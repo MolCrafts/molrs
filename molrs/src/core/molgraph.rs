@@ -382,8 +382,8 @@ fn narrow_uint(key: &str, v: Idx) -> Result<I, MolRsError> {
 /// A dynamic property bag representing a graph node (an atom or a bead).
 ///
 /// All data — including coordinates (`"x"`, `"y"`, `"z"`), element symbol,
-/// mass, charge, etc. — is stored as key-value pairs. The name is historical;
-/// `MolGraph` treats it purely as an opaque node payload.
+/// mass, charge, etc. — is stored as key-value pairs. `MolGraph` treats it
+/// purely as an opaque node payload.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Atom {
     props: IndexMap<String, PropValue>,

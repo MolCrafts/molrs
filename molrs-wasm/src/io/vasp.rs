@@ -37,11 +37,11 @@ impl VaspPoscarReader {
         }
     }
 
-    /// Read the frame at `step`. POSCAR is single-frame, so any `step != 0`
+    /// Read the frame at `index`. POSCAR is single-frame, so any `index != 0`
     /// returns `undefined`.
-    #[wasm_bindgen]
-    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
-        if step > 0 {
+    #[wasm_bindgen(js_name = readFrame)]
+    pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
+        if index > 0 {
             return Ok(None);
         }
         let rs_frame = molrs::io::read_vasp_poscar_str(&self.content)
@@ -55,7 +55,7 @@ impl VaspPoscarReader {
         if let Some(n) = self.cached_len {
             return Ok(n);
         }
-        let n = if self.read(0)?.is_some() { 1 } else { 0 };
+        let n = if self.read_frame(0)?.is_some() { 1 } else { 0 };
         self.cached_len = Some(n);
         Ok(n)
     }

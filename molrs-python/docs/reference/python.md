@@ -22,12 +22,12 @@ and the docs build.
 
 | Module | Rust owner | Holds |
 |---|---|---|
-| `molrs.core` | `molrs::core` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ScalarObservable`, `VectorObservable`, `BlockDtypeError`; `Box` (Rust `SimBox`), `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `Topology`; `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError` |
+| `molrs.core` | `molrs::core` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ObservableRecord`, `BlockDtypeError`; `Box` (Rust `SimBox`), `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `BondOrder`, `BondNumber`, `Topology`; `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError` |
 | `molrs.core.keys` | `molrs::core::keys` | the canonical column, frame-meta and graph keys |
 | `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
 | `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `place_from_internal_coords`, `Superposition`, `DEFAULT_GAP_TOL` |
-| `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingInfo`, the `perceive_*` / `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
+| `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingSet`, the `perceive_*` / `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
 | `molrs.io` | `molrs::io` | every file reader and writer, as a function `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory): structure, trajectory and force-field files, `*.mrec` records (`read_mrec_frame` / `write_mrec_frame` and partners), wire-encoded frames, SMILES and CGsmiles text, the LAMMPS log, CSV blocks |
 | `molrs.io.pdb`, `.xyz`, `.gro`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, dcd, trr, xtc}` | each format's lazy reader: `PdbReader`, `XyzReader`, `GroReader`, `DcdReader`, `TrrReader`, `XtcReader` |
 | `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader`, `BondReactTemplate`, the `Lammps*` log records |
@@ -36,7 +36,7 @@ and the docs build.
 | `molrs.io.mrec` | `molrs::io::mrec` | `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `Potentials`, `WeightedTerms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
-| `molrs.ff.compile` | `molrs::ff::compile` | `PotentialCompiler`, `compile_explicit_terms` |
+| `molrs.ff.compile` | `molrs::ff::compile` | `PotentialCompiler`, `ExplicitTerms` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `TypeAssignment`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR's vocabulary (`ParamSpec`, `StyleSpec`, `CategorySpec`) and its `IrError` family |
@@ -82,15 +82,17 @@ unspecified.
 
 ::: molrs.core.Trajectory
 
-::: molrs.core.ScalarObservable
-
-::: molrs.core.VectorObservable
+::: molrs.core.ObservableRecord
 
 ::: molrs.core.Atomistic
 
 ::: molrs.core.CoarseGrain
 
 ::: molrs.core.MolGraph
+
+::: molrs.core.BondOrder
+
+::: molrs.core.BondNumber
 
 Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, not module
 functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
@@ -161,7 +163,7 @@ alone; `assign_<fact>` writes the fact onto a clone and returns it.
 
 ::: molrs.perceive.assign_equivalence_classes
 
-::: molrs.perceive.RingInfo
+::: molrs.perceive.RingSet
 
 ::: molrs.perceive.Reaction
 
@@ -390,6 +392,10 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_json_frame_str
 
+::: molrs.io.read_clpol_alpha
+
+::: molrs.io.read_clpol_alpha_str
+
 ::: molrs.io.read_csv_block
 
 ::: molrs.io.read_csv_block_str
@@ -444,6 +450,8 @@ arrays (a CMAP `grid`).
 ### `molrs.ff.compile`
 
 ::: molrs.ff.compile.PotentialCompiler
+
+::: molrs.ff.compile.ExplicitTerms
 
 ### `molrs.ff.potential`
 

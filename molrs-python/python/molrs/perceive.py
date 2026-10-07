@@ -9,7 +9,7 @@ matching. Gasteiger charges are a charge model and live in :mod:`molrs.ff`.
 
 Every perception is a free function with the Rust name, in two shapes:
 ``perceive_<fact>(mol)`` *reports* a side table (:func:`perceive_rings` →
-:class:`RingInfo`) and never touches the molecule; ``assign_<fact>(mol)``
+:class:`RingSet`) and never touches the molecule; ``assign_<fact>(mol)``
 writes the fact onto a *clone* as atom / bond props and returns it — graph in,
 graph out — so a pipeline reads as a chain of graphs. :func:`add_hydrogens` is
 a graph edit and keeps its verb.
@@ -33,7 +33,7 @@ overlapping groups. Mapping matched groups onto the sites of a new
 
 from ._native import (
     Reaction,
-    RingInfo,
+    RingSet,
     SmartsMatch,
     SmartsPattern,
     SubgraphMatcher,
@@ -52,7 +52,7 @@ from ._native import (
 
 __all__ = [
     "Reaction",
-    "RingInfo",
+    "RingSet",
     "SmartsMatch",
     "SmartsPattern",
     "SubgraphMatcher",

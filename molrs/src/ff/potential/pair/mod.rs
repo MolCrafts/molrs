@@ -222,7 +222,7 @@ where
 /// This is LAMMPS's `pair_coeff i j` model, and it is what a neighbour-driven
 /// evaluation needs: which pairs exist is re-decided at every rebuild, so a
 /// pair's parameters have to be findable from the atoms it names rather than
-/// from the row it used to occupy.
+/// from a row of a previous list.
 #[inline]
 pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
     ti as usize * ntypes + tj as usize
@@ -258,7 +258,7 @@ pub use uff::{PairUffVdw, pair_uff_vdw_constructor};
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+    use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
     use molrs::op::F;
 
     /// A neighbour table over exactly `links`, with the displacements a
@@ -288,7 +288,7 @@ pub(crate) mod fixtures {
             .collect();
         Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points },
         )
     }

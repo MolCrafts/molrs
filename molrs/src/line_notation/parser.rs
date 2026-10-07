@@ -2002,9 +2002,8 @@ mod tests {
 
     /// A bracket symbol that is not an element is a fact about the string,
     /// not about the graph built from it: the parser reads it, so the parser
-    /// refuses it. Before this, `[Xx]` parsed into an IR and only a caller
-    /// that also ran `SmilesIr::validate` ever learnt that `Xx` is not an
-    /// element — `to_atomistic` happily built an atom with that element.
+    /// refuses it: `[Xx]` never reaches an IR, so no caller depends on
+    /// running `SmilesIr::validate` to learn that `Xx` is not an element.
     ///
     /// Kind and payload are the ones `SmilesIr::validate` already uses for the
     /// same rule (`smiles/validate.rs::validate_symbol`): the symbol exactly

@@ -10,7 +10,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 use super::images::{GhostError, ImageRange};
 use crate::core::SimBox;
-use crate::core::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
+use crate::core::{NeighborColumns, NeighborList, Neighbors, QueryMode};
 use crate::op::{F, Fnx3, Fnx3View, I};
 
 /// The periodic copies of one owned point set.
@@ -356,7 +356,7 @@ impl GhostSet {
                 n_query_points: self.n_owned,
                 n_points: self.n_owned + self.len(),
             },
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
         )
     }
 

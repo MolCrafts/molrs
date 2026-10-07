@@ -331,8 +331,8 @@ mod tests {
 
     fn bond_with_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
         let bid = mol.add_bond(a, b).expect("fixture bond");
-        // The old float encoding, expressed in the two facts it conflated:
-        // 1.5 meant "aromatic", every integer meant a localized count.
+        // The fixture's float order, split into the two facts it encodes:
+        // 1.5 is "aromatic", every integer is a localized count.
         if (order - 1.5).abs() < 1e-6 {
             mol.set_bond_class(bid, BondOrder::Aromatic, BondNumber::Unknown)
                 .expect("fixture bond class");
@@ -485,8 +485,8 @@ mod tests {
 
     #[test]
     fn charged_single_atoms_take_their_valence_hydrogens() {
-        // Charged single-heavy-atom species (the cases the old
-        // bond_order_sum - formal_charge rule got wrong for group-13/14):
+        // Charged single-heavy-atom species (the cases a plain
+        // bond_order_sum - formal_charge rule gets wrong for group-13/14):
         assert_eq!(charged_atom_h("C", 1.0), 3, "[CH3+] -> 3 H");
         assert_eq!(charged_atom_h("C", -1.0), 3, "[CH3-] -> 3 H");
         assert_eq!(charged_atom_h("B", -1.0), 4, "[BH4-] -> 4 H");
@@ -502,10 +502,10 @@ mod tests {
 
     /// Like `charged_atom_h` but stores `formal_charge` as the canonical
     /// **integer** column (`PropValue::Int`) — what the parsers and the i32-typed
-    /// graph schema actually emit. Guards the regression where `n_implicit_hydrogens`
-    /// read the charge via the strict `get_f64` (F64-only) and silently treated
-    /// every charged atom as neutral — e.g. protonating the sulfonimide [N-] in
-    /// TFSI/ANI and breaking antechamber's charge balance.
+    /// graph schema actually emit. `n_implicit_hydrogens` must read an Int
+    /// charge: reading it as F64 only would treat every charged atom as
+    /// neutral — e.g. protonating the sulfonimide [N-] in TFSI/ANI and
+    /// breaking antechamber's charge balance.
     fn charged_atom_h_int(sym: &str, fc: i32) -> u32 {
         let mut g = Atomistic::new();
         let mut a = Atom::new();
@@ -529,8 +529,8 @@ mod tests {
     #[test]
     fn test_sulfonimide_anion_not_protonated() {
         // The exact TFSI/ANI failure: a deprotonated sulfonimide N (two single
-        // bonds, int formal_charge -1) must add NO hydrogen. Before the fix the
-        // Int charge was missed → N read as neutral (valence 3, demand 2) → 1 H.
+        // bonds, int formal_charge -1) must add NO hydrogen. Missing the Int
+        // charge would read N as neutral (valence 3, demand 2) → 1 H.
         let mut g = Atomistic::new();
         let mut n_atom = Atom::new();
         n_atom.set("element", "N");

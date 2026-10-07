@@ -2378,7 +2378,7 @@ struct IndexArrays {
 
 impl IndexArrays {
     /// Create both arrays and backfill the `history` regular updates of
-    /// `rows` rows each — the history the hints described until now.
+    /// `rows` rows each — the updates the hints describe.
     fn materialize(
         store: &ReadableWritableListableStorage,
         path: &str,
@@ -3457,7 +3457,7 @@ struct PendingFrame {
 /// rewrites nothing. The writer lands complete chunks on its own cadence
 /// ([`MrecWriter::with_flush_every`] overrides it); an explicit
 /// [`flush`](MrecWriter::flush) may land a partially filled trailing
-/// chunk, whose superseded copy then stays in the shard as dead bytes — bounded
+/// chunk, whose overwritten copy then stays in the shard as dead bytes — bounded
 /// by one chunk per column per flush, and never cleaned up, because the
 /// whole-shard rewrite that would clean it is the one write that can destroy
 /// committed data on a crash.
@@ -4259,7 +4259,7 @@ impl MrecWriter {
     /// `Ok` means the frames survive a power loss.
     ///
     /// A flush that lands a partially filled trailing inner chunk re-encodes
-    /// that chunk and leaves its superseded copy in the shard as dead bytes —
+    /// that chunk and leaves its overwritten copy in the shard as dead bytes —
     /// at most one chunk per column per flush. A flush with nothing buffered
     /// is `Ok(())` and writes nothing.
     ///
@@ -5490,8 +5490,8 @@ impl TrajectoryReader for MrecReader {
 
     /// [`MrecReader::frame`] behind the backend-neutral trait: the same
     /// frame, and the same `Ok(None)` past the commit marker.
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
-        self.frame(step as u64).map_err(std::io::Error::other)
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
+        self.frame(index as u64).map_err(std::io::Error::other)
     }
 
     /// Committed frames — the length of `trajectory/step` as

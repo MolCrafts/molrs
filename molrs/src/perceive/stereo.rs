@@ -478,9 +478,9 @@ mod tests {
     /// The E/Z label must be a function of the geometry, not of bond order.
     ///
     /// 3-methyl-2-pentene: both substituents on C3 are carbon, so the
-    /// atomic-number key ties. `max_by_key` keeps the last maximum, so swapping
-    /// the two C3 bonds used to flip the label between E and Z on identical
-    /// coordinates.
+    /// atomic-number key ties. `max_by_key` keeps the last maximum, so a
+    /// ranking that relied on it would flip the label between E and Z when the
+    /// two C3 bonds are swapped on identical coordinates.
     #[test]
     fn the_ez_label_does_not_depend_on_bond_insertion_order() {
         let build = |methyl_first: bool| {

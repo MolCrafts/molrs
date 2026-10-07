@@ -107,6 +107,10 @@ from .._native import (
     read_cgsmiles_str,
     read_cif,
     read_cif_str,
+    read_clpol_alpha,
+    read_clpol_alpha_str,
+    read_csv_block,
+    read_csv_block_str,
     read_cube,
     read_cube_str,
     read_dcd_bytes,
@@ -176,6 +180,8 @@ from .._native import (
     write_amber_prep_str,
     write_cif,
     write_cif_str,
+    write_csv_block,
+    write_csv_block_str,
     write_cube,
     write_cube_str,
     write_dcd_bytes,
@@ -227,21 +233,6 @@ from .._native import (
     write_xyz_trajectory,
 )
 from . import cgsmiles, dcd, gro, lammps, mrec, pdb, smiles, trr, xtc, xyz
-from ._csv_block import (
-    read_csv_block,
-    read_csv_block_str,
-    write_csv_block,
-    write_csv_block_str,
-)
-
-# Defined in the private module above; this module is their public path.
-for _defined in (
-    read_csv_block,
-    read_csv_block_str,
-    write_csv_block,
-    write_csv_block_str,
-):
-    _defined.__module__ = __name__
 
 __all__ = [
     "cgsmiles",
@@ -263,6 +254,8 @@ __all__ = [
     "read_cgsmiles_str",
     "read_cif",
     "read_cif_str",
+    "read_clpol_alpha",
+    "read_clpol_alpha_str",
     "read_csv_block",
     "read_csv_block_str",
     "read_cube",

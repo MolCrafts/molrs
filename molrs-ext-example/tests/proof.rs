@@ -31,7 +31,7 @@ use std::sync::Arc;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::{Block, Frame};
-use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
 use molrs::ff::compile::PotentialCompiler;
 use molrs::ff::forcefield::{DefError, ForceField};
 use molrs::ff::ir::{
@@ -551,7 +551,7 @@ fn pair_style_matches_lammps() {
                     disp: d,
                 }
             }),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: n },
         );
         let mut ft = vec![0.0; x.len()];

@@ -54,14 +54,14 @@ impl<R: TrajectoryReader> Concatenated<R> {
             .try_for_each(TrajectoryReader::build_index)
     }
 
-    /// Frame `step` of the whole sequence, or `None` past its end.
-    fn read_step(&mut self, mut step: usize) -> std::io::Result<Option<Frame>> {
+    /// Frame `index` of the whole sequence, or `None` past its end.
+    fn read_frame(&mut self, mut index: usize) -> std::io::Result<Option<Frame>> {
         for file in 0..self.readers.len() {
             let n = self.count(file)?;
-            if step < n {
-                return self.readers[file].read_step(step);
+            if index < n {
+                return self.readers[file].read_frame(index);
             }
-            step -= n;
+            index -= n;
         }
         Ok(None)
     }
@@ -93,10 +93,10 @@ fn path_list(paths: &Bound<'_, PyAny>) -> PyResult<Vec<String>> {
     Ok(out)
 }
 
-/// Read an in-range step as a Python frame.
-fn frame_at<R: TrajectoryReader>(inner: &mut Concatenated<R>, step: usize) -> PyResult<PyFrame> {
+/// Read an in-range frame index as a Python frame.
+fn frame_at<R: TrajectoryReader>(inner: &mut Concatenated<R>, index: usize) -> PyResult<PyFrame> {
     let frame = inner
-        .read_step(step)
+        .read_frame(index)
         .map_err(io_error_to_pyerr)?
         .ok_or_else(|| PyIndexError::new_err("trajectory index out of range"))?;
     PyFrame::from_core_frame(frame)
@@ -270,7 +270,7 @@ macro_rules! lazy_reader {
                     if file >= inner.readers.len() {
                         return Ok(None);
                     }
-                    match inner.readers[file].read_step(local).map_err(io_error_to_pyerr)? {
+                    match inner.readers[file].read_frame(local).map_err(io_error_to_pyerr)? {
                         Some(frame) => {
                             self.cursor = (file, local + 1);
                             return Ok(Some(PyFrame::from_core_frame(frame)?));

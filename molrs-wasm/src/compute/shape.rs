@@ -168,8 +168,8 @@ impl GyrationTensor {
     /// Compute gyration tensors. Returns a flat float typed array (9 values per cluster).
     ///
     /// Internally computes the cluster geometric centers (via
-    /// [`RsClusterCenters`]) since the new compute trait exposes them as a
-    /// required upstream — the old single-frame wasm API hides this detail.
+    /// [`RsClusterCenters`]): the compute trait takes them as a required
+    /// upstream, and this single-frame wasm API hides that detail.
     pub fn compute(
         &self,
         frame: &Frame,
@@ -216,8 +216,8 @@ impl InertiaTensor {
     /// Compute inertia tensors. Returns a flat float typed array (9 values per cluster).
     ///
     /// Internally computes the cluster centers of mass (via
-    /// [`RsCenterOfMass`]) since the new compute trait consumes them as a
-    /// required upstream — the old single-frame wasm API hides this detail.
+    /// [`RsCenterOfMass`]): the compute trait takes them as a required
+    /// upstream, and this single-frame wasm API hides that detail.
     pub fn compute(
         &self,
         frame: &Frame,

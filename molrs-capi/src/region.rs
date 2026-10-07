@@ -66,7 +66,7 @@ fn with_region<R>(
     }
 }
 
-fn shared(handle: MolrsRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolrsStatus> {
+fn region_arc(handle: MolrsRegionHandle) -> Result<Arc<dyn Region + Send + Sync>, MolrsStatus> {
     let registry = lock_registry();
     match registry.regions.get(handle_to_region_key(handle)) {
         Some(r) => Ok(r.region()),
@@ -344,7 +344,7 @@ fn binary_op(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let (ra, rb) = match (shared(a), shared(b)) {
+        let (ra, rb) = match (region_arc(a), region_arc(b)) {
             (Ok(ra), Ok(rb)) => (ra, rb),
             (Err(s), _) | (_, Err(s)) => return s,
         };
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn molrs_region_not(
 ) -> MolrsStatus {
     ffi_try!({
         null_check!(out);
-        let ra = match shared(a) {
+        let ra = match region_arc(a) {
             Ok(r) => r,
             Err(s) => return s,
         };

@@ -54,8 +54,8 @@ use crate::compute::{require_disp, require_self_query};
 ///
 /// Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
 /// minimum-image displacement column `disp` (Å) — materialize it with
-/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
-/// or [`FULL`](molrs::core::NeighborsStorage::FULL). A `DIST_SQ`
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL). A `DIST_SQ`
 /// or `INDICES_ONLY` table stores no directions and reads back `None` rather
 /// than zeros, so [`Hexatic::compute`](Compute::compute) answers
 /// [`ComputeError::BadShape`] naming the missing column instead of indexing an
@@ -327,7 +327,7 @@ mod tests {
     /// `SelfQuery { n_points: 7 }` is a legal label.
     #[test]
     fn hexatic_indices_only_neighbors_is_bad_shape() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = hex_environment(20.0);
         let pairs: Vec<NeighborPair> = (0..6u32)
@@ -343,7 +343,7 @@ mod tests {
             .collect();
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::INDICES_ONLY,
+            NeighborColumns::INDICES_ONLY,
             QueryMode::SelfQuery { n_points: 7 },
         );
         assert_eq!(
@@ -382,7 +382,7 @@ mod tests {
     /// `disp` stays `r_j − r_i`, so the reversed row carries `−disp`.
     #[test]
     fn hexatic_cross_query_table_is_bad_shape() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = hex_environment(20.0);
         let mut pairs: Vec<NeighborPair> = Vec::with_capacity(12);
@@ -405,7 +405,7 @@ mod tests {
         }
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::CrossQuery {
                 n_query_points: 7,
                 n_points: 7,

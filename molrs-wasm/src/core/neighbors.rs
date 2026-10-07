@@ -15,8 +15,8 @@
 
 use js_sys::Uint32Array;
 use molrs::core::{
-    NeighborList as RsNeighborList, NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors,
-    NeighborsStorage as RsNeighborsStorage, QueryMode,
+    NeighborColumns as RsNeighborColumns, NeighborList as RsNeighborList,
+    NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors, QueryMode,
 };
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
@@ -167,7 +167,7 @@ impl NeighborList {
 
     /// Materialize the pairs into a [`Neighbors`] table.
     ///
-    /// `storage` is an optional `{ distSq?: boolean, disp?: boolean }`. Both
+    /// `columns` is an optional `{ distSq?: boolean, disp?: boolean }`. Both
     /// columns are kept by default, so no analysis is surprised by a missing
     /// one; pass `false` for a column this call site will not read. A dropped
     /// column cannot be added afterwards — materialize again instead.
@@ -180,7 +180,7 @@ impl NeighborList {
     ///
     /// # Errors
     ///
-    /// Throws if `storage` is neither nullish nor an object, or if one of its
+    /// Throws if `columns` is neither nullish nor an object, or if one of its
     /// two fields is present but not a boolean.
     ///
     /// # Example (JavaScript)
@@ -189,25 +189,20 @@ impl NeighborList {
     /// const neigh = nl.neighbors();                  // distSq + disp
     /// const lean  = nl.neighbors({ disp: false });   // indices + d²
     /// ```
-    pub fn neighbors(
-        &self,
-        storage: Option<NeighborsStorageOptions>,
-    ) -> Result<Neighbors, JsValue> {
-        let policy = match storage.as_deref() {
+    pub fn neighbors(&self, columns: Option<NeighborColumnsOptions>) -> Result<Neighbors, JsValue> {
+        let policy = match columns.as_deref() {
             // Omitted, `undefined` or `null`: keep every column — the safe
             // default, and the one an order parameter needs.
-            None => RsNeighborsStorage::FULL,
-            Some(options) if options.is_undefined() || options.is_null() => {
-                RsNeighborsStorage::FULL
-            }
+            None => RsNeighborColumns::FULL,
+            Some(options) if options.is_undefined() || options.is_null() => RsNeighborColumns::FULL,
             Some(options) if !options.is_object() => {
                 return Err(JsValue::from_str(
-                    "neighbors(storage) expects an object like { distSq: true, disp: true }",
+                    "neighbors(columns) expects an object like { distSq: true, disp: true }",
                 ));
             }
-            Some(options) => RsNeighborsStorage {
-                dist_sq: storage_flag(options, "distSq")?,
-                disp: storage_flag(options, "disp")?,
+            Some(options) => RsNeighborColumns {
+                dist_sq: column_flag(options, "distSq")?,
+                disp: column_flag(options, "disp")?,
             },
         };
         Ok(Neighbors {
@@ -232,7 +227,7 @@ const NEIGHBORS_STORAGE_OPTIONS: &'static str = r#"
  * `true`: a column omitted here cannot be read back, and cannot be added
  * afterwards without materializing again.
  */
-export interface NeighborsStorageOptions {
+export interface NeighborColumnsOptions {
     /** Keep squared minimum-image distances (Å²), 8 B/pair. */
     distSq?: boolean;
     /** Keep minimum-image displacement vectors (Å), 24 B/pair. */
@@ -245,23 +240,23 @@ extern "C" {
     /// The `{ distSq?, disp? }` object accepted by
     /// [`NeighborList::neighbors`] — typed on the JS side rather than `any`,
     /// so a misspelt flag is a compile error for a TypeScript caller.
-    #[wasm_bindgen(typescript_type = "NeighborsStorageOptions")]
-    pub type NeighborsStorageOptions;
+    #[wasm_bindgen(typescript_type = "NeighborColumnsOptions")]
+    pub type NeighborColumnsOptions;
 }
 
-/// One boolean field of the storage options object; absent means `true`.
+/// One boolean field of the column options object; absent means `true`.
 ///
 /// A field that is present but not a boolean is an error rather than a
 /// coercion: `{ disp: 0 }` silently dropping the displacement column is exactly
 /// the failure this surface exists to prevent.
-fn storage_flag(storage: &JsValue, key: &str) -> Result<bool, JsValue> {
-    let value = js_sys::Reflect::get(storage, &JsValue::from_str(key))?;
+fn column_flag(columns: &JsValue, key: &str) -> Result<bool, JsValue> {
+    let value = js_sys::Reflect::get(columns, &JsValue::from_str(key))?;
     if value.is_undefined() || value.is_null() {
         return Ok(true);
     }
     value
         .as_bool()
-        .ok_or_else(|| JsValue::from_str(&format!("neighbors(storage): '{key}' must be a boolean")))
+        .ok_or_else(|| JsValue::from_str(&format!("neighbors(columns): '{key}' must be a boolean")))
 }
 
 // ===========================================================================

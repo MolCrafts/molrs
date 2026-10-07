@@ -300,8 +300,8 @@ fn descriptor(
 ///
 /// Returns `{ categories, analyses }`. Consumers should group
 /// `analyses` by `category` in `categories` order to build a menu.
-#[wasm_bindgen(js_name = molrsComputeCatalog)]
-pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
+#[wasm_bindgen(js_name = computeCatalog)]
+pub fn compute_catalog() -> Result<JsValue, JsValue> {
     let analyses = vec![
         // --- density (freud.density: RDF + local/gaussian density, …) -------
         // The menu category is `density`, matching freud.density.RDF.

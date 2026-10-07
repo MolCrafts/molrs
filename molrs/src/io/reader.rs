@@ -150,8 +150,8 @@ impl Default for FrameIndex {
     }
 }
 
-/// Iterator over the frames of a [`TrajectoryReader`], from step 0 until
-/// [`TrajectoryReader::read_step`] yields `None`.
+/// Iterator over the frames of a [`TrajectoryReader`], from frame 0 until
+/// [`TrajectoryReader::read_frame`] yields `None`.
 ///
 /// Yields `Result<Frame>`. An `Err` leaves the cursor where it was, so the
 /// iteration must be stopped on the first one rather than polled past it.
@@ -164,7 +164,7 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
     type Item = Result<Frame>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.reader.read_step(self.current) {
+        match self.reader.read_frame(self.current) {
             Ok(Some(frame)) => {
                 self.current += 1;
                 Some(Ok(frame))
@@ -175,24 +175,24 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
     }
 }
 
-/// Random access by step over an ordered sequence of frames, whatever it is
-/// stored in.
+/// Random access by frame index over an ordered sequence of frames, whatever
+/// it is stored in.
 ///
 /// A *trajectory* here is any ordered sequence of [`Frame`]s addressed by a
-/// 0-based step index. The contract is deliberately **backend-neutral**: it
+/// 0-based frame index — the position in the sequence, not the MD step label a
+/// frame may carry. The contract is deliberately **backend-neutral**: it
 /// says nothing about files, byte offsets or seeking, so a reader over a DCD
 /// file and a reader over a Zarr store (`io::mrec::zarr_storage`'s `MrecReader`) implement
 /// the same three methods. That is also why [`Reader`] — which demands an
 /// underlying `BufRead` — is **not** a supertrait of this one: a store-backed
 /// reader has no byte stream to name.
 ///
-/// Dropping that supertrait also made this trait **dyn-compatible** — a
-/// capability callers now rely on, so re-adding one would break them.
-/// [`Reader`] is itself dyn-incompatible (`fn new(Self::R) -> Self` takes no
+/// Without that supertrait this trait is **dyn-compatible**, and callers rely
+/// on it. [`Reader`] is itself dyn-incompatible (`fn new(Self::R) -> Self` takes no
 /// receiver and returns `Self` by value), and a dyn-incompatible supertrait
 /// makes `&mut dyn TrajectoryReader` illegal. The one method a trait object
 /// cannot reach is [`iter`](Self::iter), which is `where Self: Sized`; a `dyn`
-/// caller loops on [`read_step`](Self::read_step) until it yields `None`.
+/// caller loops on [`read_frame`](Self::read_frame) until it yields `None`.
 ///
 /// # Errors
 ///
@@ -203,13 +203,13 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
 /// backend's error type. A caller who needs the structured error uses the
 /// concrete reader's own doors.
 pub trait TrajectoryReader {
-    /// Build and cache whatever per-step index the backend needs for random
+    /// Build and cache whatever per-frame index the backend needs for random
     /// access. File readers cache byte offsets; store-backed readers cache
-    /// their per-step index arrays.
+    /// their per-frame index arrays.
     ///
     /// Calling it is never *required* — an implementation may already have its
     /// index (a store-backed reader builds one when it opens) and answer with
-    /// `Ok(())` — but a caller about to make many [`read_step`](Self::read_step)
+    /// `Ok(())` — but a caller about to make many [`read_frame`](Self::read_frame)
     /// calls should call it once first, since a reader that scans lazily would
     /// otherwise pay for the scan on the first read.
     ///
@@ -218,22 +218,22 @@ pub trait TrajectoryReader {
     /// Whatever the backend raised while scanning or reading its index.
     fn build_index(&mut self) -> Result<()>;
 
-    /// Read the frame at a given step index (0-based).
+    /// Read the frame at `index` (0-based).
     ///
-    /// `Ok(None)` means `step` is past the end — the sequence has no such
+    /// `Ok(None)` means `index` is past the end — the sequence has no such
     /// frame. It is a terminator, not a failure, and it is how
     /// [`FrameIterator`] knows to stop; an implementation must not return
-    /// `Ok(None)` for a step it merely could not decode.
+    /// `Ok(None)` for a frame it merely could not decode.
     ///
     /// # Errors
     ///
     /// Whatever the backend raised while reading or decoding the frame.
-    fn read_step(&mut self, step: usize) -> Result<Option<Frame>>;
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>>;
 
     /// Total number of frames the reader can serve.
     ///
     /// Every index in `0..len()` yields `Some` from
-    /// [`read_step`](Self::read_step), and every index at or past it yields
+    /// [`read_frame`](Self::read_frame), and every index at or past it yields
     /// `None`. A backend that commits in batches counts only what it has
     /// committed.
     ///
@@ -252,7 +252,7 @@ pub trait TrajectoryReader {
         Ok(self.len()? == 0)
     }
 
-    /// Iterate frames from step 0 until [`read_step`](Self::read_step) yields
+    /// Iterate frames from frame 0 until [`read_frame`](Self::read_frame) yields
     /// `None`.
     ///
     /// Each item is a `Result`. An `Err` does **not** advance the cursor and
@@ -429,8 +429,8 @@ mod tests {
             Ok(())
         }
 
-        fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
-            if step < self.frames {
+        fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
+            if index < self.frames {
                 Ok(Some(Frame::new()))
             } else {
                 Ok(None)
@@ -478,9 +478,9 @@ mod tests {
             .build_index()
             .expect("build_index on a store-less reader");
         assert_eq!(reader.len().expect("len"), 2);
-        assert!(reader.read_step(0).expect("read_step(0)").is_some());
-        assert!(reader.read_step(1).expect("read_step(1)").is_some());
-        assert!(reader.read_step(2).expect("read_step(2)").is_none());
+        assert!(reader.read_frame(0).expect("read_frame(0)").is_some());
+        assert!(reader.read_frame(1).expect("read_frame(1)").is_some());
+        assert!(reader.read_frame(2).expect("read_frame(2)").is_none());
 
         let frames: Vec<Frame> = reader
             .iter()

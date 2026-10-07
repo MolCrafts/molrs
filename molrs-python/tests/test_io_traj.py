@@ -1,4 +1,4 @@
-"""Tests for the molpy-compatible trajectory readers in ``molrs.io``.
+"""Tests for the lazy trajectory readers in ``molrs.io`` (``read_<fmt>_trajectory``).
 
 Self-contained fixtures written by molrs. No external corpus.
 """

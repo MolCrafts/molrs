@@ -579,7 +579,7 @@ mod tests {
     use crate::line_notation::parser::{parse_smarts, parse_smiles};
 
     #[test]
-    fn write_smiles_ethanol_stable() {
+    fn smiles_text_ethanol_stable() {
         let ir = parse_smiles("CCO").unwrap();
         let s1 = smiles_text(&ir).unwrap();
         let ir2 = parse_smiles(&s1).unwrap();
@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn write_smiles_acetic_and_benzene() {
+    fn smiles_text_acetic_and_benzene() {
         for src in ["C(=O)O", "c1ccccc1", "[NH4+]", "CCO.O"] {
             let ir = parse_smiles(src).unwrap();
             let s = smiles_text(&ir).unwrap();
@@ -599,14 +599,14 @@ mod tests {
     }
 
     #[test]
-    fn write_smiles_rejects_query() {
+    fn smiles_text_rejects_query() {
         // Explicit OR query cannot be concrete SMILES.
         let ir = parse_smarts("[C,N]").unwrap();
         assert!(smiles_text(&ir).is_err(), "wrote {:?}", smiles_text(&ir));
     }
 
     #[test]
-    fn write_smarts_query_and_recursive() {
+    fn smarts_text_query_and_recursive() {
         for src in ["[#6;D3]", "[C;$(C=O)]"] {
             let ir = parse_smarts(src).unwrap();
             let s = smarts_text(&ir).unwrap();
@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn write_smiles_rejects_descriptors() {
+    fn smiles_text_rejects_descriptors() {
         // Plain SMILES has no descriptor notation, so writing one would emit
         // text its own parser refuses.
         let err = smiles_text(&fragment("[$]COC[$]")).unwrap_err();
@@ -674,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn write_smarts_rejects_descriptors() {
+    fn smarts_text_rejects_descriptors() {
         let err = smarts_text(&fragment("[$]COC[$]")).unwrap_err();
         assert!(matches!(err.kind, SmilesErrorKind::DescriptorInPlainSmiles));
     }

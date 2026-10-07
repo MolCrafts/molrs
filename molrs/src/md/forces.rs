@@ -37,7 +37,7 @@ use molrs::ff::potential::SpecialWeights;
 /// [`Potential::calc_energy_forces_with_pairs`], and `Potential` is a stable
 /// interface with dozens of implementors that this module does not get to
 /// change. So a parallel fold has to be owned by something above `Potential`
-/// and below the integrator. Before this trait there was no such object.
+/// and below the integrator; this trait is that object.
 ///
 /// Three consequences are load-bearing:
 ///
@@ -1133,10 +1133,9 @@ mod tests {
     /// that *keeps* its 1-3 neighbours.
     ///
     /// LAMMPS's `special_bonds fene` is `[0, 1, 1]`: 1-2 excluded, 1-3 at full
-    /// strength — a bead-spring chain has nothing else holding it open. The
-    /// compiled list used to exclude 1-3 whatever the force field said, so this
-    /// comparison had one side evaluating a different force field from the
-    /// other, silently. Both doors now read the weights.
+    /// strength — a bead-spring chain has nothing else holding it open. Both
+    /// doors read the weights, so neither evaluates a different force field
+    /// from the other.
     #[test]
     fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
         use molrs::core::Block;

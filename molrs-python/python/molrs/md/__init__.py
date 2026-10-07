@@ -30,7 +30,7 @@ Units contract — the engine is **unit-agnostic**. Take constants from
     md.MdDriver().run(frame, n, dt=dt, kb=kb, thermo=100)
 
 MD defines no potential: it integrates a :class:`molrs.ff.potential.PairLjCut`,
-a ``Potentials`` collection (e.g. from :func:`molrs.ff.compile.compile_explicit_terms`), or
+a ``Potentials`` collection (e.g. from :class:`molrs.ff.compile.ExplicitTerms`), or
 any object with ``calc_energy_forces``. External forces (the NN/Torch seam)
 subclass :class:`molrs.ff.potential.Potential`::
 

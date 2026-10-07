@@ -686,7 +686,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// let frames = read_lammps_dump_trajectory("trajectory.lammpstrj")?;
 /// use molrs::io::reader::TrajectoryReader;
 /// let mut reader = LammpsDumpReader::open("trajectory.lammpstrj")?;
-/// let frame_5 = reader.read_step(5)?;
+/// let frame_5 = reader.read_frame(5)?;
 /// write_lammps_dump_trajectory("output.lammpstrj", &frames, None)?;
 /// # Ok(())
 /// # }
@@ -700,7 +700,7 @@ fn parse_single_frame<R: BufRead>(reader: &mut R) -> std::io::Result<Option<Fram
 /// let mut reader = LammpsDumpReader::open("traj.lammpstrj")?;
 /// let n = reader.len()?;
 /// println!("Trajectory has {} frames", n);
-/// let frame = reader.read_step(0)?.expect("first frame");
+/// let frame = reader.read_frame(0)?.expect("first frame");
 /// # Ok(())
 /// # }
 /// ```
@@ -849,17 +849,17 @@ impl<R: BufRead + Seek> TrajectoryReader for LammpsDumpReader<R> {
         self.build_index_impl()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
         if self.index.get().is_none() {
             self.build_index_impl()?;
         }
 
-        let index = self.index.get().unwrap();
-        if step >= index.len() {
+        let offsets = self.index.get().unwrap();
+        if index >= offsets.len() {
             return Ok(None);
         }
 
-        let offset = index.get(step).unwrap();
+        let offset = offsets.get(index).unwrap();
         self.read_at_offset(offset)
     }
 
@@ -1304,7 +1304,7 @@ fn write_dump_box_bounds<W: Write>(
 
 /// Read all frames from a LAMMPS dump file.
 ///
-/// For large trajectories, prefer `LammpsDumpReader::open` with `TrajectoryReader::read_step`
+/// For large trajectories, prefer `LammpsDumpReader::open` with `TrajectoryReader::read_frame`
 /// for random access without loading all frames into memory.
 pub fn read_lammps_dump_trajectory<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<Frame>> {
     let reader = crate::io::reader::open_seekable(path)?;
@@ -1316,7 +1316,7 @@ impl LammpsDumpReader<Box<dyn ReadSeek>> {
     /// Open a LAMMPS dump file for trajectory-style random access.
     ///
     /// Returns a reader implementing `TrajectoryReader`. The index is built lazily
-    /// on first call to `read_step` or `len`.
+    /// on first call to `read_frame` or `len`.
     pub fn open<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let reader = crate::io::reader::open_seekable(path)?;
         Ok(Self::new(reader))
@@ -1572,15 +1572,15 @@ ITEM: ATOMS id type x y z
         let mut reader = LammpsDumpReader::new(cursor(MULTI_DUMP));
 
         // Read step 1 first (out of order)
-        let f1 = reader.read_step(1).unwrap().expect("step 1");
+        let f1 = reader.read_frame(1).unwrap().expect("step 1");
         assert_eq!(f1.meta.get("timestep").unwrap().as_i64(), Some(100));
 
         // Then step 0
-        let f0 = reader.read_step(0).unwrap().expect("step 0");
+        let f0 = reader.read_frame(0).unwrap().expect("step 0");
         assert_eq!(f0.meta.get("timestep").unwrap().as_i64(), Some(0));
 
         // Out of bounds
-        assert!(reader.read_step(5).unwrap().is_none());
+        assert!(reader.read_frame(5).unwrap().is_none());
     }
 
     /// Per-bond `dump local` (OVITO-compatible). The header keywords

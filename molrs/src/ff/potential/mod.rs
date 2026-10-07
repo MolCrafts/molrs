@@ -70,9 +70,8 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// 1-2 (bonded) and 1-3 (angle) pairs and flagging 1-4 (dihedral-end) pairs.
 ///
 /// This is the neighbour list that [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile) hands to every
-/// pair kernel — the same logic the MMFF frame builder used to compute
-/// privately, lifted here so every force field (GAFF/LAMMPS, OPLS, MMFF, …)
-/// shares one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
+/// pair kernel; every force field (GAFF/LAMMPS, OPLS, MMFF, …) shares this
+/// one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
 /// pair kernels using the force field's 1-4 weight, not baked into this list.
 ///
 /// # Per-pair overrides
@@ -86,17 +85,16 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 ///
 /// # Why this needs the force field's weights
 ///
-/// Which 1-2 / 1-3 pairs belong in the list *is* a force-field decision, and
-/// this function used to make it — always excluding both, whatever the force
-/// field said. LAMMPS's `special_bonds fene` (`[0, 1, 1]`) keeps 1-3 pairs at
-/// full strength, and a FENE chain without them has nothing holding it open.
-/// `special` answers it instead, via
+/// Which 1-2 / 1-3 pairs belong in the list *is* a force-field decision, so
+/// this function does not make it on its own. LAMMPS's `special_bonds fene`
+/// (`[0, 1, 1]`) keeps 1-3 pairs at full strength, and a FENE chain without
+/// them has nothing holding it open. `special` answers it, via
 /// [`SpecialBonds::compiled_inclusion`](crate::ff::ir::SpecialBonds::compiled_inclusion),
 /// which is also where weights this list cannot express become an [`Err`]
 /// rather than a silently different force field.
 ///
 /// [`SpecialBonds::default`](crate::ff::ir::SpecialBonds::default)
-/// reproduces the historical behaviour exactly: both classes excluded.
+/// excludes both classes.
 pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
     let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
@@ -744,12 +742,12 @@ impl SpecialWeights {
     ///
     /// # Why a column and not a split
     ///
-    /// This used to partition the table into a full-strength one and a group
-    /// per distinct weight, because energy is a sum over pairs and scaling a
-    /// group is the same as scaling its contribution. That is true, and it cost
-    /// the table being rebuilt — allocated, re-pushed column by column — once
-    /// per weight per member per step. Measured at 4 096 atoms it was four
-    /// times the kernel it was preparing input for, and thirty megabytes a step.
+    /// Partitioning the table into a full-strength one and a group per
+    /// distinct weight is also correct, because energy is a sum over pairs and
+    /// scaling a group is the same as scaling its contribution. It costs the
+    /// table being rebuilt — allocated, re-pushed column by column — once per
+    /// weight per member per step. Measured at 4 096 atoms that is four times
+    /// the kernel it prepares input for, and thirty megabytes a step.
     ///
     /// A weight is one number per pair. Handing the kernel that number is one
     /// pass over a buffer the caller keeps.
@@ -1389,7 +1387,7 @@ mod tests {
                     disp: [2.0, 0.0, 0.0],
                 },
             ],
-            molrs::core::NeighborsStorage::FULL,
+            molrs::core::NeighborColumns::FULL,
             molrs::core::QueryMode::SelfQuery { n_points: 3 },
         );
         let mut pots = Potentials::new();

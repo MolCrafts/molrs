@@ -1,6 +1,6 @@
-"""FFI smoke tests for the ``*.mrec`` path doors (``molrs.io.read_mrec`` …).
+"""FFI smoke tests for the ``*.mrec`` path doors (``molrs.io.read_mrec_frame`` …).
 
-Frame and Trajectory are the in-memory objects; the whole-record doors are
+Frame and Trajectory are the in-memory objects; the per-section doors are
 paired in ``molrs.io``, the store machinery in ``molrs.io.mrec``. Schema checks
 live in ``molrs::io::mrec::validation`` and are bound, not reimplemented, at
 ``molrs.io.mrec.validation``.

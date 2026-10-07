@@ -18,7 +18,7 @@ use molrs::core::Atomistic;
 use molrs::core::Element;
 use molrs::core::NodeId;
 use molrs::perceive::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
-use molrs::perceive::{RingInfo, perceive_rings};
+use molrs::perceive::{RingSet, perceive_rings};
 
 /// Per-atom perceived properties consumed by the bounds builder.
 #[derive(Clone, Debug)]
@@ -43,7 +43,7 @@ pub struct DgFeatures {
     pub order: HashMap<(usize, usize), f64>,
     /// Aromatic flag per atom-pair bond.
     pub aromatic_bond: HashMap<(usize, usize), bool>,
-    pub rings: RingInfo,
+    pub rings: RingSet,
     /// Ring atom-index sets (each ring as a `Vec<usize>` in ring order).
     pub ring_idx: Vec<Vec<usize>>,
 }

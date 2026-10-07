@@ -47,7 +47,7 @@
 //! Every table stores each pair's two particle indices `(i, j)`. Its two
 //! *physical* columns are stored only if the caller asked for them when the
 //! table was materialized, by naming a
-//! [`NeighborsStorage`](molrs::core::NeighborsStorage) policy:
+//! [`NeighborColumns`](molrs::core::NeighborColumns) policy:
 //!
 //! - `dist_sq` — the squared pair distance `|r_j − r_i|²` in Å², taken under
 //!   the **minimum-image convention**: with periodic boundaries the box is
@@ -72,8 +72,8 @@
 //!
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborsStorage::DISP` or `FULL` |
-//! | `dist_sq` — distances only | [`Rdf`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborsStorage::DIST_SQ` or `FULL` |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
+//! | `dist_sq` — distances only | [`Rdf`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborColumns::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
@@ -338,7 +338,7 @@ pub use voronoi::{
 mod require_tests {
     use crate::compute::ComputeError;
     use crate::compute::{require_disp, require_dist_sq};
-    use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+    use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
     use molrs::op::F;
 
     /// Two hard-coded half-shell pairs (`i < j`), legal under
@@ -360,8 +360,8 @@ mod require_tests {
         ]
     }
 
-    fn table(storage: NeighborsStorage) -> Neighbors {
-        Neighbors::from_pairs(two_pairs(), storage, QueryMode::SelfQuery { n_points: 4 })
+    fn table(columns: NeighborColumns) -> Neighbors {
+        Neighbors::from_pairs(two_pairs(), columns, QueryMode::SelfQuery { n_points: 4 })
     }
 
     /// Basics: on a `FULL` table the displacement column comes back as an
@@ -369,7 +369,7 @@ mod require_tests {
     /// are copies, not arithmetic).
     #[test]
     fn require_disp_returns_the_full_table_column() {
-        let nb = table(NeighborsStorage::FULL);
+        let nb = table(NeighborColumns::FULL);
         let disp = require_disp(&nb).expect("FULL table has a disp column");
 
         assert_eq!(disp.nrows(), 2);
@@ -391,7 +391,7 @@ mod require_tests {
     /// slice of `n_pairs` values, in table order (Å², exact copies).
     #[test]
     fn require_dist_sq_returns_the_full_table_column() {
-        let nb = table(NeighborsStorage::FULL);
+        let nb = table(NeighborColumns::FULL);
         let d2 = require_dist_sq(&nb).expect("FULL table has a dist_sq column");
 
         assert_eq!(d2.len(), nb.n_pairs());
@@ -403,7 +403,7 @@ mod require_tests {
     /// text names the missing column and how many pairs it was needed for.
     #[test]
     fn require_disp_on_indices_only_is_bad_shape() {
-        let nb = table(NeighborsStorage::INDICES_ONLY);
+        let nb = table(NeighborColumns::INDICES_ONLY);
         assert_eq!(
             nb.n_pairs(),
             2,
@@ -428,7 +428,7 @@ mod require_tests {
     /// Edge: same for the radial column — a lean list with pairs but no `d²`.
     #[test]
     fn require_dist_sq_on_indices_only_is_bad_shape() {
-        let nb = table(NeighborsStorage::INDICES_ONLY);
+        let nb = table(NeighborColumns::INDICES_ONLY);
         assert_eq!(
             nb.n_pairs(),
             2,

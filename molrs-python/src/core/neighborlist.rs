@@ -31,8 +31,9 @@
 use crate::core::simbox::PyBox;
 use molrs::core::SimBox;
 use molrs::core::{
-    NeighborList as RsNeighborList, NeighborPair, NeighborPolicy, NeighborQuery as RsNeighborQuery,
-    Neighbors as RsNeighbors, NeighborsStorage, QueryMode, SkinError, VerletSkin as RsVerletSkin,
+    NeighborColumns, NeighborList as RsNeighborList, NeighborPair, NeighborPolicy,
+    NeighborQuery as RsNeighborQuery, Neighbors as RsNeighbors, QueryMode, SkinError,
+    VerletSkin as RsVerletSkin,
 };
 use ndarray::{Array2, ArrayView1};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2};
@@ -139,7 +140,7 @@ impl PyNeighbors {
                 "inconsistent Neighbors pickle columns",
             ));
         }
-        let storage = NeighborsStorage {
+        let columns = NeighborColumns {
             dist_sq: dist_sq.is_some(),
             disp: disp.is_some(),
         };
@@ -158,7 +159,7 @@ impl PyNeighbors {
             disp: disp.as_ref().map_or([0.0; 3], |values| values[row]),
         });
         Ok(Self {
-            inner: RsNeighbors::from_pairs(pairs, storage, mode),
+            inner: RsNeighbors::from_pairs(pairs, columns, mode),
         })
     }
 
@@ -279,7 +280,7 @@ impl PyNeighbors {
         } else {
             "cross"
         };
-        let storage = self.inner.storage();
+        let columns = self.inner.columns();
         format!(
             "Neighbors(n_pairs={}, mode={}, n_points={}, n_query_points={}, \
              dist_sq={}, disp={})",
@@ -287,8 +288,8 @@ impl PyNeighbors {
             mode,
             self.inner.n_points(),
             self.inner.n_query_points(),
-            storage.dist_sq,
-            storage.disp,
+            columns.dist_sq,
+            columns.disp,
         )
     }
 }
@@ -492,7 +493,7 @@ impl PyNeighborList {
     #[pyo3(signature = (dist_sq=true, disp=true))]
     fn neighbors(&self, dist_sq: bool, disp: bool) -> PyResult<PyNeighbors> {
         Ok(PyNeighbors {
-            inner: self.get()?.neighbors(NeighborsStorage { dist_sq, disp }),
+            inner: self.get()?.neighbors(NeighborColumns { dist_sq, disp }),
         })
     }
 

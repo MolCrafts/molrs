@@ -195,8 +195,8 @@ evaluation that met it.
 registry of one's own; `PotentialCompiler::new` reads the process-wide one
 (`molrs::ff::style_registry::register_style`, Python `style_registry.register_style`).
 
-Without a force field, `molrs.ff.compile.compile_explicit_terms(category, style, atoms, *,
-charges=None, **params)` builds the kernel of any style the IR prices — a
+Without a force field, `molrs.ff.compile.ExplicitTerms(category, style, atoms, *,
+charges=None, **params).compile()` builds the kernel of any style the IR prices — a
 built-in, a registered one, a custom category's — over explicit terms: an
 `(n, arity)` array of atom indices and each parameter as stored, one number
 or one value per term. It is built exactly as `PotentialCompiler.compile`
@@ -380,7 +380,7 @@ from molpy.typifier import TypeAssignment, Typifier
 
 class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
     category, name = "bond", "fene"
-    params = [Param("k", "E/L^2"), Param("r0", "L"), Param("epsilon", "E"), Param("sigma", "L")]
+    params = [ParamSpec("k", "E/L^2"), ParamSpec("r0", "L"), ParamSpec("epsilon", "E"), ParamSpec("sigma", "L")]
     expression = ("-0.5*k*r0^2*log(1-(r/r0)^2)"
                   "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
 

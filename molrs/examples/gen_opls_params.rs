@@ -24,7 +24,7 @@ use molrs::core::unit_factors::KCAL_TO_KJ;
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::forcefield::StyleDefs;
 use molrs::ff::ir::Params;
-use molrs::ff::ir::torsion::{MultiHarmonic, Opls};
+use molrs::ff::ir::torsion::{MultiHarmonicForm, OplsForm};
 use molrs::io::{gromacs::GromacsTopForcefieldReader, reader::ForceFieldReader};
 use sha2::{Digest, Sha256};
 
@@ -441,7 +441,7 @@ impl Table {
                             param(&t.params, "a4", &what)?,
                             param(&t.params, "a5", &what)?,
                         ];
-                        let series = MultiHarmonic { a }.to_series();
+                        let series = MultiHarmonicForm { a }.to_series();
                         let sum = series.energy(std::f64::consts::PI);
                         if sum.abs() * KCAL_TO_KJ.get() > RB_SUM_TOL_KJ {
                             return Err(format!(
@@ -452,7 +452,7 @@ impl Table {
                         }
                         // The sum is zero to the tolerance above, so the
                         // cosines are the OPLS row (its constant is its own).
-                        let f = Opls::nearest(&series).k;
+                        let f = OplsForm::nearest(&series).k;
                         table.dihedrals.push(DihedralRow {
                             ends: [
                                 t.itom.clone(),

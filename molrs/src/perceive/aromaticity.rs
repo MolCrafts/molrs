@@ -201,7 +201,7 @@ fn explicit_valence(mol: &Atomistic, id: NodeId) -> i32 {
 /// non-ring bond. Returns the partner atom if found.
 fn incident_noncyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::perceive::RingInfo,
+    rings: &crate::perceive::RingSet,
     id: NodeId,
 ) -> Option<NodeId> {
     for (bid, other, order) in incident_bonds(mol, id) {
@@ -216,7 +216,7 @@ fn incident_noncyclic_multiple_bond(
 /// ring.
 fn incident_cyclic_multiple_bond(
     mol: &Atomistic,
-    rings: &crate::perceive::RingInfo,
+    rings: &crate::perceive::RingSet,
     id: NodeId,
 ) -> bool {
     incident_bonds(mol, id).any(|(bid, _, order)| rings.is_bond_in_ring(bid) && order >= 2.0)
@@ -270,11 +270,7 @@ fn count_atom_elec(mol: &Atomistic, id: NodeId) -> i32 {
 
 /// RDKit `getAtomDonorTypeArom` with `exocyclicBondsStealElectrons = true`
 /// (the default-model setting).
-fn atom_donor_type(
-    mol: &Atomistic,
-    rings: &crate::perceive::RingInfo,
-    id: NodeId,
-) -> ElectronDonor {
+fn atom_donor_type(mol: &Atomistic, rings: &crate::perceive::RingSet, id: NodeId) -> ElectronDonor {
     let z = atomic_num(mol, id);
     if z == 0 {
         // dummy atom

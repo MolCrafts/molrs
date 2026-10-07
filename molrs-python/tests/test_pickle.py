@@ -74,7 +74,7 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     assert roundtrip(molrs.core.UnitPreset("real")).name == "real"
     assert roundtrip(molrs.core.Element("C")) == molrs.core.Element(6)
 
-    observable = molrs.core.VectorObservable(
+    observable = molrs.core.ObservableRecord.vector(
         "force",
         np.array([[1.0, 2.0, 3.0]]),
         "force vector",
@@ -90,6 +90,9 @@ def test_storage_units_and_observables_pickle_by_logical_state() -> None:
     assert restored_observable.description == "force vector"
     assert restored_observable.axes == ["atom", "xyz"]
     assert restored_observable.target == "atoms"
+    assert restored_observable.kind == "vector"
+    other = roundtrip(molrs.core.ObservableRecord("s", np.array([0.5]), kind="spectrum"))
+    assert other.kind == "spectrum"
 
     trajectory = molrs.core.Trajectory(
         [frame], step=np.array([7], dtype=np.int64), time=np.array([0.5])

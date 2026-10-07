@@ -12,13 +12,11 @@ use crate::core::{NodeId, RelationId};
 // Public types
 // ---------------------------------------------------------------------------
 
-/// All ring information for an [`Atomistic`], produced by [`perceive_rings`]:
-/// the SSSR rings and per-atom / per-bond ring membership, addressed by
-/// [`NodeId`] / [`RelationId`].
-///
-/// It keeps RDKit's name (`Chem.RingInfo`) for the same object.
+/// The ring set of an [`Atomistic`], produced by [`perceive_rings`]: the SSSR
+/// rings and per-atom / per-bond ring membership, addressed by [`NodeId`] /
+/// [`RelationId`]. RDKit calls the same object `Chem.RingInfo`.
 #[derive(Debug, Clone)]
-pub struct RingInfo {
+pub struct RingSet {
     /// Each ring is an ordered list of `NodeId`s forming a closed path.
     rings: Vec<Vec<NodeId>>,
     /// atom → indices of rings that contain it.
@@ -27,7 +25,7 @@ pub struct RingInfo {
     bond_rings: HashMap<RelationId, Vec<usize>>,
 }
 
-impl RingInfo {
+impl RingSet {
     /// Whether the atom belongs to any ring.
     pub fn is_atom_in_ring(&self, id: NodeId) -> bool {
         self.atom_rings.get(&id).is_some_and(|v| !v.is_empty())
@@ -324,10 +322,10 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 /// 2. runs the SSSR search,
 /// 3. lifts the resulting `usize` indices back onto the [`NodeId`] / [`RelationId`]
 ///    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
-///    pipeline) actually holds, as a [`RingInfo`].
+///    pipeline) actually holds, as a [`RingSet`].
 ///
 /// Rings come back smallest-first.
-pub fn perceive_rings(mol: &Atomistic) -> RingInfo {
+pub fn perceive_rings(mol: &Atomistic) -> RingSet {
     // ---- 1. Project onto the core index space ------------------------------
     // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
     // `i`-th bond of `mol.bonds()` (`Topology::from_edges` preserves edge
@@ -380,7 +378,7 @@ pub fn perceive_rings(mol: &Atomistic) -> RingInfo {
         }
     }
 
-    RingInfo {
+    RingSet {
         rings,
         atom_rings,
         bond_rings,
@@ -599,7 +597,7 @@ fn bfs_skip_edge(
 
 /// The SSSR of a [`Topology`] in its own index space: rings as ordered lists
 /// of atom indices forming closed paths, with membership by edge index.
-/// [`perceive_rings`] lifts it onto handles as a [`RingInfo`].
+/// [`perceive_rings`] lifts it onto handles as a [`RingSet`].
 #[derive(Debug, Clone)]
 struct IndexRings {
     rings: Vec<Vec<usize>>,
@@ -669,17 +667,11 @@ impl IndexRings {
 /// through the pivots it actually collides with — so a candidate costs the XORs
 /// it really performs.
 ///
-/// The dense predecessor XOR-scanned the whole basis per candidate, which is
-/// `O(R · E/64)` each and `O(R² · E/64)` overall. On ring-rich systems that is
-/// cubic in the atom count and it dominated everything downstream of ring
-/// perception (aromaticity, SMARTS, MMFF/UFF/ATD typing): 4000 disjoint
-/// benzenes took 4.3 s. Disjoint rings now reduce in one step each.
-///
-/// This is a cost change only. The predecessor visited the basis in insertion
-/// order rather than by pivot, which is not a sound reduction in general — a
-/// later vector can re-set a bit an earlier one cleared — but the two selected
-/// identical ring sets on all 16 000 random graphs surveyed (degree bounds 3,
-/// 4, 6 and unbounded), so no behaviour was riding on it.
+/// A dense basis XOR-scanned whole per candidate costs `O(R · E/64)` each and
+/// `O(R² · E/64)` overall. On ring-rich systems that is cubic in the atom
+/// count and dominates everything downstream of ring perception (aromaticity,
+/// SMARTS, MMFF/UFF/ATD typing): 4000 disjoint benzenes take 4.3 s that way.
+/// Here disjoint rings reduce in one step each.
 struct CycleBasis {
     /// Reduced basis vectors, each an ascending list of edge indices.
     vectors: Vec<Vec<usize>>,

@@ -145,8 +145,8 @@ impl<T> Drop for ColumnArray<T> {
         } else {
             // Rust-owned: drop the inner ArrayD normally.
             // SAFETY: `foreign_keeper` is None, so `array` is a real owned
-            // ArrayD allocated by Rust's global allocator. We have not dropped
-            // `array` previously (this is the only place we do).
+            // ArrayD allocated by Rust's global allocator, and this is the
+            // only place `array` is dropped.
             unsafe { ManuallyDrop::drop(&mut self.array) }
         }
     }

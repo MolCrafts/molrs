@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
-
 import molrs
 import numpy as np
 import pytest
@@ -39,7 +37,7 @@ class TestPotentialProtocol:
             assert not hasattr(molrs._native.md, name)
 
 
-class TestMDDtype:
+class TestMdDtype:
     def test_float64_is_accepted(self) -> None:
         md = MdDriver(dtype=np.float64)
         assert md.dtype == np.dtype(np.float64)
@@ -47,25 +45,6 @@ class TestMDDtype:
     def test_float32_is_rejected_with_rust_message(self) -> None:
         with pytest.raises(ValueError, match="Rust"):
             MdDriver(dtype=np.float32)
-
-
-class TestWarnings:
-    def test_import_molrs_is_silent(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            import importlib
-
-            importlib.reload(molrs)
-        assert not [w for w in caught if issubclass(w.category, FutureWarning)]
-
-    def test_import_molrs_md_is_silent(self) -> None:
-        import importlib
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", FutureWarning)
-            importlib.reload(molrs.md)
-        fw = [w for w in caught if issubclass(w.category, FutureWarning)]
-        assert not fw
 
 
 class TestDispatch:

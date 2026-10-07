@@ -1444,8 +1444,8 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         ])
     }
 
-    /// A bonded-only field has no pair rows: the writer used to demand a self
-    /// pair for every atom label anyway, so such a field could not be written.
+    /// A bonded-only field has no pair rows, and the writer demands no self
+    /// pair for its atom labels.
     #[test]
     fn a_bonded_only_field_writes_without_pair_rows() {
         let mut ff = ForceField::new("bonded");

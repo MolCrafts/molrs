@@ -1,15 +1,13 @@
 //! Shared `#[cfg(test)]` neighbor-list construction for the compute unit tests.
 //!
-//! The per-kernel test modules used to pack the frame's separate `x`/`y`/`z`
-//! columns into an owned [`Array2`](ndarray::Array2) and build a table from a
-//! backend directly. This helper replaces that boilerplate with the engine's
-//! column entry point ([`get_positions_ref`] → [`NeighborList::build_columns`]),
-//! reading the three columns without an interleaved copy. Same pairs as the
-//! `N × 3` path (proven by `engine_build_columns_matches_build`), so every
-//! rewired test produces identical results.
+//! The per-kernel test modules build their tables through the engine's column
+//! entry point ([`get_positions_ref`] → [`NeighborList::build_columns`]),
+//! reading the frame's `x`/`y`/`z` columns without an interleaved copy. It
+//! yields the same pairs as the `N × 3` path (proven by
+//! `engine_build_columns_matches_build`).
 
 use molrs::core::FrameAccess;
-use molrs::core::{NeighborList, Neighbors, NeighborsStorage};
+use molrs::core::{NeighborColumns, NeighborList, Neighbors};
 use molrs::op::F;
 
 use super::positions::get_positions_ref;
@@ -20,7 +18,7 @@ use super::positions::get_positions_ref;
 /// Reads the `atoms` block's `x`/`y`/`z` columns with [`get_positions_ref`] (a
 /// zero-copy borrow for contiguous columns) and hands them to
 /// [`NeighborList::build_columns`], then materializes every column
-/// ([`NeighborsStorage::FULL`]) because the kernels under test read distances
+/// ([`NeighborColumns::FULL`]) because the kernels under test read distances
 /// and displacements alike.
 ///
 /// Row order is unspecified — the cell-list backend materializes in parallel —
@@ -35,5 +33,5 @@ pub(crate) fn nlist_from_frame<FA: FrameAccess>(frame: &FA, cutoff: F) -> Neighb
         .expect("frame must have a simulation box");
     let mut nl = NeighborList::new(cutoff);
     nl.build_columns(xs.slice(), ys.slice(), zs.slice(), simbox);
-    nl.neighbors(NeighborsStorage::FULL)
+    nl.neighbors(NeighborColumns::FULL)
 }

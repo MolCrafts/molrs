@@ -3,7 +3,7 @@
 use super::Backend;
 use crate::core::LinkCell;
 use crate::core::SimBox;
-use crate::core::{Neighbors, NeighborsStorage, QueryMode};
+use crate::core::{NeighborColumns, Neighbors, QueryMode};
 use crate::op::{F, Fnx3, Fnx3View};
 
 /// Cross-query search over a fixed set of reference points.
@@ -27,7 +27,7 @@ use crate::op::{F, Fnx3, Fnx3View};
 ///   convenience over the same reference points.
 ///
 /// Every returned [`Neighbors`] table carries both physical columns
-/// ([`NeighborsStorage::FULL`]): distances in Å² and minimum-image
+/// ([`NeighborColumns::FULL`]): distances in Å² and minimum-image
 /// displacements in Å. There is no column policy here — a caller who wants a
 /// leaner table uses
 /// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors), or drops
@@ -104,7 +104,7 @@ impl NeighborQuery {
     ///
     /// The returned table is tagged [`QueryMode::CrossQuery`] with both point
     /// counts, and carries both physical columns
-    /// ([`NeighborsStorage::FULL`]): `dist_sq` in Å², `disp` in Å.
+    /// ([`NeighborColumns::FULL`]): `dist_sq` in Å², `disp` in Å.
     ///
     /// # Panics
     /// Panics if `query_points` does not have 3 columns.
@@ -134,7 +134,7 @@ impl NeighborQuery {
                 n_query_points: n_query,
                 n_points: self.points.nrows(),
             },
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
         );
 
         for qi in 0..n_query {
@@ -156,7 +156,7 @@ impl NeighborQuery {
     /// reported exactly once and no point pairs with itself. The returned table
     /// is tagged `QueryMode::SelfQuery { n_points }` with the size of the
     /// reference set, and carries both physical columns
-    /// ([`NeighborsStorage::FULL`]).
+    /// ([`NeighborColumns::FULL`]).
     ///
     /// Reuses the index this object already holds — the cell index is the same
     /// for both traversals; only the walk differs (forward half-shell here,
@@ -171,7 +171,7 @@ impl NeighborQuery {
             QueryMode::SelfQuery {
                 n_points: self.points.nrows(),
             },
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
         );
         self.lc.materialize_into(&mut out);
         out

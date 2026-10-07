@@ -78,8 +78,9 @@ def test_a_fully_labelled_column_has_no_validity_mask() -> None:
 def test_partial_frag_id_survives_the_frame_round_trip() -> None:
     """The labelled atom keeps its id and the unlabelled ones stay unlabelled.
 
-    Today ``to_frame`` drops the whole column when any atom lacks a label
-    (the old "all or nothing" rule), so the label is lost.
+    ``to_frame`` writes a partially labelled ``frag_id`` column with a
+    validity mask, so ``from_frame`` restores the label where it was set and
+    leaves the unlabelled atoms without one.
     """
     frame = _partially_labelled_fragment().to_frame()
 

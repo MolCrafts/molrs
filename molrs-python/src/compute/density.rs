@@ -200,7 +200,7 @@ impl PySpatialDistribution {
     /// If the first frame carries an `"orientations"` topology block (one
     /// `(head, tail)` atom pair per target atom, in `target` order), a per-voxel
     /// mean body-frame orientation of the unit `head − tail` vector is
-    /// accumulated; otherwise the SDF is orientation-free (the old `None` case).
+    /// accumulated; otherwise the SDF is orientation-free.
     fn compute(&self, frames: &Bound<'_, PyAny>) -> PyResult<PySpatialDistributionResult> {
         let owned = collect_frames(frames)?;
         let refs: Vec<&CoreFrame> = owned.iter().collect();

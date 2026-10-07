@@ -329,7 +329,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 ///
 /// - [`FrameReader::read`] streams forward from the current file position and
 ///   does **not** build the offset index (one pass over the file).
-/// - [`TrajectoryReader::read_step`] / [`TrajectoryReader::len`] build the index
+/// - [`TrajectoryReader::read_frame`] / [`TrajectoryReader::len`] build the index
 ///   on demand for random access and known length.
 ///
 /// TRR is the full-precision GROMACS trajectory format: an XDR (big-endian)
@@ -389,7 +389,7 @@ fn scan_offsets<R: BufRead + Seek>(r: &mut R) -> Result<Vec<u64>> {
 /// # fn main() -> std::io::Result<()> {
 /// let frames = read_trr_trajectory("traj.trr")?;          // sequential, all frames
 /// let mut r = TrrReader::open("traj.trr")?;            // random access
-/// let frame_5 = r.read_step(5)?;
+/// let frame_5 = r.read_frame(5)?;
 /// write_trr_trajectory("out.trr", &frames)?;
 /// # Ok(())
 /// # }
@@ -467,14 +467,14 @@ impl<R: BufRead + Seek> TrajectoryReader for TrrReader<R> {
         self.ensure_index()
     }
 
-    fn read_step(&mut self, step: usize) -> Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
         self.ensure_index()?;
-        let off = match self.offsets.get().and_then(|o| o.get(step).copied()) {
+        let off = match self.offsets.get().and_then(|o| o.get(index).copied()) {
             Some(o) => o,
             None => return Ok(None),
         };
         // Keep sequential cursor coherent if someone mixes random + stream.
-        self.cursor = step + 1;
+        self.cursor = index + 1;
         parse_frame_at(&mut self.reader, off).map(Some)
     }
 

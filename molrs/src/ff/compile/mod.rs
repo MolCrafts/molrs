@@ -375,9 +375,9 @@ impl<'a> PotentialCompiler<'a> {
         // is an error, not a silently-zero potential. A `PerInstance` style
         // (MMFF's bonded terms, `coul/cut`, `pme`) reads its numbers from Frame
         // columns the typifier baked and ignores `tp` entirely, so zero rows is
-        // its *normal* state. Asking the registry which one this is replaces the
-        // old blanket `category != "pair"` escape hatch — the hatch that let MMFF
-        // register as table-driven and then be fed 4,065 rows of XML no code reads.
+        // its *normal* state. The registry says which one this is; a blanket
+        // `category != "pair"` test would let MMFF register as table-driven and
+        // then be fed 4,065 rows of XML no code reads.
         //
         // The registry is the authority because it is where the kernel is declared;
         // an unregistered style falls through to `TypeRows` here and then fails on

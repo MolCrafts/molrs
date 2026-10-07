@@ -1,4 +1,4 @@
-"""``molrs.io.read_smiles``: one SMILES molecule in, an ``Atomistic`` out —
+"""``molrs.io.read_smiles_str``: one SMILES molecule in, an ``Atomistic`` out —
 connectivity only."""
 
 from __future__ import annotations

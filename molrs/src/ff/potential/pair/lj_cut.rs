@@ -1110,7 +1110,7 @@ mod tests {
                 dist_sq: 1.0,
                 disp: [1.0, 0.0, 0.0],
             }],
-            molrs::core::NeighborsStorage::FULL,
+            molrs::core::NeighborColumns::FULL,
             molrs::core::QueryMode::SelfQuery { n_points: 2 },
         );
         let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
@@ -1155,7 +1155,7 @@ mod tests {
                     dist_sq: 3.7 * 3.7,
                     disp: [3.7, 0.0, 0.0],
                 }],
-                molrs::core::NeighborsStorage::FULL,
+                molrs::core::NeighborColumns::FULL,
                 molrs::core::QueryMode::SelfQuery { n_points: 2 },
             );
             let ForceTerm::Pair(typed) = typed else {
@@ -1178,7 +1178,7 @@ mod tests {
     /// Free boundary on purpose: this is about the lookup, not periodicity.
     #[test]
     fn a_typed_kernel_scores_a_pair_exactly_as_a_compiled_one() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         // Two types, deliberately unlike each other, so a table indexed the
         // wrong way round would give a different answer.
@@ -1224,7 +1224,7 @@ mod tests {
 
         let neighbors = Neighbors::from_pairs(
             table,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 4 },
         );
 
@@ -1392,7 +1392,7 @@ mod tests {
     }
 
     fn typed_energy(rows: &[(String, Params)]) -> F {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
         let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
         style.set_str("mixing", "geometric");
         let style = gathered(style);
@@ -1409,7 +1409,7 @@ mod tests {
                 dist_sq: R_AB * R_AB,
                 disp: [R_AB, 0.0, 0.0],
             }],
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 2 },
         );
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, R_AB, 0.0, 0.0];

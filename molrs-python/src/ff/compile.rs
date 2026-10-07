@@ -4,7 +4,7 @@
 //! * [`PyPotentialCompiler`] — a `ForceField` compiled into kernels:
 //!   `Potentials` over a fixed topology, or `WeightedTerms` (each kernel with
 //!   its special-bonds weights) for a neighbour-driven integrator.
-//! * `compile_explicit_terms(category, style, atoms, *, charges=None, **params)` — the kernel
+//! * `ExplicitTerms(category, style, atoms, *, charges=None, **params).compile()` — the kernel
 //!   of **any** registered style over explicit instances (atom indices and
 //!   one parameter row per term, as stored: the force-field IR's units, angle
 //!   values in degrees). It is [`molrs::ff::compile::ExplicitTerms`], so the
@@ -87,7 +87,8 @@ fn per_term(
     }
 }
 
-/// Build the kernel of one style over explicit instances.
+/// The terms of one style over explicit instances —
+/// ``molrs::ff::compile::ExplicitTerms``; :meth:`compile` builds their kernel.
 ///
 /// Works for every style the force-field IR prices: a built-in, a style
 /// registered from Python (by expression or kernel, :mod:`molrs.ff.ir`), a
@@ -114,37 +115,74 @@ fn per_term(
 ///     families are spelled ``k1``, ``k2``, …. A style whose numbers are per
 ///     instance (``coul/cut``) takes none.
 ///
-/// Returns
-/// -------
-/// Potentials
-///     One member; ``Potentials.push`` moves it into another collection.
-///
 /// Raises
 /// ------
-/// IrError
-///     The IR's refusal, by its subclass: ``UnknownCategory``, ``Arity``
-///     (a row of the wrong length), ``NoKernel``, ``MissingParam``, ….
 /// TypeError
 ///     A parameter the registered style does not declare.
 ///
 /// Examples
 /// --------
 /// >>> import numpy as np
-/// >>> from molrs.ff.potential import compile_explicit_terms
-/// >>> pots = compile_explicit_terms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.5)
+/// >>> from molrs.ff.compile import ExplicitTerms
+/// >>> pots = ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.5).compile()
 /// >>> e, f = pots.calc_energy_forces(np.array([0.0, 0, 0, 1.6, 0, 0]))
 /// >>> round(e, 12)
 /// 3.0
-#[pyfunction]
-#[pyo3(signature = (category, style, atoms, *, charges=None, **params))]
-fn compile_explicit_terms(
+#[pyclass(module = "molrs.ff.compile", name = "ExplicitTerms", frozen)]
+pub struct PyExplicitTerms {
+    inner: ExplicitTerms,
+}
+
+#[pymethods]
+impl PyExplicitTerms {
+    #[new]
+    #[pyo3(signature = (category, style, atoms, *, charges=None, **params))]
+    fn new(
+        py: Python<'_>,
+        category: &str,
+        style: &str,
+        atoms: &Bound<'_, PyAny>,
+        charges: Option<Vec<F>>,
+        params: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            inner: explicit_terms(py, category, style, atoms, charges, params)?,
+        })
+    }
+
+    /// Build the kernel of these terms, exactly as
+    /// :meth:`PotentialCompiler.compile` builds it, one type per term.
+    ///
+    /// Returns
+    /// -------
+    /// Potentials
+    ///     One member; ``Potentials.push`` moves it into another collection.
+    ///
+    /// Raises
+    /// ------
+    /// IrError
+    ///     The IR's refusal, by its subclass: ``UnknownCategory``, ``Arity``
+    ///     (a row of the wrong length), ``NoKernel``, ``MissingParam``, ….
+    fn compile(&self) -> PyResult<PyPotentials> {
+        crate::ff::style_registry::clear_kernel_err();
+        let pots = self.inner.compile().map_err(ir::compile_err)?;
+        crate::ff::style_registry::take_kernel_err()?;
+        Ok(PyPotentials {
+            inner: PotBacking::Compiled(pots),
+            err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
+        })
+    }
+}
+
+/// The [`ExplicitTerms`] the Python constructor's arguments describe.
+fn explicit_terms(
     py: Python<'_>,
     category: &str,
     style: &str,
     atoms: &Bound<'_, PyAny>,
     charges: Option<Vec<F>>,
     params: Option<&Bound<'_, PyDict>>,
-) -> PyResult<PyPotentials> {
+) -> PyResult<ExplicitTerms> {
     let who = format!("{category} `{style}`");
     let atoms = term_atoms(atoms)?;
     let n = atoms.len();
@@ -207,13 +245,7 @@ fn compile_explicit_terms(
     if let Some(q) = charges {
         terms = terms.charges(q);
     }
-    crate::ff::style_registry::clear_kernel_err();
-    let pots = terms.compile().map_err(ir::compile_err)?;
-    crate::ff::style_registry::take_kernel_err()?;
-    Ok(PyPotentials {
-        inner: PotBacking::Compiled(pots),
-        err_slots: vec![crate::ff::style_registry::kernel_err_slot()],
-    })
+    Ok(terms)
 }
 
 /// Compiles a :class:`ForceField` into evaluable kernels.
@@ -384,10 +416,6 @@ impl PyPotentialCompiler {
 /// Register `molrs.ff.compile`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPotentialCompiler>()?;
-    crate::add_function(
-        m,
-        "molrs.ff.compile",
-        wrap_pyfunction!(compile_explicit_terms, m)?,
-    )?;
+    m.add_class::<PyExplicitTerms>()?;
     Ok(())
 }

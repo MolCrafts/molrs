@@ -443,5 +443,5 @@ def test_ff_layers_hold_the_registry_compiler_and_fragment_table():
     ):
         assert hasattr(molrs.ff.style_registry, name), name
     assert molrs.ff.compile.PotentialCompiler
-    assert molrs.ff.compile.compile_explicit_terms
+    assert molrs.ff.compile.ExplicitTerms
     assert "c2c1im" in molrs.ff.clpol_scaling.fragment_table()

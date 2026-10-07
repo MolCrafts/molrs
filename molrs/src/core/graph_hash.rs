@@ -161,8 +161,8 @@ impl GraphView {
         };
         let aromatic = explicit.unwrap_or_else(|| {
             // The edge label packs `(bond_type << 32) | bond_number`, so the
-            // class is the high half. Reinterpreting it as a float — which is
-            // what the old 1.5 convention did — can never match anything.
+            // class is the high half. Reinterpreting it as a float order of
+            // 1.5 can never match anything.
             incident
                 .iter()
                 .any(|&(_, label)| (label >> 32) == AROMATIC_BOND_TYPE)

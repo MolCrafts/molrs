@@ -16,11 +16,10 @@
 //!   `ParamSource` gate: a `TypeRows` constructor reads its rows (another
 //!   row, another energy; no rows, an error), a `PerInstance` one ignores
 //!   them (the same energy, bit for bit, with or without a row).
-//! * [`positional_codecs_write_what_the_pre_wp8_writer_wrote`] — every
-//!   built-in written by a [`LammpsForm::Positional`](crate::ff::ir::LammpsForm)
-//!   codec writes, byte for byte, the include the hand-written writer arms
-//!   of molrs before WP8 (`e964ade2`) wrote, for the LAMMPS-read hand
-//!   molecule and every P4 source's LAMMPS form; the expected files are
+//! * [`positional_codecs_match_golden_includes`] — every built-in written
+//!   by a [`LammpsForm::Positional`](crate::ff::ir::LammpsForm) codec
+//!   writes, byte for byte, the golden include for the LAMMPS-read hand
+//!   molecule and every P4 source's LAMMPS form; the golden files are
 //!   `ff/testdata/builtin_conformance/*.lmp`.
 
 use std::collections::BTreeSet;
@@ -43,7 +42,7 @@ use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
-use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
+use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
 use molrs::op::{F, Idx};
 
 /// Configurations × parameter sets per style.
@@ -111,7 +110,7 @@ fn table(x: &[F]) -> Neighbors {
                 disp: d,
             }
         }),
-        NeighborsStorage::FULL,
+        NeighborColumns::FULL,
         QueryMode::SelfQuery { n_points: 4 },
     )
 }
@@ -738,7 +737,7 @@ fn every_param_source_is_what_its_constructor_reads() {
 }
 
 // ---------------------------------------------------------------------------
-// Positional codecs: the pre-WP8 writer's lines
+// Positional codecs: the golden includes
 // ---------------------------------------------------------------------------
 
 /// One field per positional built-in (and per units, `real` and `metal`:
@@ -923,18 +922,23 @@ fn positional_styles(ff_text: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// `text` against the pre-WP8 `want`: the same lines and tokens, a number
-/// that differs differing by rounding alone (≤ 4ε relative: two ulps). The old
-/// writer converted each value through LAMMPS's `lj` units by its own unit
-/// expression (even `real` → `real`: `bond morse`'s `alpha` came out one ulp
-/// off the stored 1.987); the positional codec multiplies by one exact
-/// factor per dimension, the identity exactly. Returns the tokens that
-/// differ, `"<case>: <then> → <now>"`.
+/// `text` against the golden `want`: the same lines and tokens, a number
+/// that differs differing by rounding alone (≤ 4ε relative: two ulps). Some
+/// golden files convert each value through LAMMPS's `lj` units by a unit
+/// expression (even `real` → `real`: `bond morse`'s `alpha` is one ulp off
+/// the stored 1.987); the positional codec multiplies by one exact factor
+/// per dimension, the identity exactly. Returns the tokens that differ,
+/// `"<case>: <golden> → <written>"`.
 fn same_but_last_digit(case: &str, text: &str, want: &str) -> Vec<String> {
-    let (now, then): (Vec<&str>, Vec<&str>) = (text.lines().collect(), want.lines().collect());
-    assert_eq!(now.len(), then.len(), "{case}: lines\n{text}\n---\n{want}");
+    let (written, golden): (Vec<&str>, Vec<&str>) =
+        (text.lines().collect(), want.lines().collect());
+    assert_eq!(
+        written.len(),
+        golden.len(),
+        "{case}: lines\n{text}\n---\n{want}"
+    );
     let mut out = Vec::new();
-    for (a, b) in now.iter().zip(&then) {
+    for (a, b) in written.iter().zip(&golden) {
         let (ta, tb): (Vec<&str>, Vec<&str>) = (
             a.split_whitespace().collect(),
             b.split_whitespace().collect(),
@@ -949,7 +953,7 @@ fn same_but_last_digit(case: &str, text: &str, want: &str) -> Vec<String> {
             };
             assert!(
                 (u - v).abs() <= 4.0 * F::EPSILON * u.abs().max(v.abs()),
-                "{case}: {y} then, {x} now: beyond rounding (4ε relative)"
+                "{case}: golden {y}, written {x}: beyond rounding (4ε relative)"
             );
             out.push(format!("{case}: {y} → {x}"));
         }
@@ -957,13 +961,13 @@ fn same_but_last_digit(case: &str, text: &str, want: &str) -> Vec<String> {
     out
 }
 
-/// The positional built-ins the writer before WP8 had no arm for: no file
-/// to hold them to (`bond class2`, `pair buck`, `pair morse` are priced by
-/// LAMMPS in `ff::engine_codec_check` instead, `buck` converted to `metal`).
-const NEW_IN_WP8: [&str; 3] = ["bond class2", "pair buck", "pair morse"];
+/// The positional built-ins no golden include holds (`bond class2`,
+/// `pair buck`, `pair morse` are priced by LAMMPS in
+/// `ff::engine_codec_check` instead, `buck` converted to `metal`).
+const WITHOUT_GOLDEN: [&str; 3] = ["bond class2", "pair buck", "pair morse"];
 
 #[test]
-fn positional_codecs_write_what_the_pre_wp8_writer_wrote() {
+fn positional_codecs_match_golden_includes() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ff/testdata/builtin_conformance");
     if let Some(out) = std::env::var_os("MOLRS_PIN_POSITIONAL") {
         for (name, text) in positional_cases() {
@@ -1000,14 +1004,14 @@ fn positional_codecs_write_what_the_pre_wp8_writer_wrote() {
     ] {
         assert!(identical.iter().any(|c| c == case), "{case}");
     }
-    // Every positional built-in is held, or is one the old writer lacked.
+    // Every positional built-in is held, or is one without a golden include.
     let r = Registry::builtin();
     for (spec, _) in r.styles(None) {
         if !matches!(spec.lammps, LammpsForm::Positional { .. }) {
             continue;
         }
         let name = format!("{} {}", spec.category, spec.name);
-        if NEW_IN_WP8.contains(&name.as_str()) {
+        if WITHOUT_GOLDEN.contains(&name.as_str()) {
             assert!(unpinned.contains(&name), "{name}: written by a case");
         } else {
             assert!(

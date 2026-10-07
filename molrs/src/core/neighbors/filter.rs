@@ -49,7 +49,7 @@ use crate::op::F;
 /// is order-equivalent because the square root is monotonic, then takes square
 /// roots to evaluate `R(m)` and to compare it against `r_{m+1}`.
 ///
-/// The output inherits the input's `mode` and storage policy, and query points
+/// The output inherits the input's `mode` and column policy, and query points
 /// are visited in ascending index order so the result is deterministic.
 ///
 /// # Why a filter
@@ -79,12 +79,12 @@ use crate::op::F;
 /// would be to invent zeros — a zero displacement is a physically meaningful
 /// value, so it would be indistinguishable from data — or to return an empty
 /// list, which reads downstream as "this particle has no neighbors". Rerun the
-/// search with [`NeighborsStorage::FULL`](crate::core::NeighborsStorage::FULL)
+/// search with [`NeighborColumns::FULL`](crate::core::NeighborColumns::FULL)
 /// instead.
 pub fn filter_sann(nlist: &Neighbors) -> Neighbors {
     let (offsets, mut order) = pairs_by_query(nlist);
 
-    let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
+    let mut out = Neighbors::empty(nlist.mode(), nlist.columns());
     let dist_sq = nlist
         .dist_sq()
         .expect("filter_sann needs the dist_sq column; rerun the search with it stored");
@@ -193,7 +193,7 @@ fn sann_cutoff(pair_ks_sorted: &[usize], dist_sq: &[F]) -> usize {
 /// matters for a cross-query whose query and reference sets are the same
 /// points, where every point is its own neighbor at distance zero.
 ///
-/// The output inherits the input's `mode` and storage policy, and query points
+/// The output inherits the input's `mode` and column policy, and query points
 /// are visited in ascending index order so the result is deterministic.
 ///
 /// # Panics
@@ -205,7 +205,7 @@ pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
     let cos_thresh = acceptance.cos();
     let (offsets, mut order) = pairs_by_query(nlist);
 
-    let mut out = Neighbors::empty(nlist.mode(), nlist.storage());
+    let mut out = Neighbors::empty(nlist.mode(), nlist.columns());
     let dist_sq = nlist
         .dist_sq()
         .expect("filter_rad needs the dist_sq column; rerun the search with it stored");
@@ -257,7 +257,7 @@ pub fn filter_rad(nlist: &Neighbors, acceptance: F) -> Neighbors {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{NeighborPair, NeighborsStorage, QueryMode};
+    use crate::core::{NeighborColumns, NeighborPair, QueryMode};
 
     /// Cross-query table over `n_points × n_points`, both physical columns
     /// stored (a filter needs them).
@@ -269,7 +269,7 @@ mod tests {
                 dist_sq,
                 disp,
             }),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::CrossQuery {
                 n_query_points: n_points,
                 n_points,
@@ -443,7 +443,7 @@ mod tests {
     fn empty_input_returns_empty() {
         let nl = Neighbors::from_pairs(
             std::iter::empty(),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 0 },
         );
         let f = filter_sann(&nl);
@@ -461,7 +461,7 @@ mod tests {
             (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
             (0, 2, 1.0, [0.0, 1.0, 0.0]),
         ];
-        let lean = make_nlist(&pairs, 3).repack(NeighborsStorage::INDICES_ONLY);
+        let lean = make_nlist(&pairs, 3).repack(NeighborColumns::INDICES_ONLY);
         let _ = filter_sann(&lean);
     }
 
@@ -472,7 +472,7 @@ mod tests {
             (0u32, 1u32, 1.0_f64, [1.0_f64, 0.0, 0.0]),
             (0, 2, 1.0, [0.0, 1.0, 0.0]),
         ];
-        let lean = make_nlist(&pairs, 3).repack(NeighborsStorage::DIST_SQ);
+        let lean = make_nlist(&pairs, 3).repack(NeighborColumns::DIST_SQ);
         let _ = filter_rad(&lean, std::f64::consts::FRAC_PI_3);
     }
 }

@@ -94,7 +94,7 @@ pub fn intramolecular_pairs_from_neighbors(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+    use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
     /// A four-atom chain 0-1-2-3 with its bonds, angles and dihedral.
     fn chain() -> Frame {
@@ -153,7 +153,7 @@ mod tests {
                 n_points: 4,
             }
         };
-        Neighbors::from_pairs(rows, NeighborsStorage::FULL, mode)
+        Neighbors::from_pairs(rows, NeighborColumns::FULL, mode)
     }
 
     #[test]

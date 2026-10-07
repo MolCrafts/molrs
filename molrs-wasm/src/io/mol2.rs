@@ -37,16 +37,16 @@ impl Mol2Reader {
         }
     }
 
-    /// Read the molecule record at the given step index (0-based).
-    #[wasm_bindgen]
-    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+    /// Read the molecule record at the given index (0-based).
+    #[wasm_bindgen(js_name = readFrame)]
+    pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
         let mut reader = RsMol2Reader::new(Cursor::new(self.content.as_slice()));
-        for current in 0..=step {
+        for current in 0..=index {
             let rs_frame = reader
                 .read()
                 .map_err(|e| JsValue::from_str(&format!("MOL2 read error: {}", e)))?;
             match rs_frame {
-                Some(frame) if current == step => return Ok(Some(Frame::from_rs(frame)?)),
+                Some(frame) if current == index => return Ok(Some(Frame::from_rs(frame)?)),
                 Some(_) => continue,
                 None => return Ok(None),
             }

@@ -50,8 +50,8 @@ use crate::compute::{require_disp, require_self_query};
 ///
 /// `q_ℓm` is built from bond *directions*, so the table must carry the
 /// minimum-image displacement column `disp` (Å) — materialize it with
-/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
-/// or [`FULL`](molrs::core::NeighborsStorage::FULL). Distances
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL). Distances
 /// alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
 /// directions, and reads back `None` rather than zeros, so every entry point
 /// here answers [`ComputeError::BadShape`] naming the missing column instead of
@@ -126,8 +126,8 @@ impl Steinhardt {
 ///
 /// `nlist` must carry the minimum-image displacement column `disp` (Å) — build
 /// it with
-/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
-/// or [`FULL`](molrs::core::NeighborsStorage::FULL) — because the
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL) — because the
 /// bond directions `r̂_ij` are the entire computation.
 ///
 /// Returns a row-major buffer of length `n_particles · (2ℓ+1)` with element
@@ -710,13 +710,13 @@ mod tests {
     /// so it must refuse that table loudly instead of reading zeros.
     #[test]
     fn nlist_without_displacement_vectors_is_error() {
-        use molrs::core::NeighborsStorage;
+        use molrs::core::NeighborColumns;
         let frame = octahedron(20.0);
         let nl_full = nlist_from_frame(&frame, 1.2);
         assert!(nl_full.n_pairs() > 0);
         // Lean list: distances kept, displacements dropped (a caller that only
         // asked for d², e.g. an RDF-shaped query, reused for an order kernel).
-        let nl_lean = nl_full.repack(NeighborsStorage::DIST_SQ);
+        let nl_lean = nl_full.repack(NeighborColumns::DIST_SQ);
         assert_eq!(nl_lean.n_pairs(), nl_full.n_pairs());
         assert!(
             nl_lean.disp().is_none(),
@@ -744,7 +744,7 @@ mod tests {
     /// so `SelfQuery { n_points: 7 }` is a legal label for them.
     #[test]
     fn steinhardt_indices_only_neighbors_is_bad_shape() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = octahedron(20.0);
         let bonds: [[F; 3]; 6] = [
@@ -767,7 +767,7 @@ mod tests {
             .collect();
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::INDICES_ONLY,
+            NeighborColumns::INDICES_ONLY,
             QueryMode::SelfQuery { n_points: 7 },
         );
         assert_eq!(
@@ -981,7 +981,7 @@ mod tests {
     /// `Steinhardt::one_frame` would leave those two entry points open.
     #[test]
     fn steinhardt_cross_query_table_is_bad_shape() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = octahedron(20.0);
         // Same six bonds as `steinhardt_indices_only_neighbors_is_bad_shape`:
@@ -1014,7 +1014,7 @@ mod tests {
         }
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::CrossQuery {
                 n_query_points: 7,
                 n_points: 7,

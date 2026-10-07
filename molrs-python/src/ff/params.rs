@@ -3,13 +3,8 @@
 //! (`clpol_polarizability`). The AMBER 1-4 divisors are engine constants,
 //! `molrs.core.constants.AMBER_SCEE` / `AMBER_SCNB`.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-
-use crate::path::path_str;
+use std::collections::HashMap;
 
 /// One row's fields under the names CL&Pol (and molpy) use.
 fn fields(
@@ -28,12 +23,10 @@ fn fields(
     ])
 }
 
-/// CL&Pol Drude parameters per atom type, from ``alpha.ff``.
-///
-/// Without ``path``, the table molrs ships (paduagroup/clandpol ``alpha.ff``
-/// 2024/06/05, :data:`molrs::ff::params::CLPOL_POLARIZABILITY`); with it, that
-/// file read the same way (``#`` comments, rows ``type m_D q_D k_D alpha
-/// a_thole``; a type given twice keeps its last row).
+/// CL&Pol Drude parameters per atom type: the ``alpha.ff`` table molrs ships
+/// (paduagroup/clandpol ``alpha.ff`` 2024/06/05,
+/// ``molrs::ff::params::CLPOL_POLARIZABILITY``). A caller's own ``alpha.ff``
+/// is read by :func:`molrs.io.read_clpol_alpha`.
 ///
 /// Returns
 /// -------
@@ -41,40 +34,17 @@ fn fields(
 ///     ``type -> {"m_D", "q_D_sign", "k_D", "alpha", "a_thole"}`` in u, e
 ///     (sign), kJ/mol/Å² (``k/2 r²`` form), Å³ and dimensionless. A type
 ///     with ``k_D == 0`` carries no Drude particle.
-///
-/// Raises
-/// ------
-/// ValueError
-///     The file cannot be read or a row's numbers do not parse.
 #[pyfunction]
-#[pyo3(signature = (path = None))]
-pub fn clpol_polarizability(
-    path: Option<PathBuf>,
-) -> PyResult<HashMap<String, HashMap<&'static str, f64>>> {
-    match path {
-        None => Ok(molrs::ff::params::CLPOL_POLARIZABILITY
-            .iter()
-            .map(|r| {
-                (
-                    r.type_name.to_owned(),
-                    fields(r.m_d, r.q_d_sign, r.k_d, r.alpha, r.a_thole),
-                )
-            })
-            .collect()),
-        Some(path) => {
-            let rows =
-                molrs::io::read_clpol_alpha(path_str(&path)?).map_err(PyValueError::new_err)?;
-            Ok(rows
-                .into_iter()
-                .map(|r| {
-                    (
-                        r.type_name,
-                        fields(r.m_d, r.q_d_sign, r.k_d, r.alpha, r.a_thole),
-                    )
-                })
-                .collect())
-        }
-    }
+pub fn clpol_polarizability() -> HashMap<String, HashMap<&'static str, f64>> {
+    molrs::ff::params::CLPOL_POLARIZABILITY
+        .iter()
+        .map(|r| {
+            (
+                r.type_name.to_owned(),
+                fields(r.m_d, r.q_d_sign, r.k_d, r.alpha, r.a_thole),
+            )
+        })
+        .collect()
 }
 
 /// Register `molrs.ff.params`.

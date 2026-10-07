@@ -191,7 +191,7 @@ impl Backend for LinkCell {
     /// On-demand pair traversal — zero allocation.
     ///
     /// Half-shell iteration over the occupied cells, calling the visitor
-    /// instead of building a [`Neighbors`] table, so no storage policy is
+    /// instead of building a [`Neighbors`] table, so no column policy is
     /// involved: the visitor always receives `dist_sq` (Å²) and the
     /// minimum-image displacement `r_j - r_i` (Å) for each pair, with `i < j`.
     ///
@@ -226,7 +226,7 @@ impl Backend for LinkCell {
         #[cfg(feature = "rayon")]
         {
             if self.occupied_cells.len() >= PAR_MIN_CELLS {
-                let mut partial = self.par_pairs(out.mode(), out.storage());
+                let mut partial = self.par_pairs(out.mode(), out.columns());
                 out.append(&mut partial);
                 return;
             }
@@ -410,12 +410,12 @@ impl LinkCell {
     }
 
     /// Half-shell pair search folded over occupied cells with rayon, into a
-    /// fresh table keeping the columns `storage` asks for.
+    /// fresh table keeping the columns `columns` asks for.
     ///
     /// Each worker accumulates its cells into a private [`Neighbors`], and the
     /// partial tables are concatenated by [`Neighbors::append`], which is where
     /// the column-alignment contract of the merge is stated. Every worker starts
-    /// from the same `storage`, so every partial table has the same columns and
+    /// from the same `columns`, so every partial table has the same columns and
     /// concatenating them cannot misalign anything.
     ///
     /// Partial tables carry the caller's `mode` from the start, so no
@@ -427,7 +427,7 @@ impl LinkCell {
     fn par_pairs(
         &self,
         mode: crate::core::QueryMode,
-        storage: crate::core::NeighborsStorage,
+        columns: crate::core::NeighborColumns,
     ) -> Neighbors {
         #[cfg(test)]
         crate::core::test_thread_pool::ensure();
@@ -438,7 +438,7 @@ impl LinkCell {
         self.occupied_cells
             .par_iter()
             .fold(
-                || Neighbors::empty(mode, storage),
+                || Neighbors::empty(mode, columns),
                 |mut acc, &cell_u32| {
                     let mut fwd_buf = [0usize; 27];
                     self.pairs_in_cell(
@@ -451,7 +451,7 @@ impl LinkCell {
                 },
             )
             .reduce(
-                || Neighbors::empty(mode, storage),
+                || Neighbors::empty(mode, columns),
                 |mut a, mut b| {
                     a.append(&mut b);
                     a
@@ -486,7 +486,7 @@ mod tests {
     use super::*;
     use crate::core::SimBox;
     use crate::core::neighbors::test_fixtures::table_rows_sorted;
-    use crate::core::{NeighborList, NeighborsStorage};
+    use crate::core::{NeighborColumns, NeighborList};
     use ndarray::array;
 
     /// Half-shell self pairs of `pts` from the cell-list backend, every column
@@ -494,7 +494,7 @@ mod tests {
     fn cell_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
         let mut nl = NeighborList::new(cutoff);
         nl.build(pts, bx);
-        nl.neighbors(NeighborsStorage::FULL)
+        nl.neighbors(NeighborColumns::FULL)
     }
 
     /// The same, from the O(N²) reference backend — the oracle the cell list is
@@ -502,7 +502,7 @@ mod tests {
     fn brute_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
         let mut nl = NeighborList::brute_force(cutoff);
         nl.build(pts, bx);
-        nl.neighbors(NeighborsStorage::FULL)
+        nl.neighbors(NeighborColumns::FULL)
     }
 
     #[test]
@@ -585,7 +585,7 @@ mod tests {
         let mut nl = NeighborList::new(0.6);
         nl.build(pts.view(), &bx);
 
-        let table = table_rows_sorted(&nl.neighbors(NeighborsStorage::FULL));
+        let table = table_rows_sorted(&nl.neighbors(NeighborColumns::FULL));
 
         let mut streamed: Vec<(u32, u32, F, [F; 3])> = Vec::new();
         nl.for_each_pair(|p| streamed.push((p.i, p.j, p.dist_sq, p.disp)));
@@ -696,8 +696,8 @@ mod tests {
     /// A sparse system pays for its particles, not for its empty cells.
     ///
     /// Box 20 Å at cutoff 0.5 Å is 64 000 cells for three particles; the search
-    /// walks `occupied_cells` (three of them), which is what stopped this
-    /// configuration from timing out as it once did.
+    /// walks `occupied_cells` (three of them), so this configuration does not
+    /// time out.
     ///
     /// `occupied_cells` is a backend internal that no engine accessor exposes,
     /// so this single test stays on [`LinkCell`] — through the trait methods the
@@ -853,7 +853,7 @@ mod tests {
         let aos = cell_pairs(2.0, pts.view(), &bx);
         let mut soa_nl = NeighborList::new(2.0);
         soa_nl.build_columns(&xs, &ys, &zs, &bx);
-        let soa = soa_nl.neighbors(NeighborsStorage::FULL);
+        let soa = soa_nl.neighbors(NeighborColumns::FULL);
         assert!(aos.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&aos, &soa);
 
@@ -871,7 +871,7 @@ mod tests {
         let aos_free = cell_pairs(1.0, ptsf.view(), &bxf);
         let mut soa_free_nl = NeighborList::new(1.0);
         soa_free_nl.build_columns(&fxs, &fys, &fzs, &bxf);
-        let soa_free = soa_free_nl.neighbors(NeighborsStorage::FULL);
+        let soa_free = soa_free_nl.neighbors(NeighborColumns::FULL);
         assert!(aos_free.n_pairs() > 0, "fixture should produce pairs");
         assert_bitwise_equal(&aos_free, &soa_free);
     }
@@ -904,9 +904,9 @@ mod tests {
 mod equivalence {
     use super::*;
     use crate::core::CellGrid;
+    use crate::core::NeighborColumns;
     use crate::core::NeighborList;
     use crate::core::NeighborQuery;
-    use crate::core::NeighborsStorage;
     use crate::core::SimBox;
     use crate::op::Fnx3;
     use ndarray::{Array2, array};
@@ -1065,11 +1065,11 @@ mod equivalence {
 
                     let mut bf = NeighborList::brute_force(cutoff);
                     bf.build(pts.view(), &bx);
-                    let (want, _) = collect(&bf.neighbors(NeighborsStorage::FULL));
+                    let (want, _) = collect(&bf.neighbors(NeighborColumns::FULL));
 
                     let mut lc = NeighborList::new(cutoff);
                     lc.build(pts.view(), &bx);
-                    let (got, emitted) = collect(&lc.neighbors(NeighborsStorage::FULL));
+                    let (got, emitted) = collect(&lc.neighbors(NeighborColumns::FULL));
 
                     assert_eq!(emitted, want.len(), "{tag}: pair count (duplicate or gap)");
                     assert_eq!(

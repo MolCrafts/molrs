@@ -122,7 +122,7 @@ impl PyMsdTimeSeries {
 ///
 /// Examples
 /// --------
-/// >>> molrs.compute.MSD(method="window").compute(frames).mean
+/// >>> molrs.compute.Msd(method="window").compute(frames).mean
 #[pyclass(module = "molrs.compute", name = "Msd")]
 pub struct PyMsd {
     inner: Msd,

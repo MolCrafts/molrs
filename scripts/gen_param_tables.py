@@ -405,7 +405,7 @@ def parse_parmchk(path: Path) -> Equivalents:
     if len(phases[1]) != len(phases[2]):
         raise GrammarError(
             f"{path.name}: the two equivalent_flag phases have different lengths "
-            f"({phases[1]} vs {phases[2]}); the pairing is positional and no longer zips"
+            f"({phases[1]} vs {phases[2]}); the pairing is positional and does not zip"
         )
 
     for phase, names in phases.items():

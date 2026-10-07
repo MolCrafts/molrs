@@ -24,7 +24,7 @@
 //! the computation itself (ring perception, bond-order perception):
 //!
 //! - **`perceive_<fact>(mol) -> table`** computes a fact and returns it as a
-//!   side table, leaving the graph alone: [`perceive_rings`] → [`RingInfo`],
+//!   side table, leaving the graph alone: [`perceive_rings`] → [`RingSet`],
 //!   [`perceive_rotatable_bonds`], [`perceive_chiral_centers`],
 //!   [`perceive_tetrahedral_stereo`], [`perceive_bond_stereo`],
 //!   [`perceive_equivalence_classes`], [`perceive_bond_orders`],
@@ -97,7 +97,7 @@ pub use kekule::assign_kekule_bond_orders;
 pub use ring_class::{
     AntechamberRingMembership, AntechamberRingSummary, RingClasses, perceive_ring_classes,
 };
-pub use rings::{RingInfo, assign_rings, perceive_rings, small_ring_closure};
+pub use rings::{RingSet, assign_rings, perceive_rings, small_ring_closure};
 pub use rotatable::{
     RotatableBond, UnknownBondPolicy, assign_rotatable_bonds, downstream_atoms,
     perceive_rotatable_bonds, perceive_rotatable_bonds_with_downstream,

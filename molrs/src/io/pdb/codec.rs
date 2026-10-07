@@ -584,9 +584,9 @@ impl<R: BufRead + Seek> TrajectoryReader for PdbReader<R> {
         Ok(())
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
         self.build_index()?;
-        let Some(&at) = self.index.as_ref().and_then(|index| index.get(step)) else {
+        let Some(&at) = self.index.as_ref().and_then(|offsets| offsets.get(index)) else {
             return Ok(None);
         };
         let bytes = crate::io::frame_index::frame_bytes(&mut self.reader, at)?;
@@ -691,7 +691,7 @@ impl<W: Write> PdbWriter<W> {
 /// Write the `CRYST1` record from the frame's simulation box, if any.
 fn write_cryst1<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
     // Always emit CRYST1: PDB readers and OpenMM decks expect a cell line even
-    // when the frame has no simbox (molpy historically wrote a unit cube).
+    // when the frame has no simbox, which is written as a unit cube.
     let (a, b, c) = if let Some(simbox) = frame.simbox_ref() {
         let lengths = simbox.lengths();
         (lengths[0], lengths[1], lengths[2])
@@ -838,8 +838,8 @@ fn write_atom_conect_records<W: Write>(
 
         // PDB v3.3 ATOM record. occupancy/tempFactor default to 1.00/0.00
         // when the frame carries no `occupancy` / `b_factor`. Element
-        // right-justified in cols 77-78, then one charge pad space;
-        // historical molpy lines are 79 printable columns + newline.
+        // right-justified in cols 77-78, then one charge pad space; every
+        // line is padded to 79 printable columns + newline.
         let mut line = format!(
             "ATOM  {:>5} {}{}{:<3} {}{:>4}{}   {:>8.3}{:>8.3}{:>8.3}{:>6.2}{:>6.2}          {:>2}  ",
             serial,
@@ -1541,8 +1541,8 @@ END
         use crate::io::reader::TrajectoryReader;
         let mut reader = PdbReader::new(std::io::Cursor::new(MULTI_PDB.as_bytes()));
         assert_eq!(reader.len().unwrap(), 2);
-        let second = reader.read_step(1).unwrap().expect("model 2");
-        let first = reader.read_step(0).unwrap().expect("model 1");
+        let second = reader.read_frame(1).unwrap().expect("model 2");
+        let first = reader.read_frame(0).unwrap().expect("model 1");
         let models = read_all_models(MULTI_PDB);
         let x = |f: &Frame| {
             f.get("atoms")
@@ -1557,7 +1557,7 @@ END
         };
         assert_eq!(x(&first), x(&models[0]));
         assert_eq!(x(&second), x(&models[1]));
-        assert!(reader.read_step(2).unwrap().is_none());
+        assert!(reader.read_frame(2).unwrap().is_none());
     }
 
     #[test]

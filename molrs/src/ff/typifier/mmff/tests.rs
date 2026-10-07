@@ -19,7 +19,7 @@ mod tests {
 
     fn bond_order(mol: &mut Atomistic, a: NodeId, b: NodeId, order: f64) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            // The old float encoding, split into the two facts it conflated.
+            // The fixture's float order, split into class (1.5 = aromatic) and count.
             let _ = if (order - 1.5).abs() < 1e-6 {
                 mol.set_bond_class(
                     bid,

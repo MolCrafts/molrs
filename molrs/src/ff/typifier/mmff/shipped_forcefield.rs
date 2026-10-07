@@ -1,8 +1,7 @@
 //! The shipped MMFF parameter set, assembled from the compiled table.
 //!
-//! `Mmff94Typifier::new()` and `Mmff94sTypifier::new()` used to `include_str!` a
-//! 68 KB XML each and re-parse it on every construction. Both now share one
-//! library per variant ([`library`]), built once from the compiled table
+//! `Mmff94Typifier::new()` and `Mmff94sTypifier::new()` parse no XML: both
+//! share one library per variant ([`library`]), built once from the compiled table
 //! ([`crate::ff::params::mmff`]); the two differ by exactly two things:
 //! the force-field **name** they build under, and the
 //! [`MmffVariant`] their front door pins. Nothing

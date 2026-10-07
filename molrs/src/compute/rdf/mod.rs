@@ -587,7 +587,7 @@ mod tests {
     /// 8.526157665637252 — both asserts below fail.
     #[test]
     fn rdf_self_half_list_factor_two_vs_cross() {
-        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         /// g(r) in bin 1 for the two-particle fixture, factor 2 included.
         const G_BIN1: F = 17.052315331274503;
@@ -616,7 +616,7 @@ mod tests {
                 dist_sq: d_sq,
                 disp: [1.5, 0.0, 0.0],
             }],
-            NeighborsStorage::DIST_SQ,
+            NeighborColumns::DIST_SQ,
             QueryMode::SelfQuery { n_points: 2 },
         );
         // The same two particles as a directed cross list of the set against
@@ -637,7 +637,7 @@ mod tests {
                     disp: [-1.5, 0.0, 0.0],
                 },
             ],
-            NeighborsStorage::DIST_SQ,
+            NeighborColumns::DIST_SQ,
             QueryMode::CrossQuery {
                 n_query_points: 2,
                 n_points: 2,

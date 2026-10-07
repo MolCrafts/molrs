@@ -153,9 +153,9 @@ def test_smiles_unclosed_branch_span_points_at_the_open_paren() -> None:
 def test_unknown_bracket_element_is_refused_by_the_constructor() -> None:
     """``Xx`` is not an element, so the string never becomes an IR.
 
-    It used to construct, and ``to_atomistic()`` then handed back a graph with
-    an atom whose element was the string ``"Xx"`` — a graph no chemistry can
-    read. The refusal belongs to the parser, so it happens here.
+    Constructing it would let ``to_atomistic()`` hand back a graph with an atom
+    whose element is the string ``"Xx"`` — a graph no chemistry can read. The
+    refusal belongs to the parser, so it happens here.
     """
     with pytest.raises(molrs.io.smiles.SmilesError):
         molrs.io.smiles.SmilesIr(UNKNOWN_BRACKET_ELEMENT)

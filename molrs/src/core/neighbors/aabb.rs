@@ -446,7 +446,7 @@ mod tests {
     ///
     /// On [`tilted_bx`] the maximum is at `(+,+,+)`: `a1+a2+a3 = (16,8,10)`,
     /// `‖.‖ = sqrt(420)`, so the circumradius is `sqrt(420)/2 = 10.2470`. The
-    /// superseded expression gives `sqrt(300)/2 = 8.6603`, which is **below**
+    /// half-diagonal of the edge lengths gives `sqrt(300)/2 = 8.6603`, which is **below**
     /// the true bound — an under-estimate, so a descent could miss the true
     /// nearest neighbour.
     #[test]
@@ -457,17 +457,17 @@ mod tests {
             (r - (420.0_f64).sqrt() / 2.0).abs() < 1e-12,
             "circumradius {r}, expected sqrt(420)/2"
         );
-        let superseded = {
+        let edge_half_diagonal = {
             let l = bx.lengths();
             (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt() / 2.0
         };
         assert!(
-            r > superseded,
-            "the old bound {superseded} must be an under-estimate of {r}"
+            r > edge_half_diagonal,
+            "the edge-length half-diagonal {edge_half_diagonal} must be an under-estimate of {r}"
         );
 
-        // Orthogonal cells are untouched: every sign pattern has the same norm,
-        // so the circumradius is exactly the old half-diagonal.
+        // On an orthogonal cell every sign pattern has the same norm, so the
+        // circumradius is exactly the edge-length half-diagonal.
         let cube = cube_bx(10.0, [true; 3]);
         assert!((AabbQuery::circumradius(&cube) - (300.0_f64).sqrt() / 2.0).abs() < 1e-12);
     }
@@ -531,7 +531,7 @@ mod tests {
     /// likely to differ and it is the part that depends on the cell.
     #[test]
     fn aabb_backend_matches_brute_force() {
-        use crate::core::{NeighborList, NeighborsStorage};
+        use crate::core::{NeighborColumns, NeighborList};
 
         let pts: Fnx3 = array![
             [0.2_f64, 0.3, 0.4],
@@ -556,12 +556,12 @@ mod tests {
                 let mut want = NeighborList::brute_force(cutoff);
                 want.build(pts.view(), &bx);
                 let mut want_pairs: Vec<(u32, u32)> = want
-                    .neighbors(NeighborsStorage::INDICES_ONLY)
+                    .neighbors(NeighborColumns::INDICES_ONLY)
                     .query_point_indices()
                     .iter()
                     .copied()
                     .zip(
-                        want.neighbors(NeighborsStorage::INDICES_ONLY)
+                        want.neighbors(NeighborColumns::INDICES_ONLY)
                             .point_indices()
                             .iter()
                             .copied(),
@@ -571,7 +571,7 @@ mod tests {
 
                 let mut got = NeighborList::aabb(cutoff);
                 got.build(pts.view(), &bx);
-                let got_tbl = got.neighbors(NeighborsStorage::FULL);
+                let got_tbl = got.neighbors(NeighborColumns::FULL);
                 let mut got_pairs: Vec<(u32, u32)> = got_tbl
                     .query_point_indices()
                     .iter()

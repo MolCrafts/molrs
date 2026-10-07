@@ -20,7 +20,7 @@ pub use linkcell::LinkCell;
 pub use query::NeighborQuery;
 pub use verlet_skin::{NeighborPolicy, SkinError, SkinPair, VerletSkin};
 
-// NeighborsStorage and NeighborPair are defined below next to Neighbors.
+// NeighborColumns and NeighborPair are defined below next to Neighbors.
 
 // ---------------------------------------------------------------------------
 // QueryMode — which point sets a table indexes, and how large they are
@@ -75,7 +75,7 @@ pub enum QueryMode {
 ///
 /// A visitor always receives the complete physics of a pair — the same two
 /// quantities a [`NeighborPair`] carries — because nothing has been dropped by
-/// a storage policy yet. Crate-internal: the public streaming API is
+/// a column policy yet. Crate-internal: the public streaming API is
 /// [`NeighborList::for_each_pair`], which packs these four arguments into a
 /// [`NeighborPair`].
 pub(crate) trait PairVisitor {
@@ -175,7 +175,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     fn visit_pairs(&self, visitor: &mut dyn PairVisitor);
 
     /// Append every pair within the cutoff to `out`, keeping the columns `out`'s
-    /// storage policy asks for.
+    /// column policy asks for.
     ///
     /// The default drives [`visit_pairs`](Self::visit_pairs) and pushes each
     /// pair as it arrives, so a backend gets materialization for free and the
@@ -186,7 +186,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     ///
     /// 1. the same pair *set* the visitor would have produced, half-shell with
     ///    `i < j`;
-    /// 2. `out`'s storage policy honored, so a column the caller did not ask for
+    /// 2. `out`'s column policy honored, so a column the caller did not ask for
     ///    is never written;
     /// 3. rows appended, never overwritten — `out` may already hold pairs.
     ///
@@ -264,7 +264,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// distance — materializes once, naming the columns it will actually read:
 ///
 /// ```
-/// use molrs::core::{NeighborList, NeighborsStorage};
+/// use molrs::core::{NeighborList, NeighborColumns};
 /// use molrs::core::SimBox;
 /// use ndarray::array;
 ///
@@ -274,14 +274,14 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// let mut nl = NeighborList::new(3.0);
 /// nl.build(points.view(), &bx);
 ///
-/// let table = nl.neighbors(NeighborsStorage::DISP);
+/// let table = nl.neighbors(NeighborColumns::DISP);
 /// let disp = table.disp().expect("DISP keeps the displacement column");
 /// assert_eq!(table.n_pairs(), 1);
 /// assert!((disp[[0, 0]] - 0.4).abs() < 1e-12);
 /// assert!(table.dist_sq().is_none(), "DISP drops the distance column");
 /// ```
 ///
-/// [`NeighborsStorage::FULL`] selects every *column*; it never means a
+/// [`NeighborColumns::FULL`] selects every *column*; it never means a
 /// bidirectional pair list, and nothing here falls back to it implicitly —
 /// [`neighbors`](Self::neighbors) takes the policy as an argument.
 ///
@@ -324,7 +324,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// nl.update(points.view());                  // re-index, reusing that box
 ///
 /// nl.for_each_pair(|pair| { /* ... */ });    // stream half-shell self pairs
-/// let table = nl.neighbors(NeighborsStorage::FULL);  // ...or materialize them
+/// let table = nl.neighbors(NeighborColumns::FULL);  // ...or materialize them
 ///
 /// let nq = NeighborQuery::new(&simbox, points.view(), 3.0);
 /// let cross = nq.query(query_points.view()); // cross-query, directed
@@ -348,7 +348,7 @@ pub(crate) trait Backend: std::fmt::Debug {
 /// | `NeighborList.point_indices` | [`Neighbors::point_indices()`] | — |
 /// | `NeighborList.distances` (r, Å) | [`Neighbors::dist_sq()`] (r², Å²) | molrs stores the square and never hides a square root inside an accessor; take `.sqrt()` at the call site |
 /// | `NeighborList.vectors` | [`Neighbors::disp()`] | same unnormalized MIC vector `r_j - r_i` |
-/// | (both always present) | [`NeighborsStorage`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
+/// | (both always present) | [`NeighborColumns`] | freud always carries distances and vectors; molrs returns `None` for a column the search was told not to store |
 /// | `freud.locality.LinkCell` | [`NeighborList`] (its [`LinkCell`] backend) | — |
 /// | `freud.locality.AABBQuery` | [`AabbQuery`] | one tree, both questions: the `Aabb` backend of [`NeighborList`] for cutoff searches, [`AabbQuery::query_knn`] for k-nearest |
 /// | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
@@ -565,10 +565,10 @@ impl NeighborList {
     }
 
     /// Materialize the pairs into a [`Neighbors`] table keeping the columns
-    /// `storage` asks for.
+    /// `columns` asks for.
     ///
     /// The same pair *set* [`for_each_pair`](Self::for_each_pair) streams, so
-    /// the result is `Neighbors::from_pairs(collected_stream, storage, mode)` up
+    /// the result is `Neighbors::from_pairs(collected_stream, columns, mode)` up
     /// to row order. Row order is **not** part of the contract: the cell-list
     /// backend materializes by folding over occupied cells in parallel (rayon
     /// feature, on by default), which is 2–4× faster at molecular-dynamics
@@ -580,18 +580,18 @@ impl NeighborList {
     /// The table is tagged `SelfQuery { n_points }` with the point count of
     /// the last index.
     ///
-    /// A column `storage` leaves out is not written, and its accessor reports
+    /// A column `columns` leaves out is not written, and its accessor reports
     /// `None` rather than a fabricated zero; it cannot be added afterwards
-    /// (see [`Neighbors::repack`]). `storage` is an argument rather than a
+    /// (see [`Neighbors::repack`]). `columns` is an argument rather than a
     /// default, so no call site ever materializes
-    /// [`NeighborsStorage::FULL`] by accident — the columns a table carries are
+    /// [`NeighborColumns::FULL`] by accident — the columns a table carries are
     /// always something the caller asked for by name.
-    pub fn neighbors(&self, storage: NeighborsStorage) -> Neighbors {
+    pub fn neighbors(&self, columns: NeighborColumns) -> Neighbors {
         let mut out = Neighbors::empty(
             QueryMode::SelfQuery {
                 n_points: self.n_points,
             },
-            storage,
+            columns,
         );
         self.backend.materialize_into(&mut out);
         out
@@ -607,9 +607,9 @@ impl NeighborList {
 /// The pair indices `(i, j)` are always stored — two `u32`s, 8 bytes per pair.
 /// The two physical columns are optional:
 ///
-/// - [`dist_sq`](NeighborsStorage::dist_sq) — squared minimum-image distance in
+/// - [`dist_sq`](NeighborColumns::dist_sq) — squared minimum-image distance in
 ///   Å², one `f64` (8 B) per pair.
-/// - [`disp`](NeighborsStorage::disp) — minimum-image displacement
+/// - [`disp`](NeighborColumns::disp) — minimum-image displacement
 ///   `r_j - r_i` in Å, three `f64`s (24 B) per pair.
 ///
 /// # `FULL` is about columns, not about direction
@@ -617,7 +617,7 @@ impl NeighborList {
 /// [`FULL`](Self::FULL) means **every column is present**. It says nothing
 /// about pair direction: a self-query stays half-shell (each unordered pair
 /// once, `i < j`) under `FULL`, and an indices-only cross-query stays directed
-/// and bidirectional. Storage policy and pair direction are orthogonal, and the
+/// and bidirectional. Column policy and pair direction are orthogonal, and the
 /// word "full" here never means "both `(i, j)` and `(j, i)` are stored".
 ///
 /// # Choosing a policy
@@ -630,7 +630,7 @@ impl NeighborList {
 /// materializing at all: [`NeighborList::for_each_pair`] streams every pair
 /// with both quantities and allocates nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NeighborsStorage {
+pub struct NeighborColumns {
     /// Store squared minimum-image distances (Å²).
     pub dist_sq: bool,
     /// Store minimum-image displacement vectors `r_j - r_i` as `(dx, dy, dz)`
@@ -638,16 +638,16 @@ pub struct NeighborsStorage {
     pub disp: bool,
 }
 
-/// The default is [`FULL`](NeighborsStorage::FULL): unless a caller says
+/// The default is [`FULL`](NeighborColumns::FULL): unless a caller says
 /// otherwise, a materialized table carries both physical columns, so no
 /// downstream consumer is surprised by a missing one.
-impl Default for NeighborsStorage {
+impl Default for NeighborColumns {
     fn default() -> Self {
         Self::FULL
     }
 }
 
-impl NeighborsStorage {
+impl NeighborColumns {
     /// Indices only — lightest materialization (8 B/pair).
     ///
     /// Enough for connectivity questions (clustering, percolation) that never
@@ -724,7 +724,7 @@ pub struct NeighborPair {
 /// Materialized neighbor pair table (freud-style).
 ///
 /// Column store of every pair within the cutoff: two index columns that are
-/// always present, plus whichever physical columns [`NeighborsStorage`] asked
+/// always present, plus whichever physical columns [`NeighborColumns`] asked
 /// for. Row `k` of the table is one pair, and all columns are indexed by the
 /// same `k`.
 ///
@@ -760,25 +760,25 @@ pub struct NeighborPair {
 #[derive(Debug, Clone)]
 pub struct Neighbors {
     /// Which optional columns `push` writes; the rest stay empty.
-    pub(crate) storage: NeighborsStorage,
+    pub(crate) columns: NeighborColumns,
     /// Query point index per pair (i).
     pub(crate) idx_i: Vec<u32>,
     /// Reference point index per pair (j).
     pub(crate) idx_j: Vec<u32>,
-    /// Squared distances, one per pair (empty when `!storage.dist_sq`).
+    /// Squared distances, one per pair (empty when `!columns.dist_sq`).
     pub(crate) dist_sq: Vec<F>,
-    /// Flat MIC displacements `[dx0,dy0,dz0, …]` (empty when `!storage.disp`).
+    /// Flat MIC displacements `[dx0,dy0,dz0, …]` (empty when `!columns.disp`).
     pub(crate) disp_flat: Vec<F>,
     /// Query identity: self vs cross, plus the point-set sizes.
     pub(crate) mode: QueryMode,
 }
 
 impl Neighbors {
-    /// Materialize a pair stream into a table, keeping the columns `storage`
+    /// Materialize a pair stream into a table, keeping the columns `columns`
     /// asks for.
     ///
     /// This is the only public way to build a table from pairs. Each
-    /// [`NeighborPair`] arrives with both physical quantities; `storage` decides
+    /// [`NeighborPair`] arrives with both physical quantities; `columns` decides
     /// which of them survive into the table. A column the policy drops is simply
     /// not written — it is never zero-filled, and the corresponding accessor
     /// will report `None`. Rows keep the order in which the iterator yielded
@@ -801,10 +801,10 @@ impl Neighbors {
     /// checked.
     pub fn from_pairs(
         pairs: impl IntoIterator<Item = NeighborPair>,
-        storage: NeighborsStorage,
+        columns: NeighborColumns,
         mode: QueryMode,
     ) -> Self {
-        let mut out = Self::empty(mode, storage);
+        let mut out = Self::empty(mode, columns);
         let half_shell = matches!(mode, QueryMode::SelfQuery { .. });
         for p in pairs {
             debug_assert!(
@@ -819,9 +819,9 @@ impl Neighbors {
     }
 
     /// An empty table with the given query identity and column policy.
-    pub(crate) fn empty(mode: QueryMode, storage: NeighborsStorage) -> Self {
+    pub(crate) fn empty(mode: QueryMode, columns: NeighborColumns) -> Self {
         Self {
-            storage,
+            columns,
             idx_i: Vec::new(),
             idx_j: Vec::new(),
             dist_sq: Vec::new(),
@@ -841,19 +841,19 @@ impl Neighbors {
         self.mode = mode;
     }
 
-    /// Storage policy for optional columns — equivalently, which of
+    /// Column policy for optional columns — equivalently, which of
     /// [`dist_sq()`](Self::dist_sq()) and [`disp()`](Self::disp()) will return
     /// `Some` for this table.
     #[inline]
-    pub fn storage(&self) -> NeighborsStorage {
-        self.storage
+    pub fn columns(&self) -> NeighborColumns {
+        self.columns
     }
 
     /// Push a neighbor pair into the table.
     ///
     /// `d2` is the squared minimum-image distance (Å²) and `dr` the
     /// minimum-image displacement `r_j - r_i` (Å); each is retained only when
-    /// the corresponding [`NeighborsStorage`] flag is set, and silently dropped
+    /// the corresponding [`NeighborColumns`] flag is set, and silently dropped
     /// otherwise. Callers are responsible for the mode's ordering contract —
     /// this is the crate-internal fast path that engines use to write straight
     /// into the table, so unlike `from_pairs` it does not check `i < j`.
@@ -861,10 +861,10 @@ impl Neighbors {
     pub(crate) fn push(&mut self, i: u32, j: u32, d2: F, dr: [F; 3]) {
         self.idx_i.push(i);
         self.idx_j.push(j);
-        if self.storage.dist_sq {
+        if self.columns.dist_sq {
             self.dist_sq.push(d2);
         }
-        if self.storage.disp {
+        if self.columns.disp {
             self.disp_flat.extend(dr);
         }
     }
@@ -883,22 +883,22 @@ impl Neighbors {
     /// — appending `idx_i` without appending `disp_flat` would leave a table
     /// whose distances belong to the wrong pairs, and nothing downstream could
     /// notice. Concatenating *all* the columns in one place, from tables that by
-    /// construction share a storage policy, is what keeps them aligned: a column
+    /// construction share a column policy, is what keeps them aligned: a column
     /// the policy drops is empty in both tables, so appending it is a no-op, and
     /// a column the policy keeps is appended in both. `disp_flat` holds three
     /// values per pair rather than one, and is appended whole for the same
     /// reason.
     ///
     /// # Panics
-    /// In debug builds, panics if the two tables disagree about their storage
+    /// In debug builds, panics if the two tables disagree about their columns
     /// policy — that is exactly the case where the concatenation would misalign
     /// the columns — or if the merged columns do not come out to one entry per
     /// pair.
     #[cfg(feature = "rayon")]
     pub(crate) fn append(&mut self, other: &mut Self) {
         debug_assert_eq!(
-            self.storage, other.storage,
-            "merging neighbor tables with different storage policies would \
+            self.columns, other.columns,
+            "merging neighbor tables with different column policies would \
              misalign the columns"
         );
         if self.idx_i.is_empty() {
@@ -917,11 +917,11 @@ impl Neighbors {
         }
         debug_assert_eq!(self.idx_i.len(), self.idx_j.len(), "index columns");
         debug_assert!(
-            !self.storage.dist_sq || self.dist_sq.len() == self.idx_i.len(),
+            !self.columns.dist_sq || self.dist_sq.len() == self.idx_i.len(),
             "dist_sq column lost alignment with the index columns"
         );
         debug_assert!(
-            !self.storage.disp || self.disp_flat.len() == 3 * self.idx_i.len(),
+            !self.columns.disp || self.disp_flat.len() == 3 * self.idx_i.len(),
             "disp column lost alignment with the index columns"
         );
     }
@@ -940,7 +940,7 @@ impl Neighbors {
     /// A column this table did not store arrives as `None` — never as a
     /// fabricated `0.0` or `[0, 0, 0]`, both of which are legal physical values
     /// (two coincident particles) and would therefore be indistinguishable from
-    /// real data. The `Option`s are decided once by the table's storage policy,
+    /// real data. The `Option`s are decided once by the table's column policy,
     /// not per pair: either every call sees `Some` for a given argument or every
     /// call sees `None`. Only a [`NeighborPair`] stream straight out of a search
     /// is guaranteed to carry every physical quantity.
@@ -953,8 +953,8 @@ impl Neighbors {
         C: FnMut(u32, u32, Option<F>, Option<[F; 3]>),
     {
         for k in 0..self.n_pairs() {
-            let d2 = self.storage.dist_sq.then(|| self.dist_sq[k]);
-            let dr = self.storage.disp.then(|| {
+            let d2 = self.columns.dist_sq.then(|| self.dist_sq[k]);
+            let dr = self.columns.disp.then(|| {
                 let b = k * 3;
                 [
                     self.disp_flat[b],
@@ -966,7 +966,7 @@ impl Neighbors {
         }
     }
 
-    /// Re-materialize this table under a leaner storage policy.
+    /// Re-materialize this table under a leaner column policy.
     ///
     /// **Downgrade only.** Columns kept by both the old and the new policy are
     /// copied verbatim; columns the new policy drops are discarded. Indices and
@@ -980,36 +980,36 @@ impl Neighbors {
     /// from. Rerun the search with that column enabled instead.
     ///
     /// # Panics
-    /// Panics when `storage` asks for a column this table never stored, with a
+    /// Panics when `columns` asks for a column this table never stored, with a
     /// message naming the column. It never invents values, and in particular
     /// never fills the new column with zeros — a zero displacement or distance
     /// is physically meaningful (coincident particles) and would be
     /// indistinguishable from real data downstream.
-    pub fn repack(&self, storage: NeighborsStorage) -> Self {
-        if storage.dist_sq && !self.storage.dist_sq {
+    pub fn repack(&self, columns: NeighborColumns) -> Self {
+        if columns.dist_sq && !self.columns.dist_sq {
             panic!(
                 "repack cannot add a dist_sq column: physical quantities cannot be \
                  fabricated from an indices-only / lean list — rerun the neighbor \
-                 search with NeighborsStorage::dist_sq set"
+                 search with NeighborColumns::dist_sq set"
             );
         }
-        if storage.disp && !self.storage.disp {
+        if columns.disp && !self.columns.disp {
             panic!(
                 "repack cannot add a disp column: physical quantities cannot be \
                  fabricated from an indices-only / lean list — rerun the neighbor \
-                 search with NeighborsStorage::disp set"
+                 search with NeighborColumns::disp set"
             );
         }
         Self {
-            storage,
+            columns,
             idx_i: self.idx_i.clone(),
             idx_j: self.idx_j.clone(),
-            dist_sq: if storage.dist_sq {
+            dist_sq: if columns.dist_sq {
                 self.dist_sq.clone()
             } else {
                 Vec::new()
             },
-            disp_flat: if storage.disp {
+            disp_flat: if columns.disp {
                 self.disp_flat.clone()
             } else {
                 Vec::new()
@@ -1074,7 +1074,7 @@ impl Neighbors {
 
     /// Squared minimum-image distances (Å²), one per pair.
     ///
-    /// `None` when [`NeighborsStorage::dist_sq`] was not set for this table —
+    /// `None` when [`NeighborColumns::dist_sq`] was not set for this table —
     /// which is different from an empty slice, and must not be treated as
     /// "distances are zero". When `Some`, the slice has exactly
     /// [`n_pairs()`](Self::n_pairs) elements, aligned row-for-row with the index
@@ -1085,7 +1085,7 @@ impl Neighbors {
     /// hid a per-pair `sqrt` would make that cost invisible.
     #[inline]
     pub fn dist_sq(&self) -> Option<&[F]> {
-        self.storage.dist_sq.then_some(self.dist_sq.as_slice())
+        self.columns.dist_sq.then_some(self.dist_sq.as_slice())
     }
 
     /// Minimum-image displacements `r_j - r_i` (Å) as an `n_pairs × 3` view.
@@ -1095,12 +1095,12 @@ impl Neighbors {
     /// wants a direction divides the row by that length. When `Some`, the view
     /// has exactly [`n_pairs()`](Self::n_pairs) rows.
     ///
-    /// `None` when [`NeighborsStorage::disp`] was not set for this table. That
+    /// `None` when [`NeighborColumns::disp`] was not set for this table. That
     /// is not the same as a zero vector, which would mean two coincident
     /// particles.
     #[inline]
     pub fn disp(&self) -> Option<Fnx3View<'_>> {
-        if !self.storage.disp {
+        if !self.columns.disp {
             return None;
         }
         Some(
@@ -1219,7 +1219,7 @@ mod from_pairs_tests {
     fn from_pairs_full_roundtrip() {
         let nb = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 4 },
         );
 
@@ -1253,7 +1253,7 @@ mod from_pairs_tests {
     fn from_pairs_indices_only_gives_none_columns() {
         let nb = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::INDICES_ONLY,
+            NeighborColumns::INDICES_ONLY,
             QueryMode::SelfQuery { n_points: 4 },
         );
 
@@ -1273,7 +1273,7 @@ mod from_pairs_tests {
     fn from_pairs_dist_sq_only() {
         let nb = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::DIST_SQ,
+            NeighborColumns::DIST_SQ,
             QueryMode::SelfQuery { n_points: 4 },
         );
 
@@ -1291,7 +1291,7 @@ mod from_pairs_tests {
     fn from_pairs_disp_only() {
         let nb = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::DISP,
+            NeighborColumns::DISP,
             QueryMode::SelfQuery { n_points: 4 },
         );
 
@@ -1329,7 +1329,7 @@ mod from_pairs_tests {
 
         let mut bf = NeighborList::brute_force(1.5);
         bf.build(pts.view(), &bx);
-        let nb: Neighbors = bf.neighbors(NeighborsStorage::FULL);
+        let nb: Neighbors = bf.neighbors(NeighborColumns::FULL);
 
         assert_eq!(nb.n_pairs(), 3);
         assert!(matches!(nb.mode(), QueryMode::SelfQuery { .. }));
@@ -1363,10 +1363,10 @@ mod from_pairs_tests {
     fn repack_downgrade_drops_columns() {
         let full = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 4 },
         );
-        let lean = full.repack(NeighborsStorage::DIST_SQ);
+        let lean = full.repack(NeighborColumns::DIST_SQ);
 
         assert_eq!(lean.n_pairs(), 2);
         assert_eq!(lean.query_point_indices(), &[0u32, 1u32][..]);
@@ -1389,10 +1389,10 @@ mod from_pairs_tests {
     fn repack_upgrade_panics() {
         let lean = Neighbors::from_pairs(
             two_pairs(),
-            NeighborsStorage::INDICES_ONLY,
+            NeighborColumns::INDICES_ONLY,
             QueryMode::SelfQuery { n_points: 4 },
         );
-        let _upgraded = lean.repack(NeighborsStorage::FULL);
+        let _upgraded = lean.repack(NeighborColumns::FULL);
     }
 
     /// Spec §from_pairs trust boundary: `SelfQuery` with `i > j` is a
@@ -1409,7 +1409,7 @@ mod from_pairs_tests {
         }];
         let _nb = Neighbors::from_pairs(
             bad,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 4 },
         );
     }
@@ -1420,7 +1420,7 @@ mod from_pairs_tests {
 // ---------------------------------------------------------------------------
 
 /// The `NeighborList` engine: index-only `build`/`update`, a streaming
-/// `for_each_pair`, and `neighbors(storage)` as the materializing sugar.
+/// `for_each_pair`, and `neighbors(columns)` as the materializing sugar.
 ///
 /// Every fixture here is hard-coded — lattices are generated by an explicit
 /// deterministic loop, never by a random number generator — so a failure names
@@ -1609,10 +1609,10 @@ mod engine_tests {
         let streamed = collect_sorted(&nl);
         let manual = Neighbors::from_pairs(
             streamed.iter().copied(),
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::SelfQuery { n_points: 4 },
         );
-        let engine = nl.neighbors(NeighborsStorage::FULL);
+        let engine = nl.neighbors(NeighborColumns::FULL);
 
         assert_eq!(
             engine.mode(),
@@ -1726,7 +1726,7 @@ mod engine_tests {
         // A column-fed build is still a self-query over every point handed in:
         // the SoA path must not lose the point count the table is tagged with.
         assert_eq!(
-            soa.neighbors(NeighborsStorage::FULL).mode(),
+            soa.neighbors(NeighborColumns::FULL).mode(),
             QueryMode::SelfQuery { n_points: 4 },
             "a table built from columns must be tagged as a self-query over all \
              four points"
@@ -1786,7 +1786,7 @@ mod engine_tests {
     }
 
     /// The **parallel** materialization of the cell-list backend reproduces the
-    /// O(N²) reference, pair for pair, and honors the storage policy through the
+    /// O(N²) reference, pair for pair, and honors the column policy through the
     /// merge.
     ///
     /// [`NeighborList::neighbors`] folds over occupied cells with rayon above 64
@@ -1863,11 +1863,11 @@ mod engine_tests {
 
         let mut nl = NeighborList::new(LATTICE_512_CUTOFF);
         nl.build(pts.view(), &bx);
-        let full = nl.neighbors(NeighborsStorage::FULL);
+        let full = nl.neighbors(NeighborColumns::FULL);
 
         let mut bf = NeighborList::brute_force(LATTICE_512_CUTOFF);
         bf.build(pts.view(), &bx);
-        let oracle = bf.neighbors(NeighborsStorage::FULL);
+        let oracle = bf.neighbors(NeighborColumns::FULL);
 
         assert_eq!(
             full.mode(),
@@ -1931,10 +1931,10 @@ mod engine_tests {
             );
         }
 
-        // The storage policy survives the parallel merge: a column the caller
+        // The column policy survives the parallel merge: a column the caller
         // did not ask for is absent, never a fabricated zero, and the pair set
         // is unchanged.
-        let dist_only = nl.neighbors(NeighborsStorage::DIST_SQ);
+        let dist_only = nl.neighbors(NeighborColumns::DIST_SQ);
         assert_eq!(dist_only.n_pairs(), LATTICE_512_PAIRS);
         assert_eq!(
             dist_only
@@ -1951,10 +1951,10 @@ mod engine_tests {
         assert_eq!(
             sorted_index_pairs(&dist_only),
             sorted_index_pairs(&full),
-            "storage policy selects columns, not pairs"
+            "column policy selects columns, not pairs"
         );
 
-        let indices_only = nl.neighbors(NeighborsStorage::INDICES_ONLY);
+        let indices_only = nl.neighbors(NeighborColumns::INDICES_ONLY);
         assert_eq!(indices_only.n_pairs(), LATTICE_512_PAIRS);
         assert!(
             indices_only.dist_sq().is_none(),
@@ -1967,7 +1967,7 @@ mod engine_tests {
         assert_eq!(
             sorted_index_pairs(&indices_only),
             sorted_index_pairs(&full),
-            "storage policy selects columns, not pairs"
+            "column policy selects columns, not pairs"
         );
     }
 
@@ -2024,7 +2024,7 @@ mod engine_tests {
         nl.update(pts.view());
     }
 
-    /// ac-002 / ac-004: the storage policy changes the columns, never the pairs.
+    /// ac-002 / ac-004: the column policy changes the columns, never the pairs.
     #[test]
     fn engine_neighbors_lean_storage() {
         let bx = small_box();
@@ -2033,7 +2033,7 @@ mod engine_tests {
         let mut nl = NeighborList::new(1.5);
         nl.build(pts.view(), &bx);
 
-        let lean = nl.neighbors(NeighborsStorage::INDICES_ONLY);
+        let lean = nl.neighbors(NeighborColumns::INDICES_ONLY);
         assert!(
             lean.dist_sq().is_none(),
             "INDICES_ONLY must not fabricate a dist_sq column"
@@ -2043,11 +2043,11 @@ mod engine_tests {
             "INDICES_ONLY must not fabricate a disp column"
         );
 
-        let full = nl.neighbors(NeighborsStorage::FULL);
+        let full = nl.neighbors(NeighborColumns::FULL);
         assert_eq!(
             lean.n_pairs(),
             full.n_pairs(),
-            "storage policy selects columns, not pairs"
+            "column policy selects columns, not pairs"
         );
         assert_eq!(lean.n_pairs(), SMALL_GOLDEN.len());
         assert_eq!(lean.query_point_indices(), full.query_point_indices());

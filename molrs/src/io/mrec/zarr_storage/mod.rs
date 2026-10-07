@@ -57,7 +57,7 @@
 //! **byte identical**, cost a **single** store write of 18 180 B against a
 //! 146 399 B shard (the codec read back only the 11 486 B straddling chunk),
 //! and all 14 800 rows came back bit exact. One caveat for the writer: the
-//! superseded copy of the rewritten chunk stays in the file as dead bytes
+//! overwritten copy of the rewritten chunk stays in the file as dead bytes
 //! (shard 1 grew 146 399 → 164 447 B), so repeatedly extending one tail chunk
 //! trades file size for latency. A pure append leaves no dead bytes — Q6
 //! measures growth exactly equal to the new chunk.
@@ -125,9 +125,8 @@ pub use sequence::{Compression, MrecReader, MrecWriter, SequenceSchema, dtype_fr
 /// Every test writes a real `FilesystemStore` under a `tempfile::tempdir`;
 /// nothing here is a mock. Q1–Q4 and Q6 are **pins**: they must stay green,
 /// because a `zarrs` upgrade that breaks any of them silently turns each
-/// `flush()` into an O(shard) rewrite. Q5 and Q7 were **experiments** whose
-/// outcomes are recorded in the module doc above; they now assert the observed
-/// invariant so a regression is loud.
+/// `flush()` into an O(shard) rewrite. Q5 and Q7 assert the invariants
+/// recorded in the module doc above, so a regression is loud.
 ///
 /// One shared shape: an `[nrows, 3]` f64 array whose chunk (= shard) is
 /// `rows_per_chunk * chunks_per_shard` rows, with a `sharding_indexed` codec

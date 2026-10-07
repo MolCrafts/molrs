@@ -20,8 +20,10 @@
 use super::OptimizationReport;
 
 /// Default number of correction pairs retained by the L-BFGS history.
-/// This is the value the ETKDG cleanup historically used; preserving it keeps
-/// conformer generation bit-for-bit unchanged after the extraction.
+///
+/// Nocedal & Wright (§7.2) report that `m` between 3 and 20 suffices in
+/// practice; 8 sits in that range and is what the ETKDG stages are pinned at,
+/// so the conformer reference numbers depend on it.
 pub(crate) const HISTORY: usize = 8;
 /// Armijo sufficient-decrease parameter (`c1`).
 const ARMIJO_C1: f64 = 1e-4;
@@ -272,9 +274,8 @@ where
 /// RMS-gradient-tolerance L-BFGS entry point for the ETKDG stages: both
 /// distance-geometry minimizations and the MMFF cleanup.
 ///
-/// Preserves the historical signature and convergence behaviour (RMS gradient,
-/// no trust region, history size `HISTORY`) so conformer generation is
-/// unchanged. `coords` is updated in place.
+/// Converges on the RMS gradient, with no trust region and history size
+/// `HISTORY`. `coords` is updated in place.
 #[cfg_attr(not(feature = "conformer"), allow(dead_code))]
 pub(crate) fn minimize_lbfgs_rms<F>(
     coords: &mut [f64],

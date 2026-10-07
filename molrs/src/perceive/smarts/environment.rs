@@ -84,7 +84,7 @@ fn center_query(
     mol: &Atomistic,
     id: NodeId,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingInfo,
+    rings: &crate::perceive::RingSet,
 ) -> Result<AtomQuery, SmilesError> {
     let mut prims: Vec<AtomQuery> = Vec::new();
 
@@ -255,7 +255,7 @@ fn build_chain_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingInfo,
+    rings: &crate::perceive::RingSet,
 ) -> Result<Chain, SmilesError> {
     fn rec(
         mol: &Atomistic,
@@ -263,7 +263,7 @@ fn build_chain_env(
         parent: Option<NodeId>,
         depth: &HashMap<NodeId, u32>,
         opts: &EnvironmentOptions,
-        rings: &crate::perceive::RingInfo,
+        rings: &crate::perceive::RingSet,
         is_center: bool,
     ) -> Result<Chain, SmilesError> {
         let q = if is_center {
@@ -311,7 +311,7 @@ fn build_recursive_env(
     center: NodeId,
     depth: &HashMap<NodeId, u32>,
     opts: &EnvironmentOptions,
-    rings: &crate::perceive::RingInfo,
+    rings: &crate::perceive::RingSet,
 ) -> Result<Chain, SmilesError> {
     // Centre with LowAnd of primitives + Recursive fragments for each neighbour path
     let mut prims: Vec<AtomQuery> = match center_query(mol, center, opts, rings)? {

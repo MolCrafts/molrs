@@ -929,13 +929,13 @@ impl<R: BufRead + Seek> TrajectoryReader for XtcReader<R> {
         self.ensure_index()
     }
 
-    fn read_step(&mut self, step: usize) -> Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
         self.ensure_index()?;
-        let off = match self.offsets.get().and_then(|o| o.get(step).copied()) {
+        let off = match self.offsets.get().and_then(|o| o.get(index).copied()) {
             Some(o) => o,
             None => return Ok(None),
         };
-        self.cursor = step + 1;
+        self.cursor = index + 1;
         parse_frame_at(&mut self.reader, off).map(Some)
     }
 

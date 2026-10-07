@@ -104,7 +104,8 @@ that format's reader (or stream) and writer.
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
   `parseRangeInInput` per frame)
 - `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader` — whole-content
-  readers, the molrs reader classes of those formats
+  readers, the molrs reader classes of those formats; `readFrame(index)` reads
+  frame `index` (0-based), as every reader in every binding does
 - `readStlBytes(bytes)` → `TriMesh`
 - `readLammpsLogStr(text, style?)` → the `LammpsLog` record (runs, thermo
   tables, timings — Rust and Python's field names); `isLammpsLog(text)` tells a
@@ -144,7 +145,6 @@ const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come
 - **UFF** — full RDKit default table (entire periodic table + oxidation states)
 - **MMFF94 / MMFF94s** — Merck force fields
 - **no GFN-FF**
-- **no** free-function `intramolecularPairs` / `insertIntramolecularPairs`
 - `typifier.forcefield()` → the `ForceField` typing assigned;
   `new PotentialCompiler(ff).compile(typedFrame)` → `Potentials` — the native
   composition, no typifier-to-potentials shortcut
@@ -186,7 +186,7 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
   Rust name
 - `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`,
   `pairSurvivalTcf`, … — what molrs has as a free function is a free function
-- `molrsComputeCatalog()` lists every analysis with its parameters and how to
+- `computeCatalog()` lists every analysis with its parameters and how to
   call it
 
 Neighbor searches support frames without a simulation box. RDF additionally
@@ -206,10 +206,10 @@ The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
 Records written by molrs in Python or Rust (see
 [Record files](https://docs.molcrafts.org/molrs/guides/records/)) read here
-from bytes. `readMrecFrame(source)` returns the `frame` section (or
-`undefined`) and `sectionNames(source)` lists the sections, where `source` is a
-`Map<path, Uint8Array>` of the record's files or the bytes of a packed
-`*.mrec.zip`. Every reader decodes `zstd` and `shuffle`, so columns written with
+from bytes. `readMrecFrameBytes(bytes)` returns the `frame` section (or
+`undefined`) of a packed `*.mrec.zip` and `sectionNamesBytes(bytes)` lists its
+sections; `readMrecFrameFiles(files)` and `sectionNamesFiles(files)` do the
+same for a `Map<path, Uint8Array>` of the record's files. Every reader decodes `zstd` and `shuffle`, so columns written with
 a declared precision read as they do natively.
 
 `MrecReader` opens a MolRec trajectory (Zarr V3) and decodes one frame

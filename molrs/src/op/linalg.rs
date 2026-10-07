@@ -79,7 +79,7 @@ pub fn inv3(m: &Mat3) -> Option<Mat3> {
 /// `tol = 1e-15·‖A‖_F`, used for the sweep stop, for
 /// skipping an already-small off-diagonal pair and for the equal-diagonal
 /// branch. (An absolute tolerance stops early on a small-scale matrix: at
-/// 1e-8 scale the former absolute 1e-14 returned a basis rotated by 0.93 rad.)
+/// 1e-8 scale an absolute 1e-14 returns a basis rotated by 0.93 rad.)
 pub fn eigh_sym_3x3(a: &Mat3) -> (Vec3, Mat3) {
     eigh_sym_fixed(a)
 }
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn inv3_singularity_test_is_scale_invariant() {
-        // det(1e-4 I) = 1e-12, below the old absolute 1e-8 threshold, but the
+        // det(1e-4 I) = 1e-12, below an absolute 1e-8 threshold, but the
         // matrix is perfectly conditioned: |det| / ‖A‖_F³ = 1 / 3^{3/2}.
         let small: Mat3 = [[1e-4, 0.0, 0.0], [0.0, 1e-4, 0.0], [0.0, 0.0, 1e-4]];
         let inv = inv3(&small).expect("1e-4·I is invertible");
@@ -386,8 +386,8 @@ mod tests {
     #[test]
     fn eigh_sym_3x3_is_scale_invariant() {
         // Distinct eigenvalues, so each eigenvector is unique up to sign.
-        // With the old absolute 1e-14 off-diagonal tolerance the 1e-8-scaled
-        // copy stopped early and returned a rotated basis.
+        // With an absolute 1e-14 off-diagonal tolerance the 1e-8-scaled copy
+        // would stop early and return a rotated basis.
         let a: Mat3 = [[4.0, 1.0, 2.0], [1.0, 3.0, -1.0], [2.0, -1.0, 5.0]];
         let (vals, vecs) = eigh_sym_3x3(&a);
         let (vals_small, vecs_small) = eigh_sym_3x3(&scaled(&a, 1e-8));

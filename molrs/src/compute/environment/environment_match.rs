@@ -110,7 +110,7 @@ impl EnvironmentMatch {
 /// particle's list bonds land in ascending pair-index order — the same
 /// order a per-particle scan would produce — so downstream fingerprints,
 /// magnitude sorting, and registration RMSD are unchanged. Pair indices
-/// outside `0..n` are ignored, matching the old per-particle scan.
+/// outside `0..n` are ignored.
 ///
 /// A table without the `disp` column carries no bond vectors at all, so it is
 /// rejected as [`ComputeError::BadShape`] — the caller's neighbor list is an
@@ -129,8 +129,7 @@ fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Result<Vec<Vec<[F; 3]>
         }
         if symmetric {
             let j = j_idx[k] as usize;
-            // Skip self-pairs so the reversed bond is not double-counted
-            // (matches the old `else if` that fired only when `i != j`).
+            // Skip self-pairs so the reversed bond is not double-counted.
             if j != i && j < n {
                 bonds[j].push([-v[0], -v[1], -v[2]]);
             }

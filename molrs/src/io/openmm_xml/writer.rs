@@ -10,7 +10,9 @@ use crate::ff::forcefield::{ForceField, Style, StyleDefs};
 use crate::ff::ir::CMAP_GRID;
 use crate::ff::ir::CombiningRule;
 use crate::ff::ir::Params;
-use crate::ff::ir::torsion::{Charmm, Class2, Periodic, RyckaertBellemans, SignedCosine};
+use crate::ff::ir::torsion::{
+    CharmmForm, Class2Form, PeriodicForm, RyckaertBellemansForm, SignedCosineForm,
+};
 use crate::ff::ir::{OneFour, has_own_one_four};
 use crate::ff::style_registry::torsion_series;
 use crate::ff::style_registry::{Registry, RegistryRef};
@@ -491,7 +493,7 @@ impl OpenmmXmlWriter {
         let refused = |e: crate::ff::ir::torsion::TorsionRefusal| format!("{what}: {e}");
         let terms: Option<Vec<(f64, f64, f64)>> = match style.name() {
             "periodic" => Some(
-                Periodic::from_params(p)
+                PeriodicForm::from_params(p)
                     .map_err(refused)?
                     .terms
                     .iter()
@@ -499,7 +501,7 @@ impl OpenmmXmlWriter {
                     .collect(),
             ),
             "charmm" => {
-                let f = Charmm::from_params(p).map_err(refused)?;
+                let f = CharmmForm::from_params(p).map_err(refused)?;
                 if f.w != 0.0 {
                     return Err(
                         format!("{what}: the 1-4 weight w = {} has no OpenMM form", f.w).into(),
@@ -509,7 +511,7 @@ impl OpenmmXmlWriter {
             }
             // k[1 + d cos nφ] = k[1 + cos(nφ − γ)], γ = 0° (d = 1) or 180° (d = −1).
             "harmonic" => {
-                let f = SignedCosine::from_params("dihedral harmonic", p).map_err(refused)?;
+                let f = SignedCosineForm::from_params("dihedral harmonic", p).map_err(refused)?;
                 let phase = match f.sign {
                     1.0 => 0.0,
                     -1.0 => 180.0,
@@ -519,7 +521,7 @@ impl OpenmmXmlWriter {
             }
             // k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)].
             "class2" => {
-                let f = Class2::from_params(p);
+                let f = Class2Form::from_params(p);
                 Some(
                     f.k.iter()
                         .zip(&f.phi)
@@ -548,7 +550,7 @@ impl OpenmmXmlWriter {
         // Every other torsion form, through its form codec: RB holds
         // Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°), constant included.
         let series = torsion_series("dihedral", style.name(), style.params(), p)?;
-        let rb = RyckaertBellemans::from_series(&series)
+        let rb = RyckaertBellemansForm::from_series(&series)
             .map_err(|e| format!("{what}: no RBTorsionForce form: {e}"))?;
         let mut body = String::new();
         for (n, c) in rb.c.iter().enumerate() {

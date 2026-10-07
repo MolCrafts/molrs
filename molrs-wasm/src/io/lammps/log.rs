@@ -14,8 +14,6 @@
 //! it knows how many points the chart can show, and slicing an array in JS
 //! costs nothing next to re-parsing.
 
-use molrs::io::lammps::is_lammps_log as is_lammps_log_rs;
-use molrs::io::read_lammps_log_str;
 use wasm_bindgen::prelude::*;
 
 /// Parse a LAMMPS log's text into molrs's `LammpsLog` record.
@@ -39,8 +37,8 @@ use wasm_bindgen::prelude::*;
 /// const series = thermo.rows.map((row) => row[temp]);
 /// ```
 #[wasm_bindgen(js_name = readLammpsLogStr)]
-pub fn read_lammps_log_str_export(text: &str, style: Option<String>) -> Result<JsValue, JsValue> {
-    let log = read_lammps_log_str(text, "", style.as_deref().unwrap_or("default"));
+pub fn read_lammps_log_str(text: &str, style: Option<String>) -> Result<JsValue, JsValue> {
+    let log = molrs::io::read_lammps_log_str(text, "", style.as_deref().unwrap_or("default"));
     serde_wasm_bindgen::to_value(&log)
         .map_err(|e| JsValue::from_str(&format!("LAMMPS log serialization error: {e}")))
 }
@@ -52,7 +50,7 @@ pub fn read_lammps_log_str_export(text: &str, style: Option<String>) -> Result<J
 /// nothing to read. Cheap enough to run on a file's first bytes.
 #[wasm_bindgen(js_name = isLammpsLog)]
 pub fn is_lammps_log(text: &str) -> bool {
-    is_lammps_log_rs(text)
+    molrs::io::lammps::is_lammps_log(text)
 }
 
 #[cfg(all(test, target_arch = "wasm32"))]
@@ -79,7 +77,7 @@ Loop time of 1.0 on 1 procs for 1000 steps with 10 atoms
 Total wall time: 0:00:02
 ";
         assert!(is_lammps_log(text));
-        let log = read_lammps_log_str_export(text, None).unwrap();
+        let log = read_lammps_log_str(text, None).unwrap();
         let runs = Array::from(&get(&log, "runs"));
         assert_eq!(runs.length(), 2);
         assert!(get(&runs.get(0), "thermo").is_undefined());
@@ -92,7 +90,7 @@ Total wall time: 0:00:02
         assert_eq!(rows.length(), 2);
         assert_eq!(Array::from(&rows.get(1)).get(1).as_f64(), Some(301.25));
         assert!(!is_lammps_log("LAMMPS"));
-        let empty = read_lammps_log_str_export("LAMMPS", None).unwrap();
+        let empty = read_lammps_log_str("LAMMPS", None).unwrap();
         assert_eq!(Array::from(&get(&empty, "runs")).length(), 0);
     }
 }

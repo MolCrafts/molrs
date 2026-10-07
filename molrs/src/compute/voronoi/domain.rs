@@ -64,8 +64,7 @@ impl VoronoiDomainAnalysis {
         // 0-based component id (isolated cells get their own), so a flat `Vec`
         // keyed by that id tallies domain sizes without hashing. Connected
         // components are a graph invariant, so the partition — and thus the size
-        // multiset — is identical to the old union-find roots; only the label
-        // integers differ.
+        // multiset — is the same under any labelling.
         let mut domain_of = vec![0usize; n];
         let mut size_of = vec![0usize; n];
         for (i, d) in domain_of.iter_mut().enumerate() {

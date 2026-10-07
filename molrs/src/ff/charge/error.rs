@@ -10,8 +10,8 @@ use std::fmt;
 /// Typed, not a `String`: the C++ and Python bridges have to *discriminate*. A
 /// molecule the parameter set cannot correct (boron: `BCCPARM.DAT` has no row) is
 /// a permanent, structural refusal the caller must surface to a user, while a
-/// charge-count mismatch is the caller's own marshalling bug. Both used to arrive
-/// as prose.
+/// charge-count mismatch is the caller's own marshalling bug. Prose could not
+/// tell them apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChargeError {
     /// The model needs QM base charges and was handed `None`.

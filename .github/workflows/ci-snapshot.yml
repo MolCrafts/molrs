@@ -150,7 +150,7 @@ jobs:
             "${args[@]}" \
             ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && '--track' || '' }}
 
-      # molrs.io's *.mrec doors (read_mrec, write_mrec, read_mrec_frame, …) and
+      # molrs.io's *.mrec doors (read_mrec_frame, write_mrec_frame, …) and
       # molrs.io.mrec's store classes are the Rust core's. Building the extension
       # is how the suite reaches them. The Python test suite is not run.
       # A red suite fails this job; its record is still written and published.

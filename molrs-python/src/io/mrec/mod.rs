@@ -341,7 +341,7 @@ pub fn read_mrec_forcefield(path: PathBuf) -> PyResult<Option<PyForceFieldSectio
 /// -------
 /// frozenset[str]
 ///     The section names, as a ``frozenset``. Callers ask which sections are
-///     present instead of probing ``read_mrec`` / ``read_mrec_system`` and
+///     present instead of probing ``read_mrec_frame`` / ``read_mrec_system`` and
 ///     catching a missing-section error.
 ///
 /// Raises

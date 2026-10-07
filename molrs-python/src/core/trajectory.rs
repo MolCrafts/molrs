@@ -1,9 +1,11 @@
 // PyO3 bindings for `Trajectory` (frame sequence) and observable records.
-// Hosts `molrs.core.Trajectory`, `molrs.core.ScalarObservable`, `molrs.core.VectorObservable`.
+// Hosts `molrs.core.Trajectory` and `molrs.core.ObservableRecord`.
 #![allow(clippy::too_many_arguments)]
 
 use molrs::core::Column;
-use molrs::core::{ObservableRecord, ObservableValues, Trajectory as CoreTrajectory};
+use molrs::core::{
+    ObservableKind, ObservableRecord, ObservableValues, Trajectory as CoreTrajectory,
+};
 use molrs::op::{F, I, Idx};
 use ndarray::{ArrayD, IxDyn};
 use numpy::{IntoPyArray, PyArrayDyn, PyReadonlyArray1, PyReadonlyArrayDyn};
@@ -42,25 +44,28 @@ pub struct PyTrajectory {
     pub(crate) inner: CoreTrajectory,
 }
 
+/// A named observable and its metadata: ``molrs::core::ObservableRecord``.
+///
+/// ``kind`` is the contract spelling, ``"scalar"`` or ``"vector"``; another
+/// spelling is carried verbatim, as Rust's ``ObservableKind::Other``.
+/// :meth:`scalar` and :meth:`vector` build the two contract kinds.
+///
+/// Parameters
+/// ----------
+/// name
+///     The observable's name.
+/// values
+///     A numpy array, a scalar, or a ``list[str]``.
+/// kind
+///     The contract spelling of the kind.
 #[pyclass(
     module = "molrs.core",
-    name = "ScalarObservable",
+    name = "ObservableRecord",
     from_py_object,
     subclass
 )]
 #[derive(Clone)]
-pub struct PyScalarObservable {
-    pub(crate) inner: ObservableRecord,
-}
-
-#[pyclass(
-    module = "molrs.core",
-    name = "VectorObservable",
-    from_py_object,
-    subclass
-)]
-#[derive(Clone)]
-pub struct PyVectorObservable {
+pub struct PyObservableRecord {
     pub(crate) inner: ObservableRecord,
 }
 
@@ -194,205 +199,13 @@ impl PyTrajectory {
 }
 
 #[pymethods]
-impl PyScalarObservable {
+impl PyObservableRecord {
     #[new]
-    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    #[pyo3(signature = (name, values, kind="scalar", description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
     fn new(
         name: &str,
         values: &Bound<'_, PyAny>,
-        description: &str,
-        unit: Option<String>,
-        axes: Option<Vec<String>>,
-        time_dependent: bool,
-        sampling: Option<String>,
-        domain: Option<String>,
-        target: Option<String>,
-    ) -> PyResult<Self> {
-        Self::build(
-            name,
-            values,
-            description,
-            unit,
-            axes,
-            time_dependent,
-            sampling,
-            domain,
-            target,
-        )
-    }
-
-    #[getter]
-    fn name(&self) -> String {
-        self.inner.name.clone()
-    }
-
-    #[getter]
-    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        observable_values_to_pyobject(py, &self.inner.values)
-    }
-
-    /// The contract spelling of the observable's kind.
-    #[getter]
-    fn kind(&self) -> &str {
-        self.inner.kind.as_str()
-    }
-
-    #[getter]
-    fn description(&self) -> String {
-        self.inner.description.clone()
-    }
-
-    #[getter]
-    fn unit(&self) -> Option<String> {
-        self.inner.unit.clone()
-    }
-
-    #[getter]
-    fn axes(&self) -> Vec<String> {
-        self.inner.axes.clone()
-    }
-
-    #[getter]
-    fn time_dependent(&self) -> bool {
-        self.inner.time_dependent
-    }
-
-    #[getter]
-    fn sampling(&self) -> Option<String> {
-        self.inner.sampling.clone()
-    }
-
-    #[getter]
-    fn domain(&self) -> Option<String> {
-        self.inner.domain.clone()
-    }
-
-    #[getter]
-    fn target(&self) -> Option<String> {
-        self.inner.target.clone()
-    }
-
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
-        let this = slf.borrow();
-        crate::pickle::reduce_via_type(
-            slf.as_any(),
-            (
-                this.name(),
-                this.values(slf.py())?,
-                this.description(),
-                this.unit(),
-                this.axes(),
-                this.time_dependent(),
-                this.sampling(),
-                this.domain(),
-                this.target(),
-            ),
-        )
-    }
-}
-
-#[pymethods]
-impl PyVectorObservable {
-    #[new]
-    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
-    fn new(
-        name: &str,
-        values: &Bound<'_, PyAny>,
-        description: &str,
-        unit: Option<String>,
-        axes: Option<Vec<String>>,
-        time_dependent: bool,
-        sampling: Option<String>,
-        domain: Option<String>,
-        target: Option<String>,
-    ) -> PyResult<Self> {
-        Self::build(
-            name,
-            values,
-            description,
-            unit,
-            axes,
-            time_dependent,
-            sampling,
-            domain,
-            target,
-        )
-    }
-
-    #[getter]
-    fn name(&self) -> String {
-        self.inner.name.clone()
-    }
-
-    #[getter]
-    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        observable_values_to_pyobject(py, &self.inner.values)
-    }
-
-    /// The contract spelling of the observable's kind.
-    #[getter]
-    fn kind(&self) -> &str {
-        self.inner.kind.as_str()
-    }
-
-    #[getter]
-    fn description(&self) -> String {
-        self.inner.description.clone()
-    }
-
-    #[getter]
-    fn unit(&self) -> Option<String> {
-        self.inner.unit.clone()
-    }
-
-    #[getter]
-    fn axes(&self) -> Vec<String> {
-        self.inner.axes.clone()
-    }
-
-    #[getter]
-    fn time_dependent(&self) -> bool {
-        self.inner.time_dependent
-    }
-
-    #[getter]
-    fn sampling(&self) -> Option<String> {
-        self.inner.sampling.clone()
-    }
-
-    #[getter]
-    fn domain(&self) -> Option<String> {
-        self.inner.domain.clone()
-    }
-
-    #[getter]
-    fn target(&self) -> Option<String> {
-        self.inner.target.clone()
-    }
-
-    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
-        let this = slf.borrow();
-        crate::pickle::reduce_via_type(
-            slf.as_any(),
-            (
-                this.name(),
-                this.values(slf.py())?,
-                this.description(),
-                this.unit(),
-                this.axes(),
-                this.time_dependent(),
-                this.sampling(),
-                this.domain(),
-                this.target(),
-            ),
-        )
-    }
-}
-
-impl PyScalarObservable {
-    pub(crate) fn build(
-        name: &str,
-        values: &Bound<'_, PyAny>,
+        kind: &str,
         description: &str,
         unit: Option<String>,
         axes: Option<Vec<String>>,
@@ -402,6 +215,7 @@ impl PyScalarObservable {
         target: Option<String>,
     ) -> PyResult<Self> {
         let mut inner = ObservableRecord::scalar(name, py_any_to_column(values)?);
+        inner.kind = ObservableKind::from(kind);
         set_observable_metadata(
             &mut inner,
             description,
@@ -414,10 +228,11 @@ impl PyScalarObservable {
         );
         Ok(Self { inner })
     }
-}
 
-impl PyVectorObservable {
-    pub(crate) fn build(
+    /// A ``"scalar"`` observable: one value per sample.
+    #[staticmethod]
+    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    fn scalar(
         name: &str,
         values: &Bound<'_, PyAny>,
         description: &str,
@@ -428,9 +243,10 @@ impl PyVectorObservable {
         domain: Option<String>,
         target: Option<String>,
     ) -> PyResult<Self> {
-        let mut inner = ObservableRecord::vector(name, py_any_to_column(values)?);
-        set_observable_metadata(
-            &mut inner,
+        Self::new(
+            name,
+            values,
+            "scalar",
             description,
             unit,
             axes,
@@ -438,8 +254,113 @@ impl PyVectorObservable {
             sampling,
             domain,
             target,
-        );
-        Ok(Self { inner })
+        )
+    }
+
+    /// A ``"vector"`` observable: an ordered tuple of components per sample.
+    #[staticmethod]
+    #[pyo3(signature = (name, values, description="", unit=None, axes=None, time_dependent=false, sampling=None, domain=None, target=None))]
+    fn vector(
+        name: &str,
+        values: &Bound<'_, PyAny>,
+        description: &str,
+        unit: Option<String>,
+        axes: Option<Vec<String>>,
+        time_dependent: bool,
+        sampling: Option<String>,
+        domain: Option<String>,
+        target: Option<String>,
+    ) -> PyResult<Self> {
+        Self::new(
+            name,
+            values,
+            "vector",
+            description,
+            unit,
+            axes,
+            time_dependent,
+            sampling,
+            domain,
+            target,
+        )
+    }
+
+    #[getter]
+    fn name(&self) -> String {
+        self.inner.name.clone()
+    }
+
+    #[getter]
+    fn values<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
+        observable_values_to_pyobject(py, &self.inner.values)
+    }
+
+    /// The contract spelling of the observable's kind.
+    #[getter]
+    fn kind(&self) -> &str {
+        self.inner.kind.as_str()
+    }
+
+    #[getter]
+    fn description(&self) -> String {
+        self.inner.description.clone()
+    }
+
+    #[getter]
+    fn unit(&self) -> Option<String> {
+        self.inner.unit.clone()
+    }
+
+    #[getter]
+    fn axes(&self) -> Vec<String> {
+        self.inner.axes.clone()
+    }
+
+    #[getter]
+    fn time_dependent(&self) -> bool {
+        self.inner.time_dependent
+    }
+
+    #[getter]
+    fn sampling(&self) -> Option<String> {
+        self.inner.sampling.clone()
+    }
+
+    #[getter]
+    fn domain(&self) -> Option<String> {
+        self.inner.domain.clone()
+    }
+
+    #[getter]
+    fn target(&self) -> Option<String> {
+        self.inner.target.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ObservableRecord(name={:?}, kind={:?})",
+            self.inner.name,
+            self.inner.kind.as_str()
+        )
+    }
+
+    fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, pyo3::types::PyTuple>> {
+        let this = slf.borrow();
+        crate::pickle::reduce_via_type(
+            slf.as_any(),
+            (
+                this.name(),
+                this.values(slf.py())?,
+                this.kind().to_string(),
+                this.description(),
+                this.unit(),
+                this.axes(),
+                this.time_dependent(),
+                this.sampling(),
+                this.domain(),
+                this.target(),
+            ),
+        )
     }
 }
 

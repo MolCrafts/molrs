@@ -83,8 +83,8 @@ impl HandleRegistry {
     /// Reset all state: every frame, box, force field and region is dropped
     /// and every interned key forgotten.
     pub fn clear(&mut self) {
-        // Destructured so a field added later cannot be forgotten here (a
-        // region used to survive `molrs_shutdown` this way).
+        // Destructured so a field added later cannot be forgotten here: a
+        // field missed by `clear` would survive `molrs_shutdown`.
         let Self {
             frames,
             interned_keys,

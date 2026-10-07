@@ -874,7 +874,7 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 /// Unified XYZ/ExtXYZ reader treating all files as trajectories
 ///
 /// Single-frame files are treated as 1-step trajectories. This reader
-/// implements lazy indexing: the first `read_step(0)` call reads immediately
+/// implements lazy indexing: the first `read_frame(0)` call reads immediately
 /// without scanning the file, while accessing later frames triggers index
 /// building for efficient random access.
 ///
@@ -891,12 +891,12 @@ fn meta_to_extxyz(value: &MetaValue) -> String {
 /// let mut reader = XyzReader::new(BufReader::new(file));
 ///
 /// // Read first frame (no indexing)
-/// if let Some(frame) = reader.read_step(0)? {
+/// if let Some(frame) = reader.read_frame(0)? {
 ///     println!("First frame loaded");
 /// }
 ///
 /// // Read frame 5 (triggers indexing)
-/// if let Some(frame) = reader.read_step(5)? {
+/// if let Some(frame) = reader.read_frame(5)? {
 ///     println!("Frame 5 loaded");
 /// }
 ///
@@ -954,8 +954,8 @@ impl<R: BufRead + Seek> XyzReader<R> {
             // Locate the next atom-count line. Blank lines between frames
             // (and trailing blanks at EOF) are skipped — same rule as
             // `read_frame_from` and `XyzIndexBuilder` in the
-            // AwaitingNatoms state. Recording a frame only after a valid
-            // count avoids the old "invalid atom count: " crash on `\n`.
+            // AwaitingNatoms state. A frame is recorded only after a valid
+            // count, so a lone `\n` is never read as an atom count.
             let n = loop {
                 let frame_start = current_pos;
                 line.clear();
@@ -1053,9 +1053,9 @@ impl<R: BufRead + Seek> TrajectoryReader for XyzReader<R> {
         self.build_index()
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
         // Fast path for first frame: read immediately without indexing
-        if step == 0
+        if index == 0
             && self.index.get().is_none()
             && let Ok(start_pos) = self.reader.stream_position()
         {
@@ -1068,12 +1068,12 @@ impl<R: BufRead + Seek> TrajectoryReader for XyzReader<R> {
             self.build_index()?;
         }
 
-        let index = self.index.get().unwrap();
-        if step >= index.len() {
+        let offsets = self.index.get().unwrap();
+        if index >= offsets.len() {
             return Ok(None);
         }
 
-        let offset = index.get(step).unwrap();
+        let offset = offsets.get(index).unwrap();
         self.read_at_offset(offset)
     }
 
@@ -1103,7 +1103,7 @@ pub fn read_xyz<P: AsRef<std::path::Path>>(path: P) -> std::io::Result<Frame> {
     let reader = open_seekable(path)?;
     let mut xyz_reader = XyzReader::new(reader);
     xyz_reader
-        .read_step(0)?
+        .read_frame(0)?
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty file"))
 }
 
@@ -1156,7 +1156,7 @@ pub fn write_xyz_trajectory<P: AsRef<std::path::Path>, FA: FrameAccess>(
 /// memory.
 pub fn read_xyz_str(text: &str) -> std::io::Result<Frame> {
     XyzReader::new(std::io::Cursor::new(text.as_bytes()))
-        .read_step(0)?
+        .read_frame(0)?
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty XYZ text"))
 }
 
@@ -1808,7 +1808,7 @@ mod tests {
     }
 
     /// `XyzReader::build_index` (used by `len()` / random-access
-    /// `read_step`) tolerates blank lines between frames and trailing
+    /// `read_frame`) tolerates blank lines between frames and trailing
     /// blanks — the same AwaitingNatoms rule as the streaming index — rather
     /// than reporting `XYZ len error: invalid atom count:`.
     #[test]
@@ -1831,8 +1831,8 @@ H 1 0 1
         let mut reader = XyzReader::new(BufReader::new(Cursor::new(s.as_bytes())));
         assert_eq!(reader.len().expect("len"), 2);
 
-        let f0 = reader.read_step(0).expect("step0").expect("some");
-        let f1 = reader.read_step(1).expect("step1").expect("some");
+        let f0 = reader.read_frame(0).expect("step0").expect("some");
+        let f1 = reader.read_frame(1).expect("step1").expect("some");
         assert_eq!(f0.get("atoms").unwrap().n_rows().unwrap(), 2);
         assert_eq!(f1.get("atoms").unwrap().n_rows().unwrap(), 2);
         let z0 = f0
@@ -1860,7 +1860,7 @@ H 1 0 1
         let s = "\n\n  \n2\nframe 0\nH 0 0 0\nH 1 0 0\n";
         let mut reader = XyzReader::new(BufReader::new(Cursor::new(s.as_bytes())));
         assert_eq!(reader.len().expect("len"), 1);
-        let f0 = reader.read_step(0).expect("step0").expect("some");
+        let f0 = reader.read_frame(0).expect("step0").expect("some");
         assert_eq!(f0.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 }

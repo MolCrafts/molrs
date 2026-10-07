@@ -11,8 +11,8 @@
 //!
 //! ```text
 //! pots = Potentials()
-//! pots.push(compile_explicit_terms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4))
-//! pots.push(compile_explicit_terms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5))
+//! pots.push(ExplicitTerms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4).compile())
+//! pots.push(ExplicitTerms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5).compile())
 //! energy, forces = pots.calc_energy_forces(pos)
 //! ```
 //!
@@ -59,7 +59,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie kernel
 /// a neighbour loop feeds pairs to (MD's nonbond kernel). A pair list with a
-/// row per pair is ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=…, sigma=…)``.
+/// row per pair is ``ExplicitTerms("pair", "lj/cut", pairs, epsilon=…, sigma=…).compile()``.
 #[pyclass(name = "PairLjCut", module = "molrs.ff.potential", subclass)]
 pub struct PyPairLjCut {
     pub(crate) inner: PairLjCut,

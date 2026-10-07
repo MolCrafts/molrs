@@ -2,8 +2,9 @@
 """Run molrec's conformance suite against the Rust core and write its snapshot.
 
 The suite enters through the ``*.mrec`` doors at the top of ``molrs.io``
-(``read_mrec`` / ``write_mrec``, ``read_mrec_frame`` / ``write_mrec_frame``,
-``read_mrec_system``, ``read_mrec_trajectory``, …) and the store classes of
+(``read_mrec_frame`` / ``write_mrec_frame``, ``read_mrec_system`` /
+``write_mrec_system``, ``read_mrec_trajectory``, ``read_mrec_meta``, …) and
+the store classes of
 ``molrs.io.mrec`` (``MrecReader``, ``MrecWriter``, ``SequenceSchema``,
 ``ForceFieldSection``), all implemented in ``molrs/src/io/mrec``. This does not
 collect ``molrs-python/tests`` or any other binding suite. An adapter author writes two methods; every assertion stays

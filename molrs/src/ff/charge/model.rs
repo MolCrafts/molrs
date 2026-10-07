@@ -148,7 +148,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
 /// The **atom** column is the load-bearing one: the ATD engine labels atoms *into*
 /// [`keys::TYPE`], so a molecule arriving with an incompatible column there (LAMMPS
 /// integer atom-type ids, say) would refuse the write. The **bond** column is
-/// stripped as defence in depth only: perception now keeps its perceived bond types
+/// stripped as defence in depth only: perception keeps its perceived bond types
 /// in their own [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) prop and
 /// neither reads nor writes a bond's `type`, so nothing downstream can be steered by
 /// a caller's bond labels even when they are left in place.

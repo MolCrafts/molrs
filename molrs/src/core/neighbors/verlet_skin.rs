@@ -7,7 +7,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::core::SimBox;
 use crate::op::{F, Fnx3};
 
-use super::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
+use super::{NeighborColumns, NeighborList, Neighbors, QueryMode};
 
 /// Failures from Verlet-skin construction or the unwrapped-position guard.
 #[derive(Debug)]
@@ -235,7 +235,7 @@ impl VerletSkin {
             x_hold: Array2::zeros((n_atoms, 3)),
             pairs_buf: Neighbors::empty(
                 QueryMode::SelfQuery { n_points: n_atoms },
-                NeighborsStorage::FULL,
+                NeighborColumns::FULL,
             ),
             scratch_r2: Vec::new(),
             scratch_disp: Vec::new(),

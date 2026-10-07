@@ -52,9 +52,8 @@ class TestReadGro:
     def test_native_columns(self, water_gro):
         frames = molrs.io.read_gro_trajectory(str(water_gro))
         atoms = frames[0]["atoms"]
-        # The reader emits canonical names directly; `resid`/`atom_id` were
-        # format-native spellings that something downstream had to rename, and
-        # that rename is now a write into a UInt key an Int column cannot pass.
+        # The reader emits the canonical column names (`res_id`, `id`), not
+        # the format-native spellings `resid` / `atom_id`.
         for col in ["res_id", "res_name", "name", "id", "x", "y", "z"]:
             assert col in atoms, f"missing column: {col}"
 

@@ -38,17 +38,17 @@ impl GroReader {
         }
     }
 
-    /// Read the frame at the given step index (0-based). Coordinates arrive
+    /// Read the frame at the given index (0-based). Coordinates arrive
     /// in angstrom (the molrs reader converts from the file's nm).
-    #[wasm_bindgen]
-    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+    #[wasm_bindgen(js_name = readFrame)]
+    pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
         let mut reader = RsGroReader::new(Cursor::new(self.content.as_slice()));
-        for current in 0..=step {
+        for current in 0..=index {
             let rs_frame = reader
                 .read()
                 .map_err(|e| JsValue::from_str(&format!("GRO read error: {}", e)))?;
             match rs_frame {
-                Some(frame) if current == step => {
+                Some(frame) if current == index => {
                     return Ok(Some(Frame::from_rs(frame)?));
                 }
                 Some(_) => continue,

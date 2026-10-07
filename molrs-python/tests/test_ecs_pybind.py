@@ -319,8 +319,8 @@ def test_adopt_moves_storage_and_empties_source():
 
 
 def test_adopt_on_leaf_moves_its_own_store():
-    # adopt must move the *leaf's* backing store, not an empty base graph —
-    # regression for adopt being a no-op on Atomistic/CoarseGrain.
+    # adopt must move the *leaf's* backing store, not an empty base graph, so
+    # adopt on Atomistic/CoarseGrain carries the atoms over.
     src = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
     n = src.n_atoms
     assert n == 3
@@ -490,7 +490,7 @@ def test_perception_is_free_functions():
     info = molrs.perceive.perceive_rings(mol)
     assert info.ring_sizes() == [3]
     with pytest.raises(TypeError):
-        molrs.perceive.RingInfo(mol)
+        molrs.perceive.RingSet(mol)
     flagged = molrs.perceive.assign_rings(mol)
     in_ring = sorted(flagged.get(h, "is_in_ring") for h in flagged.entities())
     assert in_ring == [0, 1, 1, 1]

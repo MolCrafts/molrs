@@ -188,10 +188,9 @@ impl Compute for VanHove {
 
         // Per-origin work: build the `NeighborQuery` spatial index over r_i(τ)
         // ONCE, then reuse it for every realizable lag (each lag queries a
-        // different r_j(τ+lag) set). This drops the neighbor-index construction
-        // from once-per-(lag, origin) to once-per-origin while producing the exact
-        // same pair set the old per-(lag, origin) `NeighborQuery::new(...).query()`
-        // did — the query takes `&self` and never mutates the index.
+        // different r_j(τ+lag) set). The index is built once per origin, not
+        // once per (lag, origin), and the pair set is the same either way: the
+        // query takes `&self` and never mutates the index.
         //
         // Distinct part uses the same cutoff-`r_max` search as `compute::rdf`
         // (O(N·neighbours), not O(N²)); every pair beyond `r_max` would be dropped
@@ -231,9 +230,9 @@ impl Compute for VanHove {
                 }
             };
 
-        // Time origins τ = 0, stride, 2·stride, … < n_frames: exactly the set the
-        // old per-lag `while tau + lag < n_frames` loop visited, gathered once and
-        // fanned out over lags inside `accumulate`.
+        // Time origins τ = 0, stride, 2·stride, … < n_frames, gathered once and
+        // fanned out over lags inside `accumulate` (each lag keeps the origins
+        // with `tau + lag < n_frames`).
         let origins: Vec<usize> = (0..n_frames).step_by(self.stride).collect();
 
         let n_cells = n_lags * self.n_rbins;

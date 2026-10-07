@@ -226,7 +226,7 @@ composition never disturbs its operands. A stale handle is reported as
 The CXX bridge carries the same surface as free functions over a
 `Box<RegionRef>` (`region_sphere`, `region_and`, `region_distance`, …), gated
 by the `CXX_CAP_REGION` capability bit so a consumer can fail loudly when it
-is linked against a bridge that predates it. A vector argument that is not
+is linked against a bridge without it. A vector argument that is not
 exactly three values, or a ragged point list, throws `rust::Error`; nothing
 falls back to the origin or to an empty answer.
 
@@ -242,7 +242,7 @@ each item after the molrs owner it fronts:
 | `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
 | `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
 | `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `RdfAccumulator`, `MsdAccumulator`, `VacfAccumulator` | `compute::` the same names |
-| `assign_am1_bcc_charges` | `ff::charge::BccModel` with `BccParameterSet::from_name` |
+| `BccModel` (`bcc_model_new`, `assign`, `correct`) | `ff::charge::BccModel` (`BccParameterSet::from_name`, `assign`, `correct`) |
 
 In-house Rust consumers (molpack, the binders) do **not** go through this C
 ABI — they take Path A or Path B directly, and every one of them links molrs

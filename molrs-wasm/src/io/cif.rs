@@ -37,7 +37,7 @@ use crate::core::frame::Frame;
 /// ```js
 /// const content = await file.text();
 /// const reader = new CifReader(content);
-/// const frame  = reader.read(0);
+/// const frame  = reader.readFrame(0);
 /// const atoms  = frame.get("atoms");
 /// const box    = frame.simbox;        // populated from the unit cell
 /// ```
@@ -72,25 +72,25 @@ impl CifReader {
     ///
     /// # Arguments
     ///
-    /// * `step` - 0-based index of the `data_*` block to return
+    /// * `index` - 0-based index of the `data_*` block to return
     ///
     /// # Returns
     ///
     /// A [`Frame`] for the requested block, or `undefined` when
-    /// `step >= len()`.
+    /// `index >= len()`.
     ///
     /// # Errors
     ///
     /// Throws a `JsValue` string on parse errors.
-    #[wasm_bindgen]
-    pub fn read(&mut self, step: usize) -> Result<Option<Frame>, JsValue> {
+    #[wasm_bindgen(js_name = readFrame)]
+    pub fn read_frame(&mut self, index: usize) -> Result<Option<Frame>, JsValue> {
         let mut reader = RsCifReader::new(Cursor::new(self.content.as_slice()));
         let frames = molrs::io::reader::collect_frames(&mut reader)
             .map_err(|e| JsValue::from_str(&format!("CIF read error: {}", e)))?;
-        if step >= frames.len() {
+        if index >= frames.len() {
             return Ok(None);
         }
-        let rs_frame = frames.into_iter().nth(step).expect("bounds checked");
+        let rs_frame = frames.into_iter().nth(index).expect("bounds checked");
         Ok(Some(Frame::from_rs(rs_frame)?))
     }
 

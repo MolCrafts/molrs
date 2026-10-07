@@ -666,7 +666,7 @@ class TestFrameMeta:
             assert key == dtype
             assert isinstance(value, tuple) and value == payload
 
-        # A dict-literal comparison uses the frozen value, so a list no longer matches.
+        # A dict-literal comparison uses the frozen value, so a list does not match.
         stress = self._vector_meta("f64x6", (1.0, 2.0, 3.0, 4.0, 5.0, 6.0))
         assert stress == {"f64x6": (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)}
         assert stress != {"f64x6": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]}

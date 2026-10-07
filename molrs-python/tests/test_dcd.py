@@ -26,7 +26,7 @@ class TestReadDcd:
             molrs.io.read_dcd_trajectory("/nonexistent/path.dcd").read_all()
 
 
-class TestDcdTrajReader:
+class TestDcdReader:
     def test_random_access_matches_sequential(self, water_dcd):
         path = str(water_dcd)
         sequential = molrs.io.read_dcd_trajectory(path).read_all()
@@ -54,7 +54,7 @@ class TestDcdTrajReader:
             _ = reader[10_000_000]
 
 
-class TestDcdTrajReaderMolpyAligned:
+class TestDcdReaderReadMethods:
     def test_n_frames_matches_len(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
         assert reader.n_frames == len(reader)

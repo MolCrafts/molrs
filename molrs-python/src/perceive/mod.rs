@@ -3,7 +3,7 @@
 //!
 //! Every perception is a free function at the Rust name, in one of two shapes:
 //! `perceive_<fact>(mol)` reports a side table (here `perceive_rings` →
-//! `RingInfo`) and leaves the graph alone; `assign_<fact>(mol)` writes the fact
+//! `RingSet`) and leaves the graph alone; `assign_<fact>(mol)` writes the fact
 //! onto a **clone** of the molecule as atom / bond props and returns it, so the
 //! steps compose. Every `assign_*` takes `&PyAtomistic` (a shared borrow) and
 //! returns a **new** `Atomistic`: the non-mutating contract is enforced by the
@@ -218,8 +218,8 @@ fn assign_equivalence_classes_py(py: Python<'_>, mol: &PyAtomistic) -> PyResult<
 /// --------
 /// The two groups below share the middle bead:
 ///
-/// >>> pattern = molrs.io.smiles.CgSmilesIr("{[#1][#4]}").to_coarsegrain()
-/// >>> target = molrs.io.smiles.CgSmilesIr("{[#1][#4][#1]}").to_coarsegrain()
+/// >>> pattern = molrs.io.cgsmiles.CgSmilesIr("{[#1][#4]}").to_coarsegrain()
+/// >>> target = molrs.io.cgsmiles.CgSmilesIr("{[#1][#4][#1]}").to_coarsegrain()
 /// >>> len(molrs.perceive.SubgraphMatcher(pattern).find(target))
 /// 2
 #[pyclass(module = "molrs.perceive", name = "SubgraphMatcher", frozen)]
@@ -289,7 +289,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         crate::add_function(m, "molrs.perceive", f)?;
     }
     m.add_class::<PySubgraphMatcher>()?;
-    m.add_class::<rings::PyRingInfo>()?;
+    m.add_class::<rings::PyRingSet>()?;
     m.add_class::<smarts::PySmartsPattern>()?;
     m.add_class::<smarts::PySmartsMatch>()?;
     m.add_class::<smarts::PyReaction>()?;

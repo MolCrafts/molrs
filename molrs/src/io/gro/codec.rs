@@ -514,9 +514,9 @@ impl<R: BufRead + Seek> TrajectoryReader for GroReader<R> {
         Ok(())
     }
 
-    fn read_step(&mut self, step: usize) -> Result<Option<Frame>> {
+    fn read_frame(&mut self, index: usize) -> Result<Option<Frame>> {
         self.build_index()?;
-        let Some(at) = self.index.as_ref().and_then(|index| index.get(step)) else {
+        let Some(at) = self.index.as_ref().and_then(|offsets| offsets.get(index)) else {
             return Ok(None);
         };
         self.reader.seek(SeekFrom::Start(at))?;
@@ -727,11 +727,11 @@ mod tests {
                 .as_float()
                 .unwrap()[[1]]
         };
-        let second = reader.read_step(1).unwrap().expect("frame 2");
-        let first = reader.read_step(0).unwrap().expect("frame 1");
+        let second = reader.read_frame(1).unwrap().expect("frame 2");
+        let first = reader.read_frame(0).unwrap().expect("frame 1");
         assert!((x(&first) - 1.0).abs() < 1e-9);
         assert!((x(&second) - 2.0).abs() < 1e-9);
-        assert!(reader.read_step(2).unwrap().is_none());
+        assert!(reader.read_frame(2).unwrap().is_none());
     }
 
     #[test]

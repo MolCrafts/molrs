@@ -98,7 +98,7 @@ class MdDriver:
         """Attach a pre-built potential (advanced; replaces :meth:`set_forcefield`).
 
         Accepts a compiled ``Potentials`` collection (e.g. one
-        :func:`molrs.ff.compile.compile_explicit_terms` built), an ``PairLjCut``, or a
+        :class:`molrs.ff.compile.ExplicitTerms` built), an ``PairLjCut``, or a
         ``Potential`` subclass instance. The caller owns units — and, when skipping :meth:`set_neighbors`, neighbor correctness too:
         compiled ``Potentials`` evaluate exactly the topology (any ``pairs``
         block included) they were bound to; nothing is rebuilt as coordinates
@@ -292,10 +292,8 @@ class MdDriver:
             ff = self._forcefield
             if ff.get_styles("pair"):
                 # One call decides which kernel each style needs and how its
-                # close neighbours are scaled. The driver used to re-derive both
-                # here, in Python, for `lj/cut` alone and one (epsilon, sigma)
-                # set — and refused a bonded topology outright because it had no
-                # way to apply special_bonds to a neighbour table.
+                # close neighbours are scaled (special_bonds included), so the
+                # driver re-derives neither.
                 config = self._neighbor_config or dict(_NEIGHBOR_DEFAULTS)
                 pots = PotentialCompiler(ff).compile_typed(frame)
                 neighbors = self._build_skin(frame, pos, self._force_cutoff(config))

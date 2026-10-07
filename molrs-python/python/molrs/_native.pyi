@@ -1018,6 +1018,40 @@ class Topology:
         """Per-atom connected-component label, ``0..n_components`` in order
         of each component's first atom."""
 
+class BondOrder:
+    """The chemical class of a bond, stored under ``keys.BOND_TYPE`` as its
+    code (``int(member)``): ``Unknown`` 0, ``Single`` 1, ``Double`` 2,
+    ``Triple`` 3, ``Aromatic`` 4."""
+
+    Unknown: ClassVar[BondOrder]
+    Single: ClassVar[BondOrder]
+    Double: ClassVar[BondOrder]
+    Triple: ClassVar[BondOrder]
+    Aromatic: ClassVar[BondOrder]
+    @property
+    def code(self) -> int: ...
+    @staticmethod
+    def from_code(code: int) -> BondOrder: ...
+    def is_aromatic(self) -> bool: ...
+    def implied_number(self) -> BondNumber | None: ...
+    def __int__(self) -> int: ...
+
+class BondNumber:
+    """The integer bond number of a localized (Kekulé) structure, stored
+    under ``keys.BOND_NUMBER`` as its code: ``Unknown`` 0, ``Single`` 1,
+    ``Double`` 2, ``Triple`` 3, ``Quadruple`` 4."""
+
+    Unknown: ClassVar[BondNumber]
+    Single: ClassVar[BondNumber]
+    Double: ClassVar[BondNumber]
+    Triple: ClassVar[BondNumber]
+    Quadruple: ClassVar[BondNumber]
+    @property
+    def code(self) -> int: ...
+    @staticmethod
+    def from_code(code: int) -> BondNumber: ...
+    def __int__(self) -> int: ...
+
 class Element:
     """Immutable chemical-element record backed by the Rust periodic table."""
 
@@ -2076,8 +2110,8 @@ def assign_bcc_bond_types_from_connectivity(mol: Atomistic) -> Atomistic:
 def assign_equivalence_classes(mol: Atomistic) -> Atomistic:
     """Clone of ``mol`` with ``equiv_class`` on every atom (antechamber
     ``-eq 1``)."""
-def perceive_rings(mol: Atomistic) -> RingInfo:
-    """The SSSR rings of ``mol`` as a :class:`RingInfo`; ``mol`` is untouched."""
+def perceive_rings(mol: Atomistic) -> RingSet:
+    """The SSSR rings of ``mol`` as a :class:`RingSet`; ``mol`` is untouched."""
 
 # ---------------------------------------------------------------------------
 # Frame vocabulary (molrs.core.keys / molrs.core.schema, mirrors
@@ -2541,9 +2575,23 @@ class CgSmilesIr:
 def read_csv_block_str(
     text: str, delimiter: str = ",", header: list[str] | None = None
 ) -> Block:
-    """Native half of ``molrs.io.read_csv_block_str``."""
+    """CSV text as a :class:`Block`; dtypes inferred int → float → str."""
+def read_csv_block(
+    path: PathInput, delimiter: str = ",", header: list[str] | None = None
+) -> Block:
+    """:func:`read_csv_block_str` over the UTF-8 file at ``path``."""
 def write_csv_block_str(block: Block, delimiter: str = ",", header: bool = True) -> str:
-    """Native half of ``molrs.io.write_csv_block_str``."""
+    """``block`` as CSV text; the inverse of :func:`read_csv_block_str`."""
+def write_csv_block(
+    path: PathInput, block: Block, delimiter: str = ",", header: bool = True
+) -> None:
+    """``block`` as a CSV file at ``path``; the inverse of :func:`read_csv_block`."""
+def read_clpol_alpha_str(text: str) -> list[dict[str, str | float]]:
+    """``alpha.ff`` text as its rows in file order: ``type_name``, ``m_D``,
+    ``q_D_sign``, ``k_D``, ``alpha``, ``a_thole``. Raises ``ValueError`` for a
+    row whose numbers do not parse."""
+def read_clpol_alpha(path: PathInput) -> list[dict[str, str | float]]:
+    """:func:`read_clpol_alpha_str` over the file at ``path``."""
 def read_msgpack_frame_bytes(data: bytes) -> Frame: ...
 def write_msgpack_frame_bytes(frame: Frame) -> bytes: ...
 def read_json_frame_str(text: str) -> Frame: ...
@@ -3638,7 +3686,7 @@ class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
     ``Potentials()`` is empty; ``push`` **moves** members in (an ``PairLjCut``,
-    another ``Potentials`` such as one ``compile_explicit_terms`` built, or an object with
+    another ``Potentials`` such as one ``ExplicitTerms.compile`` built, or an object with
     ``calc_energy_forces``). The engine is unit-agnostic: nothing scales the
     energy or forces implicitly.
     """
@@ -3928,10 +3976,9 @@ def write_gromacs_top_system(
     ``[ molecules ]``): the inverse of :func:`read_gromacs_top_system`. Raises
     ``ValueError`` for what GROMACS cannot express."""
 
-def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, float]]:
+def clpol_polarizability() -> dict[str, dict[str, float]]:
     """CL&Pol Drude parameters per atom type (``m_D``, ``q_D_sign``, ``k_D``,
-    ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table, or ``path``
-    read the same way. Raises ``ValueError`` for an unreadable file."""
+    ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table."""
 
 def read_lammps_data_coeffs(path: PathInput, *, units: str | None = None) -> ForceField:
     """The force field a LAMMPS data file's ``* Coeffs`` sections define,
@@ -4017,9 +4064,22 @@ class Trajectory:
 
 type _ObservableScalarValue = npt.NDArray | float | int | bool | str | list[str]
 
-class ScalarObservable:
+class ObservableRecord:
     def __init__(
         self,
+        name: str,
+        values: _ObservableScalarValue,
+        kind: str = "scalar",
+        description: str = "",
+        unit: str | None = None,
+        axes: list[str] | None = None,
+        time_dependent: bool = False,
+        sampling: str | None = None,
+        domain: str | None = None,
+        target: str | None = None,
+    ) -> None: ...
+    @staticmethod
+    def scalar(
         name: str,
         values: _ObservableScalarValue,
         description: str = "",
@@ -4029,31 +4089,9 @@ class ScalarObservable:
         sampling: str | None = None,
         domain: str | None = None,
         target: str | None = None,
-    ) -> None: ...
-    @property
-    def name(self) -> str: ...
-    @property
-    def values(self) -> npt.NDArray | list[str] | str: ...
-    @property
-    def kind(self) -> str: ...
-    @property
-    def description(self) -> str: ...
-    @property
-    def unit(self) -> str | None: ...
-    @property
-    def axes(self) -> list[str]: ...
-    @property
-    def time_dependent(self) -> bool: ...
-    @property
-    def sampling(self) -> str | None: ...
-    @property
-    def domain(self) -> str | None: ...
-    @property
-    def target(self) -> str | None: ...
-
-class VectorObservable:
-    def __init__(
-        self,
+    ) -> ObservableRecord: ...
+    @staticmethod
+    def vector(
         name: str,
         values: _ObservableScalarValue,
         description: str = "",
@@ -4063,7 +4101,7 @@ class VectorObservable:
         sampling: str | None = None,
         domain: str | None = None,
         target: str | None = None,
-    ) -> None: ...
+    ) -> ObservableRecord: ...
     @property
     def name(self) -> str: ...
     @property
@@ -4088,7 +4126,7 @@ class VectorObservable:
 class mrec:
     """The ``_native.mrec`` submodule, surfaced as :mod:`molrs.io.mrec`: the
     record store's reader, writer, schema and force-field section. The
-    whole-record doors are flat (``read_mrec`` / ``write_mrec`` and
+    per-section doors are flat (``read_mrec_frame`` / ``write_mrec_frame`` and
     partners), as :mod:`molrs.io`'s."""
 
     class ForceFieldSection:
@@ -4847,27 +4885,34 @@ def polarizability_finite_field(
 # molrs.ff.potential — hand-built kernels (mirrors molrs-python/src/ff/potential.rs)
 # ---------------------------------------------------------------------------
 
-def compile_explicit_terms(
-    category: str,
-    style: str,
-    atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
-    *,
-    charges: Sequence[float] | ArrayF | None = None,
-    **params: float | str | Sequence[float] | Sequence[str] | ArrayF,
-) -> Potentials:
-    """One style's kernel over explicit instances: ``atoms`` ``(n,
-    arity)``, each per-term parameter a number (broadcast) or one value
-    per term, as stored (angle values in degrees); style parameters
-    (``cutoff``, ``coulomb``, an unregistered style's ``expression``) a
-    number or a string. Built as ``PotentialCompiler.compile`` builds it,
-    one type per term; works for every registered style, built-in or
-    custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
+class ExplicitTerms:
+    """One style's terms over explicit instances
+    (``molrs::ff::compile::ExplicitTerms``): ``atoms`` ``(n, arity)``, each
+    per-term parameter a number (broadcast) or one value per term, as stored
+    (angle values in degrees); style parameters (``cutoff``, ``coulomb``, an
+    unregistered style's ``expression``) a number or a string. Works for
+    every registered style, built-in or custom. A parameter the style does
+    not declare raises ``TypeError``."""
+
+    def __init__(
+        self,
+        category: str,
+        style: str,
+        atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
+        *,
+        charges: Sequence[float] | ArrayF | None = None,
+        **params: float | str | Sequence[float] | Sequence[str] | ArrayF,
+    ) -> None: ...
+    def compile(self) -> Potentials:
+        """The terms' kernel, built as ``PotentialCompiler.compile`` builds
+        it, one type per term. Refusals raise their ``molrs.ff.ir.IrError``
+        subclass."""
 
 class PairLjCut:
     """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
     kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
     kernel). A pair list with a row per pair is
-    ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+    ``ExplicitTerms("pair", "lj/cut", pairs, epsilon=..., sigma=...).compile()``."""
 
     def __init__(
         self,
@@ -5406,7 +5451,7 @@ class RamanSpectrum:
     ) -> None: ...
     def fit(self, /, acf_iso, acf_aniso, dt_fs): ...
 
-class RingInfo:
+class RingSet:
     """
     The ring facts of a molecule: SSSR rings and the systems they fuse into.
 

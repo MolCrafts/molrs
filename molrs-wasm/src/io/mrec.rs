@@ -13,9 +13,10 @@
 //!   a multi-gigabyte run opens in a worker that reads its files (or an HTTP
 //!   range server) synchronously.
 //!
-//! A record that is not a frame sequence is read whole: `sectionNames(source)`
-//! lists its sections and `readMrecFrame(source)` reads its `frame` snapshot,
-//! where `source` is the files `Map` or the packed zip's bytes.
+//! A record that is not a frame sequence is read whole: `sectionNamesBytes`
+//! / `sectionNamesFiles` list its sections and `readMrecFrameBytes` /
+//! `readMrecFrameFiles` read its `frame` snapshot, from the packed zip's bytes
+//! or from the files `Map`.
 
 use crate::core::frame::Frame;
 use crate::core::simbox::Box as JsBox;
@@ -214,9 +215,9 @@ impl TrajectoryReader for MrecReader {
         Ok(())
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<molrs::core::Frame>> {
+    fn read_frame(&mut self, index: usize) -> std::io::Result<Option<molrs::core::Frame>> {
         self.sequence
-            .frame(step as u64)
+            .frame(index as u64)
             .map_err(std::io::Error::other)
     }
 
@@ -476,54 +477,52 @@ fn memory_storage_from_zip(bytes: &[u8]) -> Result<ReadableWritableListableStora
     Ok(store as ReadableWritableListableStorage)
 }
 
-#[wasm_bindgen]
-extern "C" {
-    /// A record handed over whole: a `Map<path, Uint8Array>` of its files, or
-    /// the bytes of a packed `*.mrec.zip`.
-    #[wasm_bindgen(typescript_type = "Map<string, Uint8Array> | Uint8Array")]
-    pub type MrecSource;
-}
-
-/// The in-memory store of a record handed over whole (see [`MrecSource`]).
-fn memory_storage(source: &MrecSource) -> Result<ReadableWritableListableStorage, JsValue> {
-    if let Some(files) = source.dyn_ref::<js_sys::Map>() {
-        memory_storage_from_files(files)
-    } else if let Some(bytes) = source.dyn_ref::<js_sys::Uint8Array>() {
-        memory_storage_from_zip(&bytes.to_vec())
-    } else {
-        Err(JsValue::from_str(
-            "a record is a Map<path, Uint8Array> of its files or the bytes of a packed *.mrec.zip",
-        ))
-    }
-}
-
-/// The record's top-level sections (`"meta"`, `"frame"`, `"trajectory"`, …):
-/// molrs `io::mrec::section_names`.
+/// The record's top-level sections (`"meta"`, `"frame"`, `"trajectory"`, …)
+/// of a packed `*.mrec.zip` given as its bytes: molrs
+/// `io::mrec::section_names`.
 ///
 /// Listed, never decoded — a record's sections are independent, and asking
 /// which ones exist must not cost a read of any of them.
-///
-/// `source` is a `Map<path, Uint8Array>` of the record's files or the bytes
-/// of a packed `*.mrec.zip`.
-#[wasm_bindgen(js_name = sectionNames)]
-pub fn section_names(source: &MrecSource) -> Result<Vec<String>, JsValue> {
-    section_names_storage(memory_storage(source)?).map_err(js_string_err)
+#[wasm_bindgen(js_name = sectionNamesBytes)]
+pub fn section_names_bytes(bytes: &[u8]) -> Result<Vec<String>, JsValue> {
+    section_names_storage(memory_storage_from_zip(bytes)?).map_err(js_string_err)
 }
 
-/// The `frame` section of a record — its snapshot — or `undefined`: molrs
-/// `io::read_mrec_frame`.
+/// [`section_names_bytes`] for a record handed over as a
+/// `Map<path, Uint8Array>` of its files.
+#[wasm_bindgen(js_name = sectionNamesFiles)]
+pub fn section_names_files(files: js_sys::Map) -> Result<Vec<String>, JsValue> {
+    section_names_storage(memory_storage_from_files(&files)?).map_err(js_string_err)
+}
+
+/// The `frame` section — the snapshot — of a packed `*.mrec.zip` given as its
+/// bytes, or `undefined`: molrs `io::read_mrec_frame`.
 ///
 /// molpack writes a packed configuration as `meta` + `frame/`, which
 /// `MrecReader` reads as a sequence of length zero; this reads the snapshot
-/// it actually carries. `source` is a `Map<path, Uint8Array>` of the record's
-/// files or the bytes of a packed `*.mrec.zip`.
+/// it actually carries.
 ///
 /// # Errors
 ///
-/// Throws when the source is not a readable record.
-#[wasm_bindgen(js_name = readMrecFrame)]
-pub fn read_mrec_frame(source: &MrecSource) -> Result<Option<Frame>, JsValue> {
-    match read_mrec_frame_storage(memory_storage(source)?, "frame").map_err(js_string_err)? {
+/// Throws when the bytes are not a readable packed record.
+#[wasm_bindgen(js_name = readMrecFrameBytes)]
+pub fn read_mrec_frame_bytes(bytes: &[u8]) -> Result<Option<Frame>, JsValue> {
+    frame_section(memory_storage_from_zip(bytes)?)
+}
+
+/// [`read_mrec_frame_bytes`] for a record handed over as a
+/// `Map<path, Uint8Array>` of its files.
+///
+/// # Errors
+///
+/// Throws when the files are not a readable record.
+#[wasm_bindgen(js_name = readMrecFrameFiles)]
+pub fn read_mrec_frame_files(files: js_sys::Map) -> Result<Option<Frame>, JsValue> {
+    frame_section(memory_storage_from_files(&files)?)
+}
+
+fn frame_section(store: ReadableWritableListableStorage) -> Result<Option<Frame>, JsValue> {
+    match read_mrec_frame_storage(store, "frame").map_err(js_string_err)? {
         Some(frame) => Ok(Some(Frame::from_rs(frame)?)),
         None => Ok(None),
     }
@@ -582,5 +581,8 @@ mod tests {
         let frame = read_mrec_frame_storage(store, "frame").unwrap().unwrap();
         assert_eq!(x_of(&frame), rounded(&X[0]));
         assert_eq!(frame.get("atoms").unwrap().precision("x"), Some(1e-3));
+        assert!(read_mrec_frame_bytes(FIXTURE).unwrap().is_some());
+        let sections = section_names_bytes(FIXTURE).unwrap();
+        assert!(sections.iter().any(|name| name == "frame"), "{sections:?}");
     }
 }

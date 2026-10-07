@@ -20,15 +20,15 @@
 //!
 //! | form | style | energy | image condition |
 //! |---|---|---|---|
-//! | [`Periodic`] | `dihedral periodic` (LAMMPS `fourier`) | Σₘ kₘ[1 + cos(nₘφ − γₘ)] | none: every series (a periodicity-0 term holds the constant) |
-//! | [`Charmm`] | `dihedral charmm` | k[1 + cos(nφ − d)] | one order, `√(aₙ² + bₙ²) = |a₀|` |
-//! | [`CosineTerm`] | `improper periodic` | k[1 + cos(nφ − γ)] | as charmm |
-//! | [`SignedCosine`] | `dihedral harmonic`, `improper cvff` | k[1 + d cos nφ] | one order, `bₙ = 0`, `|aₙ| = |a₀|` |
-//! | [`Opls`] | `dihedral opls` | ½Σ kₙ[1 ∓ cos nφ] | `bₙ = 0`, n ≤ 4, `a₀ = a₁ − a₂ + a₃ − a₄` |
-//! | [`Class2`] | `dihedral class2` (torsion part) | Σₙ₌₁³ kₙ[1 − cos(nφ − φₙ)] | n ≤ 3, `a₀ = Σ ±√(aₙ² + bₙ²)` |
-//! | [`MultiHarmonic`] | `dihedral multi/harmonic` | Σₙ₌₁⁵ Aₙ cosⁿ⁻¹φ | `bₙ = 0`, n ≤ 4 |
-//! | [`NHarmonic`] | `dihedral nharmonic` | Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ | `bₙ = 0` |
-//! | [`RyckaertBellemans`] | `dihedral rb` (GROMACS funct 3, OpenMM `RBTorsionForce`) | Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°) | `bₙ = 0`, n ≤ 5 |
+//! | [`PeriodicForm`] | `dihedral periodic` (LAMMPS `fourier`) | Σₘ kₘ[1 + cos(nₘφ − γₘ)] | none: every series (a periodicity-0 term holds the constant) |
+//! | [`CharmmForm`] | `dihedral charmm` | k[1 + cos(nφ − d)] | one order, `√(aₙ² + bₙ²) = |a₀|` |
+//! | [`CosineTermForm`] | `improper periodic` | k[1 + cos(nφ − γ)] | as charmm |
+//! | [`SignedCosineForm`] | `dihedral harmonic`, `improper cvff` | k[1 + d cos nφ] | one order, `bₙ = 0`, `|aₙ| = |a₀|` |
+//! | [`OplsForm`] | `dihedral opls` | ½Σ kₙ[1 ∓ cos nφ] | `bₙ = 0`, n ≤ 4, `a₀ = a₁ − a₂ + a₃ − a₄` |
+//! | [`Class2Form`] | `dihedral class2` (torsion part) | Σₙ₌₁³ kₙ[1 − cos(nφ − φₙ)] | n ≤ 3, `a₀ = Σ ±√(aₙ² + bₙ²)` |
+//! | [`MultiHarmonicForm`] | `dihedral multi/harmonic` | Σₙ₌₁⁵ Aₙ cosⁿ⁻¹φ | `bₙ = 0`, n ≤ 4 |
+//! | [`NHarmonicForm`] | `dihedral nharmonic` | Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ | `bₙ = 0` |
+//! | [`RyckaertBellemansForm`] | `dihedral rb` (GROMACS funct 3, OpenMM `RBTorsionForce`) | Σₙ₌₀⁵ Cₙ cosⁿ(φ − 180°) | `bₙ = 0`, n ≤ 5 |
 //!
 //! Every periodicity must be an integer ([`TorsionRefusal::NonIntegerPeriodicity`]);
 //! LAMMPS requires that of every style above.
@@ -68,8 +68,8 @@
 //!   form codec. A periodic improper and a harmonic one agree to second order
 //!   about the minimum only: `K = n²·k/2` in LAMMPS's un-halved `K(χ − χ0)²`
 //!   (`2k` at `n = 2`; the `k_h = n²k` of a ½-form harmonic) — see
-//!   [`CosineTerm::second_order_harmonic`] and
-//!   [`ImproperHarmonic::second_order_periodic`]. Their quartic terms differ
+//!   [`CosineTermForm::second_order_harmonic`] and
+//!   [`ImproperHarmonicForm::second_order_periodic`]. Their quartic terms differ
 //!   by `−k n⁴ δ⁴/24`; `fit_form` gives the projection under a declared
 //!   metric with its residual.
 //! - `dihedral charmm`'s `w` weights the 1-4 pair of the dihedral; it is not a
@@ -78,7 +78,7 @@
 //!   `w = 0`.
 //! - `dihedral class2`'s cross terms (`mbt`, `ebt`, `at`, `aat`, `bb13`) couple
 //!   the torsion to bonds and angles; they are outside the Class-I IR (and
-//!   molrs stores none of them). [`Class2`] is the torsion part only.
+//!   molrs stores none of them). [`Class2Form`] is the torsion part only.
 //! - The out-of-plane impropers (`improper fourier` / molrs `uff_inversion`,
 //!   `mmff_oop`) are functions of a Wilson angle, not of a dihedral.
 //!
@@ -500,14 +500,14 @@ fn or0(p: &Params, key: &str) -> f64 {
 /// `k[1 + cos(nφ − γ)]`, `γ` = `phase` in degrees: one term of `dihedral
 /// periodic` (LAMMPS `fourier`), and the whole of molrs `improper periodic`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CosineTerm {
+pub struct CosineTermForm {
     pub k: f64,
     pub periodicity: f64,
     /// degrees
     pub phase: f64,
 }
 
-impl CosineTerm {
+impl CosineTermForm {
     /// The energy at `phi` (radians), straight from the formula.
     pub fn energy(&self, phi: f64) -> f64 {
         self.k * (1.0 + (self.periodicity * phi - self.phase.to_radians()).cos())
@@ -614,7 +614,7 @@ impl CosineTerm {
     ///
     /// [`TorsionRefusal::NoCurvature`] for `k = 0` or `n = 0`;
     /// [`TorsionRefusal::NonIntegerPeriodicity`].
-    pub fn second_order_harmonic(&self) -> Result<ImproperHarmonic> {
+    pub fn second_order_harmonic(&self) -> Result<ImproperHarmonicForm> {
         let (n, _) = order_of(self.periodicity)?;
         if n == 0 || self.k == 0.0 {
             return Err(TorsionRefusal::NoCurvature);
@@ -622,7 +622,7 @@ impl CosineTerm {
         let shift = if self.k > 0.0 { 180.0 } else { 0.0 };
         let period = 360.0 / n as f64;
         let base = ((self.phase + shift) / self.periodicity).rem_euclid(period);
-        Ok(ImproperHarmonic {
+        Ok(ImproperHarmonicForm {
             k: self.k.abs() * (n * n) as f64 / 2.0,
             chi0: base.min(period - base),
         })
@@ -632,13 +632,13 @@ impl CosineTerm {
 /// `k[1 + d cos nφ]`, `d` = `sign` ∈ {+1, −1}: LAMMPS `dihedral harmonic` and
 /// `improper cvff` (`K d n`).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SignedCosine {
+pub struct SignedCosineForm {
     pub k: f64,
     pub sign: f64,
     pub periodicity: f64,
 }
 
-impl SignedCosine {
+impl SignedCosineForm {
     /// The energy at `phi` (radians), straight from the formula.
     pub fn energy(&self, phi: f64) -> f64 {
         self.k * (1.0 + self.sign * (self.periodicity * phi).cos())
@@ -670,7 +670,7 @@ impl SignedCosine {
     pub fn from_series(s: &FourierSeries) -> Result<Self> {
         let k = s.constant();
         let Some(n) = single_order(s)? else {
-            let c = CosineTerm::constant(k);
+            let c = CosineTermForm::constant(k);
             return Ok(Self {
                 k: c.k,
                 sign: 1.0,
@@ -728,13 +728,13 @@ impl SignedCosine {
 /// molrs `dihedral periodic` (LAMMPS `dihedral fourier`):
 /// `Σₘ kₘ[1 + cos(nₘφ − γₘ)]`. Every series has this form, and its
 /// canonical one is the force-field IR's canonical torsion
-/// ([`Periodic::from_series`]).
+/// ([`PeriodicForm::from_series`]).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Periodic {
-    pub terms: Vec<CosineTerm>,
+pub struct PeriodicForm {
+    pub terms: Vec<CosineTermForm>,
 }
 
-impl Periodic {
+impl PeriodicForm {
     /// The sum of the terms' series.
     pub fn to_series(&self) -> Result<FourierSeries> {
         let mut s = FourierSeries::zero();
@@ -750,14 +750,14 @@ impl Periodic {
     /// the constant is not the terms' own (beyond [`CONSTANT_RTOL`]). Never
     /// refuses.
     pub fn from_series(s: &FourierSeries) -> Self {
-        let mut terms: Vec<CosineTerm> = s
+        let mut terms: Vec<CosineTermForm> = s
             .orders()
             .into_iter()
-            .map(|n| CosineTerm::from_coefficients(n, s.a(n), s.b(n)))
+            .map(|n| CosineTermForm::from_coefficients(n, s.a(n), s.b(n)))
             .collect();
         let rest = s.constant() - terms.iter().map(|t| t.k).sum::<f64>();
         if rest.abs() > CONSTANT_RTOL * s.scale() {
-            terms.insert(0, CosineTerm::constant(rest));
+            terms.insert(0, CosineTermForm::constant(rest));
         }
         Self { terms }
     }
@@ -767,7 +767,7 @@ impl Periodic {
     /// term (first, `γ = 0`, `k ≠ 0`), every other `k > 0` and
     /// `γ ∈ (−180°, 180°]`; or the single zero term.
     pub fn is_canonical(&self) -> bool {
-        let zero = CosineTerm::constant(0.0);
+        let zero = CosineTermForm::constant(0.0);
         if self.terms.is_empty() || self.terms == [zero] {
             return true;
         }
@@ -794,7 +794,7 @@ impl Periodic {
         let mut terms = Vec::new();
         let mut m = 1;
         while let Some(k) = p.get(&format!("k{m}")) {
-            terms.push(CosineTerm {
+            terms.push(CosineTermForm {
                 k,
                 periodicity: need(p, WHAT, &format!("periodicity{m}"))?,
                 phase: or0(p, &format!("phase{m}")),
@@ -802,7 +802,7 @@ impl Periodic {
             m += 1;
         }
         if terms.is_empty() {
-            terms.push(CosineTerm {
+            terms.push(CosineTermForm {
                 k: need(p, WHAT, "k")?,
                 periodicity: need(p, WHAT, "periodicity")?,
                 phase: or0(p, "phase"),
@@ -814,7 +814,7 @@ impl Periodic {
     /// The indexed spelling `k<m>`, `periodicity<m>`, `phase<m>`; no terms is
     /// the one zero term.
     pub fn to_params(&self) -> Params {
-        let zero = [CosineTerm::constant(0.0)];
+        let zero = [CosineTermForm::constant(0.0)];
         let terms = if self.terms.is_empty() {
             &zero[..]
         } else {
@@ -834,21 +834,21 @@ impl Periodic {
 /// the dihedral prices; it is not a torsion parameter, so the series does not
 /// carry it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Charmm {
-    pub term: CosineTerm,
+pub struct CharmmForm {
+    pub term: CosineTermForm,
     pub w: f64,
 }
 
-impl Charmm {
+impl CharmmForm {
     /// The torsion's series (the 1-4 pair `w` prices is no part of it).
     pub fn to_series(&self) -> Result<FourierSeries> {
         self.term.to_series()
     }
 
-    /// The single term of `s` (see [`CosineTerm::from_series`]), `w = 0`.
+    /// The single term of `s` (see [`CosineTermForm::from_series`]), `w = 0`.
     pub fn from_series(s: &FourierSeries) -> Result<Self> {
         Ok(Self {
-            term: CosineTerm::from_series(s)?,
+            term: CosineTermForm::from_series(s)?,
             w: 0.0,
         })
     }
@@ -857,7 +857,7 @@ impl Charmm {
     pub fn from_params(p: &Params) -> Result<Self> {
         const WHAT: &str = "dihedral charmm";
         Ok(Self {
-            term: CosineTerm {
+            term: CosineTermForm {
                 k: need(p, WHAT, "k")?,
                 periodicity: need(p, WHAT, "periodicity")?,
                 phase: or0(p, "phase"),
@@ -876,11 +876,11 @@ impl Charmm {
 /// LAMMPS `dihedral opls`:
 /// `½[k₁(1 + cos φ) + k₂(1 − cos 2φ) + k₃(1 + cos 3φ) + k₄(1 − cos 4φ)]`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Opls {
+pub struct OplsForm {
     pub k: [f64; 4],
 }
 
-impl Opls {
+impl OplsForm {
     /// `a₀ = ½Σkₙ`, `aₙ = ±½kₙ` (`−` at even `n`).
     pub fn to_series(&self) -> FourierSeries {
         let [k1, k2, k3, k4] = self.k;
@@ -938,13 +938,13 @@ impl Opls {
 /// LAMMPS `dihedral class2`, torsion part: `Σₙ₌₁³ kₙ[1 − cos(nφ − φₙ)]`,
 /// `φₙ` in degrees. The cross terms are outside the Class-I IR.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Class2 {
+pub struct Class2Form {
     pub k: [f64; 3],
     /// degrees
     pub phi: [f64; 3],
 }
 
-impl Class2 {
+impl Class2Form {
     /// `a₀ = Σkₙ`, `aₙ = −kₙ cos φₙ`, `bₙ = −kₙ sin φₙ`.
     pub fn to_series(&self) -> FourierSeries {
         let mut s = FourierSeries::zero();
@@ -1034,11 +1034,11 @@ impl Class2 {
 
 /// LAMMPS `dihedral nharmonic`: `Σᵢ₌₁ᴺ Aᵢ cosⁱ⁻¹φ` (`a[i−1]` = `Aᵢ`).
 #[derive(Debug, Clone, PartialEq)]
-pub struct NHarmonic {
+pub struct NHarmonicForm {
     pub a: Vec<f64>,
 }
 
-impl NHarmonic {
+impl NHarmonicForm {
     pub fn to_series(&self) -> FourierSeries {
         cos_poly_to_series(&self.a)
     }
@@ -1083,16 +1083,16 @@ impl NHarmonic {
 
 /// LAMMPS `dihedral multi/harmonic`: `Σₙ₌₁⁵ Aₙ cosⁿ⁻¹φ` — `nharmonic` at `N = 5`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MultiHarmonic {
+pub struct MultiHarmonicForm {
     pub a: [f64; 5],
 }
 
-impl MultiHarmonic {
+impl MultiHarmonicForm {
     pub fn to_series(&self) -> FourierSeries {
         cos_poly_to_series(&self.a)
     }
 
-    /// As [`NHarmonic::from_series`], constant included.
+    /// As [`NHarmonicForm::from_series`], constant included.
     ///
     /// # Errors
     ///
@@ -1132,14 +1132,14 @@ impl MultiHarmonic {
 /// OpenMM `RBTorsionForce`. Since `cos ψ = −cos φ` it is
 /// `multi/harmonic` / `nharmonic` with `Aₙ₊₁ = (−1)ⁿ Cₙ`.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RyckaertBellemans {
+pub struct RyckaertBellemansForm {
     pub c: [f64; 6],
 }
 
-impl RyckaertBellemans {
+impl RyckaertBellemansForm {
     /// The `nharmonic` coefficients `Aₙ₊₁ = (−1)ⁿ Cₙ` (N = 6).
-    pub fn to_nharmonic(&self) -> NHarmonic {
-        NHarmonic {
+    pub fn to_nharmonic(&self) -> NHarmonicForm {
+        NHarmonicForm {
             a: self
                 .c
                 .iter()
@@ -1197,13 +1197,13 @@ impl RyckaertBellemans {
 
 /// LAMMPS `improper harmonic`: `K(χ − χ0)²`, `χ = |φ|`, `χ0` in degrees.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ImproperHarmonic {
+pub struct ImproperHarmonicForm {
     pub k: f64,
     /// degrees
     pub chi0: f64,
 }
 
-impl ImproperHarmonic {
+impl ImproperHarmonicForm {
     /// The energy at `phi` (radians), straight from the formula.
     pub fn energy(&self, phi: f64) -> f64 {
         let d = phi.abs() - self.chi0.to_radians();
@@ -1221,13 +1221,13 @@ impl ImproperHarmonic {
 
     /// The periodic improper of periodicity `n` agreeing with this one to
     /// second order about `φ = χ0`: `k = 2K/n²`, `γ = nχ0 + 180°` (on
-    /// (−180°, 180°]), the inverse of [`CosineTerm::second_order_harmonic`].
+    /// (−180°, 180°]), the inverse of [`CosineTermForm::second_order_harmonic`].
     ///
     /// # Errors
     ///
     /// [`TorsionRefusal::NonIntegerPeriodicity`]; [`TorsionRefusal::NoCurvature`]
     /// for `n = 0`.
-    pub fn second_order_periodic(&self, periodicity: f64) -> Result<CosineTerm> {
+    pub fn second_order_periodic(&self, periodicity: f64) -> Result<CosineTermForm> {
         let (n, _) = order_of(periodicity)?;
         if n == 0 {
             return Err(TorsionRefusal::NoCurvature);
@@ -1237,7 +1237,7 @@ impl ImproperHarmonic {
         if phase > 180.0 {
             phase -= 360.0;
         }
-        Ok(CosineTerm {
+        Ok(CosineTermForm {
             k: 2.0 * self.k / (n * n),
             periodicity: n,
             phase,
@@ -1292,14 +1292,14 @@ pub(crate) fn nharmonic_coefficients(p: &Params) -> std::result::Result<Vec<f64>
 // ── the `torsion` form family ───────────────────────────────────────────────
 
 /// The canonical torsion parameters of `s`: the `dihedral periodic` row of
-/// [`Periodic::from_series`].
+/// [`PeriodicForm::from_series`].
 fn canonical_row(s: &FourierSeries) -> TypeParams {
-    TypeParams::row(Periodic::from_series(s).to_params())
+    TypeParams::row(PeriodicForm::from_series(s).to_params())
 }
 
 /// The series of canonical (`dihedral periodic`) parameters.
 pub(crate) fn canonical_series(tp: &TypeParams) -> Result<FourierSeries> {
-    Periodic::from_params(&tp.row)?.to_series()
+    PeriodicForm::from_params(&tp.row)?.to_series()
 }
 
 /// The family name of every torsion form.
@@ -1327,18 +1327,18 @@ fn codec(
 /// The `torsion` family: every Fourier-series torsion style molrs registers,
 /// as `(category, style, codec)`. The canonical style is `dihedral
 /// periodic`; its embedding is the identity on a row already canonical
-/// ([`Periodic::is_canonical`]) so that `canonical()` is idempotent.
+/// ([`PeriodicForm::is_canonical`]) so that `canonical()` is idempotent.
 /// `improper harmonic` and the per-instance styles (MMFF, UFF) register
 /// none.
 pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
     let mut periodic = codec(
         true,
-        |p| Periodic::from_params(p)?.to_series(),
-        |s| Ok(Periodic::from_series(s).to_params()),
-        |s| Periodic::from_series(s).to_params(),
+        |p| PeriodicForm::from_params(p)?.to_series(),
+        |s| Ok(PeriodicForm::from_series(s).to_params()),
+        |s| PeriodicForm::from_series(s).to_params(),
     );
     periodic.embed = std::sync::Arc::new(|tp: &TypeParams| {
-        let row = Periodic::from_params(&tp.row)?;
+        let row = PeriodicForm::from_params(&tp.row)?;
         Ok(if row.is_canonical() {
             TypeParams::row(row.to_params())
         } else {
@@ -1353,16 +1353,16 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             codec(
                 false,
                 |p| {
-                    let f = Charmm::from_params(p)?;
+                    let f = CharmmForm::from_params(p)?;
                     if f.w != 0.0 {
                         return Err(TorsionRefusal::OneFourWeight { w: f.w });
                     }
                     f.to_series()
                 },
-                |s| Ok(Charmm::from_series(s)?.to_params()),
+                |s| Ok(CharmmForm::from_series(s)?.to_params()),
                 |s| {
-                    Charmm {
-                        term: CosineTerm::nearest(s),
+                    CharmmForm {
+                        term: CosineTermForm::nearest(s),
                         w: 0.0,
                     }
                     .to_params()
@@ -1374,9 +1374,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "opls",
             codec(
                 false,
-                |p| Ok(Opls::from_params(p).to_series()),
-                |s| Ok(Opls::from_series(s)?.to_params()),
-                |s| Opls::nearest(s).to_params(),
+                |p| Ok(OplsForm::from_params(p).to_series()),
+                |s| Ok(OplsForm::from_series(s)?.to_params()),
+                |s| OplsForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1384,9 +1384,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "multi/harmonic",
             codec(
                 false,
-                |p| Ok(MultiHarmonic::from_params(p).to_series()),
-                |s| Ok(MultiHarmonic::from_series(s)?.to_params()),
-                |s| MultiHarmonic::nearest(s).to_params(),
+                |p| Ok(MultiHarmonicForm::from_params(p).to_series()),
+                |s| Ok(MultiHarmonicForm::from_series(s)?.to_params()),
+                |s| MultiHarmonicForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1394,9 +1394,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "nharmonic",
             codec(
                 false,
-                |p| Ok(NHarmonic::from_params(p)?.to_series()),
-                |s| Ok(NHarmonic::from_series(s)?.to_params()),
-                |s| NHarmonic::nearest(s).to_params(),
+                |p| Ok(NHarmonicForm::from_params(p)?.to_series()),
+                |s| Ok(NHarmonicForm::from_series(s)?.to_params()),
+                |s| NHarmonicForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1404,9 +1404,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "harmonic",
             codec(
                 false,
-                |p| SignedCosine::from_params("dihedral harmonic", p)?.to_series(),
-                |s| Ok(SignedCosine::from_series(s)?.to_params()),
-                |s| SignedCosine::nearest(s).to_params(),
+                |p| SignedCosineForm::from_params("dihedral harmonic", p)?.to_series(),
+                |s| Ok(SignedCosineForm::from_series(s)?.to_params()),
+                |s| SignedCosineForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1414,9 +1414,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "class2",
             codec(
                 false,
-                |p| Ok(Class2::from_params(p).to_series()),
-                |s| Ok(Class2::from_series(s)?.to_params()),
-                |s| Class2::nearest(s).to_params(),
+                |p| Ok(Class2Form::from_params(p).to_series()),
+                |s| Ok(Class2Form::from_series(s)?.to_params()),
+                |s| Class2Form::nearest(s).to_params(),
             ),
         ),
         (
@@ -1424,9 +1424,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "rb",
             codec(
                 false,
-                |p| Ok(RyckaertBellemans::from_params(p)?.to_series()),
-                |s| Ok(RyckaertBellemans::from_series(s)?.to_params()),
-                |s| RyckaertBellemans::nearest(s).to_params(),
+                |p| Ok(RyckaertBellemansForm::from_params(p)?.to_series()),
+                |s| Ok(RyckaertBellemansForm::from_series(s)?.to_params()),
+                |s| RyckaertBellemansForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1434,9 +1434,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "cvff",
             codec(
                 false,
-                |p| SignedCosine::from_params("improper cvff", p)?.to_series(),
-                |s| Ok(SignedCosine::from_series(s)?.to_params()),
-                |s| SignedCosine::nearest(s).to_params(),
+                |p| SignedCosineForm::from_params("improper cvff", p)?.to_series(),
+                |s| Ok(SignedCosineForm::from_series(s)?.to_params()),
+                |s| SignedCosineForm::nearest(s).to_params(),
             ),
         ),
         (
@@ -1444,9 +1444,9 @@ pub(crate) fn codecs() -> Vec<(&'static str, &'static str, FormCodec)> {
             "periodic",
             codec(
                 false,
-                |p| CosineTerm::from_params(p)?.to_series(),
-                |s| Ok(CosineTerm::from_series(s)?.to_params()),
-                |s| CosineTerm::nearest(s).to_params(),
+                |p| CosineTermForm::from_params(p)?.to_series(),
+                |s| Ok(CosineTermForm::from_series(s)?.to_params()),
+                |s| CosineTermForm::nearest(s).to_params(),
             ),
         ),
     ]
@@ -1493,8 +1493,8 @@ mod tests {
     }
 
     /// Any term: negative k, n ∈ 0..=6, any phase (also beyond ±180°).
-    fn any_term(rng: &mut StdRng) -> CosineTerm {
-        CosineTerm {
+    fn any_term(rng: &mut StdRng) -> CosineTermForm {
+        CosineTermForm {
             k: coeff(rng),
             periodicity: rng.random_range(0..=6) as f64,
             phase: rng.random_range(-540.0..540.0),
@@ -1502,8 +1502,8 @@ mod tests {
     }
 
     /// A term `from_series` reproduces: k > 0, n ∈ 1..=6, γ ∈ (−180°, 180°].
-    fn canonical_term(rng: &mut StdRng, n: usize) -> CosineTerm {
-        CosineTerm {
+    fn canonical_term(rng: &mut StdRng, n: usize) -> CosineTermForm {
+        CosineTermForm {
             k: positive(rng),
             periodicity: n as f64,
             phase: phase(rng),
@@ -1555,40 +1555,40 @@ mod tests {
     /// (negative k, arbitrary phases, n ≤ 6). `charmm`'s `w` is 0: a
     /// non-zero one does not embed.
     fn random_rows(rng: &mut StdRng) -> Vec<Row> {
-        let periodic = Periodic {
+        let periodic = PeriodicForm {
             terms: (0..rng.random_range(1..=4))
                 .map(|_| any_term(rng))
                 .collect(),
         };
-        let charmm = Charmm {
+        let charmm = CharmmForm {
             term: any_term(rng),
             w: 0.0,
         };
         let improper = any_term(rng);
-        let opls = Opls {
+        let opls = OplsForm {
             k: [0; 4].map(|_| coeff(rng)),
         };
-        let multi = MultiHarmonic {
+        let multi = MultiHarmonicForm {
             a: [0; 5].map(|_| coeff(rng)),
         };
-        let nharm = NHarmonic {
+        let nharm = NHarmonicForm {
             a: (0..rng.random_range(1..=7)).map(|_| coeff(rng)).collect(),
         };
-        let harmonic = SignedCosine {
+        let harmonic = SignedCosineForm {
             k: coeff(rng),
             sign: sign(rng),
             periodicity: rng.random_range(0..=6) as f64,
         };
-        let cvff = SignedCosine {
+        let cvff = SignedCosineForm {
             k: coeff(rng),
             sign: sign(rng),
             periodicity: rng.random_range(0..=6) as f64,
         };
-        let class2 = Class2 {
+        let class2 = Class2Form {
             k: [0; 3].map(|_| coeff(rng)),
             phi: [phase(rng), phase(rng), rng.random_range(-540.0..540.0)],
         };
-        let rb = RyckaertBellemans {
+        let rb = RyckaertBellemansForm {
             c: [0; 6].map(|_| coeff(rng)),
         };
         let poly = |a: Vec<f64>| {
@@ -1717,14 +1717,14 @@ mod tests {
             if orders.is_empty() {
                 orders.push(1);
             }
-            let periodic = Periodic {
+            let periodic = PeriodicForm {
                 terms: orders
                     .iter()
                     .map(|&n| canonical_term(&mut rng, n))
                     .collect(),
             };
             assert!(periodic.is_canonical(), "{periodic:?}");
-            let back = Periodic::from_series(&periodic.to_series().unwrap());
+            let back = PeriodicForm::from_series(&periodic.to_series().unwrap());
             assert_eq!(back.terms.len(), periodic.terms.len(), "{back:?}");
             for (t, u) in periodic.terms.iter().zip(&back.terms) {
                 assert!(
@@ -1736,32 +1736,35 @@ mod tests {
 
             // A single term keeps its sign: k = a₀.
             let n = rng.random_range(1..=6);
-            let term = CosineTerm {
+            let term = CosineTermForm {
                 k: coeff(&mut rng),
                 ..canonical_term(&mut rng, n)
             };
-            let back = Charmm::from_series(&term.to_series().unwrap()).unwrap();
+            let back = CharmmForm::from_series(&term.to_series().unwrap()).unwrap();
             assert!(close(back.term.k, term.k), "{term:?} {back:?}");
             assert_eq!((back.term.periodicity, back.w), (term.periodicity, 0.0));
             let s = back.to_series().unwrap();
             assert!(s.max_abs_diff(&term.to_series().unwrap()) < 1e-12 * 16.0);
 
-            let sc = SignedCosine {
+            let sc = SignedCosineForm {
                 k: coeff(&mut rng),
                 sign: sign(&mut rng),
                 periodicity: rng.random_range(1..=6) as f64,
             };
-            assert_eq!(SignedCosine::from_series(&sc.to_series().unwrap()), Ok(sc));
+            assert_eq!(
+                SignedCosineForm::from_series(&sc.to_series().unwrap()),
+                Ok(sc)
+            );
 
-            let opls = Opls {
+            let opls = OplsForm {
                 k: [0; 4].map(|_| coeff(&mut rng)),
             };
-            assert_eq!(Opls::from_series(&opls.to_series()), Ok(opls));
+            assert_eq!(OplsForm::from_series(&opls.to_series()), Ok(opls));
 
-            let multi = MultiHarmonic {
+            let multi = MultiHarmonicForm {
                 a: [0; 5].map(|_| coeff(&mut rng)),
             };
-            let back = MultiHarmonic::from_series(&multi.to_series()).unwrap();
+            let back = MultiHarmonicForm::from_series(&multi.to_series()).unwrap();
             for (x, y) in multi.a.iter().zip(&back.a) {
                 assert!((x - y).abs() < 1e-12 * 64.0, "{multi:?} → {back:?}");
             }
@@ -1774,26 +1777,26 @@ mod tests {
             if top > 0 {
                 a[top] = positive(&mut rng);
             }
-            let nh = NHarmonic { a };
-            let back = NHarmonic::from_series(&nh.to_series()).unwrap();
+            let nh = NHarmonicForm { a };
+            let back = NHarmonicForm::from_series(&nh.to_series()).unwrap();
             assert_eq!(back.a.len(), nh.a.len(), "{nh:?} → {back:?}");
             for (x, y) in nh.a.iter().zip(&back.a) {
                 assert!((x - y).abs() < 1e-12 * 64.0, "{nh:?} → {back:?}");
             }
 
-            let rb = RyckaertBellemans {
+            let rb = RyckaertBellemansForm {
                 c: [0; 6].map(|_| coeff(&mut rng)),
             };
-            let back = RyckaertBellemans::from_series(&rb.to_series()).unwrap();
+            let back = RyckaertBellemansForm::from_series(&rb.to_series()).unwrap();
             for (x, y) in rb.c.iter().zip(&back.c) {
                 assert!((x - y).abs() < 1e-12 * 64.0, "{rb:?} → {back:?}");
             }
 
-            let class2 = Class2 {
+            let class2 = Class2Form {
                 k: [0; 3].map(|_| positive(&mut rng)),
                 phi: [0; 3].map(|_| phase(&mut rng)),
             };
-            let back = Class2::from_series(&class2.to_series()).unwrap();
+            let back = Class2Form::from_series(&class2.to_series()).unwrap();
             for i in 0..3 {
                 assert!(close(class2.k[i], back.k[i]), "{class2:?} → {back:?}");
                 assert!(
@@ -1802,11 +1805,11 @@ mod tests {
                 );
             }
             // A negative class2 k is found among the sign choices.
-            let mixed = Class2 {
+            let mixed = Class2Form {
                 k: [positive(&mut rng), -positive(&mut rng), positive(&mut rng)],
                 ..class2
             };
-            let back = Class2::from_series(&mixed.to_series()).unwrap();
+            let back = Class2Form::from_series(&mixed.to_series()).unwrap();
             assert!(
                 back.to_series().max_abs_diff(&mixed.to_series()) < 1e-12 * 64.0,
                 "{mixed:?} → {back:?}"
@@ -1822,7 +1825,7 @@ mod tests {
         let codec = codec_of("dihedral", "periodic");
         for _ in 0..CASES {
             let s = random_series(&mut rng, 5, true);
-            let p = Periodic::from_series(&s);
+            let p = PeriodicForm::from_series(&s);
             assert!(p.is_canonical(), "{p:?}");
             assert!(p.to_series().unwrap().max_abs_diff(&s) < 1e-12 * 64.0 * s.scale());
             let once = (codec.embed)(&TypeParams::row(p.to_params())).unwrap();
@@ -1835,14 +1838,14 @@ mod tests {
             assert!(zeroth.len() <= 1 && p.terms[0].periodicity <= 1.0, "{p:?}");
         }
         // A non-canonical row (negative k, two terms of one order) is not.
-        let messy = Periodic {
+        let messy = PeriodicForm {
             terms: vec![
-                CosineTerm {
+                CosineTermForm {
                     k: -1.0,
                     periodicity: 3.0,
                     phase: 0.0,
                 },
-                CosineTerm {
+                CosineTermForm {
                     k: 2.0,
                     periodicity: 3.0,
                     phase: 0.0,
@@ -1850,7 +1853,7 @@ mod tests {
             ],
         };
         assert!(!messy.is_canonical());
-        let canonical = Periodic::from_params(
+        let canonical = PeriodicForm::from_params(
             &(codec.embed)(&TypeParams::row(messy.to_params()))
                 .unwrap()
                 .row,
@@ -1858,7 +1861,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             canonical.terms,
-            vec![CosineTerm {
+            vec![CosineTermForm {
                 k: 1.0,
                 periodicity: 3.0,
                 phase: 0.0
@@ -1878,7 +1881,7 @@ mod tests {
             // In OPLS's image: C₅ = 0, and ΣCₙ = E(180°) = 0.
             c[5] = 0.0;
             c[0] = -(c[1] + c[2] + c[3] + c[4]);
-            let rb = RyckaertBellemans { c };
+            let rb = RyckaertBellemansForm { c };
             let s = rb.to_series();
 
             assert_eq!(
@@ -1886,14 +1889,14 @@ mod tests {
                 [c[0], -c[1], c[2], -c[3], c[4], -c[5]],
                 "A(n+1) = (−1)ⁿ C(n), exactly"
             );
-            let multi = MultiHarmonic::from_series(&s).unwrap();
+            let multi = MultiHarmonicForm::from_series(&s).unwrap();
             for (n, (&a, &cn)) in multi.a.iter().zip(&c).enumerate() {
                 let want = if n % 2 == 0 { cn } else { -cn };
                 assert!((a - want).abs() < 1e-12 * 64.0, "A{}: {a} vs {want}", n + 1);
             }
-            let opls = Opls::from_series(&multi.to_series()).unwrap();
-            let periodic = Periodic::from_series(&opls.to_series());
-            let rb2 = RyckaertBellemans::from_series(&periodic.to_series().unwrap()).unwrap();
+            let opls = OplsForm::from_series(&multi.to_series()).unwrap();
+            let periodic = PeriodicForm::from_series(&opls.to_series());
+            let rb2 = RyckaertBellemansForm::from_series(&periodic.to_series().unwrap()).unwrap();
 
             for (name, other) in [
                 ("multi/harmonic", multi.to_series()),
@@ -1933,7 +1936,7 @@ mod tests {
                     break p;
                 }
             };
-            let s = CosineTerm {
+            let s = CosineTermForm {
                 k: positive(&mut rng),
                 periodicity: n as f64,
                 phase: p,
@@ -1941,11 +1944,14 @@ mod tests {
             .to_series()
             .unwrap();
             for (target, got) in [
-                ("opls", Opls::from_series(&s).map(|_| ())),
-                ("multi/harmonic", MultiHarmonic::from_series(&s).map(|_| ())),
-                ("nharmonic", NHarmonic::from_series(&s).map(|_| ())),
-                ("harmonic", SignedCosine::from_series(&s).map(|_| ())),
-                ("rb", RyckaertBellemans::from_series(&s).map(|_| ())),
+                ("opls", OplsForm::from_series(&s).map(|_| ())),
+                (
+                    "multi/harmonic",
+                    MultiHarmonicForm::from_series(&s).map(|_| ()),
+                ),
+                ("nharmonic", NHarmonicForm::from_series(&s).map(|_| ())),
+                ("harmonic", SignedCosineForm::from_series(&s).map(|_| ())),
+                ("rb", RyckaertBellemansForm::from_series(&s).map(|_| ())),
             ] {
                 match got {
                     Err(TorsionRefusal::SineTerm { n: m, .. }) => assert_eq!(m, n),
@@ -1959,14 +1965,18 @@ mod tests {
             let top = random_series(&mut rng, 5, false) + FourierSeries::new(a6, vec![]);
             assert_eq!(top.order(), 6);
             for (target, max, got) in [
-                ("opls", 4, Opls::from_series(&top).map(|_| ())),
+                ("opls", 4, OplsForm::from_series(&top).map(|_| ())),
                 (
                     "multi/harmonic",
                     4,
-                    MultiHarmonic::from_series(&top).map(|_| ()),
+                    MultiHarmonicForm::from_series(&top).map(|_| ()),
                 ),
-                ("class2", 3, Class2::from_series(&top).map(|_| ())),
-                ("rb", 5, RyckaertBellemans::from_series(&top).map(|_| ())),
+                ("class2", 3, Class2Form::from_series(&top).map(|_| ())),
+                (
+                    "rb",
+                    5,
+                    RyckaertBellemansForm::from_series(&top).map(|_| ()),
+                ),
             ] {
                 match got {
                     Err(TorsionRefusal::OrderTooHigh { n, max: m }) => {
@@ -1981,17 +1991,20 @@ mod tests {
             let two = canonical_term(&mut rng, 1).to_series().unwrap()
                 + canonical_term(&mut rng, 3).to_series().unwrap();
             let multi = Err(TorsionRefusal::MultiTerm { orders: vec![1, 3] });
-            assert_eq!(CosineTerm::from_series(&two).map(|_| ()), multi);
-            assert_eq!(SignedCosine::from_series(&two).map(|_| ()), multi);
+            assert_eq!(CosineTermForm::from_series(&two).map(|_| ()), multi);
+            assert_eq!(SignedCosineForm::from_series(&two).map(|_| ()), multi);
 
             // A constant the form's terms do not fix.
             let k = positive(&mut rng);
             let shifted = FourierSeries::new(vec![k + 1.0, 0.0, -k], vec![]);
             for (target, got) in [
-                ("charmm", Charmm::from_series(&shifted).map(|_| ())),
-                ("harmonic", SignedCosine::from_series(&shifted).map(|_| ())),
-                ("opls", Opls::from_series(&shifted).map(|_| ())),
-                ("class2", Class2::from_series(&shifted).map(|_| ())),
+                ("charmm", CharmmForm::from_series(&shifted).map(|_| ())),
+                (
+                    "harmonic",
+                    SignedCosineForm::from_series(&shifted).map(|_| ()),
+                ),
+                ("opls", OplsForm::from_series(&shifted).map(|_| ())),
+                ("class2", Class2Form::from_series(&shifted).map(|_| ())),
             ] {
                 assert!(
                     matches!(got, Err(TorsionRefusal::ConstantOffset { constant, .. }) if constant == k + 1.0),
@@ -1999,12 +2012,12 @@ mod tests {
                 );
             }
             // … which the polynomial forms carry.
-            assert!(MultiHarmonic::from_series(&shifted).is_ok());
-            assert!(RyckaertBellemans::from_series(&shifted).is_ok());
+            assert!(MultiHarmonicForm::from_series(&shifted).is_ok());
+            assert!(RyckaertBellemansForm::from_series(&shifted).is_ok());
         }
 
         // Non-integer n, a sign that is not ±1, a 1-4 weight, a non-Fourier form.
-        let half = CosineTerm {
+        let half = CosineTermForm {
             k: 1.0,
             periodicity: 2.5,
             phase: 0.0,
@@ -2013,7 +2026,7 @@ mod tests {
             half.to_series(),
             Err(TorsionRefusal::NonIntegerPeriodicity { periodicity: 2.5 })
         );
-        let bad = SignedCosine {
+        let bad = SignedCosineForm {
             k: 1.0,
             sign: 0.5,
             periodicity: 2.0,
@@ -2022,12 +2035,12 @@ mod tests {
             bad.to_series(),
             Err(TorsionRefusal::InvalidSign { sign: 0.5 })
         );
-        let charmm = Charmm { term: half, w: 0.5 };
+        let charmm = CharmmForm { term: half, w: 0.5 };
         let refused = (codec_of("dihedral", "charmm").embed)(&TypeParams::row(charmm.to_params()))
             .unwrap_err();
         assert!(refused.reason.contains("w = 0.5"), "{refused}");
         assert!(matches!(
-            ImproperHarmonic { k: 1.0, chi0: 0.0 }.to_series(),
+            ImproperHarmonicForm { k: 1.0, chi0: 0.0 }.to_series(),
             Err(TorsionRefusal::NotAFourierForm { .. })
         ));
         assert!(
@@ -2049,7 +2062,7 @@ mod tests {
             (90.0, 0.0, 1.0),
             (-90.0, 0.0, -1.0),
         ] {
-            let s = CosineTerm {
+            let s = CosineTermForm {
                 k: 1.0,
                 periodicity: 2.0,
                 phase,
@@ -2065,8 +2078,8 @@ mod tests {
     #[test]
     fn rows_on_one_quadruple_sum() {
         let rows = [
-            Periodic {
-                terms: vec![CosineTerm {
+            PeriodicForm {
+                terms: vec![CosineTermForm {
                     k: 1.0,
                     periodicity: 3.0,
                     phase: 0.0,
@@ -2074,8 +2087,8 @@ mod tests {
             }
             .to_series()
             .unwrap(),
-            Charmm {
-                term: CosineTerm {
+            CharmmForm {
+                term: CosineTermForm {
                     k: 0.5,
                     periodicity: 3.0,
                     phase: 180.0,
@@ -2084,7 +2097,7 @@ mod tests {
             }
             .to_series()
             .unwrap(),
-            Opls {
+            OplsForm {
                 k: [2.0, 0.0, 0.0, 0.0],
             }
             .to_series(),
@@ -2098,19 +2111,19 @@ mod tests {
         );
         // 2.5 − (1 + 0.5) = 1 left over: k₀ = ½ at periodicity 0.
         assert_eq!(
-            Periodic::from_series(&s).terms,
+            PeriodicForm::from_series(&s).terms,
             vec![
-                CosineTerm {
+                CosineTermForm {
                     k: 0.5,
                     periodicity: 0.0,
                     phase: 0.0
                 },
-                CosineTerm {
+                CosineTermForm {
                     k: 1.0,
                     periodicity: 1.0,
                     phase: 0.0
                 },
-                CosineTerm {
+                CosineTermForm {
                     k: 0.5,
                     periodicity: 3.0,
                     phase: 0.0
@@ -2118,9 +2131,9 @@ mod tests {
             ]
         );
         assert_eq!(
-            Charmm::from_series(&FourierSeries::new(vec![0.5, 0.0, 0.0, 0.5], vec![])),
-            Ok(Charmm {
-                term: CosineTerm {
+            CharmmForm::from_series(&FourierSeries::new(vec![0.5, 0.0, 0.0, 0.5], vec![])),
+            Ok(CharmmForm {
+                term: CosineTermForm {
                     k: 0.5,
                     periodicity: 3.0,
                     phase: 0.0
@@ -2129,7 +2142,7 @@ mod tests {
             })
         );
         assert!(matches!(
-            Charmm::from_series(&FourierSeries::new(vec![9.0, 0.0, 0.0, 0.5], vec![])),
+            CharmmForm::from_series(&FourierSeries::new(vec![9.0, 0.0, 0.0, 0.5], vec![])),
             Err(TorsionRefusal::ConstantOffset { .. })
         ));
     }
@@ -2141,21 +2154,27 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(SEED + 7);
         for _ in 0..CASES {
             let s = random_series(&mut rng, 6, true);
-            assert!(Opls::from_series(&Opls::nearest(&s).to_series()).is_ok());
-            assert!(MultiHarmonic::from_series(&MultiHarmonic::nearest(&s).to_series()).is_ok());
-            assert!(NHarmonic::from_series(&NHarmonic::nearest(&s).to_series()).is_ok());
+            assert!(OplsForm::from_series(&OplsForm::nearest(&s).to_series()).is_ok());
             assert!(
-                RyckaertBellemans::from_series(&RyckaertBellemans::nearest(&s).to_series()).is_ok()
+                MultiHarmonicForm::from_series(&MultiHarmonicForm::nearest(&s).to_series()).is_ok()
             );
-            assert!(Class2::from_series(&Class2::nearest(&s).to_series()).is_ok());
-            assert!(CosineTerm::from_series(&CosineTerm::nearest(&s).to_series().unwrap()).is_ok());
-            let sc = SignedCosine::nearest(&s);
-            assert!(SignedCosine::from_series(&sc.to_series().unwrap()).is_ok());
+            assert!(NHarmonicForm::from_series(&NHarmonicForm::nearest(&s).to_series()).is_ok());
+            assert!(
+                RyckaertBellemansForm::from_series(&RyckaertBellemansForm::nearest(&s).to_series())
+                    .is_ok()
+            );
+            assert!(Class2Form::from_series(&Class2Form::nearest(&s).to_series()).is_ok());
+            assert!(
+                CosineTermForm::from_series(&CosineTermForm::nearest(&s).to_series().unwrap())
+                    .is_ok()
+            );
+            let sc = SignedCosineForm::nearest(&s);
+            assert!(SignedCosineForm::from_series(&sc.to_series().unwrap()).is_ok());
 
-            let opls = Opls {
+            let opls = OplsForm {
                 k: [0; 4].map(|_| coeff(&mut rng)),
             };
-            assert_eq!(Opls::nearest(&opls.to_series()), opls);
+            assert_eq!(OplsForm::nearest(&opls.to_series()), opls);
         }
     }
 
@@ -2165,19 +2184,23 @@ mod tests {
     #[test]
     fn periodic_and_harmonic_impropers_agree_to_second_order() {
         // AMBER's improper: k[1 + cos(2φ − 180°)] = k[1 − cos 2φ], minimum at 0.
-        let amber = CosineTerm {
+        let amber = CosineTermForm {
             k: 1.1,
             periodicity: 2.0,
             phase: 180.0,
         };
         let h = amber.second_order_harmonic().unwrap();
-        assert_eq!(h, ImproperHarmonic { k: 2.2, chi0: 0.0 }, "K = 2k at n = 2");
+        assert_eq!(
+            h,
+            ImproperHarmonicForm { k: 2.2, chi0: 0.0 },
+            "K = 2k at n = 2"
+        );
         assert_eq!(h.second_order_periodic(2.0), Ok(amber));
 
         let mut rng = StdRng::seed_from_u64(SEED + 4);
         for _ in 0..CASES {
             let n = rng.random_range(1..=6);
-            let t = CosineTerm {
+            let t = CosineTermForm {
                 k: coeff(&mut rng),
                 periodicity: n as f64,
                 phase: phase(&mut rng),
@@ -2215,7 +2238,7 @@ mod tests {
             assert!((back_h.chi0 - h.chi0).abs() < 1e-9, "{h:?} {back_h:?}");
         }
         assert_eq!(
-            CosineTerm {
+            CosineTermForm {
                 k: 1.0,
                 periodicity: 0.0,
                 phase: 0.0

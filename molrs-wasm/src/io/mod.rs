@@ -20,7 +20,7 @@
 //! | [`amber`] | `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr` | AMBER inpcrd / restrt, Antechamber AC, prmtop structure |
 //! | `smiles` | `readSmilesStr`, `writeSmilesStr`, `readCgsmilesStr`, `SmilesIr.parse` | SMILES and CGsmiles strings (`smiles` feature) |
 //! | [`csv`] | `readCsvBlockStr`, `writeCsvBlockStr` | CSV tables as a `Block` |
-//! | [`mrec`] | `MrecReader`, `readMrecFrame`, `sectionNames` | `*.mrec` scientific records (Zarr V3) |
+//! | [`mrec`] | `MrecReader`, `readMrecFrameBytes` / `readMrecFrameFiles`, `sectionNamesBytes` / `sectionNamesFiles` | `*.mrec` scientific records (Zarr V3) |
 //! | [`cube`] | `readCubeStr`, `writeCubeStr` | Gaussian Cube |
 //! | [`xsf`] | `readXsfStr`, `writeXsfStr` | XCrySDen XSF |
 //! | [`stl`] | `readStlBytes` | STL surface meshes (ASCII or binary) — produces a `TriMesh`, not a `Frame` |

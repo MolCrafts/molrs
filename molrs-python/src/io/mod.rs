@@ -7,7 +7,8 @@
 //! | [`in_memory`]           | the frame formats' `read_<fmt>_str` / `_bytes` and `write_<fmt>_str` / `_bytes` |
 //! | [`trajectory_readers`]  | `read_<fmt>_trajectory` and the lazy `<Fmt>Reader` classes; the trajectory writers |
 //! | [`stl`]                 | STL                                                      |
-//! | [`csv`]                 | the native half of the CSV block doors                   |
+//! | [`csv`]                 | a `Block` as CSV                                         |
+//! | [`clpol`]               | the CL&Pol `alpha.ff` polarisation table                 |
 //! | [`forcefield`]          | force-field files                                        |
 //! | [`frame_encoding`]      | a frame as MessagePack bytes / JSON text                 |
 //! | [`smiles`], [`cgsmiles`] | the SMILES and CGsmiles line notations                  |
@@ -21,6 +22,7 @@
 //! (`molrs.io.<fmt>.<Fmt>Reader`). No door picks a format for the caller.
 
 pub mod cgsmiles;
+mod clpol;
 mod csv;
 mod forcefield;
 mod frame_encoding;
@@ -47,6 +49,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     trajectory_readers::register(m)?;
     stl::register(m)?;
     csv::register(m)?;
+    clpol::register(m)?;
     forcefield::register(m)?;
     frame_encoding::register(m)?;
     smiles::register(m)?;

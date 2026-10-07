@@ -63,8 +63,8 @@
 
 // Let in-crate paths refer to this crate by its public name `molrs::` (e.g.
 // `molrs::core::Frame`, `molrs::io::read_xyz`), matching how downstream code and
-// doctests spell them. Sub-system modules below were absorbed from the former
-// `molrs-*` member crates and rely on this alias for their cross-module paths.
+// doctests spell them. The sub-system modules below use this alias for their
+// cross-module paths.
 extern crate self as molrs;
 
 // Op is always compiled: the numeric base beneath core (vector, rigid-motion,

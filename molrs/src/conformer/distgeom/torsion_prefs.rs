@@ -11,9 +11,9 @@
 //!   * `$RDBASE/Code/ForceField/CrystalFF/TorsionAngleM6.h` — the M6 potential
 //!     `V = Σ_m V_m·(1 + s_m·cos(m·x))`.
 //!
-//! ## Faithful port (this replaces the former representative subset)
+//! ## Faithful port
 //!
-//! Every torsion assignment now flows through the **full** three-table data
+//! Every torsion assignment flows through the **full** three-table data
 //! set and the project SMARTS engine ([`molrs::perceive::smarts::SmartsPattern`]). For
 //! each rotatable bond we reproduce RDKit's exact selection:
 //!

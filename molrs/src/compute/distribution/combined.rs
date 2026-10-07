@@ -204,8 +204,7 @@ impl From<DihedralObservable> for InternalCoordinate {
 ///   Because it is the tensor product of the same per-axis CIC scheme, summing
 ///   the joint histogram over the other axes reproduces the link-01 1-D CIC
 ///   distribution *exactly* — the defining CDF marginal-consistency contract
-///   (ac-001) holds, now bit-for-bit with reference implementation rather than via a nearest-bin
-///   approximation.
+///   (ac-001) holds bit for bit, not through a nearest-bin approximation.
 ///
 /// # References
 /// - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).

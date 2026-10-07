@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use crate::core::Element;
 use crate::core::{Atomistic, BondNumber, BondOrder, NodeId};
 use crate::perceive::Hybridization;
-use crate::perceive::{RingInfo, perceive_rings};
+use crate::perceive::{RingSet, perceive_rings};
 
 /// The bond class MMFF perceives against, from a localized bond number.
 ///
@@ -68,7 +68,7 @@ pub(crate) struct MmffTopology {
     /// by aromaticity, so total-bond-order tests stay correct.
     pub(crate) nbr_kekule: Vec<Vec<BondOrder>>,
     /// SSSR ring info.
-    pub(crate) rings: RingInfo,
+    pub(crate) rings: RingSet,
     /// rings expressed as dense atom indices (parallel to `rings.rings()`).
     pub(crate) ring_idx: Vec<Vec<usize>>,
     /// MMFF aromatic flag per atom (set by [`set_mmff_aromaticity`]).

@@ -1,4 +1,4 @@
-//! Ring facts (`molrs::perceive::perceive_rings`): [`PyRingInfo`] reports the SSSR
+//! Ring facts (`molrs::perceive::perceive_rings`): [`PyRingSet`] reports the SSSR
 //! rings of a molecule and the systems they fuse into, without touching it.
 
 use molrs::core::{node_from_u64, node_to_u64};
@@ -22,13 +22,13 @@ use crate::core::molgraph::PyAtomistic;
 /// 1
 /// >>> rings.ring_sizes()
 /// [6]
-#[pyclass(module = "molrs.perceive", name = "RingInfo", subclass)]
-pub struct PyRingInfo {
-    inner: molrs::perceive::RingInfo,
+#[pyclass(module = "molrs.perceive", name = "RingSet", subclass)]
+pub struct PyRingSet {
+    inner: molrs::perceive::RingSet,
 }
 
 #[pymethods]
-impl PyRingInfo {
+impl PyRingSet {
     /// Every ring, as a list of atom handles forming a closed path.
     fn rings(&self) -> Vec<Vec<u64>> {
         self.inner
@@ -82,7 +82,7 @@ impl PyRingInfo {
 
     fn __repr__(&self) -> String {
         format!(
-            "RingInfo(n_rings={}, sizes={:?})",
+            "RingSet(n_rings={}, sizes={:?})",
             self.inner.n_rings(),
             self.inner.ring_sizes()
         )
@@ -90,10 +90,10 @@ impl PyRingInfo {
 }
 
 /// Perceive the rings of ``mol`` (SSSR / minimum cycle basis) as a
-/// :class:`RingInfo` side table; ``mol`` is left untouched.
+/// :class:`RingSet` side table; ``mol`` is left untouched.
 #[pyfunction(name = "perceive_rings")]
-pub(super) fn perceive_rings_py(mol: &Bound<'_, PyAtomistic>) -> PyRingInfo {
-    PyRingInfo {
+pub(super) fn perceive_rings_py(mol: &Bound<'_, PyAtomistic>) -> PyRingSet {
+    PyRingSet {
         inner: molrs::perceive::perceive_rings(mol.borrow().core()),
     }
 }

@@ -1342,11 +1342,10 @@ mod tests {
         );
     }
 
-    /// The sequence that made the infallible constructors panic —
-    /// store a str `x`, then add an atom carrying a real float `x` — cannot be
-    /// assembled any more: it already ends at its first step, so the
-    /// `add_atom_xyz` that used to meet a str `x` column meets a float one and
-    /// the frame it produces is the schema-conforming one.
+    /// Storing a str `x` and then adding an atom carrying a real float `x`
+    /// cannot be assembled: the sequence ends at its first step, so
+    /// `add_atom_xyz` meets a float `x` column and the frame it produces is
+    /// the schema-conforming one.
     #[test]
     fn set_atom_refusal_leaves_add_atom_xyz_a_float_x_column() {
         let mut mol = Atomistic::new();

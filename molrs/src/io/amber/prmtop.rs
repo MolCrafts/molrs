@@ -936,9 +936,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
 /// What the frame carries of the tables is per-row: which rows a multi-term
 /// improper is. A 1-4 pair's own weight (`SCEE` / `SCNB`) is force-field
 /// meaning: `AmberPrmtopForcefieldReader::read_system`
-/// returns this frame with those `pairs` rows. Structure fields mirror the
-/// historical molpy `AmberPrmtopReader` Frame contract so molpy can thin to a
-/// molrs call.
+/// returns this frame with those `pairs` rows.
 ///
 /// # Output Frame
 ///

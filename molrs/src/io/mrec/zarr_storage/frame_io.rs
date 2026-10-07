@@ -238,9 +238,7 @@ fn dtype_of(col: &Column) -> (zarrs::array::DataType, zarrs::array::FillValue) {
 /// The fill value is always the dtype's zero — [`DType::itemsize`] zero bytes,
 /// and no bytes (the empty string) for the variable-width variant. The frame
 /// path writes its arrays whole, so no reader there ever observes a fill; the
-/// zero is what the stores written before this function existed already
-/// carried, and it is also what a sequence's growth array is padded with
-/// beyond its live rows.
+/// zero is what a sequence's growth array is padded with beyond its live rows.
 ///
 /// Keyed on [`DType`] rather than on a [`Column`] because the sequence writer
 /// creates arrays from a *schema*, where no column value exists yet — this is
@@ -2147,8 +2145,8 @@ mod tests {
         assert_eq!(back.validity(COLUMN), None);
     }
 
-    /// No mask, no subgroup: a store written by a molrs that never masked a
-    /// column is byte-identical to one written now, so it keeps reading.
+    /// No mask, no subgroup: a frame with no masked column writes no
+    /// validity child at all.
     #[test]
     fn a_frame_with_no_masked_column_writes_no_validity_child() {
         let dir = TempDir::new().unwrap();

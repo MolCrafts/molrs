@@ -9,6 +9,7 @@
 //! `molrs.core.schema` and `molrs.core.constants`.
 
 pub mod block;
+pub mod bond_order;
 pub mod element;
 pub mod frame;
 pub mod graph_views;
@@ -39,8 +40,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<frame::PyFrameMeta>()?;
     m.add_class::<frame::PyFrame>()?;
     m.add_class::<trajectory::PyTrajectory>()?;
-    m.add_class::<trajectory::PyScalarObservable>()?;
-    m.add_class::<trajectory::PyVectorObservable>()?;
+    m.add_class::<trajectory::PyObservableRecord>()?;
 
     m.add_class::<simbox::PyBox>()?;
     m.add_class::<neighborlist::PyNeighborList>()?;
@@ -60,6 +60,8 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<trace::PyTrace>()?;
 
     m.add_class::<element::PyElement>()?;
+    m.add_class::<bond_order::PyBondOrder>()?;
+    m.add_class::<bond_order::PyBondNumber>()?;
     m.add_class::<topology::PyTopology>()?;
     m.add_class::<molgraph::PyMolGraph>()?;
     m.add_class::<molgraph::PyAtomistic>()?;

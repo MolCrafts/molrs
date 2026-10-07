@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use crate::core::Atomistic;
 use crate::core::NodeId;
 use crate::core::PropValue;
-use crate::perceive::{RingInfo, perceive_rings};
+use crate::perceive::{RingSet, perceive_rings};
 
 /// The molecule a pattern is matched against, with the facts every
 /// primitive evaluation reads, precomputed once and read-only.
@@ -41,7 +41,7 @@ use crate::perceive::{RingInfo, perceive_rings};
 /// behaves exactly as before.
 pub struct SmartsTarget<'m> {
     pub mol: &'m Atomistic,
-    pub rings: RingInfo,
+    pub rings: RingSet,
     /// atom → is-aromatic (perceived once, up front).
     aromatic_atom: HashMap<NodeId, bool>,
     /// atom → total H count (explicit H neighbours; see module note).
@@ -102,7 +102,7 @@ impl<'m> SmartsTarget<'m> {
 
         // Ring-bond connectivity (`x<n>`): for each ring bond, both endpoints
         // gain one incident ring bond. Counted from the bond side so it uses
-        // the same `RingInfo::is_bond_in_ring` truth as the `@` bond primitive.
+        // the same `RingSet::is_bond_in_ring` truth as the `@` bond primitive.
         let mut ring_bond_count: HashMap<NodeId, u32> =
             mol.atoms().map(|(id, _)| (id, 0)).collect();
         for (bid, bond) in mol.bonds() {

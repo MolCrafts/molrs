@@ -63,11 +63,10 @@ use typing::typify_atoms;
 /// Callers compose `Typing::typify` → `to_frame` → pairs →
 /// `PotentialCompiler::new(typing.forcefield()).compile`.
 ///
-/// # B-line reversal
+/// # Bonded parameters
 ///
-/// This reverses the "typifier does not sink (B-line)" decision of
-/// `opls-ef-01-kernels-seam`: OPLS bonded-parameter assignment now happens in
-/// Rust (here), not in a post-typify Python pass over a molpy `ForceField`.
+/// OPLS bonded-parameter assignment happens in Rust (here), not in a
+/// post-typify Python pass over a molpy `ForceField`.
 ///
 /// # Scope
 ///

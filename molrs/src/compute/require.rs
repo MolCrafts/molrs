@@ -12,7 +12,7 @@
 //! distance `|r_j − r_i|²` in Å², and `disp`, the displacement `r_j − r_i`
 //! itself in Å, pointing from `i` to `j` and left unnormalized. Which of them
 //! a table holds is decided when it is materialized, by
-//! [`NeighborsStorage`](molrs::core::NeighborsStorage).
+//! [`NeighborColumns`](molrs::core::NeighborColumns).
 //!
 //! A table reports a column it never stored as `None`, never as a fabricated
 //! zero: `disp()` on an indices-only table is `None`, not a view full of
@@ -53,7 +53,7 @@ use super::error::ComputeError;
 /// # Errors
 ///
 /// [`ComputeError::BadShape`] when the table was materialized without
-/// [`NeighborsStorage::disp`](molrs::core::NeighborsStorage::disp)
+/// [`NeighborColumns::disp`](molrs::core::NeighborColumns::disp)
 /// — that is, with any policy other than `DISP` or `FULL`. The `expected` text
 /// names the missing column and the pair count it was needed for, and `got`
 /// describes the table that arrived; nothing is substituted for the column.
@@ -74,7 +74,7 @@ pub(crate) fn require_disp(nlist: &Neighbors) -> Result<Fnx3View<'_>, ComputeErr
 /// # Errors
 ///
 /// [`ComputeError::BadShape`] when the table was materialized without
-/// [`NeighborsStorage::dist_sq`](molrs::core::NeighborsStorage::dist_sq)
+/// [`NeighborColumns::dist_sq`](molrs::core::NeighborColumns::dist_sq)
 /// — that is, with any policy other than `DIST_SQ` or `FULL`. The `expected`
 /// text names the missing column and the pair count it was needed for, and
 /// `got` describes the table that arrived.

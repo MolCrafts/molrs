@@ -64,8 +64,7 @@ impl Fit for RamanSpectrum {
         }
 
         let max_lag = n - 1;
-        // Pre-compute CosineSq window once and apply to both ACFs — identical to
-        // the historical Raman transform tail.
+        // Pre-compute the CosineSq window once and apply it to both ACFs.
         let window = cosine_sq_window(max_lag + 1);
         let win_iso: Array1<f64> = acf_iso.iter().zip(&window).map(|(a, w)| a * w).collect();
         let win_aniso: Array1<f64> = acf_aniso.iter().zip(&window).map(|(a, w)| a * w).collect();

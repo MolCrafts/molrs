@@ -9,7 +9,7 @@ same words; this package itself holds nothing but them:
 * :mod:`~molrs.ff.potential` — evaluable force terms: ``Potentials``,
   ``WeightedTerms``, ``PairLjCut``, and the ``Potential`` protocol
 * :mod:`~molrs.ff.compile` — a force field bound to its kernels: the
-  ``PotentialCompiler``, and ``compile_explicit_terms`` for any style over
+  ``PotentialCompiler``, and ``ExplicitTerms`` for any style over
   explicit terms
 * :mod:`~molrs.ff.typifier` — the subclassable ``Typifier`` base and its
   ``TypeAssignment``, the built-in typifiers, and ``assign_cmaps``

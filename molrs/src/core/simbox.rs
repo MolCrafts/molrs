@@ -1492,18 +1492,18 @@ mod tests {
 
     /// `images` reads the flag off the fractional coordinate with no fudge.
     ///
-    /// It used to add `1e-8` before flooring. On a *fractional* coordinate that
-    /// is not a small number: it moves the boundary by `1e-8 · L`, which is
+    /// Adding `1e-8` before flooring would be no small number on a
+    /// *fractional* coordinate: it moves the boundary by `1e-8 · L`, which is
     /// 5e-7 Å in a 50 Å cell. Every atom in the half-open band just below a
-    /// face was then reported one cell further along than it is, and the
-    /// reconstruction `xyz + H·images` put it a whole cell away from where it
-    /// started. A tolerance that shifts a boundary is not a tolerance.
+    /// face would be reported one cell further along than it is, and the
+    /// reconstruction `xyz + H·images` would put it a whole cell away from
+    /// where it started. A tolerance that shifts a boundary is not a tolerance.
     #[test]
     fn images_has_no_boundary_fudge() {
         let l = 50.0_f64;
         let bx = SimBox::cube(l, array![0.0, 0.0, 0.0], [true, true, true]).unwrap();
 
-        // Fractional coordinates inside the band the old epsilon swallowed:
+        // Fractional coordinates inside the band a 1e-8 epsilon would swallow:
         // just below 1.0, i.e. just inside the far face of cell 0.
         for eps_frac in [1e-9_f64, 5e-9, 9e-9] {
             let pts = array![[(1.0 - eps_frac) * l, 0.5 * l, 0.5 * l]];

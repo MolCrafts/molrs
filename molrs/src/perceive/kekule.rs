@@ -310,8 +310,8 @@ impl BondGraph {
             aromatic.push(is_aromatic);
         }
 
-        let ring_info = perceive_rings(mol);
-        let rings = ring_info
+        let ring_set = perceive_rings(mol);
+        let rings = ring_set
             .rings()
             .iter()
             .map(|ring| {

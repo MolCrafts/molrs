@@ -1853,10 +1853,10 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
         assert_eq!(sb.coul[1], 0.0);
     }
 
-    /// Regression: a LAMMPS `improper_style harmonic` term evaluates at the
-    /// energy LAMMPS gives it, `K·(χ − χ₀)²` with `χ₀` in degrees; the reader
-    /// once stored `k = 2K` (the old bond/angle form map) and every LAMMPS
-    /// improper came out twice too high.
+    /// A LAMMPS `improper_style harmonic` term evaluates at the energy LAMMPS
+    /// gives it, `K·(χ − χ₀)²` with `χ₀` in degrees: the reader stores `k = K`,
+    /// not the `k = 2K` of the bond/angle form map, which would price every
+    /// LAMMPS improper twice too high.
     #[test]
     fn a_lammps_improper_evaluates_at_the_lammps_energy() {
         use crate::ff::compile::PotentialCompiler;

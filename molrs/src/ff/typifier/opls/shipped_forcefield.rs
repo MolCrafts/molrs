@@ -1,14 +1,12 @@
 //! The shipped OPLS-AA parameter set, assembled from the compiled tables.
 //!
-//! [`OplsAaTypifier::oplsaa`](super::OplsAaTypifier::oplsaa) used to `include_str!`
-//! 346 KB of XML and run two parsers over it — one for the potential
-//! [`ForceField`], one for the typing metadata — on every construction. The
-//! potential half now comes from [`crate::ff::params::oplsaa`] (generated from
-//! GROMACS `oplsaa.ff`, in molrs units), the typing half from the molrs-owned
+//! [`OplsAaTypifier::oplsaa`](super::OplsAaTypifier::oplsaa) parses no XML:
+//! the potential [`ForceField`] comes from [`crate::ff::params::oplsaa`] (generated from
+//! GROMACS `oplsaa.ff`, in molrs units), the typing metadata from the molrs-owned
 //! rules of [`crate::ff::params::oplsaa_typing`], joined to the atom rows by
 //! name.
 //!
-//! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is still read —
+//! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is read —
 //! by `molrs::io` — and handed to
 //! [`OplsAaTypifier::new`](super::OplsAaTypifier::new). molrs does not
 //! re-parse *its own* parameter set at runtime.

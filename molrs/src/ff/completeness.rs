@@ -77,7 +77,7 @@ const NO_OMM: &str = "io/openmm_xml/writer.rs::styles_without_an_openmm_form_are
 const NO_LMP: &str = "io/lammps/forcefield_writer.rs::lammps_coeff_values_rejects_unsupported_kernel_and_missing_param";
 const NO_LMP_PAIR: &str =
     "io/lammps/forcefield_reader.rs::data_coeffs_unsupported_pair_hint_is_an_error";
-// The engine codecs (WP8).
+// The engine codecs.
 const CODEC_RT: &str = "ff/engine_codec_check.rs::every_builtin_codec_reads_back_what_it_writes";
 const CODEC_FILE: &str =
     "ff/engine_codec_check.rs::every_builtin_round_trips_through_an_include_at_the_same_energy";
@@ -1128,7 +1128,7 @@ const MATRIX: &[Row] = &[
             ]),
         ],
     },
-    // ── the protocol's engine forms (WP8) ──
+    // ── the protocol's engine forms ──
     Row {
         item: "run-time style with a positional LAMMPS form",
         cells: [

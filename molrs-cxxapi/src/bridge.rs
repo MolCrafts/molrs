@@ -175,10 +175,10 @@ pub mod ffi {
         // compiled out or omitted.
         fn cxx_api_capabilities() -> u64;
 
-        // ── Frame bridge (molrs.Frame via molrs-ffi FrameRef) ─────
+        // ── Frame bridge (molrs.core.Frame via molrs-ffi FrameRef) ─────
         type FrameRef;
 
-        // ── Region bridge (molrs.Region via molrs-ffi RegionRef) ──
+        // ── Region bridge (molrs.core.Region via molrs-ffi RegionRef) ──
         // A region answers a signed distance; `contains` is its sign and
         // `bounds` the box it fits in. Compositions are ordinary handles, so
         // a shell is `region_and(outer, region_not(inner))`.
@@ -269,23 +269,26 @@ pub mod ffi {
             precision: f64,
         ) -> Result<()>;
 
-        // AM1-BCC: Atomiverse supplies AM1 base charges; molrs owns BCC typing.
+        // ── AM1-BCC bridge (molrs::ff::charge::BccModel) ─────────
+        // Atomiverse supplies AM1 base charges; molrs owns BCC typing.
         //
-        // `parameter_set` selects the correction family by name — "bcc"
+        // `bcc_model_new` selects the correction family by name — "bcc"
         // (BCCPARM.DAT, model id `"bcc"`) or `"abcg2"` (BCCPARM_ABCG2.DAT,
         // `-c abcg2`). A name molrs does not know is refused, never defaulted.
+        // `assign` is the whole model (equivalence, then correct); `correct`
+        // is the correction stage alone, for equivalenced base charges. Both
+        // write `atoms.charge` and return the charges.
         //
-        // Returns `Result`, and that is load-bearing: cxx marks every non-Result
-        // `extern "Rust"` fn `noexcept`, so a Rust panic could only abort the
-        // calling process. The errors this can raise are the caller's CHEMISTRY —
-        // a molecule with no BCC correction row (boron), a missing atom type, a
-        // missing bond order — not programmer bugs, so they cross as a catchable
-        // `rust::Error` and leave the engine alive to handle them.
-        fn assign_am1_bcc_charges(
-            fref: &mut FrameRef,
-            am1_charges: &[f64],
-            parameter_set: &str,
-        ) -> Result<Vec<f64>>;
+        // Every call returns `Result`, and that is load-bearing: cxx marks every
+        // non-Result `extern "Rust"` fn `noexcept`, so a Rust panic could only
+        // abort the calling process. The errors these can raise are the caller's
+        // CHEMISTRY — a molecule with no BCC correction row (boron), a missing
+        // atom type, a missing bond order — not programmer bugs, so they cross
+        // as a catchable `rust::Error` and leave the engine alive to handle them.
+        type BccModel;
+        fn bcc_model_new(parameter_set: &str) -> Result<Box<BccModel>>;
+        fn assign(self: &BccModel, fref: &mut FrameRef, am1_charges: &[f64]) -> Result<Vec<f64>>;
+        fn correct(self: &BccModel, fref: &mut FrameRef, am1_charges: &[f64]) -> Result<Vec<f64>>;
 
         // ── I/O ──────────────────────────────────────────────────
         // The writers take atomic numbers + blocked coordinates; `h` is empty
