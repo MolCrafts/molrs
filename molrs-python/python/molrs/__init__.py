@@ -49,11 +49,11 @@ from . import (
     signal,
     stream,
 )
+from ._lib import __version__ as __version__
 
 # FFI ABI handshake, read by name by downstream handle-bridge extensions
 # (molpack) at their import time.
 from ._lib import _ffi_abi_token  # noqa: F401
-from ._lib import __version__
 
 __all__ = [
     "builder",

@@ -381,7 +381,7 @@ def test_find_matches_has_no_mapped_shortcut():
 def test_core_constants_mirror_rust_in_full():
     """``molrs.core.constants`` is ``molrs::core::constants``, name for name."""
     rust = Path(__file__).parents[2] / "molrs" / "src" / "core" / "constants.rs"
-    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.M))
+    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.MULTILINE))
     assert names
     assert set(molrs.core.constants.__all__) == names
 
