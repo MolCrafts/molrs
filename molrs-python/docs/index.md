@@ -44,11 +44,10 @@ doc comments.
 
     ```rust
     use molrs::conformer::{Conformer, ConformerOptions};
-    use molrs::io::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::read_smiles_str;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = parse_smiles("c1ccccc1")?;
-        let mol = to_atomistic(&ir)?;
+        let mol = read_smiles_str("c1ccccc1")?;
         let (mol3d, report) = Conformer::new(ConformerOptions::default()).generate(&mol)?;
 
         println!("atoms: {}", mol3d.n_atoms());
@@ -63,13 +62,13 @@ doc comments.
     module, and the generated classes and functions are regular exports.
 
     ```ts
-    import { generate3D, parseSMILES, writeFrame } from "@molcrafts/molrs";
+    import { SmilesIR, generate3D, writeXyzStr } from "@molcrafts/molrs";
 
-    const ir = parseSMILES("CCO");
+    const ir = SmilesIR.parse("CCO");
     const frame2d = ir.toFrame();
     const frame3d = generate3D(frame2d, "fast", 42);
 
-    console.log(writeFrame(frame3d, "xyz"));
+    console.log(writeXyzStr(frame3d));
     ```
 
 ## What's new in 0.16

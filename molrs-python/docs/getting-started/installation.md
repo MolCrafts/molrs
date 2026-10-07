@@ -62,11 +62,10 @@ for nightly testing.
     In `src/main.rs`:
 
     ```rust
-    use molrs::io::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::read_smiles_str;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = parse_smiles("O")?;
-        let mol = to_atomistic(&ir)?;
+        let mol = read_smiles_str("O")?;
         println!("atoms: {}", mol.n_atoms());
         Ok(())
     }
@@ -81,9 +80,9 @@ for nightly testing.
     In a bundler that loads WebAssembly modules (Vite, webpack, …):
 
     ```ts
-    import { parseSMILES } from "@molcrafts/molrs";
+    import { SmilesIR } from "@molcrafts/molrs";
 
-    console.log(parseSMILES("O").nComponents);
+    console.log(SmilesIR.parse("O").nComponents);
     ```
 
 ## Source Builds

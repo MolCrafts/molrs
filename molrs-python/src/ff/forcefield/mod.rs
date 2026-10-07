@@ -2,7 +2,7 @@
 //! [`ForceField`] container, its style / type handles ([`handles`]), its
 //! IR-form conversions ([`forms`]) and per-row parameter columns
 //! ([`param_columns`]). Force-field files are `molrs.io`'s
-//! ([`crate::io::forcefield`]).
+//! (`molrs::io`).
 //!
 //! The Python `dict` ↔ [`Params`](molrs::ff::forcefield::Params) conversions
 //! every force-field binding uses ([`params_from_dict`], [`params_to_dict`],
@@ -241,7 +241,7 @@ pub(crate) fn params_to_dict<'py>(
 impl PyForceField {
     /// Construct an empty force field. Populate it with :meth:`def_style` and
     /// the style handles' ``def_type``, or load one with a reader
-    /// (:func:`read_forcefield_xml`, …). ``units`` declares the unit system
+    /// (:func:`molrs.io.read_openmm_xml_forcefield`, …). ``units`` declares the unit system
     /// when given; left out, the force field declares none and :attr:`units`
     /// reads ``"real"``.
     #[new]

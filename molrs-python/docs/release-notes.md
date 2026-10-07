@@ -192,24 +192,43 @@ a class's does. The [migration guide](migration.md#python-paths) lists every
 old → new path.
 
 Every file-format factory has one shape: a function at the top of
-`molrs.io` (`read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`) or a class
-`molrs.io.<fmt>.<Fmt>Reader` / `<Fmt>Writer`. Every file reader and writer
-is therefore `molrs.io`'s — force-field files included
-(`molrs.io.read_lammps_forcefield`, `molrs.io.write_gromacs_top_ff`, …;
-`molrs.ff.forcefield` is the `ForceField` data model only, and in Rust the
-formats are `molrs::io::forcefield`, which `ff` never depends on), the
-`*.mrec` doors (`molrs.io.read_mrec`, `write_mrec_trajectory`, …) and the
-frame-bytes codec (`molrs.io.read_frame_bytes`; `molrs.stream` is the
-transport). The record store's reader and writer are
-`molrs.io.mrec.MrecReader` / `MrecWriter` (Rust `molrs::io::mrec`'s, WASM
-`MrecReader`), the dump concatenator is
-`molrs.io.trajectory.TrajectoryReader`, and a class of one format lives in
-that format's submodule: `molrs.io.smiles` (`SmilesIR`, the CGsmiles
-records, `SmilesError`), `molrs.io.log` (the LAMMPS log records),
-`molrs.io.lammps_bond_react`. New: `molrs.io.read_smiles` (Rust
-`molrs::io::smiles::read_smiles`) reads one molecule — connectivity only —
-and refuses a `'.'`-separated set, and `read_lammps_log_str` reads a log
-from text.
+`molrs.io` or a class of the format's own submodule — see
+[io, one module per format](#io-one-module-per-format).
+
+### io, one module per format
+
+- **One module per format.** `molrs::io` is organized by file format, not by
+  content kind: `io::{pdb, xyz, gro, sdf, mol2, cif, vasp, dcd, trr, xtc,
+  lammps, amber, gromacs, openmm_xml, clpol, smiles, cgsmiles, mrec}` hold
+  each format's classes (`PdbReader`, `LammpsDumpReader`, `OpenmmXmlWriter`,
+  …, acronyms cased as words), and Python mirrors them (`molrs.io.pdb`,
+  `molrs.io.lammps`, …).
+- **Every door names its format**, in Rust and Python alike:
+  `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` at the top of `io`, with
+  `_str` / `_bytes` for memory and `_trajectory` for every frame. No door
+  picks the format for the caller: `read_frame` / `write_frame` /
+  `FrameFormat` and the `format=`-taking frame-bytes doors are gone; the wire
+  encodings are `read_msgpack_frame_bytes` / `write_msgpack_frame_bytes` and
+  `read_json_frame_str` / `write_json_frame_str`.
+- **Lazy readers per format.** Each `read_<fmt>_trajectory` returns that
+  format's reader (`molrs.io.dcd.DcdReader`, …; PDB and GRO now too), over
+  one path or a list of paths; Rust readers open with `<Fmt>Reader::open`.
+- **Honest XML doors.** `read_openmm_xml_forcefield` /
+  `write_openmm_xml_forcefield` are inverses, the molrs-native layout has its
+  own pair (`read_molrs_xml_forcefield` / `write_molrs_xml_forcefield`, the
+  writer new), and an MMFF parameter set is `read_mmff_xml_forcefield`; the
+  old reader's layout sniffing is gone.
+- **New doors**: `read_sdf`, `read_cif` / `write_cif`, `read_vasp_poscar` /
+  `write_vasp_poscar`, `read_smiles_str` / `write_smiles_str`,
+  `read_cgsmiles_str`, `read_lammps_molecule_json` /
+  `write_lammps_molecule_json`, `read_csv_block[_str]` /
+  `write_csv_block[_str]`.
+- **SMARTS is perception's, wholly.** `SmartsPattern.from_environment(mol,
+  center, …)` (Rust `SmartsPattern::from_environment`) and `str(pattern)`
+  replace `write_smarts` / `write_local_smarts`; SMILES and SMARTS share one
+  crate-private grammar, so `io` and `perceive` depend on neither.
+- The [migration guide](migration.md#wave-s2-io-per-format) lists every old →
+  new name.
 
 ### Packaging
 

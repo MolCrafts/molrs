@@ -247,7 +247,7 @@ for sys in "${systems[@]}"; do
 done
 
 MOLRS_GMX_CHECK_DIR="$work" cargo mrs-test -- \
-    io::forcefield::readers::gromacs::engine_check --nocapture 2>&1 |
+    io::gromacs::top_reader::engine_check --nocapture 2>&1 |
     grep '^molrs ' >"$work/molrs.txt"
 
 for sys in charmm amber opls; do

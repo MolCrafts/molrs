@@ -12,7 +12,7 @@ npm install @molcrafts/molrs
 ```
 
 ```ts
-import { generate3D, parseSMILES, writeFrame } from "@molcrafts/molrs";
+import { SmilesIR, generate3D, writeXyzStr } from "@molcrafts/molrs";
 ```
 
 Configure your bundler to load `.wasm` modules. A custom build with
@@ -22,15 +22,17 @@ that must be awaited before any other call.
 ## 2. Parse, Embed, and Export
 
 ```ts
-const ir = parseSMILES("CCO");
+const ir = SmilesIR.parse("CCO");
 const frame2d = ir.toFrame();
 const frame3d = generate3D(frame2d, "fast", 42);
 
-console.log(writeFrame(frame3d, "xyz"));
+console.log(writeXyzStr(frame3d));
 ```
 
 The API shape mirrors Python, with JavaScript naming conventions:
-`parse_smiles` becomes `parseSMILES`, and `to_frame` becomes `toFrame`. The
+`SmilesIR::parse` becomes `SmilesIR.parse`, `to_frame` becomes `toFrame`, and
+`write_xyz_str` becomes `writeXyzStr` — every door names its format, as in Rust
+and Python. The
 TypeScript declarations in the package (`molrs.d.ts`) are the source of truth
 for exported names.
 
@@ -65,10 +67,10 @@ The browser reads the same `*.mrec` [record files](../guides/records.md) that
 Python and Rust write. A packed `*.mrec.zip` arrives as bytes:
 
 ```ts
-import { TrajectoryReader, readMrecFrameFromZip } from "@molcrafts/molrs";
+import { MrecReader, readMrecFrameFromZip } from "@molcrafts/molrs";
 
 const bytes = new Uint8Array(await (await fetch("run.mrec.zip")).arrayBuffer());
-const reader = TrajectoryReader.fromZip(bytes);
+const reader = MrecReader.fromZip(bytes);
 const first = reader.readFrame(0);
 console.log(reader.countFrames(), first?.get("atoms").nrows);
 
@@ -77,7 +79,7 @@ const snapshot = readMrecFrameFromZip(
 );
 ```
 
-`TrajectoryReader.fromStore` reads chunks on demand through callbacks, so a
+`MrecReader.fromStorage` reads chunks on demand through callbacks, so a
 large trajectory never has to be downloaded whole.
 
 ## 5. Build from Source

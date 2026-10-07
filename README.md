@@ -146,10 +146,9 @@ documentation loop.
 
 ```rust
 use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::io::smiles::{parse_smiles, to_atomistic};
+use molrs::io::read_smiles_str;
 
-let ir = parse_smiles("c1ccccc1").unwrap();          // benzene
-let mol = to_atomistic(&ir).unwrap();
+let mol = read_smiles_str("c1ccccc1").unwrap();      // benzene
 let (mol3d, _report) = Conformer::new(ConformerOptions::default()).generate(&mol).unwrap();
 ```
 

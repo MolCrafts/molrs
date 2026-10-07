@@ -14,10 +14,13 @@ writer or typifier, never in a kernel.
 The IR is data — `molrs.ff.forcefield.ForceField` (Rust
 `molrs::ff::forcefield::ForceField`) — and reads no file. Every engine's
 reader and writer is `molrs.io`'s, as every other file reader and writer is:
-`molrs.io.read_lammps_forcefield`, `read_gromacs_top_ff`,
-`read_amber_prmtop_ff`, `read_opls_xml`, `write_lammps_forcefield`,
-`write_gromacs_top_ff`, `write_amber_frcmod`, `write_forcefield_xml` and the
-rest (Rust `molrs::io::forcefield::{readers, writers, xml}`).
+`molrs.io.read_lammps_forcefield`, `read_gromacs_top_forcefield`,
+`read_amber_prmtop_forcefield`, `read_openmm_xml_forcefield`,
+`write_lammps_forcefield`, `write_gromacs_top_forcefield`,
+`write_amber_frcmod`, `write_openmm_xml_forcefield` and the rest — the same
+names in Rust (`molrs::io::read_openmm_xml_forcefield`, …), each format's
+reader and writer classes in its own module (`molrs::io::lammps`,
+`molrs::io::gromacs`, `molrs::io::amber`, `molrs::io::openmm_xml`).
 
 This page is the reference for the IR: what each style computes, what its
 parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
@@ -650,10 +653,10 @@ the style's mixing rule, which a per-row fit cannot hold).
 
 ## OpenMM XML
 
-`OplsXmlReader` (Python `read_opls_xml`, and `read_forcefield_xml` for a
-file in OpenMM's schema) reads OpenMM's `<ForceField>` — its own CHARMM36,
-AMBER and OPLS-AA ports and the foyer / molpy packs — and
-`XmlForceFieldWriter` (`write_forcefield_xml`) writes the inverse, each
+`OpenmmXmlReader` (`read_openmm_xml_forcefield`) reads OpenMM's
+`<ForceField>` — its own CHARMM36, AMBER and OPLS-AA ports and the foyer /
+molpy packs — and `OpenmmXmlWriter` (`write_openmm_xml_forcefield`) writes
+the inverse, each
 number in the shortest form that reads back to the same `f64` unless a
 `precision` is given. The IR's definitions are LAMMPS's; OpenMM's are
 converted at the boundary:
@@ -1421,7 +1424,7 @@ reader refuses `ordering="smirnoff"`).
   1-4 pair and a regular one on each side of the cutoff.
 - GROMACS-read systems against GROMACS 2025.3 (double precision, `mdrun
   -rerun`, energies from the .edr) and LAMMPS (`run 0` on molrs's data file
-  and include), `io::forcefield::readers::gromacs::engine_check`,
+  and include), `io::gromacs::top_reader::engine_check`,
   `scripts/gromacs_engine_check.sh`: ACE-ALA-ALA-NME under charmm27
   (Urey–Bradley, two CMAP crossterms, `[ pairtypes ]`, a
   `[ nonbond_params ]` row), amber99sb-ildn (funct 9, funct 4, fudge ½ / ⅚),
@@ -1476,8 +1479,7 @@ reader refuses `ordering="smirnoff"`).
   force field, priced by OpenMM, gives the source's energies to ≤ 6·10⁻¹⁵,
   and read → write → read is the identity.
 
-- The prmtop readers against sander and LAMMPS (`io::forcefield::readers::
-  prmtop_check`, `scripts/prmtop_check.sh`): six prmtops AmberTools 26.1
+- The prmtop readers against sander and LAMMPS (`io::amber::prmtop_check`, `scripts/prmtop_check.sh`): six prmtops AmberTools 26.1
   builds — ff14SB ACE-PHE-NME, a GAFF2 molecule, the same with two
   multi-term impropers, GLYCAM glucose beside an ff14SB dipeptide
   (non-uniform SCEE/SCNB), a CHARMM36 chamber file (Urey–Bradley, CHARMM

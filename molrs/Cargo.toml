@@ -68,7 +68,7 @@ compute   = ["signal"]
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
 # `ff` types atoms with `perceive::smarts`, which compiles from `io::smiles`.
-# With `ff` on, `io::forcefield` (the force-field file formats, over
+# With `ff` on, the force-field file formats of `io` (over
 # `roxmltree` for XML) compiles too; `ff` itself reads no file.
 ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
@@ -143,7 +143,7 @@ ruzstd         = { version = "0.9", optional = true, default-features = false, f
 inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
-roxmltree      = { version = "0.21", optional = true }                                              # ff (io::forcefield's XML readers)
+roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
 # `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
 # directory store packs into, `zarrs_zip` reads it back. Both hang on

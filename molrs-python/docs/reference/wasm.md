@@ -20,10 +20,10 @@ The generated `pkg/` directory is not committed.
 | Area | Exports |
 | --- | --- |
 | Data model | `Frame`, `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box`, `NDArray`, `covalentRadius` |
-| SMILES and 3D | `parseSMILES` → `SmilesIR` (`toFrame`), `generate3D` |
-| File formats | whole-content readers of the formats with no stream: `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`, `CubeReader`, `CHGCARReader`, `AmberInpcrdReader`, `AcReader`; `writeFrame` / `writeFrameBytes` |
-| Chunk-fed streams (the one reader of their format) | `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`, `DCDStream`, `XTCStream`, `TRRStream` (`FrameIndexEntry`) |
-| Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
+| SMILES and 3D | `SmilesIR.parse` (`toFrame`), `readSmilesStr` → `Frame`, `generate3D` |
+| File formats | whole-content readers of the formats with no stream: `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`, `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader`; one writer per format: `writePdbStr`, `writeXyzStr`, `writeGroStr`, `writeMol2Str`, `writeCifStr`, `writeXsfStr`, `writeCubeStr`, `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr`, `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes`; `readStlBytes`; wire-encoded frames: `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` / `writeJsonFrameStr` |
+| Chunk-fed streams (the one reader of their format) | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream` (`FrameOffset`) |
+| Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `MrecReader` (`fromZip`, `fromStorage`) |
 | Topology and perception | `Topology` (`fromFrame`), `Perceive` (`findRings`, `findAromaticity`, `findHydrogens`, …) |
 | Neighbors and analysis | `NeighborList`, `NeighborQuery`, `Neighbors`, `RDF`, `MSD`, `Cluster`, `VACF`, `Steinhardt`, `PMFTXY`, … (one class per analysis; `molrsComputeCatalog()` lists them all) |
 | Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` (pairs from a `NeighborList`'s `Neighbors`) |

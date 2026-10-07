@@ -217,7 +217,7 @@ and column at its dtype, typed metadata, the box, the force field, and whole
 trajectories:
 
 ```python
-molrs.io.write_mrec("ethanol.mrec", typed_frame, forcefield=ff)
+molrs.io.write_mrec_frame("ethanol.mrec", typed_frame, forcefield=ff)
 print(sorted(molrs.io.mrec.section_names("ethanol.mrec")))
 ```
 
@@ -232,4 +232,4 @@ This quickstart crossed the main molrs boundaries:
 - `RDF` consumed an explicit neighbor list.
 - `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
-- `write_xyz` and `write_mrec` wrote the result to disk.
+- `write_xyz` and `write_mrec_frame` wrote the result to disk.

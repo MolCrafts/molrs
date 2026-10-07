@@ -46,7 +46,7 @@ impl PySmilesIR {
     /// `input` is the source text the IR came from; it feeds `__repr__` only
     /// and is never re-parsed. Not a `#[pymethods]` entry, so this adds
     /// nothing to the Python surface — the same shape as `PyLammpsLog::new`
-    /// in `io::log`.
+    /// in `io::lammps_log`.
     ///
     /// [`SmilesIR`]: molrs::io::smiles::SmilesIR
     pub(crate) fn from_core(inner: molrs::io::smiles::SmilesIR, input: String) -> Self {

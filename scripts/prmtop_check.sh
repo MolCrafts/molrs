@@ -44,7 +44,7 @@ if [ "${1:-}" = "--rebuild" ]; then
 fi
 
 MOLRS_PRMTOP_LAMMPS_DIR="$dir" cargo mrs-test -- \
-    io::forcefield::readers::prmtop_check --nocapture >"$dir/molrs.txt"
+    io::amber::prmtop_check --nocapture >"$dir/molrs.txt"
 grep '^molrs' "$dir/molrs.txt"
 
 # run <case dir> <name> <extra commands after the include> [thermo extras]
