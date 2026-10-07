@@ -5,7 +5,7 @@
 //! maps keys to files under a root directory. This module wraps it with one
 //! change — the offset form is written straight at that offset instead of being
 //! emulated by reading the whole file back, patching it in memory and rewriting
-//! it. [`PositionalWriteStore`] carries the measurement that makes the
+//! it. [`PositionalWriteStorage`] carries the measurement that makes the
 //! difference matter.
 //!
 //! Both platforms can do that, under different names: `write_all_at` on Unix
@@ -104,14 +104,14 @@ fn write_positional(file: &File, buf: &[u8], offset: u64) -> std::io::Result<()>
 ///   until [`sync_dirty`](Self::sync_dirty) fsyncs it (and its directory).
 ///   The writer calls that around the commit marker when a flush is durable.
 #[derive(Debug)]
-pub(in crate::io::mrec::zarr_storage) struct PositionalWriteStore {
+pub(in crate::io::mrec::zarr_storage) struct PositionalWriteStorage {
     inner: FilesystemStore,
     bytes_written: AtomicU64,
     /// Paths written since the last `sync_dirty`.
     dirty: Mutex<BTreeSet<PathBuf>>,
 }
 
-impl PositionalWriteStore {
+impl PositionalWriteStorage {
     /// Open a positional-write store rooted at `path`.
     ///
     /// The wrapped [`FilesystemStore`] is built here rather than handed in, so
@@ -201,7 +201,7 @@ impl PositionalWriteStore {
     }
 }
 
-impl ReadableStorageTraits for PositionalWriteStore {
+impl ReadableStorageTraits for PositionalWriteStorage {
     fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
         self.inner.get(key)
     }
@@ -231,7 +231,7 @@ impl ReadableStorageTraits for PositionalWriteStore {
     }
 }
 
-impl ListableStorageTraits for PositionalWriteStore {
+impl ListableStorageTraits for PositionalWriteStorage {
     fn list(&self) -> Result<StoreKeys, StorageError> {
         self.inner.list()
     }
@@ -253,7 +253,7 @@ impl ListableStorageTraits for PositionalWriteStore {
     }
 }
 
-impl WritableStorageTraits for PositionalWriteStore {
+impl WritableStorageTraits for PositionalWriteStorage {
     /// A whole-value write.
     ///
     /// A `zarr.json` key — array or group metadata — is written to a sibling
@@ -334,7 +334,7 @@ impl WritableStorageTraits for PositionalWriteStore {
     }
 }
 
-/// The disk-level contract of [`PositionalWriteStore`].
+/// The disk-level contract of [`PositionalWriteStorage`].
 ///
 /// Every test writes a real file under a `tempfile::tempdir` and then reads it
 /// back with `std::fs`, **outside** the store: the defect this type exists for
@@ -345,10 +345,10 @@ impl WritableStorageTraits for PositionalWriteStore {
 /// Both stores answer `get` identically afterwards; only the bytes that reached
 /// the disk differ.
 ///
-/// Constructor pinned by these tests: `PositionalWriteStore::new(path)` builds
+/// Constructor pinned by these tests: `PositionalWriteStorage::new(path)` builds
 /// its own wrapped `FilesystemStore` over the same root, so a caller cannot
 /// hand it a store whose root disagrees with the paths it writes at, and the
-/// two path-taking write doors reach it in one call. `Arc<PositionalWriteStore>`
+/// two path-taking write doors reach it in one call. `Arc<PositionalWriteStorage>`
 /// must coerce to `ReadableWritableListableStorage`, which is the shape
 /// `MrecWriter` binds an array to.
 #[cfg(all(test, feature = "filesystem"))]
@@ -362,7 +362,7 @@ mod tests {
         StoreKey, WritableStorageTraits,
     };
 
-    use super::PositionalWriteStore;
+    use super::PositionalWriteStorage;
 
     /// The one key every test writes: a shard file, which is the only value the
     /// sequence writer ever hands a partial write to.
@@ -377,8 +377,8 @@ mod tests {
         StoreKey::new(KEY).unwrap()
     }
 
-    fn store_in(dir: &TempDir) -> Arc<PositionalWriteStore> {
-        Arc::new(PositionalWriteStore::new(dir.path()).unwrap())
+    fn storage_in(dir: &TempDir) -> Arc<PositionalWriteStorage> {
+        Arc::new(PositionalWriteStorage::new(dir.path()).unwrap())
     }
 
     /// The bytes actually on disk for [`KEY`], read outside the store.
@@ -408,7 +408,7 @@ mod tests {
         const OFFSET: usize = 1000;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let original = patterned(VALUE_LEN);
         store.set(&key(), Bytes::from(original.clone())).unwrap();
 
@@ -453,7 +453,7 @@ mod tests {
         const GAP: usize = 100;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let original = patterned(VALUE_LEN);
         store.set(&key(), Bytes::from(original.clone())).unwrap();
 
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn a_partial_write_never_shortens() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let original = patterned(VALUE_LEN);
         store.set(&key(), Bytes::from(original.clone())).unwrap();
 
@@ -511,7 +511,7 @@ mod tests {
         const SHORT_LEN: usize = 100;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         store
             .set(&key(), Bytes::from(patterned(VALUE_LEN)))
             .unwrap();
@@ -538,7 +538,7 @@ mod tests {
         const LARGE_LEN: usize = 1 << 20;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         store
             .set(&key(), Bytes::from(patterned(LARGE_LEN)))
             .unwrap();
@@ -560,7 +560,7 @@ mod tests {
     #[test]
     fn reads_and_lists_delegate_to_the_wrapped_store() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let sibling = StoreKey::new("traj/zarr.json").unwrap();
         let absent = StoreKey::new("traj/c/1").unwrap();
         store
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn supports_set_partial_is_true_at_construction() {
         let dir = TempDir::new().unwrap();
-        assert!(store_in(&dir).supports_set_partial());
+        assert!(storage_in(&dir).supports_set_partial());
     }
 
     /// The disk-level guard: a 16 B write at the tail of an 8 MiB value costs
@@ -616,7 +616,7 @@ mod tests {
         const HUGE_LEN: usize = 8 << 20;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         store.set(&key(), Bytes::from(patterned(HUGE_LEN))).unwrap();
 
         let before = store.bytes_written();
@@ -637,7 +637,7 @@ mod tests {
     #[test]
     fn an_arc_of_the_store_is_readable_writable_listable_storage() {
         let dir = TempDir::new().unwrap();
-        let storage: ReadableWritableListableStorage = store_in(&dir);
+        let storage: ReadableWritableListableStorage = storage_in(&dir);
 
         let value = patterned(64);
         storage.set(&key(), Bytes::from(value.clone())).unwrap();

@@ -178,11 +178,13 @@ write_bytes_door!(
 );
 
 /// Read one DCD frame from bytes: a whole one-frame file, or a frame body
-/// with the ``context`` (the header) it is decoded with.
+/// with the ``decoder_state`` (the header) it is decoded with.
 #[pyfunction]
-#[pyo3(signature = (data, context = None))]
-pub fn read_dcd_bytes(data: &[u8], context: Option<&[u8]>) -> PyResult<PyFrame> {
-    PyFrame::from_core_frame(molrs::io::read_dcd_bytes(data, context).map_err(io_error_to_pyerr)?)
+#[pyo3(signature = (data, decoder_state = None))]
+pub fn read_dcd_bytes(data: &[u8], decoder_state: Option<&[u8]>) -> PyResult<PyFrame> {
+    PyFrame::from_core_frame(
+        molrs::io::read_dcd_bytes(data, decoder_state).map_err(io_error_to_pyerr)?,
+    )
 }
 
 /// Read AMBER inpcrd / restrt text — :func:`read_amber_inpcrd` on a string,

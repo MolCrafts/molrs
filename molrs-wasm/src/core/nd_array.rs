@@ -27,7 +27,7 @@ pub(crate) type JsFloatArray = js_sys::Float64Array;
 /// ```js
 /// // Create a 2x3 zero array
 /// const arr = new NDArray([2, 3]);
-/// arr.writeFrom(floatArray);
+/// arr.copyFrom(floatArray);
 ///
 /// // Or from existing data
 /// const arr2 = NDArray.from(floatArray, [1, 3]);
@@ -165,10 +165,10 @@ impl NDArray {
     ///
     /// ```js
     /// const wa = new NDArray([3]);
-    /// wa.writeFrom(floatArray);
+    /// wa.copyFrom(floatArray);
     /// ```
-    #[wasm_bindgen(js_name = writeFrom)]
-    pub fn write_from(&mut self, arr: &JsFloatArray) -> Result<(), JsValue> {
+    #[wasm_bindgen(js_name = copyFrom)]
+    pub fn copy_from(&mut self, arr: &JsFloatArray) -> Result<(), JsValue> {
         if arr.length() as usize != self.data.len() {
             return Err(JsValue::from_str(&format!(
                 "Array length mismatch: expected {}, got {}",
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(&*view.shape(), &[2, 3]);
 
         let data = JsFloatArray::from(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0][..]);
-        view.write_from(&data).expect("write_from failed");
+        view.copy_from(&data).expect("copy_from failed");
         assert!((view.sum() - 21.0).abs() < 1.0e-5);
 
         let js_array = view.to_copy();

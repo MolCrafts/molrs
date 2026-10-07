@@ -1161,7 +1161,7 @@ struct AtomRow<'a> {
 
 /// A force-field type the system reader can look up: its labels (`""` the
 /// wildcard) and name.
-pub(super) struct Entry {
+pub(super) struct LabelledType {
     pub(super) labels: Vec<String>,
     pub(super) name: String,
 }
@@ -1177,7 +1177,7 @@ pub(super) struct Directives {
     /// The `[ pairtypes ]` type pairs, in byte order.
     pub(super) pairtypes: HashSet<(String, String)>,
     /// Each parameter table's types in file order.
-    pub(super) lookup: HashMap<Table, Vec<Entry>>,
+    pub(super) lookup: HashMap<Table, Vec<LabelledType>>,
     /// `[ constrainttypes ]`: `(labels, funct, r0 Å)` in file order.
     pub(super) constrainttypes: Vec<([String; 2], u32, f64)>,
 }
@@ -1457,7 +1457,10 @@ fn define_lj(
 
 /// Define the bonded and cmap types of `scan`'s directive rows in `ff`, and
 /// return each parameter table's types in file order.
-fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<Entry>>, String> {
+fn define_bonded(
+    ff: &mut ForceField,
+    scan: &Scan,
+) -> Result<HashMap<Table, Vec<LabelledType>>, String> {
     let mut defs: Vec<BondedDef<'_>> = Vec::new();
     // funct 9 continues the last F_PDIHS row when its labels are the same.
     let mut last_pdihs: Option<usize> = None;
@@ -1532,7 +1535,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
             .insert(def.style);
         bases.push(base);
     }
-    let mut lookup: HashMap<Table, Vec<Entry>> = HashMap::new();
+    let mut lookup: HashMap<Table, Vec<LabelledType>> = HashMap::new();
     for (def, base) in defs.iter().zip(bases) {
         let name = if styles_of[&(def.category, base.as_str().to_owned())].len() > 1 {
             base.with_qualifier(&[&def.funct.to_string()])
@@ -1544,7 +1547,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
         ff.def_style(def.category, def.style, Params::new())
             .and_then(|s| s.def_type(name.as_str(), &refs, def.params.clone()))
             .map_err(|e| def.row.err(&e.to_string()))?;
-        lookup.entry(def.table).or_default().push(Entry {
+        lookup.entry(def.table).or_default().push(LabelledType {
             labels: def.labels.clone(),
             name: name.as_str().to_owned(),
         });
@@ -1559,7 +1562,7 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
         ff.def_style("cmap", "charmm", Params::new())
             .and_then(|s| s.def_type(name.as_str(), &refs, params))
             .map_err(|e| row.err(&e.to_string()))?;
-        lookup.entry(Table::Cmap).or_default().push(Entry {
+        lookup.entry(Table::Cmap).or_default().push(LabelledType {
             labels,
             name: name.as_str().to_owned(),
         });

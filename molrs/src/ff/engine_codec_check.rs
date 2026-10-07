@@ -638,7 +638,7 @@ fn at(frame: &Frame, x: &[F]) -> Frame {
 }
 
 /// Write the case's engine inputs into `dir/<case>/`.
-fn write_case(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
+fn stage_case_inputs(dir: &Path, case: &Case, reg: &Arc<Registry>, tsv: &mut String) {
     let root = dir.join(case.name);
     std::fs::create_dir_all(&root).unwrap();
     match case.engine {
@@ -708,7 +708,7 @@ fn write_engine_inputs() {
     let reg = registry();
     let mut tsv = String::new();
     for case in cases(&reg) {
-        write_case(dir, &case, &reg, &mut tsv);
+        stage_case_inputs(dir, &case, &reg, &mut tsv);
     }
     std::fs::write(dir.join("molrs.tsv"), tsv).unwrap();
 }

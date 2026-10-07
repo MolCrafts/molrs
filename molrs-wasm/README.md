@@ -120,7 +120,7 @@ that format's reader (or stream) and writer.
   `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr`,
   `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`,
   `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr(frame,
-  columns?)`; `readDcdBytes(bytes, context?)` / `writeDcdBytes`,
+  columns?)`; `readDcdBytes(bytes, decoderState?)` / `writeDcdBytes`,
   `readTrrBytes` / `writeTrrBytes`, `readXtcBytes` / `writeXtcBytes` (binary,
   one frame)
 - `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` /

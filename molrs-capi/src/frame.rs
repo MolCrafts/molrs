@@ -2,7 +2,7 @@
 //!
 //! A **Frame** is the top-level data container in molrs.  It maps string
 //! keys (e.g. `"atoms"`, `"bonds"`, `"angles"`) to [`Block`]s, carries
-//! an optional [`SimBox`](molrs::core::SimBox) for periodic
+//! an optional [`Box`](molrs::core::Box) for periodic
 //! boundary conditions, and stores exact-dtype scalar/fixed-vector metadata.
 //!
 //! # Typical column layout
@@ -104,7 +104,7 @@ impl Default for MolrsMetaValue {
     }
 }
 
-/// Create a new, empty frame with no blocks, no SimBox, and no metadata.
+/// Create a new, empty frame with no blocks, no Box, and no metadata.
 ///
 /// # C signature
 ///
@@ -173,7 +173,7 @@ pub unsafe extern "C" fn molrs_frame_drop(handle: MolrsFrameHandle) -> MolrsStat
 
 /// Deep-clone a frame, returning a new independent handle.
 ///
-/// The cloned frame is a complete copy of all blocks, columns, SimBox,
+/// The cloned frame is a complete copy of all blocks, columns, Box,
 /// and metadata.  Modifications to the clone do not affect the original.
 ///
 /// # C signature
@@ -383,10 +383,10 @@ pub unsafe extern "C" fn molrs_frame_get_block(
     })
 }
 
-/// Associate a SimBox with a frame.
+/// Associate a Box with a frame.
 ///
-/// The SimBox is cloned from the handle registry into the frame.
-/// Changes to the original SimBox handle after this call do not affect
+/// The Box is cloned from the handle registry into the frame.
+/// Changes to the original Box handle after this call do not affect
 /// the frame's copy.
 ///
 /// # C signature
@@ -399,7 +399,7 @@ pub unsafe extern "C" fn molrs_frame_get_block(
 /// # Arguments
 ///
 /// * `frame` -- Target frame.
-/// * `simbox` -- A live SimBox handle to clone into the frame.
+/// * `simbox` -- A live Box handle to clone into the frame.
 ///
 /// # Returns
 ///
@@ -433,7 +433,7 @@ pub unsafe extern "C" fn molrs_frame_set_box(
     })
 }
 
-/// Remove the SimBox from a frame, leaving it with no periodic cell.
+/// Remove the Box from a frame, leaving it with no periodic cell.
 ///
 /// # C signature
 ///
@@ -447,7 +447,7 @@ pub unsafe extern "C" fn molrs_frame_set_box(
 ///
 /// # Returns
 ///
-/// * `MolrsStatus::Ok` on success (including if the frame had no SimBox).
+/// * `MolrsStatus::Ok` on success (including if the frame had no Box).
 /// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety
@@ -465,9 +465,9 @@ pub unsafe extern "C" fn molrs_frame_clear_box(frame: MolrsFrameHandle) -> Molrs
     })
 }
 
-/// Extract the SimBox from a frame, cloning it into the SimBox registry.
+/// Extract the Box from a frame, cloning it into the box registry.
 ///
-/// A new SimBox handle is created each time this function is called.
+/// A new Box handle is created each time this function is called.
 /// The caller is responsible for freeing it with
 /// [`molrs_box_drop`](crate::molrs_box_drop).
 ///
@@ -481,13 +481,13 @@ pub unsafe extern "C" fn molrs_frame_clear_box(frame: MolrsFrameHandle) -> Molrs
 /// # Arguments
 ///
 /// * `frame` -- Source frame.
-/// * `out` -- On success, receives a new SimBox handle.
+/// * `out` -- On success, receives a new Box handle.
 ///
 /// # Returns
 ///
 /// * `MolrsStatus::Ok` on success.
 /// * `MolrsStatus::NullPointer` if `out` is null.
-/// * `MolrsStatus::KeyNotFound` if the frame has no SimBox.
+/// * `MolrsStatus::KeyNotFound` if the frame has no Box.
 /// * `MolrsStatus::InvalidFrameHandle` if `frame` is stale.
 ///
 /// # Safety

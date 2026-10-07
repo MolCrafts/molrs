@@ -3,10 +3,11 @@
 use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, lag_times, sum_column_acf};
+use super::{central_diff_series, sum_column_acf};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]

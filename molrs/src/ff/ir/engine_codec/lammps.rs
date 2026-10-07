@@ -375,14 +375,14 @@ struct CrossTerm {
     constants: &'static [usize],
 }
 
-fn write_cross(terms: &[CrossTerm]) -> Vec<(&'static str, Vec<Token>)> {
+fn zero_cross_lines(terms: &[CrossTerm]) -> Vec<(&'static str, Vec<Token>)> {
     terms
         .iter()
         .map(|t| (t.keyword, vec![Token::Int(0); t.values]))
         .collect()
 }
 
-fn read_cross(
+fn check_zero_cross_line(
     spec: &StyleSpec,
     terms: &[CrossTerm],
     keyword: &str,
@@ -481,7 +481,7 @@ impl LammpsCodec for AngleClass2Codec {
     ) -> Result<LammpsCoeffs, String> {
         Ok(LammpsCoeffs {
             values: positional::write(spec, p, units)?,
-            extra: write_cross(&ANGLE_CROSS),
+            extra: zero_cross_lines(&ANGLE_CROSS),
         })
     }
 
@@ -500,7 +500,7 @@ impl LammpsCodec for AngleClass2Codec {
         values: &[&str],
         _: &mut Params,
     ) -> Result<(), String> {
-        read_cross(spec, &ANGLE_CROSS, keyword, values)
+        check_zero_cross_line(spec, &ANGLE_CROSS, keyword, values)
     }
 }
 
@@ -521,7 +521,7 @@ impl LammpsCodec for DihedralClass2Codec {
     ) -> Result<LammpsCoeffs, String> {
         Ok(LammpsCoeffs {
             values: positional::write(spec, p, units)?,
-            extra: write_cross(&DIHEDRAL_CROSS),
+            extra: zero_cross_lines(&DIHEDRAL_CROSS),
         })
     }
 
@@ -540,7 +540,7 @@ impl LammpsCodec for DihedralClass2Codec {
         values: &[&str],
         _: &mut Params,
     ) -> Result<(), String> {
-        read_cross(spec, &DIHEDRAL_CROSS, keyword, values)
+        check_zero_cross_line(spec, &DIHEDRAL_CROSS, keyword, values)
     }
 }
 

@@ -70,7 +70,7 @@ pub fn write_lammps_dump_str(
 mod tests {
     use super::*;
     use crate::io::frame_index::FrameOffset;
-    use crate::io::test_support::float_col;
+    use crate::io::test_fixtures::float_col;
     use wasm_bindgen_test::*;
 
     /// Two-frame LAMMPS dump (matches the smallest fixture in molrs-io tests).

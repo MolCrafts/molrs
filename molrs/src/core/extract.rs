@@ -273,7 +273,7 @@ impl MolGraph {
 
         let mut node_map: HashMap<NodeId, NodeId> = HashMap::with_capacity(ordered.len());
         for &old in ordered {
-            let payload = self.read_atom(old);
+            let payload = self.materialize_atom(old);
             // The payload was just read out of `self`'s own node columns into
             // a graph that mirrors `self`'s kinds, and an `EntityTable` holds
             // one element type per key, so every key arrives at the type it
@@ -288,7 +288,7 @@ impl MolGraph {
         let selected: HashSet<NodeId> = ordered.iter().copied().collect();
 
         let copy_relation = |graph: &mut MolGraph, kid: KindId, rid: RelationId| {
-            let rel = self.read_relation(kid, rid);
+            let rel = self.materialize_relation(kid, rid);
             if !rel.nodes.iter().all(|n| selected.contains(n)) {
                 return;
             }
@@ -303,7 +303,7 @@ impl MolGraph {
                 // the one element type it has there: a conflict would mean the
                 // subgraph stopped mirroring the parent mid-copy.
                 graph
-                    .write_relation_props(self_kind, new_rid, &rel.props)
+                    .set_relation_props(self_kind, new_rid, &rel.props)
                     .expect("induced subgraph mirrors the parent's component types");
             }
         };

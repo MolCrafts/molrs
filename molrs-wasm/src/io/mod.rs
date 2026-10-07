@@ -114,7 +114,7 @@ pub use xtc::*;
 pub use xyz::*;
 
 #[cfg(test)]
-mod test_support {
+mod test_fixtures {
     use crate::core::frame::Frame;
     use crate::core::nd_array::JsFloatArray;
     use wasm_bindgen::JsCast;

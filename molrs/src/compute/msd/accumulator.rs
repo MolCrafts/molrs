@@ -215,7 +215,7 @@ mod tests {
         assert_eq!(acc.direct_curve().len(), t);
         for k in 0..t {
             assert!(
-                (acc.direct_curve()[k] - batch.data[k].mean).abs() < 1e-12,
+                (acc.direct_curve()[k] - batch.per_frame[k].mean).abs() < 1e-12,
                 "direct lag {k}"
             );
         }
@@ -237,9 +237,9 @@ mod tests {
         assert_eq!(streamed.len(), w + 1);
         for (k, &s) in streamed.iter().enumerate() {
             assert!(
-                (s - batch.data[k].mean).abs() < 1e-9,
+                (s - batch.per_frame[k].mean).abs() < 1e-9,
                 "windowed lag {k}: streamed {s} vs batch {}",
-                batch.data[k].mean
+                batch.per_frame[k].mean
             );
         }
     }

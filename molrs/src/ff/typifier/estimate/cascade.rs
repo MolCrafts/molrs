@@ -135,7 +135,7 @@ impl Parmchk2Estimator {
     /// Whether a pattern names this very atom type — by type name, or by the class
     /// the typifier resolved it to (OPLS keys its bonded forces on class).
     fn same(&self, pattern: &str, query: &str) -> bool {
-        pattern == query || self.context.class_of(query) == Some(pattern)
+        pattern == query || self.inputs.class_of(query) == Some(pattern)
     }
 
     /// Total substitution penalty of `pattern` against `query`, trying both

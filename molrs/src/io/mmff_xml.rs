@@ -4,7 +4,7 @@ use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::params::mmff::MmffProp;
 use crate::ff::params::mmff::encode_da;
 use crate::ff::typifier::mmff::MmffAtomProperties;
-use crate::io::molrs_xml::read_style_element;
+use crate::io::molrs_xml::parse_style_element;
 use crate::io::xml_attribute::{attr_f64, attr_u32, children_named, forcefield_root, opt_attr_f64};
 
 /// Read an MMFF [`ForceField`] from an MMFF parameter-set XML file.
@@ -62,7 +62,7 @@ pub fn read_mmff_xml_forcefield_str(xml: &str) -> Result<ForceField, String> {
             | "DefaultStretchBend"
             | "EmpiricalBondRules" => {}
             other => {
-                if !read_style_element(&mut ff, &child)? {
+                if !parse_style_element(&mut ff, &child)? {
                     return Err(format!(
                         "<{other}> is not an element of the MMFF parameter-set XML"
                     ));

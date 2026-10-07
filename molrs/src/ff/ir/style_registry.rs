@@ -504,7 +504,7 @@ struct RegisteredCategory {
 
 /// One registered form codec.
 #[derive(Clone)]
-struct FormEntry {
+struct RegisteredForm {
     codec: FormCodec,
     sealed: bool,
 }
@@ -530,7 +530,7 @@ struct FormEntry {
 pub struct Registry {
     categories: BTreeMap<String, RegisteredCategory>,
     styles: BTreeMap<(String, String), RegisteredStyle>,
-    forms: BTreeMap<(String, String), FormEntry>,
+    forms: BTreeMap<(String, String), RegisteredForm>,
     expressions: Option<ExpressionCompiler>,
 }
 
@@ -743,7 +743,7 @@ impl Registry {
         }
         self.forms.insert(
             key,
-            FormEntry {
+            RegisteredForm {
                 codec,
                 sealed: false,
             },
@@ -813,7 +813,7 @@ impl Registry {
     ) -> Option<(&StyleSpec, &dyn LammpsCodec)> {
         let writes =
             |e: &&RegisteredStyle| e.spec.lammps.lammps_name(&e.spec).as_deref() == Some(lammps);
-        let found = match self.entry(category, lammps).filter(writes) {
+        let found = match self.registered_style(category, lammps).filter(writes) {
             Some(e) => e,
             None => {
                 let mut claims = self
@@ -879,7 +879,7 @@ impl Registry {
 
     /// A registered style's spec and kernel.
     pub fn style(&self, category: &str, name: &str) -> Option<(&StyleSpec, Option<&Kernel>)> {
-        self.entry(category, name)
+        self.registered_style(category, name)
             .map(|e| (&e.spec, e.kernel.as_ref()))
     }
 
@@ -896,21 +896,23 @@ impl Registry {
 
     /// Whether `(category, name)` is a sealed built-in.
     pub fn is_sealed(&self, category: &str, name: &str) -> bool {
-        self.entry(category, name).is_some_and(|e| e.sealed)
+        self.registered_style(category, name)
+            .is_some_and(|e| e.sealed)
     }
 
-    pub(crate) fn entry(&self, category: &str, name: &str) -> Option<&RegisteredStyle> {
+    pub(crate) fn registered_style(&self, category: &str, name: &str) -> Option<&RegisteredStyle> {
         self.styles.get(&(category.to_owned(), name.to_owned()))
     }
 
     /// The [`ParamSource`] of a registered style.
     pub fn param_source(&self, category: &str, name: &str) -> Option<ParamSource> {
-        self.entry(category, name).map(|e| e.spec.source)
+        self.registered_style(category, name).map(|e| e.spec.source)
     }
 
     /// Where a registered style's rows come from.
     pub fn row_source(&self, category: &str, name: &str) -> Option<RowSource> {
-        self.entry(category, name).map(RegisteredStyle::row_source)
+        self.registered_style(category, name)
+            .map(RegisteredStyle::row_source)
     }
 }
 

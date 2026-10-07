@@ -84,5 +84,5 @@ def test_labels_must_match_the_frames():
         Trajectory(_frames(2), step=np.array([0], dtype=np.int64))
 
 
-def test_is_the_store_class():
+def test_is_the_core_trajectory_class():
     assert molrs.core.Trajectory is Trajectory

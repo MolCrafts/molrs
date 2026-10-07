@@ -1513,7 +1513,7 @@ where
 /// `trajectory/meta/`'s arrays, each carrying its own
 /// [`META_DTYPE_ATTRIBUTE`] tag. Every derived fill is `None`: a fill is what
 /// a *writer* chose, and a reader that was never told cannot say more.
-fn schema_from_store<S>(store: &Arc<S>) -> Result<SequenceSchema, MolRsError>
+fn schema_from_storage<S>(store: &Arc<S>) -> Result<SequenceSchema, MolRsError>
 where
     S: ?Sized + ReadableStorageTraits + ListableStorageTraits + 'static,
 {
@@ -2458,7 +2458,7 @@ impl IndexArrays {
 /// A cell that arrives at ordinal 0 and never changes is recorded as the
 /// `box/` group's own attributes — no array, no extra file. The first change
 /// migrates it into the `box/` arrays.
-enum CellStore {
+enum CellStorage {
     /// One cell, at ordinal 0, in the group attributes.
     Attributes(Box<SimBox>),
     /// The per-update arrays.
@@ -3056,7 +3056,7 @@ struct SequenceArrays {
     time: Option<Track<f64>>,
     meta: IndexMap<String, GrowthArray>,
     blocks: BTreeMap<String, BlockArrays>,
-    cell: Option<CellStore>,
+    cell: Option<CellStorage>,
     /// Frames committed — the `nstep` attribute.
     nstep: u64,
 }
@@ -3366,11 +3366,11 @@ impl SequenceArrays {
                 None => u64::from(arrays.vectors.rows > 0 && nstep > 0),
             };
             arrays.truncate_to(committed)?;
-            Some(CellStore::Arrays(Box::new(arrays)))
+            Some(CellStorage::Arrays(Box::new(arrays)))
         } else if group_exists(store, &box_prefix)? {
             let group = Group::open(store.clone(), &box_prefix)?;
             match cell_from_attributes(group.attributes())? {
-                Some(cell) if nstep > 0 => Some(CellStore::Attributes(Box::new(cell))),
+                Some(cell) if nstep > 0 => Some(CellStorage::Attributes(Box::new(cell))),
                 _ => None,
             }
         } else {
@@ -3511,7 +3511,8 @@ pub struct MrecWriter {
     /// The concrete positional-write store behind `store`, when this writer
     /// was opened by path — the only store that can be asked to sync.
     #[cfg(feature = "filesystem")]
-    positional: Option<Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore>>,
+    positional:
+        Option<Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage>>,
     schema: SequenceSchema,
     knobs: Knobs,
     compression: Compression,
@@ -3565,7 +3566,7 @@ impl MrecWriter {
     fn assemble(
         store: ReadableWritableListableStorage,
         #[cfg(feature = "filesystem")] positional: Option<
-            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore>,
+            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage>,
         >,
         schema: SequenceSchema,
         attached: Attached,
@@ -3627,7 +3628,7 @@ impl MrecWriter {
     fn create_with(
         store: ReadableWritableListableStorage,
         #[cfg(feature = "filesystem")] positional: Option<
-            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore>,
+            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage>,
         >,
         schema: SequenceSchema,
     ) -> Result<Self, MolRsError> {
@@ -3680,7 +3681,7 @@ impl MrecWriter {
         schema: SequenceSchema,
     ) -> Result<Self, MolRsError> {
         let positional = Arc::new(
-            crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore::new(path)?,
+            crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage::new(path)?,
         );
         let store: ReadableWritableListableStorage = positional.clone();
         Self::create_with(store, Some(positional), schema)
@@ -3696,7 +3697,7 @@ impl MrecWriter {
     #[cfg(feature = "filesystem")]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, MolRsError> {
         let positional = Arc::new(
-            crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore::new(path)?,
+            crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage::new(path)?,
         );
         let store: ReadableWritableListableStorage = positional.clone();
         Self::open_with(store, Some(positional))
@@ -3729,7 +3730,7 @@ impl MrecWriter {
     fn open_with(
         store: ReadableWritableListableStorage,
         #[cfg(feature = "filesystem")] positional: Option<
-            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore>,
+            Arc<crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage>,
         >,
     ) -> Result<Self, MolRsError> {
         ensure_not_legacy(&store)?;
@@ -3814,8 +3815,8 @@ impl MrecWriter {
             landed_blocks.insert(name.clone(), landed);
         }
         let landed_cell = match arrays.cell.as_ref() {
-            Some(CellStore::Attributes(cell)) => Some((**cell).clone()),
-            Some(CellStore::Arrays(section)) if section.vectors.rows > 0 => {
+            Some(CellStorage::Attributes(cell)) => Some((**cell).clone()),
+            Some(CellStorage::Arrays(section)) if section.vectors.rows > 0 => {
                 let reader: ReadableListableStorage = Arc::new(StorageHandle::new(store.clone()));
                 let mut boxes = BoxReader::open(&reader)?;
                 Some(boxes.cell_at(section.vectors.rows - 1, cell_defined_of(&store)?)?)
@@ -4475,15 +4476,15 @@ impl MrecWriter {
                         store,
                         box_attributes(first.is_cell_defined(), Some(first)),
                     )?;
-                    arrays.cell = Some(CellStore::Attributes(Box::new(first.clone())));
+                    arrays.cell = Some(CellStorage::Attributes(Box::new(first.clone())));
                 }
                 None => {
                     store_box_attributes(store, box_attributes(first.is_cell_defined(), None))?;
                     let mut section = BoxArrays::create(store, *knobs)?;
                     section.land(store, *knobs, &cells, &options)?;
-                    arrays.cell = Some(CellStore::Arrays(Box::new(section)));
+                    arrays.cell = Some(CellStorage::Arrays(Box::new(section)));
                 }
-                Some(CellStore::Attributes(fixed)) => {
+                Some(CellStorage::Attributes(fixed)) => {
                     let mut section = BoxArrays::create(store, *knobs)?;
                     let mut all: Vec<(u64, &SimBox)> = Vec::with_capacity(cells.len() + 1);
                     all.push((0, fixed.as_ref()));
@@ -4492,11 +4493,11 @@ impl MrecWriter {
                     // The arrays now carry the cell; the attributes keep only
                     // `cell_defined`.
                     store_box_attributes(store, box_attributes(fixed.is_cell_defined(), None))?;
-                    arrays.cell = Some(CellStore::Arrays(Box::new(section)));
+                    arrays.cell = Some(CellStorage::Arrays(Box::new(section)));
                 }
-                Some(CellStore::Arrays(mut section)) => {
+                Some(CellStorage::Arrays(mut section)) => {
                     section.land(store, *knobs, &cells, &options)?;
-                    arrays.cell = Some(CellStore::Arrays(section));
+                    arrays.cell = Some(CellStorage::Arrays(section));
                 }
             }
         }
@@ -5004,7 +5005,7 @@ impl MrecReader {
         ensure_not_legacy(&store)?;
         let schema = match pinned_schema(&store)? {
             Some(pinned) => pinned,
-            None => schema_from_store(&store)?,
+            None => schema_from_storage(&store)?,
         };
         let attributes = trajectory_attributes(&store)?;
         let nstep = committed_frames(&store, &attributes)?;
@@ -5568,7 +5569,7 @@ impl TrajectoryReader for MrecReader {
 /// The whole `trajectory/` sequence contract, pinned before the code exists.
 ///
 /// **Fixtures.** Every test writes a real store under a `tempfile::TempDir`;
-/// nothing here is a mock except [`RecordingStore`], which exists only to
+/// nothing here is a mock except [`RecordingStorage`], which exists only to
 /// observe *write order* and delegates every byte to a real `FilesystemStore`.
 /// The stock fixture frame is one `atoms` block carrying one `f64` column
 /// [`X`], with non-repeating values, so a mis-sliced CSR row range is a
@@ -5611,7 +5612,7 @@ mod tests {
         StoreKeysPrefixes, StorePrefix, WritableStorageTraits,
     };
 
-    use crate::io::mrec::zarr_storage::positional_write::PositionalWriteStore;
+    use crate::io::mrec::zarr_storage::positional_write::PositionalWriteStorage;
     use crate::io::reader::TrajectoryReader;
 
     use super::{MrecReader, MrecWriter, SequenceSchema};
@@ -5647,7 +5648,7 @@ mod tests {
     /// Same reason `frame_io`'s round-trip tests probe on a name of their own.
     const PROBE: &str = "probe";
 
-    fn store_in(dir: &TempDir) -> ReadableWritableListableStorage {
+    fn storage_in(dir: &TempDir) -> ReadableWritableListableStorage {
         Arc::new(FilesystemStore::new(dir.path()).unwrap())
     }
 
@@ -5875,7 +5876,7 @@ mod tests {
     #[test]
     fn csr_offset_is_the_prefix_sum_of_a_ragged_run() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &ragged_frames());
 
         assert_eq!(
@@ -5890,7 +5891,7 @@ mod tests {
     #[test]
     fn step_counts_every_appended_frame() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &ragged_frames());
         let group = Group::open(store.clone(), TRAJ).unwrap();
         assert_eq!(group.attributes()["nstep"], 3);
@@ -5911,7 +5912,7 @@ mod tests {
     #[test]
     fn each_frame_of_a_ragged_run_reads_back_its_own_rows() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         write_all(&store, &frames);
 
@@ -5930,7 +5931,7 @@ mod tests {
     #[test]
     fn blocks_and_columns_read_back_in_frame_order() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut zeta = Block::new();
         for column in ["c", "a", "b"] {
             zeta.insert_column(column, float_column(&[1.0])).unwrap();
@@ -5954,7 +5955,7 @@ mod tests {
     #[test]
     fn a_block_absent_at_a_step_reads_as_absent_not_empty() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut with_bonds = atoms_frame(&[10.0, 11.0]);
         with_bonds.insert(BONDS, block_with(I, uint_column(&[0, 1])));
         let frames = vec![atoms_frame(&[1.0, 2.0]), with_bonds];
@@ -5982,7 +5983,7 @@ mod tests {
         const STEPS: usize = 20;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..STEPS)
             .map(|step| {
                 let mut frame = atoms_frame(&[step as f64, step as f64 + 0.5]);
@@ -6033,7 +6034,7 @@ mod tests {
 
         // Fixed cell: `vectors` is a group attribute.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.simbox = Some(undefined(0.0));
         write_all(&store, &[frame]);
@@ -6060,7 +6061,7 @@ mod tests {
         // Changing origin: the cell lives in arrays. Dropping the `vectors`
         // chunks makes every row the zero fill value.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut first = atoms_frame(&[1.0]);
         first.simbox = Some(undefined(0.0));
         let mut second = atoms_frame(&[2.0]);
@@ -6091,8 +6092,8 @@ mod tests {
 
     /// A regular three-frame run: `atoms` carries both elision markers and
     /// `step` is a progression.
-    fn regular_store(dir: &TempDir) -> ReadableWritableListableStorage {
-        let store = store_in(dir);
+    fn regular_storage(dir: &TempDir) -> ReadableWritableListableStorage {
+        let store = storage_in(dir);
         write_all(
             &store,
             &[
@@ -6128,7 +6129,7 @@ mod tests {
             },
         ] {
             let dir = TempDir::new().unwrap();
-            let store = regular_store(&dir);
+            let store = regular_storage(&dir);
             edit_attributes(&store, &section, edit);
             let err = MrecReader::from_storage(store.clone())
                 .err()
@@ -6142,7 +6143,7 @@ mod tests {
     #[test]
     fn markers_on_a_block_with_no_columns_are_refused_and_a_bare_declared_block_reads_absent() {
         let dir = TempDir::new().unwrap();
-        let store = regular_store(&dir);
+        let store = regular_storage(&dir);
         edit_attributes(&store, TRAJ, |a| {
             a[SCHEMA_ATTRIBUTE]["blocks"]["ghost"] = serde_json::json!({"columns": {}});
         });
@@ -6168,7 +6169,7 @@ mod tests {
     #[test]
     fn a_progression_without_the_commit_marker_is_refused() {
         let dir = TempDir::new().unwrap();
-        let store = regular_store(&dir);
+        let store = regular_storage(&dir);
         let attrs = Group::open(store.clone(), TRAJ)
             .unwrap()
             .attributes()
@@ -6197,7 +6198,7 @@ mod tests {
             SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false).unwrap()
         };
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.simbox = Some(undefined([false, false, true]));
         let mut writer = MrecWriter::create_in_storage(
@@ -6208,7 +6209,7 @@ mod tests {
         assert!(writer.append(&frame).is_err());
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         frame.simbox = Some(undefined([false; 3]));
         write_all(&store, &[frame]);
         let box_path = format!("{TRAJ}/box");
@@ -6275,7 +6276,7 @@ mod tests {
             .unwrap()
         };
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.simbox = Some(cell(10.0));
         write_all(&store, &[frame]);
@@ -6298,7 +6299,7 @@ mod tests {
 
         // The first change migrates the cell into arrays.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut first = atoms_frame(&[1.0]);
         first.simbox = Some(cell(10.0));
         let mut second = atoms_frame(&[2.0]);
@@ -6329,7 +6330,7 @@ mod tests {
     #[test]
     fn frame_meta_step_is_not_a_per_step_meta_array() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.meta.insert("step", MetaValue::I64(0));
         write_all(&store, &[frame]);
@@ -6352,7 +6353,7 @@ mod tests {
     fn a_constant_block_costs_one_update_and_no_index_arrays() {
         const STEPS: usize = 5;
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..STEPS)
             .map(|step| {
                 let mut frame = atoms_frame(&[step as f64, step as f64 + 0.5]);
@@ -6396,7 +6397,7 @@ mod tests {
     #[test]
     fn a_block_changing_every_step_is_regular_and_a_ragged_one_is_indexed() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..5)
             .map(|i| atoms_frame(&[i as f64, i as f64 + 0.5]))
             .collect();
@@ -6408,7 +6409,7 @@ mod tests {
         }
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &ragged_frames());
         assert_eq!(
             u64_array(&store, &format!("{TRAJ}/{ATOMS}/step_index")),
@@ -6430,7 +6431,7 @@ mod tests {
     #[test]
     fn a_frame_straddling_an_inner_chunk_boundary_reads_back_bit_exact() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = vec![
             atoms_frame(&[1.0, 2.0, 3.0]),
             atoms_frame(&[4.0, 5.0, 6.0]),
@@ -6463,7 +6464,7 @@ mod tests {
         const ROWS_PER_SHARD: u64 = 11_184_000;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let values: Vec<f64> = (0..ATOM_COUNT * 3).map(|i| i as f64 * 0.5).collect();
         let mut frame = Frame::new();
         frame.insert(
@@ -6498,7 +6499,7 @@ mod tests {
     #[test]
     fn a_small_frame_is_chunked_in_whole_frames_up_to_the_byte_floor() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let values: Vec<f64> = (0..100).map(|i| i as f64).collect();
         write_all(&store, &[atoms_frame(&values)]);
         let (_, inner) = extents(&store, &format!("{TRAJ}/{ATOMS}/{X}"));
@@ -6511,7 +6512,7 @@ mod tests {
     #[test]
     fn dense_arrays_take_the_dense_extents() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
@@ -6551,7 +6552,7 @@ mod tests {
     #[test]
     fn a_union_mint_carries_each_block_forward_from_its_latest_update() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
 
         let plain = atoms_frame(&[1.0, 2.0]);
         let mut bonded = atoms_frame(&[10.0, 11.0]);
@@ -6598,7 +6599,7 @@ mod tests {
     #[test]
     fn omitted_zero_row_and_unseen_blocks_read_back_as_carried_empty_and_absent() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
 
         let mut with_bonds = atoms_frame(&[1.0]);
         with_bonds.insert(BONDS, block_with(I, uint_column(&[0, 1])));
@@ -6712,7 +6713,7 @@ mod tests {
     #[test]
     fn an_undeclared_block_errs_at_append_naming_it() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let declared = atoms_frame(&[1.0, 2.0]);
         let schema = SequenceSchema::from_frame(&declared).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
@@ -6731,7 +6732,7 @@ mod tests {
     #[test]
     fn an_undeclared_column_errs_at_append_naming_it() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
 
@@ -6754,7 +6755,7 @@ mod tests {
     #[test]
     fn a_changed_dtype_errs_at_append_naming_the_column() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut declared = Frame::new();
         declared.insert(ATOMS, block_with(PROBE, float_column(&[1.0, 2.0])));
         let schema = SequenceSchema::from_frame(&declared).unwrap();
@@ -6774,7 +6775,7 @@ mod tests {
     #[test]
     fn a_changed_trailing_shape_errs_at_append_naming_the_column() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut declared = Frame::new();
         declared.insert(
             ATOMS,
@@ -6806,7 +6807,7 @@ mod tests {
     #[test]
     fn a_frame_presenting_a_subset_of_the_declared_blocks_is_accepted() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut bonded = atoms_frame(&[10.0, 11.0]);
         bonded.insert(BONDS, block_with(I, uint_column(&[0, 1])));
         let schema = SequenceSchema::from_frames(&[atoms_frame(&[1.0, 2.0]), bonded]).unwrap();
@@ -6915,7 +6916,7 @@ mod tests {
 
         for value in meta_variants() {
             let dir = TempDir::new().unwrap();
-            let store = store_in(&dir);
+            let store = storage_in(&dir);
             let frames: Vec<Frame> = [1.0f64, 2.0]
                 .iter()
                 .map(|v| {
@@ -6954,7 +6955,7 @@ mod tests {
         const KEY: &str = "temperature";
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
         let schema = SequenceSchema::from_frame(&declaring).unwrap();
@@ -6977,7 +6978,7 @@ mod tests {
         const FILL: f64 = -1.0;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
         let mut schema = SequenceSchema::from_frame(&declaring).unwrap();
@@ -7009,7 +7010,7 @@ mod tests {
     fn a_nan_fill_is_storable_and_a_null_fill_is_refused() {
         const KEY: &str = "temperature";
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         schema
             .declare_meta_with_fill(KEY, MetaValue::F64(f64::NAN))
@@ -7049,7 +7050,7 @@ mod tests {
     #[test]
     fn declared_meta_keys_read_back_in_declaration_order() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut schema = SequenceSchema::new();
         schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
         schema.declare_meta("zeta", "f64").unwrap();
@@ -7087,7 +7088,7 @@ mod tests {
     #[test]
     fn create_on_an_occupied_store_errs_and_changes_nothing() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         write_all(&store, &frames);
         let before = file_map(dir.path());
@@ -7119,7 +7120,7 @@ mod tests {
     #[test]
     fn open_errs_naming_what_differed_and_both_values() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &ragged_frames());
 
         let column = format!("{TRAJ}/{ATOMS}/{X}");
@@ -7178,7 +7179,7 @@ mod tests {
         const TEMPERATURE: &str = "temperature";
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = ragged_frames()
             .into_iter()
             .enumerate()
@@ -7224,7 +7225,7 @@ mod tests {
     #[test]
     fn a_writer_reopen_still_requires_the_schema_attribute() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &ragged_frames());
         strip_schema_attribute(&store);
 
@@ -7249,7 +7250,7 @@ mod tests {
     #[test]
     fn a_flush_commits_every_frame_appended_before_it() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..5)
             .map(|step| atoms_frame(&[step as f64, step as f64 + 0.5]))
             .collect();
@@ -7290,7 +7291,7 @@ mod tests {
     #[test]
     fn a_reopened_writer_appends_across_an_inner_chunk_boundary() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..4)
             .map(|step| atoms_frame(&[step as f64, step as f64 + 0.25, step as f64 + 0.5]))
             .collect();
@@ -7344,7 +7345,7 @@ mod tests {
         const CHUNKS_PER_SHARD: u64 = 2;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all_with(
             &store,
             &[atoms_frame(&[1.0, 2.0, 3.0])],
@@ -7368,7 +7369,7 @@ mod tests {
     #[test]
     fn a_knob_after_the_first_append_errs_naming_the_phase() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         writer.append(&atoms_frame(&[1.0, 2.0])).unwrap();
@@ -7391,7 +7392,7 @@ mod tests {
     #[test]
     fn a_created_but_never_appended_store_reopens_empty() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         MrecWriter::create_in_storage(store.clone(), schema)
             .unwrap()
@@ -7416,7 +7417,7 @@ mod tests {
     #[test]
     fn a_marker_rolled_back_hides_the_uncommitted_frames() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..5)
             .map(|step| atoms_frame(&[step as f64, step as f64 + 0.5]))
             .collect();
@@ -7453,12 +7454,12 @@ mod tests {
     /// the disk through — and deliberately not `erase`, which is not a write
     /// of content.
     #[derive(Debug)]
-    struct RecordingStore {
+    struct RecordingStorage {
         inner: FilesystemStore,
         written: Mutex<Vec<String>>,
     }
 
-    impl RecordingStore {
+    impl RecordingStorage {
         fn new(path: &Path) -> Self {
             Self {
                 inner: FilesystemStore::new(path).unwrap(),
@@ -7479,7 +7480,7 @@ mod tests {
         }
     }
 
-    impl ReadableStorageTraits for RecordingStore {
+    impl ReadableStorageTraits for RecordingStorage {
         fn get(&self, key: &StoreKey) -> Result<MaybeBytes, StorageError> {
             self.inner.get(key)
         }
@@ -7509,7 +7510,7 @@ mod tests {
         }
     }
 
-    impl ListableStorageTraits for RecordingStore {
+    impl ListableStorageTraits for RecordingStorage {
         fn list(&self) -> Result<StoreKeys, StorageError> {
             self.inner.list()
         }
@@ -7531,7 +7532,7 @@ mod tests {
         }
     }
 
-    impl WritableStorageTraits for RecordingStore {
+    impl WritableStorageTraits for RecordingStorage {
         fn set(&self, key: &StoreKey, value: Bytes) -> Result<(), StorageError> {
             self.record(key);
             self.inner.set(key, value)
@@ -7569,7 +7570,7 @@ mod tests {
     #[test]
     fn the_marker_is_written_after_every_other_key() {
         let dir = TempDir::new().unwrap();
-        let recorder = Arc::new(RecordingStore::new(dir.path()));
+        let recorder = Arc::new(RecordingStorage::new(dir.path()));
         let store: ReadableWritableListableStorage = recorder.clone();
 
         let frame = atoms_frame(&[1.0, 2.0]);
@@ -7624,7 +7625,7 @@ mod tests {
         let schema = SequenceSchema::from_frames(&frames).unwrap();
 
         let eager_dir = TempDir::new().unwrap();
-        let eager_store = store_in(&eager_dir);
+        let eager_store = storage_in(&eager_dir);
         let mut eager = MrecWriter::create_in_storage(eager_store.clone(), schema)
             .unwrap()
             .with_rows_per_chunk(ROWS_PER_CHUNK)
@@ -7640,7 +7641,7 @@ mod tests {
         let eager_bytes = chunk_bytes(&eager_dir.path().join(&column_dir));
 
         let lazy_dir = TempDir::new().unwrap();
-        let lazy_store = store_in(&lazy_dir);
+        let lazy_store = storage_in(&lazy_dir);
         let mut lazy = MrecWriter::create_in_storage(
             lazy_store.clone(),
             SequenceSchema::from_frames(&frames).unwrap(),
@@ -7693,7 +7694,7 @@ mod tests {
     /// silent O(shard) rewrite per flush: `zarrs_filesystem` 0.3.12 reports
     /// `supports_set_partial() == true` while reading, patching and rewriting
     /// the whole value, so the codec-layer measurement in `zarrs_pins` is
-    /// structurally blind to it. [`PositionalWriteStore::bytes_written`] is
+    /// structurally blind to it. [`PositionalWriteStorage::bytes_written`] is
     /// the observation that is not.
     #[test]
     fn a_steady_state_flush_writes_a_chunk_not_the_shard_file() {
@@ -7716,7 +7717,7 @@ mod tests {
         const FLUSHES: u64 = 64;
 
         let dir = TempDir::new().unwrap();
-        let positional = Arc::new(PositionalWriteStore::new(dir.path()).unwrap());
+        let positional = Arc::new(PositionalWriteStorage::new(dir.path()).unwrap());
         let store: ReadableWritableListableStorage = positional.clone();
 
         let frame_of = |step: u64| {
@@ -7830,9 +7831,9 @@ mod tests {
         // Every frame carries distinct values, so every step earns its own
         // `step_index` entry: a repeated block would be stored once and the
         // row counts above would not be the ones on disk.
-        let store_files = |count: u64| -> Vec<PathBuf> {
+        let storage_files = |count: u64| -> Vec<PathBuf> {
             let dir = TempDir::new().unwrap();
-            let store = store_in(&dir);
+            let store = storage_in(&dir);
             let frames: Vec<Frame> = (0..count)
                 .map(|step| {
                     atoms_frame(
@@ -7846,8 +7847,8 @@ mod tests {
             file_map(dir.path()).into_keys().collect()
         };
 
-        let single = store_files(FRAMES);
-        let double = store_files(2 * FRAMES);
+        let single = storage_files(FRAMES);
+        let double = storage_files(2 * FRAMES);
 
         assert_eq!(
             single.len(),
@@ -7895,7 +7896,7 @@ mod tests {
     #[test]
     fn the_frame_iterator_yields_what_frame_yields() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         write_all(&store, &frames);
 
@@ -7923,7 +7924,7 @@ mod tests {
     #[test]
     fn to_trajectory_carries_the_same_frames_as_frame() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         write_all(&store, &frames);
 
@@ -7952,7 +7953,7 @@ mod tests {
     #[test]
     fn a_trajectory_frames_group_is_refused_as_a_legacy_layout() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         for group in [TRAJ, "/trajectory/frames", "/trajectory/frames/0"] {
             GroupBuilder::new()
                 .build(store.clone(), group)
@@ -7993,7 +7994,7 @@ mod tests {
     #[test]
     fn create_writes_the_root_and_a_stamped_meta_group() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
@@ -8019,7 +8020,7 @@ mod tests {
     #[test]
     fn with_meta_writes_the_identity_document() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let mut doc = serde_json::Map::new();
         doc.insert("creator".into(), serde_json::json!({"name": "test"}));
@@ -8038,7 +8039,7 @@ mod tests {
     #[test]
     fn the_landing_cadence_is_derived_from_the_frame_size() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
         let frame = atoms_frame(&values);
         let schema = SequenceSchema::from_frame(&frame).unwrap();
@@ -8051,7 +8052,7 @@ mod tests {
         assert_eq!(writer.committed(), 0, "one frame is below the cadence");
 
         let dir2 = TempDir::new().unwrap();
-        let store2 = store_in(&dir2);
+        let store2 = storage_in(&dir2);
         let mut writer = MrecWriter::create_in_storage(store2.clone(), schema)
             .unwrap()
             .with_flush_every(2)
@@ -8076,7 +8077,7 @@ mod tests {
     #[test]
     fn regular_blocks_carry_hints_and_read_back_through_them() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames: Vec<Frame> = (0..5)
             .map(|i| atoms_frame(&[i as f64, i as f64 + 0.5]))
             .collect();
@@ -8100,7 +8101,7 @@ mod tests {
         // A ragged run withdraws `uniform_rows`; a skipped ordinal withdraws
         // `dense_updates`.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frames = ragged_frames();
         frames.push(frames[2].clone()); // identical: no update at ordinal 3
         frames.push(atoms_frame(&[99.0]));
@@ -8123,7 +8124,7 @@ mod tests {
     #[test]
     fn a_reopened_writer_rolls_back_to_the_commit_marker() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frames = ragged_frames();
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
@@ -8193,7 +8194,7 @@ mod tests {
     #[test]
     fn frame_columns_reads_only_the_named_columns() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0, 2.0]);
         frame
             .get_mut(ATOMS)
@@ -8225,7 +8226,7 @@ mod tests {
     #[test]
     fn box_at_resolves_the_latest_cell() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut with_cell = atoms_frame(&[1.0]);
         with_cell.simbox = Some(fixed_cell());
         write_all(
@@ -8244,7 +8245,7 @@ mod tests {
     #[test]
     fn a_shaped_block_with_another_row_count_is_refused_at_append() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut grid = Block::new();
         grid.insert_column("rho", float_column(&[1.0, 2.0, 3.0, 4.0]))
             .unwrap();
@@ -8266,7 +8267,7 @@ mod tests {
     #[test]
     fn a_meta_value_at_another_width_is_read_at_the_declared_one() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         schema.declare_meta("com", "f64x3").unwrap();
         schema.declare_meta("count", "i64").unwrap();
@@ -8361,7 +8362,7 @@ mod tests {
     #[test]
     fn inner_codecs_follow_the_width_policy() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.insert(BONDS, block_with(I, uint_column(&[0])));
         let mut second = atoms_frame(&[2.0]);
@@ -8448,7 +8449,7 @@ mod tests {
     #[test]
     fn every_frame_keeps_the_mask_of_its_masked_column() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(
             &store,
             &[
@@ -8468,7 +8469,7 @@ mod tests {
     #[test]
     fn a_column_masked_in_one_frame_only_keeps_both_answers() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(
             &store,
             &[
@@ -8517,7 +8518,7 @@ mod tests {
     #[test]
     fn the_pinned_schema_carries_the_nullable_flag() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(&store, &[masked_frame(&[1.0, 0.0, 0.0], &MASK)]);
 
         let group = Group::open(store.clone(), TRAJ).expect("the sequence group exists");
@@ -8554,7 +8555,7 @@ mod tests {
         /// [`MASK`] with the middle row filled in — same values underneath.
         const MOVED: [bool; 3] = [true, true, false];
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(
             &store,
             &[
@@ -8580,7 +8581,7 @@ mod tests {
     #[test]
     fn two_frames_identical_in_values_and_mask_cost_one_update() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_all(
             &store,
             &[
@@ -8622,7 +8623,7 @@ mod tests {
     #[test]
     fn a_hand_declared_nullable_column_accepts_a_masked_frame() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut schema = SequenceSchema::new();
         schema.declare_block(ATOMS, Some(3)).unwrap();
         schema
@@ -8646,7 +8647,7 @@ mod tests {
     #[test]
     fn a_masked_frame_is_refused_by_a_non_nullable_declaration() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut schema = SequenceSchema::new();
         schema.declare_block(ATOMS, Some(3)).unwrap();
         schema
@@ -8726,7 +8727,7 @@ mod tests {
     #[test]
     fn a_precision_is_pinned_and_every_frame_reads_back_rounded() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let p = 1e-3;
         let frames = [
             precise_frame(&[0.123_456, -1.000_49, 2.5], p),
@@ -8762,7 +8763,7 @@ mod tests {
     #[test]
     fn a_change_below_half_a_quantum_carries_forward() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let p = 1e-3;
         let q = molrs::core::quantum(p).unwrap();
         let first = [1.0, 2.0, 3.0];
@@ -8781,7 +8782,7 @@ mod tests {
     #[test]
     fn a_frame_stating_another_precision_than_the_pin_is_refused() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&precise_frame(&[1.0], 1e-3)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         // No precision stated: the pin rounds it.
@@ -8794,7 +8795,7 @@ mod tests {
 
         // A pin without a precision refuses a frame that states one.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         assert!(writer.append(&precise_frame(&[1.0], 1e-3)).is_err());
@@ -8828,7 +8829,7 @@ mod tests {
     #[test]
     fn the_compression_knob_replaces_the_precision_compressor_and_the_shuffle_stays() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let frame = precise_frame(&[1.0, 2.0], 1e-3);
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
@@ -8877,7 +8878,7 @@ mod tests {
         }
         let bytes_per_atom_frame = |precision: Option<f64>| -> (f64, f64) {
             let dir = TempDir::new().unwrap();
-            let store = store_in(&dir);
+            let store = storage_in(&dir);
             let frames: Vec<Frame> = run
                 .iter()
                 .map(|positions| {
@@ -8935,7 +8936,7 @@ mod tests {
     #[test]
     fn targets_are_pinned_and_hold_per_resolved_frame() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let first = referencing_frame(3, &[2]);
         let schema = SequenceSchema::from_frame(&first).unwrap();
         assert_eq!(schema.target("refs", "site"), Some(ATOMS));
@@ -9031,7 +9032,7 @@ mod tests {
 
     fn write_aligned(frames: &[Frame]) -> (TempDir, ReadableWritableListableStorage) {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut writer = MrecWriter::create_in_storage(store.clone(), aligned_schema()).unwrap();
         for frame in frames {
             writer.append(frame).unwrap();
@@ -9090,7 +9091,7 @@ mod tests {
     #[test]
     fn a_writer_refuses_a_frame_that_breaks_the_alignment() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut writer = MrecWriter::create_in_storage(store.clone(), aligned_schema()).unwrap();
         writer
             .append(&aligned_frame(&[0.0, 1.0, 2.0], Some(&["A", "B", "C"])))
@@ -9122,7 +9123,7 @@ mod tests {
 
         // The aligned block presented before its target exists.
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut writer = MrecWriter::create_in_storage(store, aligned_schema()).unwrap();
         let mut types_only = Frame::new();
         types_only.insert(TYPES, block_with("type", string_column(&["A"])));
@@ -9181,7 +9182,7 @@ mod tests {
     #[test]
     fn an_aligned_block_may_not_share_a_name_with_a_system_block() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         for group in ["/", "/system", "/system/atom_types"] {
             GroupBuilder::new()
                 .build(store.clone(), group)

@@ -197,7 +197,7 @@ impl From<BondNumber> for PropValue {
 /// Returns [`MolRsError::NotFound`] when `kind` is unregistered or `id` names
 /// no live relation of it, and [`MolRsError::Validation`] when the store
 /// refuses either value.
-pub(crate) fn write_bond_class(
+pub(crate) fn stamp_bond_class(
     graph: &mut MolGraph,
     kind: KindId,
     id: RelationId,
@@ -217,14 +217,14 @@ mod tests {
     /// The two-key write is one function because a class without a number
     /// leaves the bond un-standardized: both keys land, or neither does.
     #[test]
-    fn write_bond_class_stamps_both_keys() {
+    fn stamp_bond_class_sets_both_keys() {
         let mut graph = MolGraph::new();
         let kind = graph.register_kind("bonds", 2);
         let a = graph.add_node();
         let b = graph.add_node();
         let bid = graph.add_relation(kind, &[a, b]).unwrap();
 
-        write_bond_class(
+        stamp_bond_class(
             &mut graph,
             kind,
             bid,

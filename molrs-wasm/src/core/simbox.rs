@@ -726,7 +726,7 @@ mod tests {
     fn box_coordinate_ops() {
         let mut view = NDArray::new(Box::new([2_usize, 3_usize]));
         let view_data = float_array(&[0.0, 0.0, 0.0, 2.0, 3.0, 4.0]);
-        view.write_from(&view_data).expect("write_from failed");
+        view.copy_from(&view_data).expect("copy_from failed");
 
         let h = float_array(&[2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0]);
         let origin = float_array(&[0.0, 0.0, 0.0]);
@@ -742,7 +742,7 @@ mod tests {
 
         let mut wrap_view = NDArray::new(Box::new([1_usize, 3_usize]));
         wrap_view
-            .write_from(&float_array(&[2.5, 3.5, 4.5]))
+            .copy_from(&float_array(&[2.5, 3.5, 4.5]))
             .expect("write wrap_view");
         let wrapped = sim_box.wrap(&wrap_view).expect("wrap failed");
         let wrapped_js = wrapped.to_copy();
@@ -767,9 +767,9 @@ mod tests {
 
         let mut a = NDArray::new(Box::new([1_usize, 3_usize]));
         let mut b = NDArray::new(Box::new([1_usize, 3_usize]));
-        a.write_from(&float_array(&[1.0, 1.0, 1.0]))
+        a.copy_from(&float_array(&[1.0, 1.0, 1.0]))
             .expect("write a");
-        b.write_from(&float_array(&[9.0, 9.0, 9.0]))
+        b.copy_from(&float_array(&[9.0, 9.0, 9.0]))
             .expect("write b");
 
         let delta_mi = cube.delta(&a, &b, true).expect("delta mi").to_copy();

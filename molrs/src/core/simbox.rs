@@ -279,8 +279,8 @@ impl SimBox {
             // Empty point set -- return a unit cube at origin
             return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
         }
-        let mut min = array![points[[0, 0]], points[[0, 1]], points[[0, 2]]];
-        let mut max = min.clone();
+        let mut min = [points[[0, 0]], points[[0, 1]], points[[0, 2]]];
+        let mut max = min;
         for i in 1..n {
             for d in 0..3 {
                 if points[[i, d]] < min[d] {
@@ -291,7 +291,13 @@ impl SimBox {
                 }
             }
         }
-        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding,];
+        Self::free_around(min, max, padding)
+    }
+
+    /// The free-boundary box over the bounds `min`..`max`, padded by
+    /// `padding` on every side (each edge at least `padding` long).
+    fn free_around(min: [F; 3], max: [F; 3], padding: F) -> Result<Self, BoxError> {
+        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding];
         let lengths = array![
             (max[0] - min[0] + 2.0 * padding).max(padding),
             (max[1] - min[1] + 2.0 * padding).max(padding),
@@ -334,7 +340,7 @@ impl SimBox {
     }
 
     /// Create a non-periodic (free-boundary) box enclosing all points, reading
-    /// positions from three separate `x`/`y`/`z` slices (SoA layout).
+    /// positions from three separate `x`/`y`/`z` coordinate slices (SoA layout).
     ///
     /// Arithmetically identical to [`free`](Self::free): computes the same
     /// axis-aligned bounding box (min/max over all points) plus `padding` on
@@ -347,7 +353,7 @@ impl SimBox {
     ///
     /// # Panics
     /// Panics if `padding <= 0` or the three slices do not have equal length.
-    pub fn free_columns(xs: &[F], ys: &[F], zs: &[F], padding: F) -> Result<Self, BoxError> {
+    pub fn free_from_xyz(xs: &[F], ys: &[F], zs: &[F], padding: F) -> Result<Self, BoxError> {
         assert!(padding > 0.0, "padding must be positive");
         assert!(
             xs.len() == ys.len() && ys.len() == zs.len(),
@@ -358,8 +364,8 @@ impl SimBox {
             // Empty point set -- return a unit cube at origin
             return Self::cube(padding, array![0.0 as F, 0.0, 0.0], [false, false, false]);
         }
-        let mut min = array![xs[0], ys[0], zs[0]];
-        let mut max = min.clone();
+        let mut min = [xs[0], ys[0], zs[0]];
+        let mut max = min;
         for i in 1..n {
             let p = [xs[i], ys[i], zs[i]];
             for d in 0..3 {
@@ -371,13 +377,7 @@ impl SimBox {
                 }
             }
         }
-        let origin = array![min[0] - padding, min[1] - padding, min[2] - padding,];
-        let lengths = array![
-            (max[0] - min[0] + 2.0 * padding).max(padding),
-            (max[1] - min[1] + 2.0 * padding).max(padding),
-            (max[2] - min[2] + 2.0 * padding).max(padding),
-        ];
-        Self::ortho(lengths, origin, [false, false, false])
+        Self::free_around(min, max, padding)
     }
 
     /// View of the cell matrix
@@ -1739,13 +1739,13 @@ mod tests {
     }
 
     #[test]
-    fn free_columns_matches_free_bitwise() {
+    fn free_from_xyz_matches_free_bitwise() {
         let pts = array![[1.0 as F, 2.0, 3.0], [4.0, -5.0, 6.0], [-2.5, 5.5, 0.25]];
         let xs = vec![1.0 as F, 4.0, -2.5];
         let ys = vec![2.0 as F, -5.0, 5.5];
         let zs = vec![3.0 as F, 6.0, 0.25];
         let a = SimBox::free(pts.view(), 1.5).unwrap();
-        let b = SimBox::free_columns(&xs, &ys, &zs, 1.5).unwrap();
+        let b = SimBox::free_from_xyz(&xs, &ys, &zs, 1.5).unwrap();
 
         let (oa, ob) = (a.origin_view(), b.origin_view());
         let (ha, hb) = (a.h_view(), b.h_view());

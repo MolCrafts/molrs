@@ -50,12 +50,12 @@ pub struct EstimationInputs {
 }
 
 impl EstimationInputs {
-    /// Create an empty interpolation context.
+    /// Create an empty interpolation input set.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Build a context from `(type_name, class_name)` pairs.
+    /// Build an input set from `(type_name, class_name)` pairs.
     pub fn from_type_classes<I, K, V>(classes: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -90,7 +90,7 @@ impl EstimationInputs {
     ///
     /// A class-keyed force field's bonded rows name **classes** (`CA`, `OS`), and a
     /// class is never an atom type with a mass. So every class already known to this
-    /// context also takes the mass-derived element of its member types; a class with
+    /// input set also takes the mass-derived element of its member types; a class with
     /// no member type falls back on reading its name (`element_from_token`).
     pub fn with_forcefield_elements(mut self, ff: &ForceField) -> Self {
         for at in ff.get_atomtypes() {
@@ -254,7 +254,7 @@ pub struct Parmchk2Estimator {
     /// The rows the cascade scans, by arity.
     candidates: CandidateSet,
     /// Typifier-side type metadata (class + element).
-    context: EstimationInputs,
+    inputs: EstimationInputs,
     /// `PARMCHK.DAT`: equivalences, correspondences, penalty weights, and the
     /// improper-centre column.
     substitutions: ParmchkTable,
@@ -268,16 +268,16 @@ impl Parmchk2Estimator {
     /// The `type → class` map comes from `meta`; the `type → element` map is
     /// inferred from each atom type's tabulated mass.
     pub fn new(ff: &ForceField, meta: &OplsTypingMetadata) -> Self {
-        let context = EstimationInputs::from_type_classes(
+        let inputs = EstimationInputs::from_type_classes(
             meta.iter()
                 .map(|(name, row)| (name.clone(), row.class.clone())),
         )
         .with_forcefield_elements(ff);
 
-        Self::with_context(ff, context)
+        Self::with_inputs(ff, inputs)
     }
 
-    /// Build an estimator from a force field and an explicit interpolation context.
+    /// Build an estimator from a force field and an explicit interpolation input set.
     ///
     /// This is the constructor a non-OPLS typifier uses — it is how
     /// [`GaffTypifier`](crate::ff::typifier::GaffTypifier) builds the estimator over
@@ -287,10 +287,10 @@ impl Parmchk2Estimator {
     /// declares, by style **kind** and never by style *name*: GAFF's dihedral style
     /// is `periodic` and OPLS's is `opls`, and an extractor that asks for one by
     /// name is an extractor with an empty table for the other.
-    pub fn with_context(ff: &ForceField, context: EstimationInputs) -> Self {
+    pub fn with_inputs(ff: &ForceField, inputs: EstimationInputs) -> Self {
         Self {
             candidates: CandidateSet::from_forcefield(ff),
-            context,
+            inputs,
             substitutions: tables::substitution_table(),
             empirical: EmpiricalSet::Gaff.table(),
         }
@@ -398,7 +398,7 @@ impl Parmchk2Estimator {
     /// the type name read as an element token (`c3` → C), then `PARMCHK.DAT`'s own
     /// atomic-number column.
     pub(crate) fn element_of(&self, name: &str) -> Option<String> {
-        self.context
+        self.inputs
             .element_of(name)
             .or_else(|| self.substitutions.element(name).map(str::to_owned))
     }
@@ -512,8 +512,8 @@ mod tests {
         cell.get_or_init(|| {
             let gaff = GaffTypifier::new(set);
             let candidates = gaff.source_forcefield();
-            let context = EstimationInputs::new().with_forcefield_elements(candidates);
-            Parmchk2Estimator::with_context(candidates, context).with_empirical(empirical)
+            let inputs = EstimationInputs::new().with_forcefield_elements(candidates);
+            Parmchk2Estimator::with_inputs(candidates, inputs).with_empirical(empirical)
         })
     }
 
@@ -668,7 +668,7 @@ mod tests {
     // --- orientation symmetry of a dihedral estimate ------------------------
 
     /// A one-row OPLS-shaped library, `CZ-CT-CT-CW` under `dihedral/opls`,
-    /// and a context for four carbon types: `ta` (class `CZ`), `tb` / `tc`
+    /// and an input set for four carbon types: `ta` (class `CZ`), `tb` / `tc`
     /// (class `CT`) and `td` (class `CY`). No class is a GAFF type, so every
     /// substitution is priced by element compatibility at `DEFAULT_TOR`.
     fn one_row_dihedral_estimator() -> Parmchk2Estimator {
@@ -681,16 +681,16 @@ mod tests {
                 Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
             )
             .unwrap();
-        let mut context = EstimationInputs::from_type_classes([
+        let mut inputs = EstimationInputs::from_type_classes([
             ("ta", "CZ"),
             ("tb", "CT"),
             ("tc", "CT"),
             ("td", "CY"),
         ]);
         for name in ["ta", "tb", "tc", "td"] {
-            context.insert_element(name, "C");
+            inputs.insert_element(name, "C");
         }
-        Parmchk2Estimator::with_context(&ff, context)
+        Parmchk2Estimator::with_inputs(&ff, inputs)
     }
 
     /// A proper torsion reads the same backwards (`BondedTerm::Dihedral`'s
@@ -807,7 +807,7 @@ mod tests {
     // --- all-caps OPLS classes through the cascade ---------------------------
 
     /// An OPLS-shaped estimator: `ff` carries the bonded rows, and each
-    /// `(type, class, mass)` becomes an `atom/full` type whose element the context
+    /// `(type, class, mass)` becomes an `atom/full` type whose element the input set
     /// infers from its mass — exactly how [`Parmchk2Estimator::new`] builds it.
     fn opls_class_estimator(
         mut ff: ForceField,
@@ -823,11 +823,11 @@ mod tests {
                 )
                 .unwrap();
         }
-        let context = EstimationInputs::from_type_classes(
+        let inputs = EstimationInputs::from_type_classes(
             atom_types.iter().map(|(name, class, _)| (*name, *class)),
         )
         .with_forcefield_elements(&ff);
-        Parmchk2Estimator::with_context(&ff, context)
+        Parmchk2Estimator::with_inputs(&ff, inputs)
     }
 
     /// One bond row `CA-CT`; types `ta` (class `CW`) and `tb` (class `CT`), both

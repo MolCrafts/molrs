@@ -50,7 +50,6 @@ use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
 use crate::compute::ComputeError;
-use crate::compute::lag_times as transport_lag_times;
 use crate::signal::forward_fft_onesided;
 use molrs::core::constants::{SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT};
 use molrs::core::unit_factors::M_PER_S_TO_CM_PER_FS;
@@ -169,12 +168,6 @@ pub(crate) fn bose_factor(nu: f64, temperature_k: f64) -> f64 {
 }
 
 // ── Flux + correlator primitives (IR / Raman / VCD / ROA) ────────────────────
-
-/// Lag grid shared with transport computes (`τ = i·dt`).
-#[inline]
-pub(crate) fn lag_times(max_lag: usize, dt: f64) -> Array1<f64> {
-    transport_lag_times(max_lag, dt)
-}
 
 /// Central-difference time derivative of every column of an `(n_frames, n_cols)`
 /// series, dropping first and last frame → shape `(n_frames − 2, n_cols)`.

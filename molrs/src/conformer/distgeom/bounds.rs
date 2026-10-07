@@ -323,7 +323,7 @@ fn ring_angle(hyb: Hybridization, ring_size: usize) -> f64 {
     }
 }
 
-fn set_13_helper(
+fn set_13_bound_at_angle(
     p: &DgFeatures,
     bi: &BondIndex,
     comp: &Computed,
@@ -377,7 +377,7 @@ fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut
             let id2 = (bid2, bid1);
             if !done_paths.contains(&id1) && !done_paths.contains(&id2) {
                 let angle = ring_angle(p.atoms[aid2].hybridization, rsize);
-                set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);
+                set_13_bound_at_angle(p, bi, comp, mmat, aid1, aid2, aid3, angle);
                 comp.set_angle(bid1, bid2, angle);
                 comp.set_adj(bid1, bid2, aid2);
                 visited[aid2] += 1;
@@ -425,7 +425,7 @@ fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut
                         } else {
                             120.0_f64.to_radians()
                         };
-                        set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);
+                        set_13_bound_at_angle(p, bi, comp, mmat, aid1, aid2, aid3, angle);
                         comp.set_angle(bid1, bid2, angle);
                         comp.set_adj(bid1, bid2, aid2);
                         angle_taken[aid2] += angle;
@@ -448,7 +448,7 @@ fn set_13_bounds(p: &DgFeatures, bi: &BondIndex, comp: &mut Computed, mmat: &mut
                         Hybridization::S | Hybridization::Other => 120.0_f64.to_radians(),
                     };
                     if deg <= 4 {
-                        set_13_helper(p, bi, comp, mmat, aid1, aid2, aid3, angle);
+                        set_13_bound_at_angle(p, bi, comp, mmat, aid1, aid2, aid3, angle);
                     } else {
                         let dmax = comp.bond_lengths[bid1] + comp.bond_lengths[bid2];
                         check_and_set_bounds(mmat, aid1, aid3, 1.0, dmax * 1.2);
@@ -945,7 +945,7 @@ fn record_14_path(
 
 // ── 1-5 bounds ──────────────────────────────────────────────────────────────
 
-fn set_15_helper(
+fn extend_14_path_to_15(
     p: &DgFeatures,
     bi: &BondIndex,
     comp: &mut Computed,
@@ -1062,10 +1062,10 @@ fn set_15_bounds(
 ) {
     let paths = comp.paths14.clone();
     for path in paths {
-        set_15_helper(
+        extend_14_path_to_15(
             p, bi, comp, mmat, topo, path.bid1, path.bid2, path.bid3, path.ptype,
         );
-        set_15_helper(
+        extend_14_path_to_15(
             p, bi, comp, mmat, topo, path.bid3, path.bid2, path.bid1, path.ptype,
         );
     }

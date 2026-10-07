@@ -11,10 +11,10 @@
 use molrs_ffi::{BlockHandle, FrameId};
 use slotmap::{Key, new_key_type};
 
-// --- SlotMap keys for SimBox and ForceField ---
+// --- SlotMap keys for Box and ForceField ---
 
 new_key_type! {
-    /// Key for SimBox entries in the HandleRegistry.
+    /// Key for Box entries in the HandleRegistry.
     pub struct BoxKey;
 }
 
@@ -87,7 +87,7 @@ pub struct MolrsBlockHandle {
     pub block_version: u64,
 }
 
-/// Opaque handle to a SimBox (simulation cell) in the handle registry.
+/// Opaque handle to a Box (simulation cell) in the handle registry.
 ///
 /// Obtained from [`molrs_box_new`](crate::molrs_box_new),
 /// [`molrs_box_cube`](crate::molrs_box_cube), or

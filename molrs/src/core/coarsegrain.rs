@@ -530,7 +530,7 @@ impl CoarseGrain {
         }
         let mut cg = Self::from_canonical_frame(&canonical)?;
         if let Some(members) = frame.get("members") {
-            cg.read_members(members)?;
+            cg.attach_members(members)?;
         }
         Ok(cg)
     }
@@ -541,7 +541,7 @@ impl CoarseGrain {
     fn from_canonical_frame(canonical: &Frame) -> Result<Self, MolRsError> {
         let mut graph = MolGraph::new();
         graph.register_kind("bonds", 2);
-        graph.read_frame(canonical)?;
+        graph.extend_from_frame(canonical)?;
         Self::try_from_molgraph(graph)
     }
 
@@ -550,7 +550,7 @@ impl CoarseGrain {
     /// order, which a freshly read graph shares with its `atoms` block. A
     /// repeated `(ibead, atom)` row is refused, since it would list the atom
     /// twice in its bead.
-    fn read_members(&mut self, members: &Block) -> Result<(), MolRsError> {
+    fn attach_members(&mut self, members: &Block) -> Result<(), MolRsError> {
         let column = |key: &str| {
             members.get(key).and_then(|c| c.as_uint()).ok_or_else(|| {
                 MolRsError::validation(format!("Frame 'members' block has no UInt '{key}' column"))

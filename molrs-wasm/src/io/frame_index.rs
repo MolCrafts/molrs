@@ -75,8 +75,8 @@ impl From<RsFrameOffset> for FrameOffset {
 /// JS-facing methods. Only two things vary between formats, both passed as
 /// expressions: `indexer`, which builds the format's `FrameIndexBuilder`,
 /// and `parse`, a non-capturing closure
-/// `|bytes: &[u8], ctx: Option<&[u8]>| -> std::io::Result<molrs::core::Frame>`
-/// that decodes one frame's byte range (only DCD consults `ctx`).
+/// `|bytes: &[u8], state: Option<&[u8]>| -> std::io::Result<molrs::core::Frame>`
+/// that decodes one frame's byte range (only DCD consults `state`).
 ///
 /// The calling module must have `wasm_bindgen::prelude::*` in scope.
 macro_rules! impl_wasm_traj_stream {
@@ -89,7 +89,7 @@ macro_rules! impl_wasm_traj_stream {
         pub struct $name {
             indexer: Option<Box<dyn ::molrs::io::frame_index::FrameIndexBuilder>>,
             input_buf: Vec<u8>,
-            decoder_ctx: Option<Vec<u8>>,
+            decoder_state: Option<Vec<u8>>,
         }
 
         #[wasm_bindgen(js_class = $name)]
@@ -104,7 +104,7 @@ macro_rules! impl_wasm_traj_stream {
                 Self {
                     indexer: Some(indexer),
                     input_buf: Vec::new(),
-                    decoder_ctx: None,
+                    decoder_state: None,
                 }
             }
 
@@ -158,8 +158,8 @@ macro_rules! impl_wasm_traj_stream {
                     .as_mut()
                     .ok_or_else(|| JsValue::from_str("feedIndexChunk: indexer already finished"))?;
                 indexer.feed(&self.input_buf[..len], global_offset as u64);
-                if let Some(ctx) = indexer.decoder_context() {
-                    self.decoder_ctx = Some(ctx);
+                if let Some(state) = indexer.decoder_state() {
+                    self.decoder_state = Some(state);
                 }
                 Ok(indexer.drain().into_iter().map(Into::into).collect())
             }
@@ -174,29 +174,29 @@ macro_rules! impl_wasm_traj_stream {
                 }
                 if let Some(indexer) = self.indexer.as_mut() {
                     indexer.hint_total_bytes(total as u64);
-                    if let Some(ctx) = indexer.decoder_context() {
-                        self.decoder_ctx = Some(ctx);
+                    if let Some(state) = indexer.decoder_state() {
+                        self.decoder_state = Some(state);
                     }
                 }
             }
 
             /// Opaque decoder state (DCD header + optional fixed-atom seed).
             /// Empty when the format is self-describing.
-            #[wasm_bindgen(js_name = decoderContext)]
-            pub fn decoder_context(&self) -> Option<Vec<u8>> {
-                self.decoder_ctx.clone().or_else(|| {
+            #[wasm_bindgen(js_name = decoderState)]
+            pub fn decoder_state(&self) -> Option<Vec<u8>> {
+                self.decoder_state.clone().or_else(|| {
                     self.indexer
                         .as_ref()
-                        .and_then(|indexer| indexer.decoder_context())
+                        .and_then(|indexer| indexer.decoder_state())
                 })
             }
 
             /// Install decoder state on a parse-only stream so it can
             /// decode frames while a sibling indexer is still scanning.
-            #[wasm_bindgen(js_name = setDecoderContext)]
-            pub fn set_decoder_context(&mut self, bytes: Vec<u8>) {
+            #[wasm_bindgen(js_name = setDecoderState)]
+            pub fn set_decoder_state(&mut self, bytes: Vec<u8>) {
                 if !bytes.is_empty() {
-                    self.decoder_ctx = Some(bytes);
+                    self.decoder_state = Some(bytes);
                 }
             }
 
@@ -209,12 +209,12 @@ macro_rules! impl_wasm_traj_stream {
             ) -> Result<Vec<$crate::io::frame_index::FrameOffset>, JsValue> {
                 // DCD layout may only resolve once the source length is
                 // known. Hint with bytes_seen before we consume the
-                // indexer so decoder_context is populated for nopbc files.
+                // indexer so decoder_state is populated for nopbc files.
                 if let Some(indexer) = self.indexer.as_mut() {
                     let seen = indexer.bytes_seen();
                     indexer.hint_total_bytes(seen);
-                    if let Some(ctx) = indexer.decoder_context() {
-                        self.decoder_ctx = Some(ctx);
+                    if let Some(state) = indexer.decoder_state() {
+                        self.decoder_state = Some(state);
                     }
                 }
                 let indexer = self
@@ -250,12 +250,12 @@ macro_rules! impl_wasm_traj_stream {
                     )));
                 }
                 let bytes = &self.input_buf[offset..end];
-                // Only DCD's `parse` consults the decoder context. Other
-                // formats ignore it, so a stray `setDecoderContext` cannot
+                // Only DCD's `parse` consults the decoder state. Other
+                // formats ignore it, so a stray `setDecoderState` cannot
                 // wrap XTC/TRR bytes in DCD magic.
                 let parse: fn(&[u8], Option<&[u8]>) -> std::io::Result<::molrs::core::Frame> =
                     $parse;
-                let frame = parse(bytes, self.decoder_ctx.as_deref())
+                let frame = parse(bytes, self.decoder_state.as_deref())
                     .map_err(|e| JsValue::from_str(&format!("parse error: {}", e)))?;
                 $crate::core::frame::Frame::from_rs(frame)
             }

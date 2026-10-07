@@ -33,7 +33,7 @@ pub enum MolrsStatus {
     /// The supplied `MolrsBlockHandle` does not refer to a live block,
     /// or its version has been invalidated.
     InvalidBlockHandle = 2,
-    /// The supplied `MolrsBoxHandle` does not refer to a live SimBox.
+    /// The supplied `MolrsBoxHandle` does not refer to a live Box.
     InvalidBoxHandle = 3,
     /// The supplied `MolrsForceFieldHandle` does not refer to a live
     /// force field.

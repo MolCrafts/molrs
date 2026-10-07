@@ -9,7 +9,7 @@ use crate::io::lammps::atom_style::{
     normalize_atom_style, parse_atoms_style_hint,
 };
 use crate::io::lammps::box_bounds::{BoxBounds, simbox_from_bounds};
-use crate::io::lammps::columns::OptCol;
+use crate::io::lammps::columns::OptionalColumn;
 use crate::io::lammps::fields::{
     TypeRef, invert_type_labels, labels_to_meta, parse_f, parse_i, tokenize,
 };
@@ -36,7 +36,7 @@ use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS};
 // ============================================================================
 
 #[derive(Debug, Clone, Default)]
-struct LAMMPSHeader {
+struct LammpsDataHeader {
     n_atoms: usize,
     n_bonds: usize,
     n_angles: usize,
@@ -67,51 +67,51 @@ struct AtomColumns {
     x: Vec<F>,
     y: Vec<F>,
     z: Vec<F>,
-    mol: OptCol<I>,
-    charge: OptCol<F>,
-    bodyflag: OptCol<I>,
-    mass: OptCol<F>,
-    diameter: OptCol<F>,
-    density: OptCol<F>,
-    volume: OptCol<F>,
-    shape_flag: OptCol<I>,
-    mux: OptCol<F>,
-    muy: OptCol<F>,
-    muz: OptCol<F>,
-    spx: OptCol<F>,
-    spy: OptCol<F>,
-    spz: OptCol<F>,
-    sp: OptCol<F>,
-    rho: OptCol<F>,
-    esph: OptCol<F>,
-    cv: OptCol<F>,
-    theta: OptCol<F>,
-    espin: OptCol<I>,
-    eradius: OptCol<F>,
-    status: OptCol<I>,
-    energy: OptCol<F>,
-    template_index: OptCol<I>,
-    template_atom: OptCol<I>,
-    edpd_temp: OptCol<F>,
-    edpd_cv: OptCol<F>,
-    smd_volume: OptCol<F>,
-    smd_mass: OptCol<F>,
-    smd_kradius: OptCol<F>,
-    smd_cradius: OptCol<F>,
-    smd_x0: OptCol<F>,
-    smd_y0: OptCol<F>,
-    smd_z0: OptCol<F>,
-    area: OptCol<F>,
-    ed: OptCol<F>,
-    em: OptCol<F>,
-    epsilon: OptCol<F>,
-    curvature: OptCol<F>,
-    ix: OptCol<I>,
-    iy: OptCol<I>,
-    iz: OptCol<I>,
-    vx: OptCol<F>,
-    vy: OptCol<F>,
-    vz: OptCol<F>,
+    mol: OptionalColumn<I>,
+    charge: OptionalColumn<F>,
+    bodyflag: OptionalColumn<I>,
+    mass: OptionalColumn<F>,
+    diameter: OptionalColumn<F>,
+    density: OptionalColumn<F>,
+    volume: OptionalColumn<F>,
+    shape_flag: OptionalColumn<I>,
+    mux: OptionalColumn<F>,
+    muy: OptionalColumn<F>,
+    muz: OptionalColumn<F>,
+    spx: OptionalColumn<F>,
+    spy: OptionalColumn<F>,
+    spz: OptionalColumn<F>,
+    sp: OptionalColumn<F>,
+    rho: OptionalColumn<F>,
+    esph: OptionalColumn<F>,
+    cv: OptionalColumn<F>,
+    theta: OptionalColumn<F>,
+    espin: OptionalColumn<I>,
+    eradius: OptionalColumn<F>,
+    status: OptionalColumn<I>,
+    energy: OptionalColumn<F>,
+    template_index: OptionalColumn<I>,
+    template_atom: OptionalColumn<I>,
+    edpd_temp: OptionalColumn<F>,
+    edpd_cv: OptionalColumn<F>,
+    smd_volume: OptionalColumn<F>,
+    smd_mass: OptionalColumn<F>,
+    smd_kradius: OptionalColumn<F>,
+    smd_cradius: OptionalColumn<F>,
+    smd_x0: OptionalColumn<F>,
+    smd_y0: OptionalColumn<F>,
+    smd_z0: OptionalColumn<F>,
+    area: OptionalColumn<F>,
+    ed: OptionalColumn<F>,
+    em: OptionalColumn<F>,
+    epsilon: OptionalColumn<F>,
+    curvature: OptionalColumn<F>,
+    ix: OptionalColumn<I>,
+    iy: OptionalColumn<I>,
+    iz: OptionalColumn<I>,
+    vx: OptionalColumn<F>,
+    vy: OptionalColumn<F>,
+    vz: OptionalColumn<F>,
 }
 
 impl AtomColumns {
@@ -122,51 +122,51 @@ impl AtomColumns {
             x: Vec::with_capacity(n),
             y: Vec::with_capacity(n),
             z: Vec::with_capacity(n),
-            mol: OptCol::with_capacity(n),
-            charge: OptCol::with_capacity(n),
-            bodyflag: OptCol::with_capacity(n),
-            mass: OptCol::with_capacity(n),
-            diameter: OptCol::with_capacity(n),
-            density: OptCol::with_capacity(n),
-            volume: OptCol::with_capacity(n),
-            shape_flag: OptCol::with_capacity(n),
-            mux: OptCol::with_capacity(n),
-            muy: OptCol::with_capacity(n),
-            muz: OptCol::with_capacity(n),
-            spx: OptCol::with_capacity(n),
-            spy: OptCol::with_capacity(n),
-            spz: OptCol::with_capacity(n),
-            sp: OptCol::with_capacity(n),
-            rho: OptCol::with_capacity(n),
-            esph: OptCol::with_capacity(n),
-            cv: OptCol::with_capacity(n),
-            theta: OptCol::with_capacity(n),
-            espin: OptCol::with_capacity(n),
-            eradius: OptCol::with_capacity(n),
-            status: OptCol::with_capacity(n),
-            energy: OptCol::with_capacity(n),
-            template_index: OptCol::with_capacity(n),
-            template_atom: OptCol::with_capacity(n),
-            edpd_temp: OptCol::with_capacity(n),
-            edpd_cv: OptCol::with_capacity(n),
-            smd_volume: OptCol::with_capacity(n),
-            smd_mass: OptCol::with_capacity(n),
-            smd_kradius: OptCol::with_capacity(n),
-            smd_cradius: OptCol::with_capacity(n),
-            smd_x0: OptCol::with_capacity(n),
-            smd_y0: OptCol::with_capacity(n),
-            smd_z0: OptCol::with_capacity(n),
-            area: OptCol::with_capacity(n),
-            ed: OptCol::with_capacity(n),
-            em: OptCol::with_capacity(n),
-            epsilon: OptCol::with_capacity(n),
-            curvature: OptCol::with_capacity(n),
-            ix: OptCol::with_capacity(n),
-            iy: OptCol::with_capacity(n),
-            iz: OptCol::with_capacity(n),
-            vx: OptCol::with_capacity(n),
-            vy: OptCol::with_capacity(n),
-            vz: OptCol::with_capacity(n),
+            mol: OptionalColumn::with_capacity(n),
+            charge: OptionalColumn::with_capacity(n),
+            bodyflag: OptionalColumn::with_capacity(n),
+            mass: OptionalColumn::with_capacity(n),
+            diameter: OptionalColumn::with_capacity(n),
+            density: OptionalColumn::with_capacity(n),
+            volume: OptionalColumn::with_capacity(n),
+            shape_flag: OptionalColumn::with_capacity(n),
+            mux: OptionalColumn::with_capacity(n),
+            muy: OptionalColumn::with_capacity(n),
+            muz: OptionalColumn::with_capacity(n),
+            spx: OptionalColumn::with_capacity(n),
+            spy: OptionalColumn::with_capacity(n),
+            spz: OptionalColumn::with_capacity(n),
+            sp: OptionalColumn::with_capacity(n),
+            rho: OptionalColumn::with_capacity(n),
+            esph: OptionalColumn::with_capacity(n),
+            cv: OptionalColumn::with_capacity(n),
+            theta: OptionalColumn::with_capacity(n),
+            espin: OptionalColumn::with_capacity(n),
+            eradius: OptionalColumn::with_capacity(n),
+            status: OptionalColumn::with_capacity(n),
+            energy: OptionalColumn::with_capacity(n),
+            template_index: OptionalColumn::with_capacity(n),
+            template_atom: OptionalColumn::with_capacity(n),
+            edpd_temp: OptionalColumn::with_capacity(n),
+            edpd_cv: OptionalColumn::with_capacity(n),
+            smd_volume: OptionalColumn::with_capacity(n),
+            smd_mass: OptionalColumn::with_capacity(n),
+            smd_kradius: OptionalColumn::with_capacity(n),
+            smd_cradius: OptionalColumn::with_capacity(n),
+            smd_x0: OptionalColumn::with_capacity(n),
+            smd_y0: OptionalColumn::with_capacity(n),
+            smd_z0: OptionalColumn::with_capacity(n),
+            area: OptionalColumn::with_capacity(n),
+            ed: OptionalColumn::with_capacity(n),
+            em: OptionalColumn::with_capacity(n),
+            epsilon: OptionalColumn::with_capacity(n),
+            curvature: OptionalColumn::with_capacity(n),
+            ix: OptionalColumn::with_capacity(n),
+            iy: OptionalColumn::with_capacity(n),
+            iz: OptionalColumn::with_capacity(n),
+            vx: OptionalColumn::with_capacity(n),
+            vy: OptionalColumn::with_capacity(n),
+            vz: OptionalColumn::with_capacity(n),
         }
     }
 
@@ -178,8 +178,8 @@ impl AtomColumns {
         // After streaming a row that only touches present fields, pad optionals
         // that were not written this row. Called once per row after field walk.
         let n = self.id.len();
-        let pad_i = |c: &mut OptCol<I>| c.data.resize(n, 0);
-        let pad_f = |c: &mut OptCol<F>| c.data.resize(n, 0.0);
+        let pad_i = |c: &mut OptionalColumn<I>| c.values.resize(n, 0);
+        let pad_f = |c: &mut OptionalColumn<F>| c.values.resize(n, 0.0);
         pad_i(&mut self.mol);
         pad_f(&mut self.charge);
         pad_i(&mut self.bodyflag);
@@ -256,7 +256,7 @@ impl AtomColumns {
         macro_rules! opt_i {
             ($col:expr, $key:expr) => {
                 if $col.present {
-                    insert_column_of_length(&mut block, $key, $col.data, n)?;
+                    insert_column_of_length(&mut block, $key, $col.values, n)?;
                 }
             };
         }
@@ -267,7 +267,7 @@ impl AtomColumns {
                     insert_column_of_length(
                         &mut block,
                         $key,
-                        $col.data.iter().map(|&v| v as Idx).collect(),
+                        $col.values.iter().map(|&v| v as Idx).collect(),
                         n,
                     )?;
                 }
@@ -276,7 +276,7 @@ impl AtomColumns {
         macro_rules! opt_f {
             ($col:expr, $key:expr) => {
                 if $col.present {
-                    insert_column_of_length(&mut block, $key, $col.data, n)?;
+                    insert_column_of_length(&mut block, $key, $col.values, n)?;
                 }
             };
         }
@@ -521,8 +521,8 @@ fn push_atom_line(
 fn parse_header_with_first_section<R: BufRead>(
     reader: &mut R,
     skipped: &HashSet<String>,
-) -> std::io::Result<(LAMMPSHeader, Option<SectionHeader>)> {
-    let mut header = LAMMPSHeader::default();
+) -> std::io::Result<(LammpsDataHeader, Option<SectionHeader>)> {
+    let mut header = LammpsDataHeader::default();
     let mut line = String::new();
 
     // Title line. `write_data` ends it with `…, units = <style>`; LAMMPS
@@ -978,8 +978,8 @@ fn insert_type_labels(block: &mut Block, labels: &HashMap<String, String>) -> st
     insert_column_of_length(block, keys::TYPE, names, n)
 }
 
-struct ParsedData {
-    header: LAMMPSHeader,
+struct ParsedDataFile {
+    header: LammpsDataHeader,
     atoms: AtomColumns,
     bonds: Vec<TopologyTerm>,
     angles: Vec<TopologyTerm>,
@@ -996,23 +996,23 @@ struct ParsedData {
     coeffs_text: String,
 }
 
-fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
+fn build_frame(mut parsed: ParsedDataFile) -> std::io::Result<Frame> {
     let mut frame = Frame::new();
 
     // Apply per-type Masses when no per-atom mass column was set.
-    if !data.atoms.mass.present && !data.type_masses.is_empty() {
-        let label_to_id = invert_type_labels(&data.atom_type_labels);
-        let n = data.atoms.len();
-        data.atoms.mass.data.resize(n, 0.0);
-        for (i, tref) in data.atoms.type_refs.iter().enumerate() {
+    if !parsed.atoms.mass.present && !parsed.type_masses.is_empty() {
+        let label_to_id = invert_type_labels(&parsed.atom_type_labels);
+        let n = parsed.atoms.len();
+        parsed.atoms.mass.values.resize(n, 0.0);
+        for (i, tref) in parsed.atoms.type_refs.iter().enumerate() {
             let tid = tref.resolve(&label_to_id);
-            data.atoms.mass.data[i] = data.type_masses.get(&tid).copied().unwrap_or(0.0);
+            parsed.atoms.mass.values[i] = parsed.type_masses.get(&tid).copied().unwrap_or(0.0);
         }
-        data.atoms.mass.present = true;
+        parsed.atoms.mass.present = true;
     }
 
     // atom id → row index for topology remapping
-    let atom_id_map: HashMap<I, Idx> = data
+    let atom_id_map: HashMap<I, Idx> = parsed
         .atoms
         .id
         .iter()
@@ -1020,45 +1020,45 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
         .map(|(i, &id)| (id, i as Idx))
         .collect();
 
-    if data.atoms.len() > 0 {
-        let atom_block = data.atoms.into_block(&data.atom_type_labels)?;
+    if parsed.atoms.len() > 0 {
+        let atom_block = parsed.atoms.into_block(&parsed.atom_type_labels)?;
         frame.insert("atoms", atom_block);
 
         insert_topology_block(
             &mut frame,
             "bonds",
             "Bond",
-            &data.bonds,
+            &parsed.bonds,
             &[keys::ATOMI, keys::ATOMJ],
             &atom_id_map,
-            &invert_type_labels(&data.bond_type_labels),
+            &invert_type_labels(&parsed.bond_type_labels),
         )?;
         insert_topology_block(
             &mut frame,
             "angles",
             "Angle",
-            &data.angles,
+            &parsed.angles,
             &[keys::ATOMI, keys::ATOMJ, keys::ATOMK],
             &atom_id_map,
-            &invert_type_labels(&data.angle_type_labels),
+            &invert_type_labels(&parsed.angle_type_labels),
         )?;
         insert_topology_block(
             &mut frame,
             "dihedrals",
             "Dihedral",
-            &data.dihedrals,
+            &parsed.dihedrals,
             &[keys::ATOMI, keys::ATOMJ, keys::ATOMK, keys::ATOML],
             &atom_id_map,
-            &invert_type_labels(&data.dihedral_type_labels),
+            &invert_type_labels(&parsed.dihedral_type_labels),
         )?;
         insert_topology_block(
             &mut frame,
             "impropers",
             "Improper",
-            &data.impropers,
+            &parsed.impropers,
             &[keys::ATOMI, keys::ATOMJ, keys::ATOMK, keys::ATOML],
             &atom_id_map,
-            &invert_type_labels(&data.improper_type_labels),
+            &invert_type_labels(&parsed.improper_type_labels),
         )?;
         // A CMAP type is an index into the `fix cmap` file; LAMMPS has no
         // labels for it.
@@ -1066,7 +1066,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             &mut frame,
             "cmaps",
             "CMAP",
-            &data.cmaps,
+            &parsed.cmaps,
             &[
                 keys::ATOMI,
                 keys::ATOMJ,
@@ -1083,11 +1083,11 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
         // none (the name a force field read from the same file's `* Coeffs`
         // gives that type).
         for (block_name, labels) in [
-            ("atoms", &data.atom_type_labels),
-            ("bonds", &data.bond_type_labels),
-            ("angles", &data.angle_type_labels),
-            ("dihedrals", &data.dihedral_type_labels),
-            ("impropers", &data.improper_type_labels),
+            ("atoms", &parsed.atom_type_labels),
+            ("bonds", &parsed.bond_type_labels),
+            ("angles", &parsed.angle_type_labels),
+            ("dihedrals", &parsed.dihedral_type_labels),
+            ("impropers", &parsed.improper_type_labels),
         ] {
             if let Some(block) = frame.get_mut(block_name) {
                 insert_type_labels(block, labels)?;
@@ -1096,16 +1096,16 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     }
 
     let pbc: Pbc3 = [true, true, true];
-    if let Some(sb) = simbox_from_bounds(&data.header.bounds, pbc)? {
+    if let Some(sb) = simbox_from_bounds(&parsed.header.bounds, pbc)? {
         frame.simbox = Some(sb);
     }
 
     for (key, labels) in [
-        (keys::ATOM_TYPE_LABELS, &data.atom_type_labels),
-        (keys::BOND_TYPE_LABELS, &data.bond_type_labels),
-        (keys::ANGLE_TYPE_LABELS, &data.angle_type_labels),
-        (keys::DIHEDRAL_TYPE_LABELS, &data.dihedral_type_labels),
-        (keys::IMPROPER_TYPE_LABELS, &data.improper_type_labels),
+        (keys::ATOM_TYPE_LABELS, &parsed.atom_type_labels),
+        (keys::BOND_TYPE_LABELS, &parsed.bond_type_labels),
+        (keys::ANGLE_TYPE_LABELS, &parsed.angle_type_labels),
+        (keys::DIHEDRAL_TYPE_LABELS, &parsed.dihedral_type_labels),
+        (keys::IMPROPER_TYPE_LABELS, &parsed.improper_type_labels),
     ] {
         if let Some(s) = labels_to_meta(labels) {
             frame.meta.insert(key.to_string(), s);
@@ -1113,7 +1113,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     }
 
     // Header counts (may exceed body rows when types are unused).
-    let h = &data.header;
+    let h = &parsed.header;
     frame.meta.insert(
         "lammps_counts".to_string(),
         format!(
@@ -1148,10 +1148,10 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
 
     // Force-field coefficient sections (Pair/Bond/… Coeffs), read into a force
     // field by `LammpsForcefieldReader::read_data_coeffs(&frame, …)`.
-    if !data.coeffs_text.is_empty() {
+    if !parsed.coeffs_text.is_empty() {
         frame
             .meta
-            .insert(LAMMPS_COEFFS_TEXT.to_string(), data.coeffs_text);
+            .insert(LAMMPS_COEFFS_TEXT.to_string(), parsed.coeffs_text);
     }
 
     Ok(frame)
@@ -1166,7 +1166,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
 fn dispatch_section<R: BufRead>(
     header: &SectionHeader,
     reader: &mut R,
-    data: &mut ParsedData,
+    parsed: &mut ParsedDataFile,
     skipped: &HashSet<String>,
     atom_style: Option<&str>,
 ) -> std::io::Result<Option<SectionHeader>> {
@@ -1177,32 +1177,32 @@ fn dispatch_section<R: BufRead>(
     match name {
         "Atom Type Labels" => {
             let (labels, next) = parse_type_labels(reader, name, skipped)?;
-            data.atom_type_labels = labels;
+            parsed.atom_type_labels = labels;
             Ok(next)
         }
         "Bond Type Labels" => {
             let (labels, next) = parse_type_labels(reader, name, skipped)?;
-            data.bond_type_labels = labels;
+            parsed.bond_type_labels = labels;
             Ok(next)
         }
         "Angle Type Labels" => {
             let (labels, next) = parse_type_labels(reader, name, skipped)?;
-            data.angle_type_labels = labels;
+            parsed.angle_type_labels = labels;
             Ok(next)
         }
         "Dihedral Type Labels" => {
             let (labels, next) = parse_type_labels(reader, name, skipped)?;
-            data.dihedral_type_labels = labels;
+            parsed.dihedral_type_labels = labels;
             Ok(next)
         }
         "Improper Type Labels" => {
             let (labels, next) = parse_type_labels(reader, name, skipped)?;
-            data.improper_type_labels = labels;
+            parsed.improper_type_labels = labels;
             Ok(next)
         }
         "Masses" => {
-            let (masses, next) = parse_masses(reader, &data.atom_type_labels, skipped)?;
-            data.type_masses = masses;
+            let (masses, next) = parse_masses(reader, &parsed.atom_type_labels, skipped)?;
+            parsed.type_masses = masses;
             Ok(next)
         }
         "Atoms" => {
@@ -1213,52 +1213,54 @@ fn dispatch_section<R: BufRead>(
                 Some(style) => Some(style.to_owned()),
                 None => parse_atoms_style_hint(header.line.trim()),
             };
-            data.atoms = parse_atoms_streamed(reader, data.header.n_atoms, hint.as_deref())?;
+            parsed.atoms = parse_atoms_streamed(reader, parsed.header.n_atoms, hint.as_deref())?;
             Ok(None)
         }
         "Velocities" => {
-            let (rows, next) = parse_per_atom_rows::<3, _>(reader, &data.atoms.id, name, skipped)?;
-            let atoms = &mut data.atoms;
+            let (rows, next) =
+                parse_per_atom_rows::<3, _>(reader, &parsed.atoms.id, name, skipped)?;
+            let atoms = &mut parsed.atoms;
             for (k, col) in [&mut atoms.vx, &mut atoms.vy, &mut atoms.vz]
                 .into_iter()
                 .enumerate()
             {
-                col.data = rows.iter().map(|r| r[k]).collect();
+                col.values = rows.iter().map(|r| r[k]).collect();
                 col.present = true;
             }
             Ok(next)
         }
         "Charges" => {
-            let (rows, next) = parse_per_atom_rows::<1, _>(reader, &data.atoms.id, name, skipped)?;
-            data.atoms.charge.data = rows.iter().map(|[q]| *q).collect();
-            data.atoms.charge.present = true;
+            let (rows, next) =
+                parse_per_atom_rows::<1, _>(reader, &parsed.atoms.id, name, skipped)?;
+            parsed.atoms.charge.values = rows.iter().map(|[q]| *q).collect();
+            parsed.atoms.charge.present = true;
             Ok(next)
         }
         "Bonds" => {
-            data.bonds = parse_topology_section(reader, data.header.n_bonds, 2, "Bonds")?;
+            parsed.bonds = parse_topology_section(reader, parsed.header.n_bonds, 2, "Bonds")?;
             Ok(None)
         }
         "Angles" => {
-            data.angles = parse_topology_section(reader, data.header.n_angles, 3, "Angles")?;
+            parsed.angles = parse_topology_section(reader, parsed.header.n_angles, 3, "Angles")?;
             Ok(None)
         }
         "Dihedrals" => {
-            data.dihedrals =
-                parse_topology_section(reader, data.header.n_dihedrals, 4, "Dihedrals")?;
+            parsed.dihedrals =
+                parse_topology_section(reader, parsed.header.n_dihedrals, 4, "Dihedrals")?;
             Ok(None)
         }
         "Impropers" => {
-            data.impropers =
-                parse_topology_section(reader, data.header.n_impropers, 4, "Impropers")?;
+            parsed.impropers =
+                parse_topology_section(reader, parsed.header.n_impropers, 4, "Impropers")?;
             Ok(None)
         }
         "CMAP" => {
-            if data.header.n_crossterms == 0 {
+            if parsed.header.n_crossterms == 0 {
                 return Err(invalid_data(
                     "LAMMPS data section `CMAP` without a `N crossterms` header line",
                 ));
             }
-            data.cmaps = parse_topology_section(reader, data.header.n_crossterms, 5, "CMAP")?;
+            parsed.cmaps = parse_topology_section(reader, parsed.header.n_crossterms, 5, "CMAP")?;
             Ok(None)
         }
         // Force-field coefficient blocks — the header line (`# style` comment
@@ -1267,16 +1269,16 @@ fn dispatch_section<R: BufRead>(
         // the header of a section this reader does not read.
         _ if header.is_coeffs() => {
             let declared: HashSet<&str> = [
-                &data.atom_type_labels,
-                &data.bond_type_labels,
-                &data.angle_type_labels,
-                &data.dihedral_type_labels,
-                &data.improper_type_labels,
+                &parsed.atom_type_labels,
+                &parsed.bond_type_labels,
+                &parsed.angle_type_labels,
+                &parsed.dihedral_type_labels,
+                &parsed.improper_type_labels,
             ]
             .into_iter()
             .flat_map(|labels| labels.values().map(String::as_str))
             .collect();
-            let text = &mut data.coeffs_text;
+            let text = &mut parsed.coeffs_text;
             if !text.is_empty() {
                 text.push('\n');
             }
@@ -1388,7 +1390,7 @@ impl<R: BufRead + Seek> LammpsDataReader<R> {
     fn parse_file(&mut self) -> std::io::Result<Option<Frame>> {
         self.reader.seek(SeekFrom::Start(0))?;
         let (header, first) = parse_header_with_first_section(&mut self.reader, &self.skipped)?;
-        let mut data = ParsedData {
+        let mut parsed = ParsedDataFile {
             header,
             atoms: AtomColumns::with_capacity(0),
             bonds: Vec::new(),
@@ -1411,8 +1413,8 @@ impl<R: BufRead + Seek> LammpsDataReader<R> {
         let mut line = String::new();
         loop {
             while let Some(section) = pending.take() {
-                let parsed = !section.is_coeffs() && !self.skipped.contains(&section.name);
-                if parsed && !read_sections.insert(section.name.clone()) {
+                let is_parsed = !section.is_coeffs() && !self.skipped.contains(&section.name);
+                if is_parsed && !read_sections.insert(section.name.clone()) {
                     return Err(invalid_data(format!(
                         "LAMMPS data section `{}` appears twice",
                         section.name
@@ -1421,7 +1423,7 @@ impl<R: BufRead + Seek> LammpsDataReader<R> {
                 pending = dispatch_section(
                     &section,
                     &mut self.reader,
-                    &mut data,
+                    &mut parsed,
                     &self.skipped,
                     self.atom_style.as_deref(),
                 )?;
@@ -1446,10 +1448,10 @@ impl<R: BufRead + Seek> LammpsDataReader<R> {
             pending = Some(section);
         }
 
-        if data.atoms.len() == 0 && data.header.n_atoms > 0 {
+        if parsed.atoms.len() == 0 && parsed.header.n_atoms > 0 {
             return Err(invalid_data("No atoms found in file"));
         }
-        Ok(Some(build_frame(data)?))
+        Ok(Some(build_frame(parsed)?))
     }
 }
 
@@ -1885,7 +1887,7 @@ fn enclosing_bounds(coords: &[Vec<F>]) -> std::io::Result<([F; 3], [F; 3])> {
              written inside the bounds of its coordinates",
         ));
     }
-    let free = SimBox::free_columns(&coords[0], &coords[1], &coords[2], BOXLESS_MARGIN)
+    let free = SimBox::free_from_xyz(&coords[0], &coords[1], &coords[2], BOXLESS_MARGIN)
         .map_err(|e| invalid_data(format!("the box of a box-less frame: {e:?}")))?;
     let (o, l) = (free.origin_view(), free.lengths());
     Ok(([o[0], o[1], o[2]], [l[0], l[1], l[2]]))

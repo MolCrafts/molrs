@@ -4,10 +4,11 @@
 use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, lag_times, sum_column_xcorr};
+use super::{central_diff_series, sum_column_xcorr};
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw VCD cross-correlation — the VCD-spectrum raw input.
 #[derive(Debug, Clone)]

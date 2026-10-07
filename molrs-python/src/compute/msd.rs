@@ -43,7 +43,7 @@ impl PyMsdResult {
 
 /// MSD time series aligned with the input frame list.
 ///
-/// `series.data[0]` is the reference frame (mean = 0); `series.data[i]`
+/// `series.per_frame[0]` is the reference frame (mean = 0); `series.per_frame[i]`
 /// compares frame `i` against frame `0`.
 #[pyclass(module = "molrs.compute", name = "MsdTimeSeries")]
 pub struct PyMsdTimeSeries {
@@ -54,21 +54,21 @@ pub struct PyMsdTimeSeries {
 impl PyMsdTimeSeries {
     #[getter]
     fn mean<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
-        let v: Vec<f64> = self.inner.data.iter().map(|r| r.mean).collect();
+        let v: Vec<f64> = self.inner.per_frame.iter().map(|r| r.mean).collect();
         ndarray::Array1::from_vec(v).into_pyarray(py)
     }
 
     #[getter]
     fn per_particle<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let t = self.inner.data.len();
+        let t = self.inner.per_frame.len();
         if t == 0 {
             return Ok(ndarray::Array2::from_shape_vec((0, 0), vec![])
                 .unwrap()
                 .into_pyarray(py));
         }
-        let n = self.inner.data[0].per_particle.len();
+        let n = self.inner.per_frame[0].per_particle.len();
         let mut flat: Vec<f64> = Vec::with_capacity(t * n);
-        for row in &self.inner.data {
+        for row in &self.inner.per_frame {
             if row.per_particle.len() != n {
                 return Err(PyValueError::new_err(
                     "Msd per-particle width not constant across frames",
@@ -82,22 +82,22 @@ impl PyMsdTimeSeries {
     }
 
     fn __len__(&self) -> usize {
-        self.inner.data.len()
+        self.inner.per_frame.len()
     }
 
     fn __getitem__(&self, i: isize) -> PyResult<PyMsdResult> {
-        let n = self.inner.data.len() as isize;
+        let n = self.inner.per_frame.len() as isize;
         let idx = if i < 0 { i + n } else { i };
         if idx < 0 || idx >= n {
             return Err(PyValueError::new_err("Msd index out of range"));
         }
         Ok(PyMsdResult {
-            inner: self.inner.data[idx as usize].clone(),
+            inner: self.inner.per_frame[idx as usize].clone(),
         })
     }
 
     fn __repr__(&self) -> String {
-        format!("MsdTimeSeries(n_frames={})", self.inner.data.len())
+        format!("MsdTimeSeries(n_frames={})", self.inner.per_frame.len())
     }
 }
 

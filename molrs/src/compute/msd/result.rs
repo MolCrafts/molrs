@@ -25,23 +25,24 @@ impl DescriptorRow for MsdResult {
 
 /// Time series of per-frame MSD results, aligned with the original frame slice.
 ///
-/// `data[0]` is the reference frame (its MSD is zero); `data[i]` is the MSD at
-/// frame `i` relative to frame `0`.
+/// `per_frame[0]` is the reference frame (its MSD is zero); `per_frame[i]` is
+/// the MSD at frame `i` relative to frame `0`.
 #[derive(Debug, Clone, Default)]
 pub struct MsdTimeSeries {
-    pub data: Vec<MsdResult>,
+    /// One result per frame, in frame order.
+    pub per_frame: Vec<MsdResult>,
 }
 
 impl MsdTimeSeries {
     /// Wrap per-lag results (index = lag frame).
-    pub fn new(data: Vec<MsdResult>) -> Self {
-        Self { data }
+    pub fn new(per_frame: Vec<MsdResult>) -> Self {
+        Self { per_frame }
     }
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.per_frame.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.per_frame.is_empty()
     }
 }
 
@@ -49,6 +50,6 @@ impl ComputeResult for MsdTimeSeries {}
 
 impl AsRef<[MsdResult]> for MsdTimeSeries {
     fn as_ref(&self) -> &[MsdResult] {
-        &self.data
+        &self.per_frame
     }
 }

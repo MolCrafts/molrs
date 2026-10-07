@@ -124,7 +124,7 @@ fn system() -> (ForceField, Frame, Vec<F>) {
 }
 
 /// Write the LAMMPS inputs of [`system`] into `dir` (see the module docs).
-fn write_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
+fn stage_inputs(dir: &Path, ff: &ForceField, frame: &Frame) {
     let mut lammps = frame.clone();
     lammps.remove("dihedrals");
     write_lammps_data(dir.join("data.lmp"), &lammps).unwrap();
@@ -145,7 +145,7 @@ fn energy_and_forces_are_lammps_fix_cmap() {
     let pots = PotentialCompiler::new(&ff).compile(&frame).unwrap();
     let (energy, forces) = pots.calc_energy_forces(&x);
     if let Some(dir) = std::env::var_os("MOLRS_LAMMPS_CMAP_DIR") {
-        write_inputs(Path::new(&dir), &ff, &frame);
+        stage_inputs(Path::new(&dir), &ff, &frame);
         println!("molrs energy {energy:.17e}");
         for f in forces.chunks(3) {
             println!("molrs force {:.17e} {:.17e} {:.17e}", f[0], f[1], f[2]);

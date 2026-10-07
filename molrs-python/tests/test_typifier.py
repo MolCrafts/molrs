@@ -200,7 +200,7 @@ class TestTypifierSubclass:
                     return mol
 
 
-class TestTypifierBase:
+class TestTypifierClass:
     def test_base_typify_without_match_raises_not_implemented(self) -> None:
         with pytest.raises(NotImplementedError):
             Typifier().typify(_pair())

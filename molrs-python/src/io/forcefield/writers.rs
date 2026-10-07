@@ -27,7 +27,7 @@ pub fn write_gromacs_top_forcefield_py(
     precision: usize,
 ) -> PyResult<()> {
     molrs::io::write_gromacs_top_forcefield(&path, &forcefield.inner, precision)
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a ForceField as an AMBER frcmod file.
@@ -40,7 +40,7 @@ pub fn write_gromacs_top_forcefield_py(
 #[pyo3(name = "write_amber_frcmod", signature = (path, forcefield))]
 pub fn write_amber_frcmod_py(path: PathBuf, forcefield: &PyForceField) -> PyResult<()> {
     molrs::io::write_amber_frcmod(path_str(&path)?, &forcefield.inner)
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a ForceField to OpenMM force-field XML.
@@ -70,7 +70,7 @@ pub fn write_openmm_xml_forcefield_py(
     precision: Option<usize>,
 ) -> PyResult<()> {
     molrs::io::write_openmm_xml_forcefield(path_str(&path)?, &forcefield.inner, precision)
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a :class:`ForceField` to a LAMMPS force-field include (``*.ff``).
@@ -174,7 +174,7 @@ pub fn write_lammps_forcefield_py(
         .with_frame(|frame| {
             molrs::io::write_lammps_forcefield(&path, &forcefield.inner, frame, options)
         })?
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Serialize a :class:`ForceField` to a LAMMPS force-field include string
@@ -219,7 +219,7 @@ pub fn write_lammps_forcefield_str_py(
         .with_frame(|frame| {
             molrs::io::write_lammps_forcefield_str(&forcefield.inner, frame, options)
         })?
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Serialize a :class:`ForceField` to LAMMPS data-file ``* Coeffs`` sections.
@@ -252,7 +252,7 @@ pub fn write_lammps_data_coeffs_str_py(
         .with_frame(|frame| {
             molrs::io::write_lammps_data_coeffs_str(&forcefield.inner, frame, options)
         })?
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write the LAMMPS ``fix cmap`` file of ``frame``'s CMAP crossterms.
@@ -287,7 +287,7 @@ pub fn write_lammps_cmap_forcefield_py(
         .with_frame(|frame| {
             molrs::io::write_lammps_cmap_forcefield(&path, &forcefield.inner, frame, options)
         })?
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a force field and a typed frame as one GROMACS topology — the
@@ -329,7 +329,7 @@ pub fn write_gromacs_top_system_py(
         .with_frame(|f| {
             molrs::io::write_gromacs_top_system(&path, &forcefield.inner, f, precision)
         })?
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Register the force-field writers.
@@ -363,7 +363,7 @@ pub fn write_molrs_xml_forcefield_py(path: PathBuf, forcefield: &PyForceField) -
 #[pyfunction]
 #[pyo3(name = "write_amber_frcmod_str")]
 pub fn write_amber_frcmod_str_py(forcefield: &PyForceField) -> PyResult<String> {
-    molrs::io::write_amber_frcmod_str(&forcefield.inner).map_err(crate::ff::ir::write_err)
+    molrs::io::write_amber_frcmod_str(&forcefield.inner).map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a ForceField as OpenMM force-field XML text —
@@ -375,7 +375,7 @@ pub fn write_openmm_xml_forcefield_str_py(
     precision: Option<usize>,
 ) -> PyResult<String> {
     molrs::io::write_openmm_xml_forcefield_str(&forcefield.inner, precision)
-        .map_err(crate::ff::ir::write_err)
+        .map_err(crate::ff::ir::writer_err)
 }
 
 /// Write a ForceField as molrs force-field XML text —

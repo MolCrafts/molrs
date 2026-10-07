@@ -10,7 +10,7 @@ use molrs::core::Element;
 
 use super::SmartsPattern;
 use super::compile::QueryGraph;
-use super::predicate::MolContext;
+use super::predicate::SmartsTarget;
 use super::predicate::{AtomPredicate, AtomTest, BondPredicate, BondTest};
 
 type ReactionAtomSets = Vec<Vec<NodeId>>;
@@ -65,7 +65,7 @@ fn query_bond_class(q: &BondTest) -> (BondOrder, BondNumber) {
 }
 
 /// Per-atom facts read out of a [`QueryGraph`] for the map diff.
-struct AtomInfo {
+struct QueryAtomFacts {
     label: Option<u32>,
     element: Option<String>,
     charge: Option<i32>,
@@ -74,11 +74,11 @@ struct AtomInfo {
 }
 
 /// Read the per-atom facts (label, element, charge, mapped-neighbour bonds).
-fn analyze_graph(g: &QueryGraph) -> Vec<AtomInfo> {
-    let mut infos: Vec<AtomInfo> = g
+fn analyze_graph(g: &QueryGraph) -> Vec<QueryAtomFacts> {
+    let mut facts: Vec<QueryAtomFacts> = g
         .atoms
         .iter()
-        .map(|a| AtomInfo {
+        .map(|a| QueryAtomFacts {
             label: a.map_label,
             element: query_element(&a.query),
             charge: query_charge(&a.query),
@@ -91,15 +91,15 @@ fn analyze_graph(g: &QueryGraph) -> Vec<AtomInfo> {
         if let Some(l) = la
             && lb.is_none()
         {
-            infos[b.b].attach.push((l, order));
+            facts[b.b].attach.push((l, order));
         }
         if let Some(l) = lb
             && la.is_none()
         {
-            infos[b.a].attach.push((l, order));
+            facts[b.a].attach.push((l, order));
         }
     }
-    infos
+    facts
 }
 
 /// Canonical `(min, max)` key for an unordered mapped-atom bond.
@@ -119,7 +119,7 @@ fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondOrder
 
 /// Whether two unmapped atoms are the *same* atom across the arrow: identical
 /// concrete element and a shared `(mapped-neighbour, bond class)` attachment.
-fn atoms_pair(r: &AtomInfo, p: &AtomInfo) -> bool {
+fn atoms_pair(r: &QueryAtomFacts, p: &QueryAtomFacts) -> bool {
     match (&r.element, &p.element) {
         (Some(re), Some(pe)) if re == pe => {}
         _ => return false,
@@ -195,22 +195,22 @@ impl Transform {
         reactants: &[SmartsPattern],
         product: &SmartsPattern,
     ) -> Result<Transform, MolRsError> {
-        let r_infos: Vec<Vec<AtomInfo>> =
+        let r_facts: Vec<Vec<QueryAtomFacts>> =
             reactants.iter().map(|p| analyze_graph(&p.graph)).collect();
-        let p_info = analyze_graph(&product.graph);
+        let p_facts = analyze_graph(&product.graph);
 
-        let (r_labels, p_labels) = Self::index_maps(&r_infos, &p_info)?;
+        let (r_labels, p_labels) = Self::index_maps(&r_facts, &p_facts)?;
 
         // Pair unmapped atoms; classify the rest as delete / add.
-        let mut p_claimed = vec![false; p_info.len()];
+        let mut p_claimed = vec![false; p_facts.len()];
         let mut delete_atoms: Vec<(usize, usize)> = Vec::new();
-        for (ci, infos) in r_infos.iter().enumerate() {
-            for (ai, info) in infos.iter().enumerate() {
-                if info.label.is_some() {
+        for (ci, facts) in r_facts.iter().enumerate() {
+            for (ai, r_atom) in facts.iter().enumerate() {
+                if r_atom.label.is_some() {
                     continue; // preserved
                 }
-                let pair = p_info.iter().enumerate().find(|&(pi, pinfo)| {
-                    !p_claimed[pi] && pinfo.label.is_none() && atoms_pair(info, pinfo)
+                let pair = p_facts.iter().enumerate().find(|&(pi, p_atom)| {
+                    !p_claimed[pi] && p_atom.label.is_none() && atoms_pair(r_atom, p_atom)
                 });
                 match pair {
                     Some((pi, _)) => p_claimed[pi] = true,
@@ -220,9 +220,9 @@ impl Transform {
         }
 
         let mut add_atoms: Vec<AddAtomSpec> = Vec::new();
-        for (pi, pinfo) in p_info.iter().enumerate() {
-            if pinfo.label.is_none() && !p_claimed[pi] {
-                let element = pinfo.element.clone().ok_or_else(|| {
+        for (pi, p_atom) in p_facts.iter().enumerate() {
+            if p_atom.label.is_none() && !p_claimed[pi] {
+                let element = p_atom.element.clone().ok_or_else(|| {
                     MolRsError::validation(format!(
                         "product atom {pi} is added but declares no concrete element"
                     ))
@@ -230,14 +230,14 @@ impl Transform {
                 add_atoms.push(AddAtomSpec {
                     product_idx: pi,
                     element,
-                    charge: pinfo.charge.unwrap_or(0),
+                    charge: p_atom.charge.unwrap_or(0),
                 });
             }
         }
 
-        let delete = Self::group_deletes(&r_infos, &delete_atoms);
+        let delete = Self::group_deletes(&r_facts, &delete_atoms);
         let classify = |idx: usize| -> Cls {
-            if p_info[idx].label.is_some() {
+            if p_facts[idx].label.is_some() {
                 Cls::Mapped
             } else if p_claimed[idx] {
                 Cls::Paired
@@ -278,8 +278,8 @@ impl Transform {
             if ca != Cls::Added && cb != Cls::Added {
                 continue; // handled by the mapped-mapped diff above
             }
-            let na = Self::node_ref(bnd.a, &p_info)?;
-            let nb = Self::node_ref(bnd.b, &p_info)?;
+            let na = Self::node_ref(bnd.a, &p_facts)?;
+            let nb = Self::node_ref(bnd.b, &p_facts)?;
             form_bonds.push((na, nb, query_bond_class(&bnd.query)));
         }
 
@@ -287,8 +287,8 @@ impl Transform {
         let mut set_props: Vec<PropDelta> = Vec::new();
         for (&l, &pi) in &p_labels {
             let (rc, ra) = r_labels[&l];
-            let r_atom = &r_infos[rc][ra];
-            let p_atom = &p_info[pi];
+            let r_atom = &r_facts[rc][ra];
+            let p_atom = &p_facts[pi];
             let element = match (&r_atom.element, &p_atom.element) {
                 (Some(re), Some(pe)) if re != pe => Some(pe.clone()),
                 _ => None,
@@ -320,13 +320,13 @@ impl Transform {
     /// pairwise-map rule (each label ≤ once per side, present on both sides).
     #[allow(clippy::type_complexity)]
     fn index_maps(
-        r_infos: &[Vec<AtomInfo>],
-        p_info: &[AtomInfo],
+        r_facts: &[Vec<QueryAtomFacts>],
+        p_facts: &[QueryAtomFacts],
     ) -> Result<(HashMap<u32, (usize, usize)>, HashMap<u32, usize>), MolRsError> {
         let mut r_labels: HashMap<u32, (usize, usize)> = HashMap::new();
-        for (ci, infos) in r_infos.iter().enumerate() {
-            for (ai, info) in infos.iter().enumerate() {
-                if let Some(l) = info.label
+        for (ci, facts) in r_facts.iter().enumerate() {
+            for (ai, r_atom) in facts.iter().enumerate() {
+                if let Some(l) = r_atom.label
                     && r_labels.insert(l, (ci, ai)).is_some()
                 {
                     return Err(MolRsError::validation(format!(
@@ -336,8 +336,8 @@ impl Transform {
             }
         }
         let mut p_labels: HashMap<u32, usize> = HashMap::new();
-        for (ai, info) in p_info.iter().enumerate() {
-            if let Some(l) = info.label
+        for (ai, p_atom) in p_facts.iter().enumerate() {
+            if let Some(l) = p_atom.label
                 && p_labels.insert(l, ai).is_some()
             {
                 return Err(MolRsError::validation(format!(
@@ -364,7 +364,7 @@ impl Transform {
 
     /// Group per-atom deletes into per-component [`DeleteSpec`]s with pins.
     fn group_deletes(
-        r_infos: &[Vec<AtomInfo>],
+        r_facts: &[Vec<QueryAtomFacts>],
         delete_atoms: &[(usize, usize)],
     ) -> Vec<DeleteSpec> {
         let mut comps: Vec<usize> = delete_atoms.iter().map(|&(c, _)| c).collect();
@@ -373,10 +373,10 @@ impl Transform {
         comps
             .into_iter()
             .map(|ci| {
-                let pins: Vec<(usize, u32)> = r_infos[ci]
+                let pins: Vec<(usize, u32)> = r_facts[ci]
                     .iter()
                     .enumerate()
-                    .filter_map(|(ai, info)| info.label.map(|l| (ai, l)))
+                    .filter_map(|(ai, r_atom)| r_atom.label.map(|l| (ai, l)))
                     .collect();
                 let delete_idxs: Vec<usize> = delete_atoms
                     .iter()
@@ -393,8 +393,8 @@ impl Transform {
     }
 
     /// The [`NodeRef`] for a product atom that participates in an added-atom bond.
-    fn node_ref(idx: usize, p_info: &[AtomInfo]) -> Result<NodeRef, MolRsError> {
-        match p_info[idx].label {
+    fn node_ref(idx: usize, p_facts: &[QueryAtomFacts]) -> Result<NodeRef, MolRsError> {
+        match p_facts[idx].label {
             Some(l) => Ok(NodeRef::Mapped(l)),
             None => Ok(NodeRef::Added(idx)),
         }
@@ -403,7 +403,7 @@ impl Transform {
     /// Resolve every unmapped LHS atom while the reactant world is still intact.
     fn resolve_leaving(
         &self,
-        context: &MolContext<'_>,
+        target: &SmartsTarget<'_>,
         binding: &HashMap<u32, NodeId>,
         reactants: &[SmartsPattern],
     ) -> Result<HashSet<NodeId>, MolRsError> {
@@ -414,14 +414,14 @@ impl Transform {
             // `[C;%cx:1][H]` — seed the match at its already-bound image so the
             // search grows locally from that anchor instead of scanning the whole
             // (possibly huge) graph: O(local), not O(N) per apply. The `%LABEL`
-            // context is threaded so a labelled reactant still resolves; an empty
+            // target is threaded so a labelled reactant still resolves; an empty
             // map behaves like plain matching.
             let root = spec
                 .pins
                 .iter()
                 .find(|&&(qi, _)| qi == 0)
                 .and_then(|&(_, l)| binding.get(&l).copied());
-            let matches = reactants[spec.component].find_in_context(context, root);
+            let matches = reactants[spec.component].find_in_target(target, root);
             let chosen = matches
                 .iter()
                 .find(|m| {
@@ -542,8 +542,8 @@ impl Transform {
         refresh: bool,
     ) -> Result<Vec<NodeId>, MolRsError> {
         let leaving = {
-            let context = MolContext::with_labels(mol, labels);
-            self.resolve_leaving(&context, binding, reactants)?
+            let target = SmartsTarget::with_labels(mol, labels);
+            self.resolve_leaving(&target, binding, reactants)?
         };
         let mut touched = Vec::new();
         for &aid in &leaving {
@@ -581,10 +581,10 @@ impl Transform {
         refresh: bool,
     ) -> Result<DetailedReactionBatch, MolRsError> {
         let leaving_per_edit = {
-            let context = MolContext::with_labels(mol, labels);
+            let target = SmartsTarget::with_labels(mol, labels);
             bindings
                 .iter()
-                .map(|binding| self.resolve_leaving(&context, binding, reactants))
+                .map(|binding| self.resolve_leaving(&target, binding, reactants))
                 .collect::<Result<Vec<_>, _>>()?
         };
         let mut all_leaving = HashSet::new();

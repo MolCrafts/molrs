@@ -84,8 +84,8 @@ impl Compute for EinsteinDiffusion {
             });
         }
         let series = Msd::with_mode(MsdMode::Window).compute(frames, ())?;
-        let msd = Array1::from_iter(series.data.iter().map(|r| r.mean));
-        let lag_times = Array1::from_iter((0..series.data.len()).map(|i| i as f64 * args.dt));
+        let msd = Array1::from_iter(series.per_frame.iter().map(|r| r.mean));
+        let lag_times = Array1::from_iter((0..series.per_frame.len()).map(|i| i as f64 * args.dt));
         Ok(EinsteinDiffusionResult { lag_times, msd })
     }
 }
@@ -129,9 +129,12 @@ mod tests {
         let raw = EinsteinDiffusion
             .compute(&frames, EinsteinDiffusionArgs { dt: 2.0 })
             .unwrap();
-        assert_eq!(raw.msd.len(), series.data.len());
+        assert_eq!(raw.msd.len(), series.per_frame.len());
         for i in 0..raw.msd.len() {
-            assert!((raw.msd[i] - series.data[i].mean).abs() < 1e-12, "i={i}");
+            assert!(
+                (raw.msd[i] - series.per_frame[i].mean).abs() < 1e-12,
+                "i={i}"
+            );
             assert!((raw.lag_times[i] - i as f64 * 2.0).abs() < 1e-12);
         }
     }

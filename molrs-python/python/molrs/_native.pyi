@@ -2645,7 +2645,7 @@ def write_lammps_data_str(
 def read_lammps_dump_str(text: str) -> Frame: ...
 def read_lammps_dump_bytes(data: bytes) -> Frame: ...
 def write_lammps_dump_str(frame: Frame, columns: Sequence[str] | None = None) -> str: ...
-def read_dcd_bytes(data: bytes, context: bytes | None = None) -> Frame: ...
+def read_dcd_bytes(data: bytes, decoder_state: bytes | None = None) -> Frame: ...
 def write_dcd_bytes(frame: Frame) -> bytes: ...
 def read_trr_bytes(data: bytes) -> Frame: ...
 def write_trr_bytes(frame: Frame) -> bytes: ...
@@ -4016,13 +4016,13 @@ class Trajectory:
     @property
     def time(self) -> ArrayF | None: ...
 
-type _ObservableScalarData = npt.NDArray | float | int | bool | str | list[str]
+type _ObservableScalarValue = npt.NDArray | float | int | bool | str | list[str]
 
 class ScalarObservable:
     def __init__(
         self,
         name: str,
-        values: _ObservableScalarData,
+        values: _ObservableScalarValue,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,
@@ -4056,7 +4056,7 @@ class VectorObservable:
     def __init__(
         self,
         name: str,
-        values: _ObservableScalarData,
+        values: _ObservableScalarValue,
         description: str = "",
         unit: str | None = None,
         axes: list[str] | None = None,

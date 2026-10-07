@@ -350,7 +350,7 @@ mod zarrs_pins {
         const CHUNKS_PER_SHARD: u64 = 8;
         const WARM_ROWS: u64 = 4 * ROWS_PER_CHUNK;
 
-        fn warm_store(
+        fn warm_storage(
             root: &Path,
         ) -> (
             Array<dyn ReadableWritableListableStorageTraits>,
@@ -367,7 +367,7 @@ mod zarrs_pins {
         }
 
         let opt_dir = tempdir().unwrap();
-        let (mut opt_array, opt_metrics) = warm_store(opt_dir.path());
+        let (mut opt_array, opt_metrics) = warm_storage(opt_dir.path());
         append(
             &mut opt_array,
             WARM_ROWS,
@@ -377,7 +377,7 @@ mod zarrs_pins {
         let opt_bytes = opt_metrics.bytes_written() as u64;
 
         let default_dir = tempdir().unwrap();
-        let (mut default_array, default_metrics) = warm_store(default_dir.path());
+        let (mut default_array, default_metrics) = warm_storage(default_dir.path());
         default_array
             .set_shape(vec![WARM_ROWS + ROWS_PER_CHUNK, NCOLS])
             .unwrap();
@@ -565,13 +565,13 @@ mod zarrs_pins {
         const VALUES: [f64; 4] = [1.0, 2.5, -3.75, 1.0e-300];
 
         let dir = tempdir().unwrap();
-        let store_dir = dir.path().join("rec.mrec");
-        write_mrec(&store_dir, &record_with_x(&VALUES).unwrap()).unwrap();
+        let storage_dir = dir.path().join("rec.mrec");
+        write_mrec(&storage_dir, &record_with_x(&VALUES).unwrap()).unwrap();
         // The directory store is the reference the zip must reproduce.
-        assert!(read_mrec(&store_dir).unwrap().frame.is_some());
+        assert!(read_mrec(&storage_dir).unwrap().frame.is_some());
 
         let zip_path = dir.path().join("rec.mrec.zip");
-        zip_stored(&store_dir, &zip_path);
+        zip_stored(&storage_dir, &zip_path);
 
         let outer = Arc::new(FilesystemStore::new(dir.path()).unwrap());
         let zip_store = Arc::new(

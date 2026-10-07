@@ -254,7 +254,7 @@ impl<'a> PotentialCompiler<'a> {
         // frame with atoms always has those.
         let spec = category;
         let category = style.category();
-        let entry = reg.entry(category, style.name());
+        let entry = reg.registered_style(category, style.name());
         let type_params = style.defs().kernel_type_params()?;
         let param_source = entry.map_or_else(
             || {
@@ -324,7 +324,7 @@ impl<'a> PotentialCompiler<'a> {
             return Ok(None);
         }
         let category = style.category();
-        let entry = reg.entry(category, style.name());
+        let entry = reg.registered_style(category, style.name());
         // A style contributes nothing when the molecule carries no topology of its
         // kind: a bonded style with no bonds/angles/dihedrals/impropers, or a pair
         // style when the neighbour list is empty (e.g. methane, whose every atom

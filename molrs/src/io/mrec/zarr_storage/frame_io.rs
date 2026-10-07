@@ -1336,7 +1336,7 @@ mod tests {
     /// promotion can mask the arrival width under test.
     const COLUMN: &str = "probe";
 
-    fn store_in(dir: &TempDir) -> ReadableWritableListableStorage {
+    fn storage_in(dir: &TempDir) -> ReadableWritableListableStorage {
         Arc::new(FilesystemStore::new(dir.path()).unwrap())
     }
 
@@ -1344,7 +1344,7 @@ mod tests {
     /// whole frame back, returning the column as it arrived from the store.
     fn round_trip_column(col: Column) -> Column {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block.insert_column(COLUMN, col).unwrap();
         let mut frame = Frame::new();
@@ -1406,7 +1406,7 @@ mod tests {
             ),
         ] {
             let dir = TempDir::new().unwrap();
-            let store = store_in(&dir);
+            let store = storage_in(&dir);
             GroupBuilder::new()
                 .build(store.clone(), "/f")
                 .unwrap()
@@ -1611,7 +1611,7 @@ mod tests {
     #[test]
     fn structural_shape_round_trips_with_the_block() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -1636,7 +1636,7 @@ mod tests {
     #[test]
     fn structural_shape_is_written_as_a_group_attribute() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -1661,7 +1661,7 @@ mod tests {
     #[test]
     fn column_less_block_keeps_its_row_count() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block.resize(7).unwrap();
         let mut frame = Frame::new();
@@ -1677,7 +1677,7 @@ mod tests {
     #[test]
     fn bool_column_is_written_as_the_native_zarr_bool_dtype() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -1698,7 +1698,7 @@ mod tests {
     #[test]
     fn bool_column_carries_no_molrs_dtype_attribute() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -1726,7 +1726,7 @@ mod tests {
     #[test]
     fn absent_boundary_reads_all_periodic() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         // Hand-built: the writer always emits `boundary`, but molrec's own
         // codec omits it for the default case, and that store must read as
         // fully periodic rather than as vacuum.
@@ -1745,7 +1745,7 @@ mod tests {
     #[test]
     fn explicit_boundary_round_trips_unchanged() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let simbox = SimBox::new(
             array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
             array![0.0, 0.0, 0.0],
@@ -1761,7 +1761,7 @@ mod tests {
     #[test]
     fn defined_cell_stays_defined_across_the_round_trip() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let simbox = SimBox::new(
             array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
             array![0.0, 0.0, 0.0],
@@ -1776,7 +1776,7 @@ mod tests {
     #[test]
     fn undefined_cell_round_trips_as_false() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         // A no-cell box carries the identity matrix, per `SimBox::new_cell`:
         // geometry ops degrade to no-ops and only the flag says "undefined".
         let simbox = SimBox::new_cell(
@@ -1807,7 +1807,7 @@ mod tests {
     #[test]
     fn undefined_cell_accepts_any_vectors_and_writes_the_identity() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut attrs = serde_json::Map::new();
         attrs.insert("cell_defined".into(), false.into());
         GroupBuilder::new()
@@ -1835,7 +1835,7 @@ mod tests {
     #[test]
     fn an_undefined_cell_is_periodic_on_no_axis() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let cell =
             |pbc| SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false);
 
@@ -1868,7 +1868,7 @@ mod tests {
     #[test]
     fn a_defined_singular_cell_is_refused() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         GroupBuilder::new()
             .build(store.clone(), "/box")
             .unwrap()
@@ -1881,7 +1881,7 @@ mod tests {
     #[test]
     fn absent_origin_reads_zero_origin() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut attrs = serde_json::Map::new();
         attrs.insert(
             "boundary".to_string(),
@@ -1937,7 +1937,7 @@ mod tests {
         const SHARD_ROWS: u64 = 458_752;
 
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         // Index-derived and non-repeating: a constant column would read back
         // correctly even if the shard handed out the wrong chunk.
         let values: Vec<F> = (0..ROWS).map(|i| i as F * 0.5 - 1.0e-3).collect();
@@ -2021,7 +2021,7 @@ mod tests {
     /// Write `block` as the sole block of a frame and read that frame back.
     fn round_trip_block(block: Block) -> Block {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert(BLOCK, block);
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -2161,7 +2161,7 @@ mod tests {
     #[test]
     fn a_frame_with_no_masked_column_writes_no_validity_child() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -2182,7 +2182,7 @@ mod tests {
     #[test]
     fn a_masked_column_writes_its_mask_into_a_validity_subgroup() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert(BLOCK, masked_int_block());
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -2200,7 +2200,7 @@ mod tests {
     #[test]
     fn a_mask_is_stored_as_a_bool_array_named_after_its_column() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert(BLOCK, masked_int_block());
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -2224,7 +2224,7 @@ mod tests {
     #[test]
     fn a_block_column_named_validity_is_refused_on_write() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -2247,7 +2247,7 @@ mod tests {
     #[test]
     fn a_mask_of_the_wrong_length_is_a_read_error_naming_block_and_column() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert(BLOCK, masked_int_block());
         write_frame_group(&store, FRAME, &frame).unwrap();
@@ -2273,7 +2273,7 @@ mod tests {
     #[test]
     fn frame_group_attributes_round_trip_meta_keys_in_insertion_order() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.meta.insert("z", "Z");
         frame.meta.insert("a", "A");
@@ -2303,7 +2303,7 @@ mod tests {
     /// the frame back.
     fn round_trip_precise(values: &[f64], p: f64) -> (Block, Vec<String>) {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -2411,7 +2411,7 @@ mod tests {
     #[test]
     fn a_precision_on_a_non_f64_column_is_refused_at_write() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let column = Column::from_i64(ArrayD::from_shape_vec(vec![1], vec![3_i64]).unwrap());
         let err = write_column(&store, "/f/b/n", &column, Some(1e-3))
             .unwrap_err()
@@ -2426,7 +2426,7 @@ mod tests {
     #[test]
     fn a_malformed_precision_attribute_is_refused_on_read() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
@@ -2480,7 +2480,7 @@ mod tests {
 
     fn meta_round_trip(frame: &Frame) -> Frame {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_frame_group(&store, FRAME, frame).unwrap();
         read_frame_group(&store, FRAME).unwrap()
     }
@@ -2503,7 +2503,7 @@ mod tests {
     #[test]
     fn meta_is_stored_in_typed_json_with_a_tag_per_key() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.meta.insert("t", f64::NAN);
         frame.meta.insert("n", u64::MAX);
@@ -2534,7 +2534,7 @@ mod tests {
         tamper: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
     ) -> Result<Frame, MolRsError> {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         write_frame_group(&store, FRAME, frame).unwrap();
         let mut group = zarrs::group::Group::open(store.clone(), FRAME).unwrap();
         tamper(group.attributes_mut());
@@ -2596,7 +2596,7 @@ mod tests {
     #[test]
     fn a_meta_key_named_like_the_tag_map_is_refused_at_write() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let err = write_frame_group(&store, FRAME, &one_key(META_TYPES_ATTR, 1.0))
             .unwrap_err()
             .to_string();
@@ -2606,7 +2606,7 @@ mod tests {
     #[test]
     fn a_block_group_without_its_count_is_refused() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         let mut block = Block::new();
         block
@@ -2636,7 +2636,7 @@ mod tests {
     #[test]
     fn every_canonical_key_is_held_to_its_dtype_on_read_and_converted_on_write() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut block = Block::new();
         block
             .insert_column(
@@ -2709,7 +2709,7 @@ mod tests {
     #[test]
     fn declared_targets_round_trip_as_the_block_attribute() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(3));
         let mut members = Block::new();
@@ -2736,7 +2736,7 @@ mod tests {
     #[test]
     fn a_broken_same_frame_reference_is_refused_both_ways() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         // Out of range: ibead 5 with 3 atoms.
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(3));
@@ -2785,7 +2785,7 @@ mod tests {
     #[test]
     fn the_canonical_topology_round_trips() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut atoms = atoms_of(3);
         for key in ["fx", "fy", "fz", "occupancy", "b_factor"] {
             atoms
@@ -2843,7 +2843,7 @@ mod tests {
     #[test]
     fn a_cmaps_block_round_trips() {
         let dir = TempDir::new().unwrap();
-        let store = store_in(&dir);
+        let store = storage_in(&dir);
         let mut frame = Frame::new();
         frame.insert("atoms", atoms_of(6));
         let mut cmaps = Block::new();

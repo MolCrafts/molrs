@@ -175,12 +175,12 @@ impl SmartsPattern {
         matcher::find(&self.graph, mol, options)
     }
 
-    pub(crate) fn find_in_context(
+    pub(crate) fn find_in_target(
         &self,
-        context: &predicate::MolContext<'_>,
+        target: &predicate::SmartsTarget<'_>,
         root: Option<NodeId>,
     ) -> Vec<SmartsMatch> {
-        matcher::find_in_context(&self.graph, context, root, None)
+        matcher::find_in_target(&self.graph, target, root, None)
     }
 
     /// Whether at least one match exists.

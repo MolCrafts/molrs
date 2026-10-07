@@ -335,7 +335,7 @@ pub(crate) fn compile_err(e: CompileError) -> PyErr {
 
 /// A writer's error: its typed refusal (`NoEngineForm`) as the `IrError`
 /// subclass, anything else a `ValueError`.
-pub(crate) fn write_err(e: molrs::io::writer::ForceFieldWriteError) -> PyErr {
+pub(crate) fn writer_err(e: molrs::io::writer::ForceFieldWriteError) -> PyErr {
     match e.ir() {
         Some(refusal) => ir_err(refusal, e.to_string()),
         None => PyValueError::new_err(e.to_string()),

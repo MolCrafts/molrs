@@ -319,7 +319,7 @@ impl Registry {
                         };
                         let start = match seeded {
                             Some(t) => TypeParams::new(fixed_style(t.style), t.row),
-                            None => generic_seed(spec, &tp, target_style.as_ref()),
+                            None => name_matched_seed(spec, &tp, target_style.as_ref()),
                         };
                         let (t, c) = self
                             .refine(
@@ -555,7 +555,7 @@ fn fitted_param(spec: &StyleSpec, key: &str) -> bool {
 /// the source row's same-named value, else the spec's default, else
 /// [`SEED_DEFAULT`]. The style parameters are the target's own when it is in
 /// the force field, else the source's that `spec` declares.
-fn generic_seed(
+fn name_matched_seed(
     spec: &StyleSpec,
     source: &TypeParams,
     target_style: Option<&Params>,

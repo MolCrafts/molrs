@@ -27,7 +27,7 @@ read_door!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::test_support::float_col;
+    use crate::io::test_fixtures::float_col;
     use wasm_bindgen_test::*;
 
     #[wasm_bindgen_test]

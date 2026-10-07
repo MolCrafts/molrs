@@ -1236,30 +1236,30 @@ fn write_frame_payload<W: Write>(
 // Streaming
 // ============================================================================
 
-/// Magic prefix the WASM stream prepends when a decoder context is attached
-/// (`setDecoderContext`). Not a file format — never appears on disk.
-const DCD_CTX_MAGIC: &[u8; 13] = b"MOLRS\x00DCDCTX\x00";
+/// Magic prefix the WASM stream prepends when a decoder state is attached
+/// (`setDecoderState`). Not a file format — never appears on disk.
+const DCD_STATE_MAGIC: &[u8; 13] = b"MOLRS\x00DCDCTX\x00";
 
 /// Parse exactly one DCD frame from a tightly-bounded byte slice.
 ///
 /// `bytes` is one of:
 /// - a frame body produced by [`DcdIndexBuilder`] (self-describing when
 ///   `NAMNF == 0`);
-/// - that body prefixed with a decoder-context blob (needed for fixed-atom
+/// - that body prefixed with a decoder-state blob (needed for fixed-atom
 ///   later frames);
 /// - a complete mini-file starting at the CORD header (frame 0 including
 ///   the header).
 ///
-/// `context` is a decoder context captured by
-/// [`FrameIndexBuilder::decoder_context`]; given, `bytes` is a frame body decoded
-/// with it, so a caller holding the context separately never copies the frame
+/// `decoder_state` is the state captured by
+/// [`FrameIndexBuilder::decoder_state`]; given, `bytes` is a frame body decoded
+/// with it, so a caller holding the state separately never copies the frame
 /// to prepend it.
-pub fn read_dcd_bytes(bytes: &[u8], context: Option<&[u8]>) -> std::io::Result<Frame> {
-    if let Some(context) = context {
-        let header = decode_decoder_context(context)?;
+pub fn read_dcd_bytes(bytes: &[u8], decoder_state: Option<&[u8]>) -> std::io::Result<Frame> {
+    if let Some(state) = decoder_state {
+        let header = decode_decoder_state(state)?;
         return parse_frame_with_header(&header, bytes);
     }
-    if let Some((header, rest)) = split_decoder_context(bytes)? {
+    if let Some((header, rest)) = split_decoder_state(bytes)? {
         return parse_one_frame(
             &mut Cursor::new(rest),
             &header,
@@ -1446,29 +1446,27 @@ fn try_read_record_at(
     Some((bytes[payload_start..payload_end].to_vec(), trailing_end))
 }
 
-fn split_decoder_context(bytes: &[u8]) -> std::io::Result<Option<(DcdHeader, &[u8])>> {
-    if bytes.len() < DCD_CTX_MAGIC.len() + 4 || !bytes.starts_with(DCD_CTX_MAGIC) {
+fn split_decoder_state(bytes: &[u8]) -> std::io::Result<Option<(DcdHeader, &[u8])>> {
+    if bytes.len() < DCD_STATE_MAGIC.len() + 4 || !bytes.starts_with(DCD_STATE_MAGIC) {
         return Ok(None);
     }
-    let len_off = DCD_CTX_MAGIC.len();
-    let ctx_len = u32::from_le_bytes(bytes[len_off..len_off + 4].try_into().unwrap()) as usize;
-    if ctx_len > MAX_DCD_RECORD_BYTES as usize {
-        return Err(invalid_data(
-            "DCD decoder context larger than the record cap",
-        ));
+    let len_off = DCD_STATE_MAGIC.len();
+    let state_len = u32::from_le_bytes(bytes[len_off..len_off + 4].try_into().unwrap()) as usize;
+    if state_len > MAX_DCD_RECORD_BYTES as usize {
+        return Err(invalid_data("DCD decoder state larger than the record cap"));
     }
-    let ctx_start = len_off + 4;
-    let ctx_end = ctx_start
-        .checked_add(ctx_len)
-        .ok_or_else(|| invalid_data("DCD decoder context length overflow"))?;
-    if ctx_end > bytes.len() {
-        return Err(invalid_data("DCD decoder context truncated"));
+    let state_start = len_off + 4;
+    let state_end = state_start
+        .checked_add(state_len)
+        .ok_or_else(|| invalid_data("DCD decoder state length overflow"))?;
+    if state_end > bytes.len() {
+        return Err(invalid_data("DCD decoder state truncated"));
     }
-    let header = decode_decoder_context(&bytes[ctx_start..ctx_end])?;
-    Ok(Some((header, &bytes[ctx_end..])))
+    let header = decode_decoder_state(&bytes[state_start..state_end])?;
+    Ok(Some((header, &bytes[state_end..])))
 }
 
-fn encode_decoder_context(header: &DcdHeader) -> Vec<u8> {
+fn encode_decoder_state(header: &DcdHeader) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(1u8);
     out.push(match header.byte_order {
@@ -1519,13 +1517,13 @@ fn encode_decoder_context(header: &DcdHeader) -> Vec<u8> {
     out
 }
 
-fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
+fn decode_decoder_state(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let mut cur = Cursor::new(bytes);
     let mut ver = [0u8; 1];
     cur.read_exact(&mut ver)?;
     if ver[0] != 1 {
         return Err(invalid_data(format!(
-            "unsupported DCD decoder context version {}",
+            "unsupported DCD decoder state version {}",
             ver[0]
         )));
     }
@@ -1534,12 +1532,12 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let byte_order = match flags[0] {
         0 => ByteOrder::Le,
         1 => ByteOrder::Be,
-        _ => return Err(invalid_data("bad DCD context byte order")),
+        _ => return Err(invalid_data("bad DCD decoder state byte order")),
     };
     let marker_size = match flags[1] {
         4 => MarkerSize::Four,
         8 => MarkerSize::Eight,
-        _ => return Err(invalid_data("bad DCD context marker size")),
+        _ => return Err(invalid_data("bad DCD decoder state marker size")),
     };
     let mut i32b = [0u8; 4];
     let mut u32b = [0u8; 4];
@@ -1557,7 +1555,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let namnf = u32::from_le_bytes(u32b);
     if namnf > natoms {
         return Err(invalid_data(format!(
-            "DCD decoder context namnf {namnf} > natoms {natoms}"
+            "DCD decoder state namnf {namnf} > natoms {natoms}"
         )));
     }
     let mut hb = [0u8; 2];
@@ -1569,7 +1567,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let remaining = bytes.len().saturating_sub(cur.position() as usize);
     if title_len > remaining || title_len > 1_048_576 {
         return Err(invalid_data(format!(
-            "DCD decoder context title length {title_len} is not credible"
+            "DCD decoder state title length {title_len} is not credible"
         )));
     }
     let mut title = vec![0u8; title_len];
@@ -1578,12 +1576,12 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
     let nfree = u32::from_le_bytes(u32b) as usize;
     if nfree > natoms as usize {
         return Err(invalid_data(format!(
-            "DCD decoder context nfree {nfree} > natoms {natoms}"
+            "DCD decoder state nfree {nfree} > natoms {natoms}"
         )));
     }
     let remaining = bytes.len().saturating_sub(cur.position() as usize);
     if nfree.saturating_mul(4) > remaining {
-        return Err(invalid_data("DCD decoder context free-atom list truncated"));
+        return Err(invalid_data("DCD decoder state free-atom list truncated"));
     }
     let free_atoms = if nfree == 0 {
         None
@@ -1602,9 +1600,7 @@ fn decode_decoder_context(bytes: &[u8]) -> std::io::Result<DcdHeader> {
         let need = n.saturating_mul(12);
         let remaining = bytes.len().saturating_sub(cur.position() as usize);
         if need > remaining {
-            return Err(invalid_data(
-                "DCD decoder context fixed-atom seed truncated",
-            ));
+            return Err(invalid_data("DCD decoder state fixed-atom seed truncated"));
         }
         let mut read_axis = || -> std::io::Result<Vec<f32>> {
             let mut axis = vec![0.0f32; n];
@@ -1911,14 +1907,14 @@ impl FrameIndexBuilder for DcdIndexBuilder {
         self.try_progress();
     }
 
-    fn decoder_context(&self) -> Option<Vec<u8>> {
+    fn decoder_state(&self) -> Option<Vec<u8>> {
         // Fixed-atom later frames need the frame-0 seed. Handing the
         // header out before that seed is captured would decode as if
         // every atom were free.
         if !self.seed_ready() {
             return None;
         }
-        self.header.as_ref().map(encode_decoder_context)
+        self.header.as_ref().map(encode_decoder_state)
     }
 }
 
@@ -2243,30 +2239,30 @@ mod tests {
     }
 
     #[test]
-    fn dcd_decoder_context_round_trips_header() {
+    fn dcd_decoder_state_round_trips_header() {
         let bytes = write_dcd_mem(&[two_atom_frame(0.0, true)]);
         let mut builder = Box::new(DcdIndexBuilder::new());
         builder.hint_total_bytes(bytes.len() as u64);
         builder.feed(&bytes, 0);
-        let ctx = builder.decoder_context().expect("decoder context");
+        let state = builder.decoder_state().expect("decoder state");
         let entries = builder.finish().expect("finish");
         assert_eq!(entries.len(), 1);
-        let mut wrapped = Vec::from(DCD_CTX_MAGIC.as_slice());
-        wrapped.extend_from_slice(&(ctx.len() as u32).to_le_bytes());
-        wrapped.extend_from_slice(&ctx);
+        let mut wrapped = Vec::from(DCD_STATE_MAGIC.as_slice());
+        wrapped.extend_from_slice(&(state.len() as u32).to_le_bytes());
+        wrapped.extend_from_slice(&state);
         let lo = entries[0].byte_offset as usize;
         let hi = lo + entries[0].byte_len as usize;
         wrapped.extend_from_slice(&bytes[lo..hi]);
-        let parsed = read_dcd_bytes(&wrapped, None).expect("parse with context");
+        let parsed = read_dcd_bytes(&wrapped, None).expect("parse with decoder state");
         assert_eq!(parsed.get("atoms").unwrap().n_rows().unwrap(), 2);
 
-        let no_copy =
-            read_dcd_bytes(&bytes[lo..hi], Some(&ctx)).expect("parse with context, no wrap");
+        let no_copy = read_dcd_bytes(&bytes[lo..hi], Some(&state))
+            .expect("parse with decoder state, no wrap");
         assert_eq!(no_copy.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[test]
-    fn dcd_decoder_context_rejects_huge_title() {
+    fn dcd_decoder_state_rejects_huge_title() {
         let mut bad = vec![1u8, 0, 4]; // ver, le, marker 4
         bad.extend_from_slice(&24i32.to_le_bytes()); // charmm
         bad.extend_from_slice(&1u32.to_le_bytes()); // nset
@@ -2277,7 +2273,7 @@ mod tests {
         bad.extend_from_slice(&[0u8, 0]); // has_box, has_4d
         bad.extend_from_slice(&1.0f64.to_le_bytes());
         bad.extend_from_slice(&2_000_000u32.to_le_bytes()); // title_len
-        assert!(decode_decoder_context(&bad).is_err());
+        assert!(decode_decoder_state(&bad).is_err());
     }
 
     #[test]

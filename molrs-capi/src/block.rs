@@ -15,7 +15,7 @@
 //! `get`, `get_mut`, and `copy` succeed for every fixed-width dtype the
 //! block holds. A string column has no flat scalar buffer and returns
 //! `TypeMismatch`, which is not `KeyNotFound`. Shape and dtype stay on
-//! [`molrs_block_col_shape`] and [`molrs_block_col_dtype`].
+//! [`molrs_block_column_shape`] and [`molrs_block_column_dtype`].
 //!
 //! `F` is `f64`, `I` is `i32`, `Idx` is `u64`. `out_len` is an element
 //! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
@@ -160,7 +160,7 @@ pub unsafe extern "C" fn molrs_block_n_columns(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_col_dtype(MolrsBlockHandle block,
+/// MolrsStatus molrs_block_column_dtype(MolrsBlockHandle block,
 ///                                    uint32_t col_key_id,
 ///                                    MolrsDType* out);
 /// ```
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn molrs_block_n_columns(
 /// * `block` must be a live block handle.
 /// * `out` must point to a writable `MolrsDType`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_col_dtype(
+pub unsafe extern "C" fn molrs_block_column_dtype(
     block: MolrsBlockHandle,
     col_key_id: u32,
     out: *mut MolrsDType,
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn molrs_block_col_dtype(
 /// # C signature
 ///
 /// ```c
-/// MolrsStatus molrs_block_col_shape(MolrsBlockHandle block,
+/// MolrsStatus molrs_block_column_shape(MolrsBlockHandle block,
 ///                                    uint32_t col_key_id,
 ///                                    size_t*  out_shape,
 ///                                    size_t*  inout_ndim);
@@ -248,7 +248,7 @@ pub unsafe extern "C" fn molrs_block_col_dtype(
 ///   writable `size_t` elements.
 /// * `inout_ndim` must point to a writable `size_t`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn molrs_block_col_shape(
+pub unsafe extern "C" fn molrs_block_column_shape(
     block: MolrsBlockHandle,
     col_key_id: u32,
     out_shape: *mut usize,

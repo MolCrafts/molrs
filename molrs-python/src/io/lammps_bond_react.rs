@@ -242,7 +242,7 @@ pub fn write_lammps_bond_react_system(
                 .get_ref()
                 .and_then(|inner| inner.downcast_ref::<ForceFieldWriteError>())
             {
-                crate::ff::ir::write_err(refusal.clone())
+                crate::ff::ir::writer_err(refusal.clone())
             } else if e.kind() == std::io::ErrorKind::InvalidData
                 || e.kind() == std::io::ErrorKind::InvalidInput
             {

@@ -25,7 +25,7 @@ use crate::line_notation::error::{SmilesError, SmilesErrorKind};
 /// [`SmilesErrorKind::DescriptorInPlainSmiles`] for a node carrying a bonding
 /// descriptor — write that IR with [`fragment_smiles_text`] instead.
 pub fn smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
-    write_ir(ir, Dialect::Smiles)
+    emit_ir(ir, Dialect::Smiles)
 }
 
 /// Write a SMARTS string from the IR.
@@ -41,7 +41,7 @@ pub fn smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
 /// descriptor: descriptors are fragment notation, and SMARTS has no spelling
 /// for them either.
 pub fn smarts_text(ir: &SmilesIr) -> Result<String, SmilesError> {
-    write_ir(ir, Dialect::Smarts)
+    emit_ir(ir, Dialect::Smarts)
 }
 
 /// Write a SMILES **fragment** body: SMILES plus `CGsmiles` / `BigSMILES`
@@ -77,10 +77,10 @@ pub fn smarts_text(ir: &SmilesIr) -> Result<String, SmilesError> {
 /// plain writers' refusal of the input this one exists to accept.
 #[cfg(test)]
 pub(crate) fn fragment_smiles_text(ir: &SmilesIr) -> Result<String, SmilesError> {
-    write_ir(ir, Dialect::FragmentSmiles)
+    emit_ir(ir, Dialect::FragmentSmiles)
 }
 
-fn write_ir(ir: &SmilesIr, dialect: Dialect) -> Result<String, SmilesError> {
+fn emit_ir(ir: &SmilesIr, dialect: Dialect) -> Result<String, SmilesError> {
     if ir.components.is_empty() {
         return Err(SmilesError::new(
             SmilesErrorKind::Emit("empty SmilesIr".into()),
@@ -94,45 +94,45 @@ fn write_ir(ir: &SmilesIr, dialect: Dialect) -> Result<String, SmilesError> {
         if i > 0 {
             out.push('.');
         }
-        write_chain(&mut out, chain, dialect, /*in_branch*/ false)?;
+        emit_chain(&mut out, chain, dialect, /*in_branch*/ false)?;
     }
     Ok(out)
 }
 
-fn write_chain(
+fn emit_chain(
     out: &mut String,
     chain: &Chain,
     dialect: Dialect,
     _in_branch: bool,
 ) -> Result<(), SmilesError> {
-    write_atom(out, &chain.head, dialect)?;
+    emit_atom(out, &chain.head, dialect)?;
     for elem in &chain.tail {
         match elem {
             ChainElement::BondedAtom { bond, atom } => {
-                write_bond(
+                emit_bond(
                     out,
                     bond.as_ref(),
                     dialect,
                     /*omit_default_single*/ true,
                 )?;
-                write_atom(out, atom, dialect)?;
+                emit_atom(out, atom, dialect)?;
             }
             ChainElement::Branch { bond, chain, .. } => {
                 out.push('(');
-                write_bond(out, bond.as_ref(), dialect, true)?;
-                write_chain(out, chain, dialect, true)?;
+                emit_bond(out, bond.as_ref(), dialect, true)?;
+                emit_chain(out, chain, dialect, true)?;
                 out.push(')');
             }
             ChainElement::RingClosure { bond, rnum, .. } => {
-                write_bond(out, bond.as_ref(), dialect, true)?;
-                write_rnum(out, *rnum);
+                emit_bond(out, bond.as_ref(), dialect, true)?;
+                emit_rnum(out, *rnum);
             }
         }
     }
     Ok(())
 }
 
-fn write_rnum(out: &mut String, rnum: u16) {
+fn emit_rnum(out: &mut String, rnum: u16) {
     if rnum < 10 {
         out.push(char::from(b'0' + rnum as u8));
     } else {
@@ -141,7 +141,7 @@ fn write_rnum(out: &mut String, rnum: u16) {
     }
 }
 
-fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(), SmilesError> {
+fn emit_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(), SmilesError> {
     match &node.spec {
         AtomSpec::Organic { symbol, aromatic } => {
             if *aromatic {
@@ -169,7 +169,7 @@ fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(),
             if let Some(iso) = isotope {
                 out.push_str(&iso.to_string());
             }
-            write_bracket_symbol(out, symbol);
+            emit_bracket_symbol(out, symbol);
             if let Some(ch) = chirality {
                 match ch {
                     Chirality::CounterClockwise => out.push('@'),
@@ -183,7 +183,7 @@ fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(),
                 }
             }
             if let Some(c) = charge {
-                write_charge(out, *c);
+                emit_charge(out, *c);
             }
             if let Some(cls) = atom_class {
                 out.push(':');
@@ -205,13 +205,13 @@ fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(),
                 ));
             }
             out.push('[');
-            write_atom_query(out, q)?;
+            emit_atom_query(out, q)?;
             out.push(']');
             Ok(())
         }
     }?;
 
-    write_descriptors(out, node, dialect)
+    emit_descriptors(out, node, dialect)
 }
 
 /// Write `node`'s bonding descriptors in the canonical trailing form.
@@ -231,7 +231,7 @@ fn write_atom(out: &mut String, node: &AtomNode, dialect: Dialect) -> Result<(),
 /// Returns [`SmilesErrorKind::DescriptorInPlainSmiles`] in any dialect but
 /// `FragmentSmiles`, and [`SmilesErrorKind::InvalidDescriptorOrder`] for an
 /// order outside `Single`, `Double`, `Triple` and `Quadruple`.
-fn write_descriptors(
+fn emit_descriptors(
     out: &mut String,
     node: &AtomNode,
     dialect: Dialect,
@@ -253,7 +253,7 @@ fn write_descriptors(
             None => {}
             Some(
                 k @ (BondKind::Single | BondKind::Double | BondKind::Triple | BondKind::Quadruple),
-            ) => write_bond_kind(out, k, /*omit_default_single*/ false),
+            ) => emit_bond_kind(out, k, /*omit_default_single*/ false),
             // A hand-built IR can carry an order no parser produces; emitting
             // it would write text this dialect's own parser rejects.
             Some(k) => {
@@ -283,7 +283,7 @@ fn write_descriptors(
 /// Aromaticity is notation here, not a property: a declared-aromatic element
 /// is written lowercase, which is the only thing that distinguishes `[cH]`
 /// from `[CH]`.
-fn write_bracket_symbol(out: &mut String, symbol: &BracketSymbol) {
+fn emit_bracket_symbol(out: &mut String, symbol: &BracketSymbol) {
     match symbol {
         BracketSymbol::Element { symbol, aromatic } => {
             if *aromatic {
@@ -300,7 +300,7 @@ fn write_bracket_symbol(out: &mut String, symbol: &BracketSymbol) {
     }
 }
 
-fn write_charge(out: &mut String, c: i8) {
+fn emit_charge(out: &mut String, c: i8) {
     if c == 0 {
         return;
     }
@@ -318,12 +318,12 @@ fn write_charge(out: &mut String, c: i8) {
     }
 }
 
-fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> {
+fn emit_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> {
     match q {
-        AtomQuery::Primitive(p) => write_primitive(out, p),
+        AtomQuery::Primitive(p) => emit_primitive(out, p),
         AtomQuery::Not(inner) => {
             out.push('!');
-            write_atom_query(out, inner)
+            emit_atom_query(out, inner)
         }
         AtomQuery::And(parts) => {
             // `&` binds tighter than `,`, so an AND over an OR is spelled with
@@ -342,7 +342,7 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
                 if i > 0 {
                     out.push(sep);
                 }
-                write_atom_query(out, p)?;
+                emit_atom_query(out, p)?;
             }
             Ok(())
         }
@@ -351,7 +351,7 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
                 if i > 0 {
                     out.push(',');
                 }
-                write_atom_query(out, p)?;
+                emit_atom_query(out, p)?;
             }
             Ok(())
         }
@@ -360,14 +360,14 @@ fn write_atom_query(out: &mut String, q: &AtomQuery) -> Result<(), SmilesError> 
                 if i > 0 {
                     out.push(';');
                 }
-                write_atom_query(out, p)?;
+                emit_atom_query(out, p)?;
             }
             Ok(())
         }
     }
 }
 
-fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesError> {
+fn emit_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesError> {
     match p {
         AtomPrimitive::Element { symbol, aromatic } => {
             if *aromatic {
@@ -462,7 +462,7 @@ fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesErro
             Ok(())
         }
         AtomPrimitive::Charge(c) => {
-            write_charge(out, *c);
+            emit_charge(out, *c);
             Ok(())
         }
         AtomPrimitive::Isotope(iso) => {
@@ -492,7 +492,7 @@ fn write_primitive(out: &mut String, p: &AtomPrimitive) -> Result<(), SmilesErro
     }
 }
 
-fn write_bond(
+fn emit_bond(
     out: &mut String,
     bond: Option<&BondQuery>,
     dialect: Dialect,
@@ -503,7 +503,7 @@ fn write_bond(
     };
     match q {
         BondQuery::Kind(k) => {
-            write_bond_kind(out, *k, omit_default_single);
+            emit_bond_kind(out, *k, omit_default_single);
             Ok(())
         }
         BondQuery::Not(inner) => {
@@ -511,7 +511,7 @@ fn write_bond(
                 return Err(bond_query_err(dialect));
             }
             out.push('!');
-            write_bond(out, Some(inner), dialect, false)
+            emit_bond(out, Some(inner), dialect, false)
         }
         BondQuery::And(parts) | BondQuery::Or(parts) => {
             if dialect != Dialect::Smarts {
@@ -528,7 +528,7 @@ fn write_bond(
                 if i > 0 {
                     out.push(sep);
                 }
-                write_bond(out, Some(p), dialect, false)?;
+                emit_bond(out, Some(p), dialect, false)?;
             }
             Ok(())
         }
@@ -557,7 +557,7 @@ fn dialect_name(dialect: Dialect) -> &'static str {
     }
 }
 
-fn write_bond_kind(out: &mut String, k: BondKind, omit_default_single: bool) {
+fn emit_bond_kind(out: &mut String, k: BondKind, omit_default_single: bool) {
     match k {
         BondKind::Single if omit_default_single => {}
         BondKind::Single => out.push('-'),
