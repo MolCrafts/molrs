@@ -1103,6 +1103,15 @@ pub fn write_xtc_trajectory<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[
     w.flush()
 }
 
+/// Write one frame as a one-frame XTC file in memory (Å → nm) —
+/// [`write_xtc_trajectory`] of `[frame]` into bytes; [`read_xtc_bytes`] reads
+/// it back.
+pub fn write_xtc_bytes(frame: &impl FrameAccess) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    write_xtc_frame(&mut buf, frame)?;
+    Ok(buf)
+}
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------

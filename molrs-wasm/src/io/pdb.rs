@@ -2,26 +2,30 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `PdbStream` | `PdbIndexBuilder` + `read_pdb_bytes` (the one PDB reader) |
-//! | `writePdbStr` | `PdbWriter` |
+//! | `PdbStream` | `PdbIndexBuilder` + `read_pdb_bytes` (the chunk-fed PDB reader) |
+//! | `readPdbStr`, `readPdbBytes`, `writePdbStr` | `read_pdb_str`, `read_pdb_bytes`, `write_pdb_str` |
 
-use molrs::io::pdb::{PdbIndexBuilder, PdbWriter};
-use molrs::io::read_pdb_bytes;
+use molrs::io::pdb::PdbIndexBuilder;
 use wasm_bindgen::prelude::*;
-
-use crate::core::frame::Frame;
 
 impl_wasm_traj_stream! {
     name    = PdbStream,
     indexer = PdbIndexBuilder::new(),
-    parse   = |bytes, _ctx| read_pdb_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_pdb_bytes(bytes),
 }
 
-/// Write `frame` as PDB text.
-#[wasm_bindgen(js_name = writePdbStr)]
-pub fn write_pdb_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(PdbWriter, frame, "PDB")?)
-}
+read_door!(
+    /// Read the first frame of PDB text.
+    readPdbStr => read_pdb_str(text: &str), "PDB"
+);
+read_door!(
+    /// Read one PDB frame (a `MODEL` block or a whole file) from bytes.
+    readPdbBytes => read_pdb_bytes(bytes: &[u8]), "PDB"
+);
+write_door!(
+    /// Write `frame` as PDB text.
+    writePdbStr => write_pdb_str -> String, "PDB"
+);
 
 #[cfg(test)]
 mod tests {

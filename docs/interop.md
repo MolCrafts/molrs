@@ -62,6 +62,11 @@ file is consumed by exactly these three lines. A typifier implements only
 only writer of the output `Typing::forcefield()`, which holds exactly the
 definitions typing assigned. Compiling is
 `PotentialCompiler::new(ff).compile(&frame)`.
+Python and WASM bind the same composition, with no shortcut either: a
+typifier class is named after the Rust typifier (`Mmff94Typifier`,
+`UffTypifier`, …) and folds in its `Typing` driver — `typify(…)` and
+`forcefield()` — and `PotentialCompiler(forcefield).compile(frame)` compiles
+(JS: `new PotentialCompiler(typifier.forcefield()).compile(typed)`).
 The neighbour list is *yours* because you are the one who knows when it goes
 stale: a minimizer that moves atoms decides when to rebuild it, and molrs will
 not guess. (WASM `Lbfgs` takes its pairs from the `Neighbors` table it is
@@ -238,7 +243,7 @@ each item after the molrs owner it fronts:
 | `FrameRef`, `frame_new`, `frame_column_{f64,i32,u64,str}`, `frame_set_column_{f64,i32,u64,str}` | `core::Frame` via `molrs_ffi::FrameRef` (`u64` is the `UInt` / `Idx` dtype) |
 | `frame_box_h` / `frame_set_box_h` | the box's cell matrix H, 9 row-major values (`SimBox::h_view`) |
 | `frame_meta_keys`, `frame_get_meta`, `frame_set_meta`, `KeyedMetaValue` | `Frame::meta` (a key with its exact-dtype `MetaValue`) |
-| `read_xyz_frame`, `write_xyz_frame` | `io::read_xyz`, `io::xyz::XyzWriter` |
+| `read_xyz`, `write_xyz` (one frame; `append` adds it after the frames already there) | `io::read_xyz`, `io::xyz::XyzWriter` |
 | `read_mrec_frame`, `write_mrec_frame` | `io::read_mrec_frame`, `io::write_mrec_frame` (a record's `frame` section) |
 | `read_mrec_trajectory_frame`, `MrecWriterRef` (`mrec_writer_create` / `open` / `append` / `flush` / `committed` / `close`) | `io::mrec::MrecReader::frame`, `io::mrec::MrecWriter` |
 | `Msd`, `EinsteinDiffusion`, `Vacf`, `Rdf`, `RdfAccumulator`, `MsdAccumulator`, `VacfAccumulator` | `compute::` the same names |

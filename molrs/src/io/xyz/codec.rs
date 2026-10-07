@@ -1152,6 +1152,21 @@ pub fn write_xyz_trajectory<P: AsRef<std::path::Path>, FA: FrameAccess>(
     out.flush()
 }
 
+/// Read the first frame of (extended) XYZ `text` — [`read_xyz`] on text in
+/// memory.
+pub fn read_xyz_str(text: &str) -> std::io::Result<Frame> {
+    XyzReader::new(std::io::Cursor::new(text.as_bytes()))
+        .read_step(0)?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "empty XYZ text"))
+}
+
+/// Write one frame as (extended) XYZ text — [`write_xyz`] into memory.
+pub fn write_xyz_str(frame: &impl FrameAccess) -> std::io::Result<String> {
+    let mut buf = Vec::new();
+    write_frame_to(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
 use crate::io::frame_index::{FrameIndexBuilder, FrameOffset, LineAccumulator};
 use std::io::Cursor;
 

@@ -29,13 +29,26 @@ const frame3d = new Conformer("fast", true, 42).generate(frame2d);
 console.log(writeXyzStr(frame3d));
 ```
 
-The API shape mirrors Python, with JavaScript naming conventions:
+The API shape mirrors Rust and Python, with JavaScript naming conventions:
 `SmilesIr::parse` becomes `SmilesIr.parse`, `to_frame` becomes `toFrame`,
-`Conformer(...).generate` stays `Conformer.generate`, and `write_xyz_str`
-becomes `writeXyzStr` — every class and function is named after its molrs
-owner, and every door names its format, as in Rust and Python. The
+`Conformer(...).generate` stays `Conformer.generate`, and the Rust door
+`molrs::io::write_xyz_str` (Python `molrs.io.write_xyz_str`) becomes
+`writeXyzStr` — every class and function is named after its molrs owner, and
+every door names its format. A file arrives in the browser as text or bytes,
+so JavaScript has the in-memory doors only: `read<Fmt>Str` / `write<Fmt>Str`
+for text formats and `read<Fmt>Bytes` / `write<Fmt>Bytes` for binary ones,
+the same set as Rust's and Python's `read_<fmt>_str` / `_bytes` and
+`write_<fmt>_str` / `_bytes`; a format molrs reads with functions only (XSF,
+cube, CHGCAR, AMBER inpcrd / `.ac`) has no reader class here either. The
 TypeScript declarations in the package (`molrs.d.ts`) are the source of truth
 for exported names.
+
+```ts
+import { readXyzStr, writePdbStr } from "@molcrafts/molrs";
+
+const frame = readXyzStr(await file.text());
+const pdb = writePdbStr(frame);
+```
 
 ## 3. Inspect Columns
 

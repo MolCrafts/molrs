@@ -3,9 +3,9 @@
 //! | JS | molrs |
 //! |----|-------|
 //! | `Mol2Reader` | `Mol2Reader` (whole-content; the one MOL2 reader) |
-//! | `writeMol2Str` | `Mol2Writer` |
+//! | `readMol2Str`, `writeMol2Str` | `read_mol2_str`, `write_mol2_str` |
 
-use molrs::io::mol2::{Mol2Reader as RsMol2Reader, Mol2Writer};
+use molrs::io::mol2::Mol2Reader as RsMol2Reader;
 use molrs::io::reader::{FrameReader, Reader};
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
@@ -80,8 +80,11 @@ impl Mol2Reader {
     }
 }
 
-/// Write `frame` as Tripos MOL2 text.
-#[wasm_bindgen(js_name = writeMol2Str)]
-pub fn write_mol2_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(Mol2Writer, frame, "MOL2")?)
-}
+read_door!(
+    /// Read the first molecule of Tripos MOL2 text.
+    readMol2Str => read_mol2_str(text: &str), "MOL2"
+);
+write_door!(
+    /// Write `frame` as Tripos MOL2 text.
+    writeMol2Str => write_mol2_str -> String, "MOL2"
+);

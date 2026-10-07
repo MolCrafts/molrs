@@ -667,6 +667,15 @@ pub fn write_trr_trajectory<P: AsRef<Path>, FA: FrameAccess>(path: P, frames: &[
     w.flush()
 }
 
+/// Write one frame as a one-frame TRR file in memory (single precision,
+/// Å → nm) — [`write_trr_trajectory`] of `[frame]` into bytes;
+/// [`read_trr_bytes`] reads it back.
+pub fn write_trr_bytes(frame: &impl FrameAccess) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    write_trr_frame(&mut buf, frame)?;
+    Ok(buf)
+}
+
 // ---------------------------------------------------------------------------
 // Streaming
 // ---------------------------------------------------------------------------

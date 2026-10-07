@@ -1,17 +1,18 @@
-//! Force-field WASM face — typifiers and the potentials they compile; mirrors
-//! native molrs composition (`molrs::ff::typifier`, `molrs::ff::potential`).
-//! Minimizing with those potentials is `optimize`'s job (`Lbfgs`).
+//! Force-field WASM face — typifiers, the force field they output and the
+//! compiler that turns it into potentials; the native molrs composition
+//! (`molrs::ff::typifier`, `molrs::ff::potential`), as in Python. Minimizing
+//! with those potentials is `optimize`'s job (`Lbfgs`).
 //!
 //! ```js
 //! const typifier = new UffTypifier();
 //! const typed    = typifier.typify(frame);
-//! const pots     = typifier.toPotentials(typed);   // no .forcefield()
+//! const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
 //! ```
 //!
-//! No `typifyUff` / `insertIntramolecularPairs` façades, and no force-field
-//! handle: each typifier class wraps a native `Typing<…>` whose accumulated
-//! output (`forcefield()`) stays private. This is a known asymmetry with
-//! Python, which exposes it as a copy.
+//! A typifier class is named after the native typifier and, as Python's
+//! typifier classes do, folds in the `Typing<…>` driver: `typify` labels a
+//! frame and is the only writer of the output force field `forcefield()`.
+//! There is no shortcut from a typifier to potentials.
 
 use std::sync::Arc;
 
@@ -19,7 +20,7 @@ use wasm_bindgen::prelude::*;
 
 use molrs::core::Atomistic;
 use molrs::ff::forcefield::ForceField as RsForceField;
-use molrs::ff::potential::{PotentialCompiler, Potentials as RsPotentials};
+use molrs::ff::potential::{PotentialCompiler as RsPotentialCompiler, Potentials as RsPotentials};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::UffTypifier as RsUff;
 use molrs::ff::typifier::mmff::{Mmff94Typifier as RsMmff94, Mmff94sTypifier as RsMmff94s};
@@ -71,29 +72,14 @@ macro_rules! wasm_typifier {
                 )
             }
 
-            /// Compile molecule-bound potentials from a **typed** frame, using
-            /// the output force field accumulated by [`typify`](Self::typify)
-            /// (only the definitions typing has assigned — call `typify` first).
+            /// A copy of the output force field: exactly the definitions
+            /// [`typify`](Self::typify) has assigned so far.
             ///
-            /// Non-bonded terms need a `pairs` block; `Lbfgs.minimize` installs
-            /// that list (from the [`Neighbors`](crate::core::Neighbors) table
-            /// it was constructed with) and recompiles before minimizing.
-            /// Calling this alone with no `pairs` yields bonded-only kernels.
-            ///
-            /// Native: `PotentialCompiler::new(typing.forcefield()).compile(&frame)?` —
-            /// the FF handle stays private, and WASM exposes no `PotentialCompiler`
-            /// class; it collapses that to one method on the typifier.
-            #[wasm_bindgen(js_name = toPotentials)]
-            pub fn to_potentials(&self, frame: &Frame) -> Result<Potentials, JsValue> {
-                let pots = frame.with_frame(|rs| {
-                    PotentialCompiler::new(self.inner.forcefield())
-                        .compile(rs)
-                        .map_err(|e| JsValue::from_str(&format!("toPotentials: {e}")))
-                })?;
-                Ok(Potentials {
-                    ff: self.inner.forcefield().clone(),
-                    inner: Arc::new(pots),
-                })
+            /// Native: `Typing::forcefield()`.
+            pub fn forcefield(&self) -> ForceField {
+                ForceField {
+                    inner: self.inner.forcefield().clone(),
+                }
             }
         }
 
@@ -126,9 +112,55 @@ wasm_typifier!(
     RsMmff94s::new()
 );
 
+// ── ForceField ──────────────────────────────────────────────────────────────
+
+/// A force field (molrs `ff::forcefield::ForceField`): what a typifier's
+/// `forcefield()` returns and a [`PotentialCompiler`] compiles.
+#[wasm_bindgen(js_name = ForceField)]
+pub struct ForceField {
+    pub(crate) inner: RsForceField,
+}
+
+// ── PotentialCompiler ───────────────────────────────────────────────────────
+
+/// Compiles a [`ForceField`] into evaluable [`Potentials`] — molrs
+/// `ff::potential::PotentialCompiler`. Holds a copy of the force field taken
+/// at construction.
+#[wasm_bindgen(js_name = PotentialCompiler)]
+pub struct PotentialCompiler {
+    ff: RsForceField,
+}
+
+#[wasm_bindgen(js_class = PotentialCompiler)]
+impl PotentialCompiler {
+    #[wasm_bindgen(constructor)]
+    pub fn new(forcefield: &ForceField) -> PotentialCompiler {
+        PotentialCompiler {
+            ff: forcefield.inner.clone(),
+        }
+    }
+
+    /// Compile the potentials of a **typed** frame. Non-bonded terms need a
+    /// `pairs` block; `Lbfgs.minimize` installs that list (from the
+    /// [`Neighbors`](crate::core::Neighbors) table it was constructed with)
+    /// and recompiles before minimizing, so compiling a frame with no `pairs`
+    /// yields its bonded kernels only.
+    pub fn compile(&self, frame: &Frame) -> Result<Potentials, JsValue> {
+        let pots = frame.with_frame(|rs| {
+            RsPotentialCompiler::new(&self.ff)
+                .compile(rs)
+                .map_err(|e| JsValue::from_str(&format!("compile: {e}")))
+        })?;
+        Ok(Potentials {
+            ff: self.ff.clone(),
+            inner: Arc::new(pots),
+        })
+    }
+}
+
 // ── Potentials ──────────────────────────────────────────────────────────────
 
-/// Compiled kernels. Holds the force-field skeleton so [`Lbfgs`](crate::optimize::Lbfgs) can recompile
+/// Compiled kernels (molrs `ff::potential::Potentials`). Holds the force field so [`Lbfgs`](crate::optimize::Lbfgs) can recompile
 /// after installing a neighbour list.
 #[wasm_bindgen(js_name = Potentials)]
 pub struct Potentials {

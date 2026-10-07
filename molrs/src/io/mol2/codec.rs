@@ -403,6 +403,14 @@ pub fn read_mol2_trajectory<P: AsRef<Path>>(path: P) -> Result<Vec<Frame>> {
     crate::io::reader::collect_frames(&mut mr)
 }
 
+/// Read the first molecule of MOL2 `text` — [`read_mol2`] on text in memory.
+pub fn read_mol2_str(text: &str) -> Result<Frame> {
+    let mut reader = text.as_bytes();
+    let mut pending = None;
+    read_one_record(&mut reader, &mut pending)?
+        .ok_or_else(|| invalid_data("MOL2 text has no MOLECULE block"))
+}
+
 /// `FrameReader`-trait wrapper. Each call returns the next molecule or `None`
 /// at EOF.
 ///
@@ -463,6 +471,13 @@ pub fn write_mol2<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let mut w = BufWriter::new(file);
     write_frame_to(&mut w, frame)?;
     w.flush()
+}
+
+/// Write a frame as single-molecule MOL2 text — [`write_mol2`] into memory.
+pub fn write_mol2_str(frame: &Frame) -> Result<String> {
+    let mut buf = Vec::new();
+    write_frame_to(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Emit one frame in MOL2 format.

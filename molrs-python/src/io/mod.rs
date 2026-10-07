@@ -4,6 +4,7 @@
 //! | binding                 | what                                                     |
 //! |-------------------------|----------------------------------------------------------|
 //! | [`structure`]           | one-frame doors: PDB, XYZ, GRO, SDF, MOL2, CIF, XSF, cube, VASP, LAMMPS data / molecule, AMBER |
+//! | [`in_memory`]           | the frame formats' `read_<fmt>_str` / `_bytes` and `write_<fmt>_str` / `_bytes` |
 //! | [`trajectory_readers`]  | `read_<fmt>_trajectory` and the lazy `<Fmt>Reader` classes; the trajectory writers |
 //! | [`stl`]                 | STL                                                      |
 //! | [`csv`]                 | the native half of the CSV block doors                   |
@@ -23,6 +24,7 @@ pub mod cgsmiles;
 mod csv;
 mod forcefield;
 mod frame_encoding;
+mod in_memory;
 mod json_to_py;
 pub mod lammps_bond_react;
 // The log parser reads a path, and the record store is a filesystem store in
@@ -41,6 +43,7 @@ use pyo3::prelude::*;
 /// Register every `molrs::io` binding on the native module.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     structure::register(m)?;
+    in_memory::register(m)?;
     trajectory_readers::register(m)?;
     stl::register(m)?;
     csv::register(m)?;

@@ -1041,6 +1041,20 @@ pub fn write_pdb_trajectory<P: AsRef<Path>, FA: FrameAccess>(
     out.flush()
 }
 
+/// Read the first frame of PDB `text` — [`read_pdb`] on text in memory.
+pub fn read_pdb_str(text: &str) -> std::io::Result<Frame> {
+    PdbReader::new(std::io::Cursor::new(text.as_bytes()))
+        .read()?
+        .ok_or_else(|| invalid_data("No frame found in PDB text"))
+}
+
+/// Write one frame as PDB text — [`write_pdb`] into memory.
+pub fn write_pdb_str(frame: &impl FrameAccess) -> std::io::Result<String> {
+    let mut buf = Vec::new();
+    write_frame_to(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(invalid_data)
+}
+
 // ============================================================================
 // Streaming
 // ============================================================================

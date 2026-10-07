@@ -3,9 +3,9 @@
 //! | JS | molrs |
 //! |----|-------|
 //! | `GroReader` | `GroReader` (whole-content; the one GRO reader) |
-//! | `writeGroStr` | `GroWriter` (Å → nm on write) |
+//! | `readGroStr`, `writeGroStr` | `read_gro_str`, `write_gro_str` (nm ↔ Å) |
 
-use molrs::io::gro::{GroReader as RsGroReader, GroWriter};
+use molrs::io::gro::GroReader as RsGroReader;
 use molrs::io::reader::FrameReader;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
@@ -84,8 +84,11 @@ impl GroReader {
     }
 }
 
-/// Write `frame` as GROMACS GRO text (Å → nm).
-#[wasm_bindgen(js_name = writeGroStr)]
-pub fn write_gro_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(GroWriter, frame, "GRO")?)
-}
+read_door!(
+    /// Read the first frame of GROMACS GRO text (nm → Å).
+    readGroStr => read_gro_str(text: &str), "GRO"
+);
+write_door!(
+    /// Write `frame` as GROMACS GRO text (Å → nm).
+    writeGroStr => write_gro_str -> String, "GRO"
+);

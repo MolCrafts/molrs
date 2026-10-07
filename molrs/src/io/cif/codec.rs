@@ -729,6 +729,14 @@ pub fn read_cif<P: AsRef<Path>>(path: P) -> Result<Frame> {
         .ok_or_else(|| invalid_data("CIF file has no data_ block"))
 }
 
+/// Read the first `data_` block of CIF `text` — [`read_cif`] on text in
+/// memory.
+pub fn read_cif_str(text: &str) -> Result<Frame> {
+    CifReader::new(text.as_bytes())
+        .read()?
+        .ok_or_else(|| invalid_data("CIF text has no data_ block"))
+}
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
@@ -739,6 +747,13 @@ pub fn write_cif<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     let mut w = BufWriter::new(file);
     write_frame_to(&mut w, frame)?;
     w.flush()
+}
+
+/// Write a frame as single-block CIF text — [`write_cif`] into memory.
+pub fn write_cif_str(frame: &Frame) -> Result<String> {
+    let mut buf = Vec::new();
+    write_frame_to(&mut buf, frame)?;
+    String::from_utf8(buf).map_err(invalid_data)
 }
 
 /// Write a Frame as a single CIF data block. Cell parameters come from

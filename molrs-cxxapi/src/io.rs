@@ -79,7 +79,7 @@ fn write_xyz_path(path: &str, frame: &Frame, append: bool) -> Result<(), String>
 /// XYZ / ExtXYZ file through molrs `XyzWriter`; `append` adds it after the
 /// frames already there, otherwise the file is truncated.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn write_xyz_frame(
+pub(crate) fn write_xyz(
     path: &str,
     atomic_number: &[i32],
     x: &[f64],
@@ -89,8 +89,8 @@ pub(crate) fn write_xyz_frame(
     meta: Vec<bridge::ffi::KeyedMetaValue>,
     append: bool,
 ) -> Result<(), String> {
-    let mut frame = frame_with_elements(atomic_number, x, y, z, h)
-        .map_err(|e| format!("write_xyz_frame: {e}"))?;
+    let mut frame =
+        frame_with_elements(atomic_number, x, y, z, h).map_err(|e| format!("write_xyz: {e}"))?;
     for entry in meta {
         let (key, value) = meta_from_keyed_value(entry)?;
         frame.meta.insert(key, value);
@@ -286,8 +286,8 @@ fn z_for_symbol(sym: &str) -> Result<i32, String> {
 /// Z lives in `atomic_number`, not `type`: `type` is the force-field label a
 /// caller owns (a String), and the vocabulary binds a key's dtype wherever it
 /// appears — so writing Z there is refused outright.
-pub(crate) fn read_xyz_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let what = "read_xyz_frame";
+pub(crate) fn read_xyz(path: &str) -> Result<Box<FrameRef>, String> {
+    let what = "read_xyz";
     let mut frame = molrs::io::read_xyz(path).map_err(|e| format!("{what}: read: {e}"))?;
     let atoms = frame
         .get_mut("atoms")
@@ -372,7 +372,7 @@ mod tests {
         )
         .unwrap();
 
-        let frame = read_xyz_frame(path.to_str().unwrap()).expect("read_xyz_frame");
+        let frame = read_xyz(path.to_str().unwrap()).expect("read_xyz");
         std::fs::remove_file(path).unwrap();
         let columns = frame_block_columns(&frame, "atoms");
         assert!(columns.iter().any(|column| column == "atomic_number"));
@@ -408,7 +408,7 @@ mod tests {
         )
         .unwrap();
 
-        let frame = read_xyz_frame(path.to_str().unwrap()).expect("read_xyz_frame");
+        let frame = read_xyz(path.to_str().unwrap()).expect("read_xyz");
         std::fs::remove_file(path).unwrap();
         assert_eq!(frame_column_u64(&frame, "atoms", "atomic_number"), [1u64]);
     }
@@ -424,7 +424,7 @@ mod tests {
         step.i64_value = 9_007_199_254_740_993;
         let mut energy = empty_keyed_meta_value("energy_eV".into(), MetaType::F64);
         energy.f64_value = -1.25;
-        write_xyz_frame(
+        write_xyz(
             path.to_str().unwrap(),
             &[1],
             &[0.0],

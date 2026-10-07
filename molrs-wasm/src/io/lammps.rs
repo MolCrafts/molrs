@@ -2,20 +2,17 @@
 //!
 //! | JS | molrs |
 //! |----|-------|
-//! | `LammpsDataStream` | `LammpsDataIndexBuilder` + `read_lammps_data_bytes` (the one data-file reader) |
-//! | `LammpsDumpStream` | `LammpsDumpIndexBuilder` + `read_lammps_dump_bytes` (the one dump reader) |
-//! | `writeLammpsDataStr` | `LammpsDataWriter` |
-//! | `writeLammpsDumpStr` | `LammpsDumpWriter` (one snapshot) |
+//! | `LammpsDataStream` | `LammpsDataIndexBuilder` + `read_lammps_data_bytes` (the chunk-fed data-file reader) |
+//! | `LammpsDumpStream` | `LammpsDumpIndexBuilder` + `read_lammps_dump_bytes` (the chunk-fed dump reader) |
+//! | `readLammpsDataStr`, `readLammpsDataBytes`, `writeLammpsDataStr` | `read_lammps_data_str`, `read_lammps_data_bytes`, `write_lammps_data_str` |
+//! | `readLammpsDumpStr`, `readLammpsDumpBytes`, `writeLammpsDumpStr` | `read_lammps_dump_str`, `read_lammps_dump_bytes`, `write_lammps_dump_str` (one snapshot) |
 //! | `readLammpsLogStr`, `isLammpsLog` | [`log`] — `io::lammps::log` |
 
 pub mod log;
 
 pub use self::log::*;
 
-use molrs::io::lammps::{
-    LammpsDataIndexBuilder, LammpsDataWriter, LammpsDumpIndexBuilder, LammpsDumpWriter,
-};
-use molrs::io::{read_lammps_data_bytes, read_lammps_dump_bytes};
+use molrs::io::lammps::{LammpsDataIndexBuilder, LammpsDumpIndexBuilder};
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
@@ -23,25 +20,50 @@ use crate::core::frame::Frame;
 impl_wasm_traj_stream! {
     name    = LammpsDataStream,
     indexer = LammpsDataIndexBuilder::new(),
-    parse   = |bytes, _ctx| read_lammps_data_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_lammps_data_bytes(bytes),
 }
 
 impl_wasm_traj_stream! {
     name    = LammpsDumpStream,
     indexer = LammpsDumpIndexBuilder::new(),
-    parse   = |bytes, _ctx| read_lammps_dump_bytes(bytes),
+    parse   = |bytes, _ctx| molrs::io::read_lammps_dump_bytes(bytes),
 }
 
-/// Write `frame` as a LAMMPS data file.
-#[wasm_bindgen(js_name = writeLammpsDataStr)]
-pub fn write_lammps_data_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(LammpsDataWriter, frame, "LAMMPS data")?)
-}
+read_door!(
+    /// Read LAMMPS data text.
+    readLammpsDataStr => read_lammps_data_str(text: &str), "LAMMPS data"
+);
+read_door!(
+    /// Read one LAMMPS data frame from bytes.
+    readLammpsDataBytes => read_lammps_data_bytes(bytes: &[u8]), "LAMMPS data"
+);
+write_door!(
+    /// Write `frame` as LAMMPS data text.
+    writeLammpsDataStr => write_lammps_data_str -> String, "LAMMPS data"
+);
+read_door!(
+    /// Read the first snapshot of LAMMPS dump text.
+    readLammpsDumpStr => read_lammps_dump_str(text: &str), "LAMMPS dump"
+);
+read_door!(
+    /// Read one LAMMPS dump snapshot from bytes.
+    readLammpsDumpBytes => read_lammps_dump_bytes(bytes: &[u8]), "LAMMPS dump"
+);
 
-/// Write `frame` as one LAMMPS dump snapshot.
+/// Write `frame` as one LAMMPS dump snapshot. `columns` is the `dump custom`
+/// column line, in order; omitted, every column the `atoms` block holds.
 #[wasm_bindgen(js_name = writeLammpsDumpStr)]
-pub fn write_lammps_dump_str(frame: &Frame) -> Result<String, JsValue> {
-    super::utf8_string(write_bytes!(LammpsDumpWriter, frame, "LAMMPS dump")?)
+pub fn write_lammps_dump_str(
+    frame: &Frame,
+    columns: Option<Vec<String>>,
+) -> Result<String, JsValue> {
+    let chosen: Option<Vec<&str>> = columns
+        .as_ref()
+        .map(|c| c.iter().map(String::as_str).collect());
+    frame.with_frame(|f| {
+        molrs::io::write_lammps_dump_str(f, chosen.as_deref())
+            .map_err(|e| JsValue::from_str(&format!("LAMMPS dump writing error: {e}")))
+    })
 }
 
 #[cfg(test)]

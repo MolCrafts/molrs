@@ -1963,6 +1963,16 @@ pub fn write_dcd_trajectory<P: AsRef<Path>, FA: FrameAccess>(
     Ok(())
 }
 
+/// Write one frame as a complete one-frame DCD file in memory —
+/// [`write_dcd_trajectory`] of `[frame]` into bytes; [`read_dcd_bytes`]
+/// reads it back.
+pub fn write_dcd_bytes(frame: &impl FrameAccess) -> std::io::Result<Vec<u8>> {
+    // DcdWriter patches NSET after each frame, so it needs Write + Seek.
+    let mut dcd = DcdWriter::new(Cursor::new(Vec::new()));
+    write_dcd_frame(&mut dcd, frame)?;
+    Ok(dcd.writer.into_inner())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
