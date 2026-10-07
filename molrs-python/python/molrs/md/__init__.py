@@ -1,4 +1,4 @@
-"""In-process MD: one ``Potential`` concept, Rust integrators, the ``MD`` driver.
+"""In-process MD: one ``Potential`` concept, Rust integrators, the ``MdDriver``.
 
 End to end (Ar-like LJ dimer)::
 
@@ -27,7 +27,7 @@ Units contract — the engine is **unit-agnostic**. Take constants from
 
     kb = molrs.core.UnitPreset("real").boltzmann()
     md.MaxwellBoltzmann(kb * 300.0, seed=0)
-    md.MD().run(frame, n, dt=dt, kb=kb, thermo=100)
+    md.MdDriver().run(frame, n, dt=dt, kb=kb, thermo=100)
 
 MD defines no potential: it integrates a :class:`molrs.ff.potential.PairLjCut`,
 a ``Potentials`` collection (e.g. from :func:`molrs.ff.potential.compile_explicit_terms`), or
@@ -38,31 +38,31 @@ subclass :class:`molrs.ff.potential.Potential`::
         def calc_energy_forces(self, pos):
             return 0.05 * float((pos * pos).sum()), -0.1 * pos
 
-ForceField + Frame runs go through the :class:`MD` driver::
+ForceField + Frame runs go through the :class:`MdDriver` driver::
 
-    md.MD().set_forcefield(ff).set_neighbors(cutoff=rc, skin=2.0).run(
+    md.MdDriver().set_forcefield(ff).set_neighbors(cutoff=rc, skin=2.0).run(
         frame, 1000, dt=1.0, kb=molrs.core.UnitPreset("real").boltzmann()
     )
 
-Precision: ``MD(dtype=np.float64)`` is the only entry. ``np.float32`` / mixed
+Precision: ``MdDriver(dtype=np.float64)`` is the only entry. ``np.float32`` / mixed
 raise; those loops belong in the Rust integrators.
 """
 
 from .._lib import md as _md
 
 Langevin = _md.Langevin
-MDState = _md.MDState
+MdState = _md.MdState
 MaxwellBoltzmann = _md.MaxwellBoltzmann
 VelocityVerlet = _md.VelocityVerlet
 
-from ._driver import MD
+from ._driver import MdDriver
 
-MD.__module__ = __name__
+MdDriver.__module__ = __name__
 
 __all__ = [
-    "MD",
+    "MdDriver",
     "Langevin",
-    "MDState",
+    "MdState",
     "MaxwellBoltzmann",
     "VelocityVerlet",
 ]

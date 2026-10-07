@@ -59,7 +59,7 @@ use std::f64::consts::PI;
 use ndarray::{Array2, ArrayD, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::flat_coords::{compute_dihedral, sub3, term_table, validate_coords};
 use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, scale};
 use molrs::core::Frame;
@@ -263,14 +263,6 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
     ddy
 }
 
-/// LAMMPS `FixCMAP::dihedral_angle_atan2`, degrees.
-#[inline]
-fn fix_cmap_dihedral_angle_deg(f: [F; 3], a: [F; 3], b: [F; 3], absg: F) -> F {
-    let arg1 = absg * dot(f, b);
-    let arg2 = dot(a, b);
-    arg1.atan2(arg2) * 180.0 / PI
-}
-
 /// The CHARMM CMAP crossterm over pre-resolved atoms and maps.
 pub struct CmapCharmm {
     atoms: [Vec<usize>; 5],
@@ -333,8 +325,11 @@ impl CmapCharmm {
             let dpr32r43 = dot(vb32, vb43);
             let dpr45r43 = dot(vb45, vb43);
 
-            let phi = fix_cmap_dihedral_angle_deg(vb21, a1, b1, r32);
-            let psi = fix_cmap_dihedral_angle_deg(vb32, a2, b2, r43);
+            // LAMMPS's `FixCMAP::dihedral_angle_atan2` is this angle: the
+            // IUPAC sign, `atan2(|b₂| b₁·n₂, n₁·n₂)`. Its −180° is the +180°
+            // here, which `CmapGrid::eval` reads as −180°.
+            let phi = compute_dihedral(x, i1, i2, i3, i4).to_degrees();
+            let psi = compute_dihedral(x, i2, i3, i4, i5).to_degrees();
             let (e, de_dphi, de_dpsi) = self.maps[self.map[t]].eval(phi, psi);
             energy += e;
 

@@ -1,7 +1,7 @@
 """ForceField + Frame MD — the one driver over the Rust integrators.
 
-Public path: ``molrs.md.MD``. Frame topology is compiled per
-:meth:`MD.run`; the Rust ``VelocityVerlet`` owns the neighbour loop (the
+Public path: ``molrs.md.MdDriver``. Frame topology is compiled per
+:meth:`MdDriver.run`; the Rust ``VelocityVerlet`` owns the neighbour loop (the
 ``VerletSkin`` rebuild policy and pair feeding) — Python never does pair
 bookkeeping.
 """
@@ -44,12 +44,12 @@ def _stack_vel(atoms: object, shape: tuple[int, int]) -> NDArray[np.float64]:
     return np.zeros(shape, dtype=np.float64)
 
 
-class MD:
+class MdDriver:
     """Run a ``ForceField`` (or pre-built potential) over a ``Frame``::
 
         from molrs import md
 
-        driver = md.MD()
+        driver = md.MdDriver()
         driver.set_forcefield(ff)
         driver.set_neighbors(cutoff=7.5, skin=2.0)
         state = driver.run(frame, 1000, dt=1.0, kb=molrs.core.UnitPreset("real").boltzmann())
@@ -58,7 +58,7 @@ class MD:
     Force-field parameters must already be consistent with ``dt`` / ``mass``
     / velocities. ``thermo=N`` requires an explicit ``kb=``.
 
-    Precision is ``MD(dtype=np.float64)`` only; float32 / mixed belong in
+    Precision is ``MdDriver(dtype=np.float64)`` only; float32 / mixed belong in
     the Rust integrator.
 
     After :meth:`run`, :attr:`n_edges` / :attr:`rebuild_count` /
@@ -70,7 +70,7 @@ class MD:
         dt = np.dtype(dtype)
         if dt != np.dtype(np.float64):
             raise ValueError(
-                "MD(dtype=) currently accepts only numpy.float64; "
+                "MdDriver(dtype=) currently accepts only numpy.float64; "
                 "float32 / mixed belong in the Rust integrator"
             )
         self.dtype = dt
@@ -84,7 +84,7 @@ class MD:
 
     # -- configuration ------------------------------------------------------
 
-    def set_forcefield(self, forcefield: object) -> MD:
+    def set_forcefield(self, forcefield: object) -> MdDriver:
         """Attach a ``ForceField``; each :meth:`run` compiles it per frame."""
         if not isinstance(forcefield, ForceField):
             raise TypeError(
@@ -94,7 +94,7 @@ class MD:
         self._potential = None
         return self
 
-    def set_potential(self, potential: object) -> MD:
+    def set_potential(self, potential: object) -> MdDriver:
         """Attach a pre-built potential (advanced; replaces :meth:`set_forcefield`).
 
         Accepts a compiled ``Potentials`` collection (e.g. one
@@ -123,7 +123,7 @@ class MD:
         every: int | None = None,
         delay: int | None = None,
         check: bool | None = None,
-    ) -> MD:
+    ) -> MdDriver:
         """Configure the neighbour list the run's integrator will own.
 
         Two mutually exclusive forms:
@@ -322,7 +322,7 @@ class MD:
             neighbors=neighbors,
             mass=mass,
             # The cell the positions are folded into each step. Without it
-            # `MDState.images` stays zero and the wrapped coordinates lose the
+            # `MdState.images` stays zero and the wrapped coordinates lose the
             # history that makes them readable as a trajectory.
             simbox=getattr(frame, "box", None),
         )
@@ -338,7 +338,7 @@ class MD:
         seed: int = 0,
         thermo: int | None = None,
         kb: float | None = None,
-    ) -> _md.MDState:
+    ) -> _md.MdState:
         """Integrate ``n_steps`` NVE steps; write pos and vel back to ``frame``.
 
         Assembly is per call (:meth:`_assemble`) — a driver configured via
@@ -351,13 +351,13 @@ class MD:
         :attr:`thermo` (the ``temp`` column uses ``kb=``). Every quantity is in
         the caller's unit system — ``kb`` is Boltzmann's constant in it, e.g.
         ``molrs.core.UnitPreset("real").boltzmann()`` — and nothing is
-        converted. Returns the final ``MDState``.
+        converted. Returns the final ``MdState``.
         """
         if self._forcefield is None and self._potential is None:
             raise RuntimeError("set_forcefield or set_potential before run")
         if (thermo is not None or temperature is not None) and kb is None:
             raise ValueError(
-                "MD.run(thermo=...) / temperature= requires an explicit kb="
+                "MdDriver.run(thermo=...) / temperature= requires an explicit kb="
             )
         atoms = frame["atoms"]
         pos = atoms.coords
@@ -392,7 +392,7 @@ class MD:
             kb = float(kb)
             n_dof = max(1, 3 * pos.shape[0] - int(integrator.removed_dof))
 
-            def record(step: int, state: _md.MDState) -> None:
+            def record(step: int, state: _md.MdState) -> None:
                 ke = kinetic_energy(mass_arr, state.vel)
                 pe = float(state.energy)
                 self.thermo.append(

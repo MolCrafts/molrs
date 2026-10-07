@@ -849,7 +849,7 @@ impl Frame {
     /// [`MolRsError::NotFound`] without an `atoms` block, and
     /// [`MolRsError::Block`] ([`BlockError::MissingColumn`](crate::core::BlockError::MissingColumn))
     /// when it lacks `x`, `y` or `z`.
-    pub fn coords(&self) -> Result<crate::op::FNx3, MolRsError> {
+    pub fn coords(&self) -> Result<crate::op::Fnx3, MolRsError> {
         let atoms = self.get(ATOMS).ok_or_else(|| {
             MolRsError::not_found("block", format!("frame has no '{ATOMS}' block"))
         })?;
@@ -876,7 +876,7 @@ impl Frame {
     /// frame.set_coords(array![[1.0 as F, 2.0, 3.0]].view()).unwrap();
     /// assert_eq!(frame.coords().unwrap(), array![[1.0, 2.0, 3.0]]);
     /// ```
-    pub fn set_coords(&mut self, coords: crate::op::FNx3View<'_>) -> Result<(), MolRsError> {
+    pub fn set_coords(&mut self, coords: crate::op::Fnx3View<'_>) -> Result<(), MolRsError> {
         match self.get_mut(ATOMS) {
             Some(atoms) => atoms.set_coords(coords)?,
             None => {

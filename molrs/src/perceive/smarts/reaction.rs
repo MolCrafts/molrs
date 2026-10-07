@@ -867,7 +867,7 @@ mod tests {
         let rxn = Reaction::parse("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O").unwrap();
         assert_eq!(rxn.reactants().len(), 2);
         assert_eq!(rxn.reactant_smarts(), vec!["[N;H2:1]", "[C:2](=O)OC"]);
-        assert_eq!(rxn.product().num_query_atoms(), 3);
+        assert_eq!(rxn.product().n_query_atoms(), 3);
     }
 
     #[test]

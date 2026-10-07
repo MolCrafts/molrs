@@ -94,16 +94,16 @@ fn sizeofint(size: u32) -> i32 {
     nbits
 }
 
-/// Number of bits needed to store `num_of_ints` integers `< sizes[i]` as a
+/// Number of bits needed to store `n_ints` integers `< sizes[i]` as a
 /// single mixed-radix number.
-fn sizeofints(num_of_ints: usize, sizes: &[u32; 3]) -> i32 {
+fn sizeofints(n_ints: usize, sizes: &[u32; 3]) -> i32 {
     let mut bytes = [0u32; 32];
-    let mut num_of_bytes = 1usize;
+    let mut n_bytes = 1usize;
     bytes[0] = 1;
-    for &size in sizes.iter().take(num_of_ints) {
+    for &size in sizes.iter().take(n_ints) {
         let mut tmp = 0u64;
         let mut bytecnt = 0usize;
-        while bytecnt < num_of_bytes {
+        while bytecnt < n_bytes {
             tmp += bytes[bytecnt] as u64 * size as u64;
             bytes[bytecnt] = (tmp & 0xff) as u32;
             tmp >>= 8;
@@ -114,9 +114,9 @@ fn sizeofints(num_of_ints: usize, sizes: &[u32; 3]) -> i32 {
             bytecnt += 1;
             tmp >>= 8;
         }
-        num_of_bytes = bytecnt;
+        n_bytes = bytecnt;
     }
-    let last = num_of_bytes - 1;
+    let last = n_bytes - 1;
     let mut num = 1u32;
     let mut nbits = 0i32;
     while bytes[last] >= num {
@@ -156,53 +156,53 @@ impl<'a> BitReader<'a> {
         Ok(b as u32)
     }
 
-    /// Receive `num_of_bits` bits, MSB-first.
-    fn receivebits(&mut self, mut num_of_bits: i32) -> Result<i32> {
+    /// Receive `n_bits` bits, MSB-first.
+    fn receivebits(&mut self, mut n_bits: i32) -> Result<i32> {
         let mut num: u32 = 0;
-        let mask = if num_of_bits >= 32 {
+        let mask = if n_bits >= 32 {
             u32::MAX
         } else {
-            (1u32 << num_of_bits) - 1
+            (1u32 << n_bits) - 1
         };
-        while num_of_bits >= 8 {
+        while n_bits >= 8 {
             self.lastbyte = (self.lastbyte << 8) | self.next_byte()?;
-            num |= (self.lastbyte >> self.lastbits) << (num_of_bits - 8);
-            num_of_bits -= 8;
+            num |= (self.lastbyte >> self.lastbits) << (n_bits - 8);
+            n_bits -= 8;
         }
-        if num_of_bits > 0 {
-            if self.lastbits < num_of_bits {
+        if n_bits > 0 {
+            if self.lastbits < n_bits {
                 self.lastbits += 8;
                 self.lastbyte = (self.lastbyte << 8) | self.next_byte()?;
             }
-            self.lastbits -= num_of_bits;
-            num |= (self.lastbyte >> self.lastbits) & ((1u32 << num_of_bits) - 1);
+            self.lastbits -= n_bits;
+            num |= (self.lastbyte >> self.lastbits) & ((1u32 << n_bits) - 1);
         }
         num &= mask;
         Ok(num as i32)
     }
 
-    /// Receive `num_of_ints` integers packed with `num_of_bits` total bits.
+    /// Receive `n_ints` integers packed with `n_bits` total bits.
     fn receiveints(
         &mut self,
-        num_of_ints: usize,
-        mut num_of_bits: i32,
+        n_ints: usize,
+        mut n_bits: i32,
         sizes: &[u32; 3],
         nums: &mut [i32; 3],
     ) -> Result<()> {
         let mut bytes = [0i32; 32];
-        let mut num_of_bytes = 0usize;
-        while num_of_bits > 8 {
-            bytes[num_of_bytes] = self.receivebits(8)?;
-            num_of_bytes += 1;
-            num_of_bits -= 8;
+        let mut n_bytes = 0usize;
+        while n_bits > 8 {
+            bytes[n_bytes] = self.receivebits(8)?;
+            n_bytes += 1;
+            n_bits -= 8;
         }
-        if num_of_bits > 0 {
-            bytes[num_of_bytes] = self.receivebits(num_of_bits)?;
-            num_of_bytes += 1;
+        if n_bits > 0 {
+            bytes[n_bytes] = self.receivebits(n_bits)?;
+            n_bytes += 1;
         }
-        for i in (1..num_of_ints).rev() {
+        for i in (1..n_ints).rev() {
             let mut num = 0u32;
-            for j in (0..num_of_bytes).rev() {
+            for j in (0..n_bytes).rev() {
                 num = (num << 8) | bytes[j] as u32;
                 let p = num / sizes[i];
                 bytes[j] = p as i32;
@@ -382,20 +382,20 @@ impl BitWriter {
         self.data[idx] = val;
     }
 
-    fn sendbits(&mut self, mut num_of_bits: i32, num: u32) {
+    fn sendbits(&mut self, mut n_bits: i32, num: u32) {
         let mut cnt = self.cnt;
         let mut lastbyte = self.lastbyte;
         let mut lastbits = self.lastbits;
-        while num_of_bits >= 8 {
-            lastbyte = (lastbyte << 8) | ((num >> (num_of_bits - 8)) & 0xff);
+        while n_bits >= 8 {
+            lastbyte = (lastbyte << 8) | ((num >> (n_bits - 8)) & 0xff);
             self.put(cnt, (lastbyte >> lastbits) as u8);
             cnt += 1;
-            num_of_bits -= 8;
+            n_bits -= 8;
         }
-        if num_of_bits > 0 {
-            let mask = (1u32 << num_of_bits) - 1;
-            lastbyte = (lastbyte << num_of_bits) | (num & mask);
-            lastbits += num_of_bits;
+        if n_bits > 0 {
+            let mask = (1u32 << n_bits) - 1;
+            lastbyte = (lastbyte << n_bits) | (num & mask);
+            lastbits += n_bits;
             if lastbits >= 8 {
                 lastbits -= 8;
                 self.put(cnt, (lastbyte >> lastbits) as u8);
@@ -410,28 +410,22 @@ impl BitWriter {
         }
     }
 
-    fn sendints(
-        &mut self,
-        num_of_ints: usize,
-        num_of_bits: i32,
-        sizes: &[u32; 3],
-        nums: &[u32; 3],
-    ) {
+    fn sendints(&mut self, n_ints: usize, n_bits: i32, sizes: &[u32; 3], nums: &[u32; 3]) {
         let mut bytes = [0u32; 32];
         let mut tmp = nums[0];
-        let mut num_of_bytes = 0usize;
+        let mut n_bytes = 0usize;
         loop {
-            bytes[num_of_bytes] = tmp & 0xff;
-            num_of_bytes += 1;
+            bytes[n_bytes] = tmp & 0xff;
+            n_bytes += 1;
             tmp >>= 8;
             if tmp == 0 {
                 break;
             }
         }
-        for i in 1..num_of_ints {
+        for i in 1..n_ints {
             let mut carry = nums[i] as u64;
             let mut bytecnt = 0usize;
-            while bytecnt < num_of_bytes {
+            while bytecnt < n_bytes {
                 carry += bytes[bytecnt] as u64 * sizes[i] as u64;
                 bytes[bytecnt] = (carry & 0xff) as u32;
                 carry >>= 8;
@@ -442,21 +436,18 @@ impl BitWriter {
                 bytecnt += 1;
                 carry >>= 8;
             }
-            num_of_bytes = bytecnt;
+            n_bytes = bytecnt;
         }
-        if num_of_bits >= (num_of_bytes as i32) * 8 {
-            for &b in bytes.iter().take(num_of_bytes) {
+        if n_bits >= (n_bytes as i32) * 8 {
+            for &b in bytes.iter().take(n_bytes) {
                 self.sendbits(8, b);
             }
-            self.sendbits(num_of_bits - (num_of_bytes as i32) * 8, 0);
+            self.sendbits(n_bits - (n_bytes as i32) * 8, 0);
         } else {
-            for &b in bytes.iter().take(num_of_bytes - 1) {
+            for &b in bytes.iter().take(n_bytes - 1) {
                 self.sendbits(8, b);
             }
-            self.sendbits(
-                num_of_bits - ((num_of_bytes - 1) as i32) * 8,
-                bytes[num_of_bytes - 1],
-            );
+            self.sendbits(n_bits - ((n_bytes - 1) as i32) * 8, bytes[n_bytes - 1]);
         }
     }
 

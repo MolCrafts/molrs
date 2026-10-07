@@ -15,7 +15,7 @@ use super::primitives::Region;
 use crate::core::bvh::Bvh;
 use crate::core::{BoxError, SimBox};
 use crate::op::vec3::{add, norm, sub};
-use crate::op::{F, FNx3, FNx3View};
+use crate::op::{F, Fnx3, Fnx3View};
 use ndarray::Array2;
 
 /// Why a set of centres and radii cannot become a [`SphereUnion`].
@@ -93,7 +93,7 @@ pub struct SphereUnion {
     bx: SimBox,
     shifts: Vec<[F; 3]>,
     bvh: Bvh,
-    bounds: FNx3,
+    bounds: Fnx3,
 }
 
 impl SphereUnion {
@@ -105,7 +105,7 @@ impl SphereUnion {
     ///
     /// Returns `Err` for no spheres, a count mismatch, a non-finite centre or
     /// radius, or a radius `<= 0`.
-    pub fn new(centers: FNx3View<'_>, radii: &[F], bx: &SimBox) -> Result<Self, SphereUnionError> {
+    pub fn new(centers: Fnx3View<'_>, radii: &[F], bx: &SimBox) -> Result<Self, SphereUnionError> {
         Self::check(centers, radii)?;
         let pbc = bx.pbc();
         let centers: Vec<[F; 3]> = centers
@@ -182,7 +182,7 @@ impl SphereUnion {
     /// # Errors
     ///
     /// The gates of [`new`](Self::new), plus a box that could not be built.
-    pub fn free(centers: FNx3View<'_>, radii: &[F]) -> Result<Self, SphereUnionError> {
+    pub fn free(centers: Fnx3View<'_>, radii: &[F]) -> Result<Self, SphereUnionError> {
         let r_max = Self::check(centers, radii)?;
         let bx = SimBox::free(centers, 2.0 * r_max)?;
         Self::new(centers, radii, &bx)
@@ -209,7 +209,7 @@ impl SphereUnion {
     }
 
     /// Validate and return the largest radius.
-    fn check(centers: FNx3View<'_>, radii: &[F]) -> Result<F, SphereUnionError> {
+    fn check(centers: Fnx3View<'_>, radii: &[F]) -> Result<F, SphereUnionError> {
         if centers.ncols() != 3 {
             return Err(SphereUnionError::LengthMismatch {
                 centers: centers.nrows(),
@@ -259,7 +259,7 @@ impl SphereUnion {
 impl Region for SphereUnion {
     /// The box on a periodic union (the union tiles it); the box of the
     /// spheres themselves in open space.
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         self.bounds.clone()
     }
 
@@ -298,7 +298,7 @@ mod tests {
     use ndarray::array;
 
     /// Deterministic point cloud in `[0, L)³` — no rand dependency.
-    fn cloud(n: usize, l: F) -> (FNx3, Vec<F>) {
+    fn cloud(n: usize, l: F) -> (Fnx3, Vec<F>) {
         let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
         let mut next = || {
             s ^= s << 13;
@@ -318,7 +318,7 @@ mod tests {
     }
 
     /// Brute force through the box's own minimum image.
-    fn oracle(centers: &FNx3, radii: &[F], bx: &SimBox, p: [F; 3]) -> F {
+    fn oracle(centers: &Fnx3, radii: &[F], bx: &SimBox, p: [F; 3]) -> F {
         centers
             .rows()
             .into_iter()
@@ -464,7 +464,7 @@ mod tests {
     fn named_rejects() {
         let c = array![[0.0, 0.0, 0.0]];
         let bx = SimBox::cube(5.0, array![0.0, 0.0, 0.0], [true; 3]).unwrap();
-        let empty: FNx3 = Array2::zeros((0, 3));
+        let empty: Fnx3 = Array2::zeros((0, 3));
         assert_eq!(
             SphereUnion::new(empty.view(), &[], &bx).err(),
             Some(SphereUnionError::Empty)

@@ -1,7 +1,7 @@
 //! The half-space behind a plane.
 
 use super::primitives::Region;
-use crate::op::{F, FNx3};
+use crate::op::{F, Fnx3};
 use ndarray::Array2;
 
 /// Everything on one side of a plane: inside where `n · (x − p) ≤ 0`, i.e.
@@ -66,7 +66,7 @@ impl Region for HalfSpace {
 
     /// Unbounded: `±∞` on every axis, except that an axis-aligned normal
     /// closes its own axis at the plane.
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
             b[[d, 0]] = F::NEG_INFINITY;

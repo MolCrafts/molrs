@@ -37,7 +37,7 @@
 //! about [`ComputeError`] to answer a question `core` never asks.
 
 use molrs::core::{Neighbors, QueryMode};
-use molrs::op::{F, FNx3View};
+use molrs::op::{F, Fnx3View};
 
 use super::error::ComputeError;
 
@@ -57,7 +57,7 @@ use super::error::ComputeError;
 /// — that is, with any policy other than `DISP` or `FULL`. The `expected` text
 /// names the missing column and the pair count it was needed for, and `got`
 /// describes the table that arrived; nothing is substituted for the column.
-pub(crate) fn require_disp(nlist: &Neighbors) -> Result<FNx3View<'_>, ComputeError> {
+pub(crate) fn require_disp(nlist: &Neighbors) -> Result<Fnx3View<'_>, ComputeError> {
     nlist
         .disp()
         .ok_or_else(|| missing_column("disp", nlist.n_pairs()))

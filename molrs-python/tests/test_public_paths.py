@@ -289,6 +289,12 @@ def test_retired_modules_do_not_import(gone):
         "molrs.io.cgsmiles.CGEdge",
         "molrs.io.cgsmiles.CGFragmentDef",
         "molrs.core.CGBond",
+        # Acronyms are cased as words in every subpackage; counts are n_*.
+        "molrs.md.MD",
+        "molrs.md.MDState",
+        "molrs.compute.KMeans",
+        "molrs.compute.KMeansResult",
+        "molrs.perceive.SmartsPattern.num_query_atoms",
         # Second doors on a class.
         "molrs.core.Trajectory.from_frames",
         "molrs.core.Trajectory.count_frames",
@@ -570,23 +576,39 @@ def test_a_reader_or_writer_is_named_after_its_module_with_word_cased_acronyms()
 
 
 
-# The analysis subsystems (compute, md, optimize, conformer, signal, builder,
-# stream, perceive outside SMARTS) are recased on their own; numpy's own
-# spellings (``DType``) stay as numpy writes them.
-_CASING_SCOPE = ("molrs.core", "molrs.io", "molrs.ff")
-_CASING_KEPT = {"DType"}
+# Every subpackage cases acronyms as words. Kept as their owners write them:
+# numpy's ``DType``, and ``HBond`` -- H is the element, not an acronym.
+_CASING_KEPT_PREFIXES = ("DType", "HBond")
+_ALL_CAPS_ACRONYM = re.compile(r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$|^[A-Z]{2,}$")
+
+
+def _without_kept_prefix(name: str) -> str:
+    for kept in _CASING_KEPT_PREFIXES:
+        if name.startswith(kept):
+            return name[len(kept) :]
+    return name
 
 
 def test_class_names_case_acronyms_as_words():
-    """``PdbReader``, ``SmilesIr``, ``CgGraph``, ``Mmff94Typifier``: an
-    acronym is cased as a word, never ``PDB``, ``IR`` or ``CG``."""
+    """``PdbReader``, ``SmilesIr``, ``Mmff94Typifier``, ``Rdf``, ``MdState``,
+    ``Lbfgs``: an acronym is cased as a word, never ``PDB``, ``IR``, ``MSD`` or
+    ``MD``, in every subpackage."""
     wrong = sorted(
         path
         for path, value in _objects().items()
         if inspect.isclass(value)
-        and path.startswith(_CASING_SCOPE)
-        and value.__name__ not in _CASING_KEPT
-        and re.search(r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$", value.__name__)
+        and _ALL_CAPS_ACRONYM.search(_without_kept_prefix(value.__name__))
+    )
+    assert not wrong
+
+
+def test_function_names_are_snake_case():
+    """A public function is ``snake_case``: no capital letter, so no acronym
+    can be spelled in capitals (``rdf``, never ``RDF``)."""
+    wrong = sorted(
+        path
+        for path, value in _objects().items()
+        if inspect.isroutine(value) and value.__name__ != value.__name__.lower()
     )
     assert not wrong
 

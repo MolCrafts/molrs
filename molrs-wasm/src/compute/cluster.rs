@@ -23,7 +23,7 @@ use wasm_bindgen::prelude::*;
 /// const cluster = new Cluster(5); // min 5 particles per cluster
 /// const result = cluster.compute(frame, nlist);
 ///
-/// console.log(result.numClusters);     // number of valid clusters
+/// console.log(result.nClusters);     // number of valid clusters
 /// console.log(result.clusterIdx());    // Int32Array, per-particle IDs
 /// console.log(result.clusterSizes());  // Uint32Array, size of each cluster
 /// ```
@@ -95,7 +95,7 @@ impl Cluster {
 ///
 /// ```js
 /// const result = cluster.compute(frame, nlist);
-/// console.log(result.numClusters);       // number
+/// console.log(result.nClusters);       // number
 ///
 /// const ids   = result.clusterIdx();     // Int32Array (per-particle)
 /// const sizes = result.clusterSizes();   // Uint32Array (per-cluster)

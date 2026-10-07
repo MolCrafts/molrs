@@ -31,7 +31,7 @@ use molrs::core::{
     Polyhedron as RsPolyhedron, Region as RegionTrait, Sphere as RsSphere,
     SphereUnion as RsSphereUnion,
 };
-use molrs::op::{F, F3, FNx3};
+use molrs::op::{F, F3, Fnx3};
 use ndarray::Array2;
 use wasm_bindgen::prelude::*;
 
@@ -41,7 +41,7 @@ use crate::core::simbox::Box as WasmBox;
 type Shared = Arc<dyn RegionTrait + Send + Sync>;
 
 /// Reshape a flat `[x0, y0, z0, x1, …]` array into the `N × 3` the core takes.
-fn points_from_flat(points: &[F]) -> Result<FNx3, JsValue> {
+fn points_from_flat(points: &[F]) -> Result<Fnx3, JsValue> {
     if !points.len().is_multiple_of(3) {
         return Err(JsValue::from_str(&format!(
             "points must be a flat [x, y, z, …] array; got {} values, not a multiple of 3",

@@ -1,6 +1,6 @@
 //! The analysis contract (`molrs::compute`): the descriptor-row protocol
 //! (`DescriptorRow`) a Python
-//! object implements to feed `Pca` / `KMeans`.
+//! object implements to feed `Pca` / `Kmeans`.
 
 use molrs::op::F;
 use numpy::PyReadonlyArray1;
@@ -10,10 +10,10 @@ use pyo3::prelude::*;
 // PCA
 // ---------------------------------------------------------------------------
 
-/// Row-based descriptor wrapper for PCA/KMeans input.
+/// Row-based descriptor wrapper for PCA/Kmeans input.
 ///
 /// Wrap each row (a 1-D float array) with `DescriptorRow(row)`; then pass a
-/// Python list of them to ``Pca.compute`` / ``KMeans.compute``.
+/// Python list of them to ``Pca.compute`` / ``Kmeans.compute``.
 #[pyclass(module = "molrs.compute", name = "DescriptorRow", from_py_object)]
 #[derive(Clone)]
 pub struct PyDescriptorRow {

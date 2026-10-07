@@ -158,8 +158,8 @@ impl PySmartsPattern {
 
     /// Number of query atoms in the pattern.
     #[getter]
-    fn num_query_atoms(&self) -> usize {
-        self.inner.num_query_atoms()
+    fn n_query_atoms(&self) -> usize {
+        self.inner.n_query_atoms()
     }
 
     /// Longest shortest-path length (bonds) on the query atom graph.

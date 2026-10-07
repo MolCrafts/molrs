@@ -17,7 +17,7 @@ use crate::core::simbox::PyBox;
 use crate::ff::potential::{ErrSlot, Members, PyPairLjCut, check_nx3, take_err, take_members};
 use molrs::core::Virial;
 use molrs::md::{
-    ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, SelfPairedForces,
+    ForceProvider, Langevin, MaxwellBoltzmann, MdError, MdState, MicPairs, SelfPairedForces,
     VelocityVerlet,
 };
 use molrs::op::{F, I};
@@ -61,7 +61,7 @@ fn provider(
     })
 }
 
-fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MDState> {
+fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MdState> {
     let pos: PyReadonlyArray2<f64> = state.getattr("pos")?.extract()?;
     let vel: PyReadonlyArray2<f64> = state.getattr("vel")?.extract()?;
     let forces: PyReadonlyArray2<f64> = state.getattr("forces")?.extract()?;
@@ -69,7 +69,7 @@ fn extract_state(state: &Bound<'_, PyAny>) -> PyResult<MDState> {
     check_nx3(&pos, "pos")?;
     check_nx3(&vel, "vel")?;
     check_nx3(&forces, "forces")?;
-    Ok(MDState {
+    Ok(MdState {
         images: numpy::ndarray::Array2::zeros((pos.as_array().nrows(), 3)),
         pos: pos.as_array().to_owned(),
         vel: vel.as_array().to_owned(),
@@ -97,13 +97,13 @@ fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
 /// Fields are settable (float64 `(N, 3)` arrays / a float energy) so hooks can
 /// replace them wholesale: `state.vel = new_vel`. Getters return copies —
 /// in-place slice writes (`state.vel[:] = …`) do NOT write through.
-#[pyclass(name = "MDState", module = "molrs.md")]
-pub struct PyMDState {
-    inner: MDState,
+#[pyclass(name = "MdState", module = "molrs.md")]
+pub struct PyMdState {
+    inner: MdState,
 }
 
 #[pymethods]
-impl PyMDState {
+impl PyMdState {
     #[new]
     fn new(
         pos: PyReadonlyArray2<'_, f64>,
@@ -115,7 +115,7 @@ impl PyMDState {
         check_nx3(&vel, "vel")?;
         check_nx3(&forces, "forces")?;
         Ok(Self {
-            inner: MDState {
+            inner: MdState {
                 images: numpy::ndarray::Array2::zeros((pos.as_array().nrows(), 3)),
                 pos: pos.as_array().to_owned(),
                 vel: vel.as_array().to_owned(),
@@ -210,7 +210,7 @@ impl PyMDState {
 
     fn __repr__(&self) -> String {
         format!(
-            "MDState(n_atoms={}, energy={})",
+            "MdState(n_atoms={}, energy={})",
             self.inner.pos.nrows(),
             self.inner.energy
         )
@@ -294,30 +294,30 @@ impl PyVelocityVerlet {
         &mut self,
         pos: PyReadonlyArray2<'_, f64>,
         vel: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMDState> {
+    ) -> PyResult<PyMdState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
         let result = self
             .inner
             .initial(pos.as_array().to_owned(), vel.as_array().to_owned());
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
 
-    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMDState> {
+    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMdState> {
         let result = self.inner.advance(extract_state(state)?);
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
 
-    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMDState> {
+    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMdState> {
         let result = self.inner.advance_n(extract_state(state)?, n_steps);
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
@@ -440,14 +440,14 @@ impl PyLangevin {
         &mut self,
         pos: PyReadonlyArray2<'_, f64>,
         vel: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMDState> {
+    ) -> PyResult<PyMdState> {
         check_nx3(&pos, "pos")?;
         check_nx3(&vel, "vel")?;
         let result = self
             .inner
             .initial(pos.as_array().to_owned(), vel.as_array().to_owned());
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
@@ -456,27 +456,27 @@ impl PyLangevin {
         &mut self,
         state: &Bound<'_, PyAny>,
         noise: PyReadonlyArray2<'_, f64>,
-    ) -> PyResult<PyMDState> {
+    ) -> PyResult<PyMdState> {
         check_nx3(&noise, "noise")?;
         let result = self.inner.step(extract_state(state)?, noise.as_array());
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
 
-    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMDState> {
+    fn advance(&mut self, state: &Bound<'_, PyAny>) -> PyResult<PyMdState> {
         let result = self.inner.advance(extract_state(state)?);
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
 
-    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMDState> {
+    fn advance_n(&mut self, state: &Bound<'_, PyAny>, n_steps: usize) -> PyResult<PyMdState> {
         let result = self.inner.advance_n(extract_state(state)?, n_steps);
         take_err(&self.err_slots)?;
-        Ok(PyMDState {
+        Ok(PyMdState {
             inner: result.map_err(md_err)?,
         })
     }
@@ -532,7 +532,7 @@ impl PyMaxwellBoltzmann {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMDState>()?;
+    m.add_class::<PyMdState>()?;
     m.add_class::<PyVelocityVerlet>()?;
     m.add_class::<PyLangevin>()?;
     m.add_class::<PyMaxwellBoltzmann>()?;

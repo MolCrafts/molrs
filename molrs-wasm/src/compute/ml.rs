@@ -6,7 +6,7 @@ use js_sys::Int32Array;
 use molrs::compute::Compute;
 use molrs::compute::ComputeResult;
 use molrs::compute::DescriptorRow;
-use molrs::compute::{KMeans as RsKMeans, Pca as RsPca, PcaResult as RsPcaResult};
+use molrs::compute::{Kmeans as RsKMeans, Pca as RsPca, PcaResult as RsPcaResult};
 use molrs::op::F;
 use wasm_bindgen::prelude::*;
 
@@ -121,21 +121,21 @@ impl PcaResult {
 // k-means — with k-means++ init
 // ===========================================================================
 
-/// Wrapper for [`molrs::compute::KMeans`].
+/// Wrapper for [`molrs::compute::Kmeans`].
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const km = new KMeans(3, 100, 42);
+/// const km = new Kmeans(3, 100, 42);
 /// const labels = km.fit(coords, nRows, 2);   // Int32Array
 /// ```
 #[wasm_bindgen]
-pub struct KMeans {
+pub struct Kmeans {
     inner: RsKMeans,
 }
 
-#[wasm_bindgen(js_class = KMeans)]
-impl KMeans {
+#[wasm_bindgen(js_class = Kmeans)]
+impl Kmeans {
     /// Create a new k-means configuration.
     ///
     /// # Arguments
@@ -150,11 +150,11 @@ impl KMeans {
     ///
     /// Throws if `k == 0` or `max_iter == 0`.
     #[wasm_bindgen(constructor)]
-    pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<KMeans, JsValue> {
+    pub fn new(k: usize, max_iter: usize, seed: f64) -> Result<Kmeans, JsValue> {
         let seed_u64 = seed as u64;
         RsKMeans::new(k, max_iter, seed_u64)
-            .map(|inner| KMeans { inner })
-            .map_err(|e| JsValue::from_str(&format!("KMeans: {e}")))
+            .map(|inner| Kmeans { inner })
+            .map_err(|e| JsValue::from_str(&format!("Kmeans: {e}")))
     }
 
     /// Cluster a row-major `n_rows × n_dims` coordinate matrix.
@@ -170,12 +170,12 @@ impl KMeans {
     pub fn fit(&self, coords: &[F], n_rows: usize, n_dims: usize) -> Result<Int32Array, JsValue> {
         if n_dims != 2 {
             return Err(JsValue::from_str(
-                "KMeans wasm binding supports n_dims=2 only (PCA-score input)",
+                "Kmeans wasm binding supports n_dims=2 only (PCA-score input)",
             ));
         }
         if coords.len() != n_rows * n_dims {
             return Err(JsValue::from_str(&format!(
-                "KMeans: coords length {} != n_rows * n_dims = {} * {}",
+                "Kmeans: coords length {} != n_rows * n_dims = {} * {}",
                 coords.len(),
                 n_rows,
                 n_dims
@@ -189,7 +189,7 @@ impl KMeans {
         let labels = self
             .inner
             .compute(&[&dummy], &pca)
-            .map_err(|e| JsValue::from_str(&format!("KMeans fit: {e}")))?;
+            .map_err(|e| JsValue::from_str(&format!("Kmeans fit: {e}")))?;
         let out = Int32Array::new_with_length(labels.0.len() as u32);
         out.copy_from(&labels.0);
         Ok(out)

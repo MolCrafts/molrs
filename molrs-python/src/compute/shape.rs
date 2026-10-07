@@ -52,7 +52,7 @@ impl PyClusterCentersResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "ClusterCentersResult(num_clusters={})",
+            "ClusterCentersResult(n_clusters={})",
             self.inner.centers.len()
         )
     }
@@ -155,7 +155,7 @@ impl PyCenterOfMassResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "CenterOfMassResult(num_clusters={})",
+            "CenterOfMassResult(n_clusters={})",
             self.inner.centers_of_mass.len()
         )
     }

@@ -18,7 +18,7 @@ use crate::core::TriMesh;
 use crate::core::bvh::{Bvh, triangle_box};
 use crate::core::mesh::DEGENERATE_AREA2;
 use crate::op::vec3::{add, cross, dot, norm, scale, sub};
-use crate::op::{F, FNx3};
+use crate::op::{F, Fnx3};
 use ndarray::Array2;
 
 /// Points closer than this to the surface count as on it: `distance` is
@@ -155,7 +155,7 @@ impl Polyhedron {
 }
 
 impl Region for Polyhedron {
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
             b[[d, 0]] = self.aabb.0[d];

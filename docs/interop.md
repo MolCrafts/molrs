@@ -151,7 +151,7 @@ dereference twice, `.clone()` the handle — and keeps `handle.region()`, an
 the handle's *code* runs in the producer's image (vtable dispatch), so the
 cross-image contract is the `[F; 3]` surface only: `distance`, `distance_grad`,
 `contains_point`, `bounds` — none panics on finite input. The batched
-`contains(&FNx3)` can panic on a malformed array and is not part of it.
+`contains(&Fnx3)` can panic on a malformed array and is not part of it.
 
 Enforcement on the supply side: `molrs-ffi/src/abi.rs` carries a **layout
 snapshot test** (size / align / field offsets of every FFI-crossing type,

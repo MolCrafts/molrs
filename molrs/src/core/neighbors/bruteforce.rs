@@ -12,7 +12,7 @@
 
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
-use crate::op::{F, FNx3, FNx3View};
+use crate::op::{F, Fnx3, Fnx3View};
 
 /// Brute-force O(N^2) neighbor search — the reference
 /// [`NeighborList`](crate::core::NeighborList) backend.
@@ -35,7 +35,7 @@ pub struct BruteForce {
     /// Simulation box from the last index call.
     bx: Option<SimBox>,
     /// Stored positions for visit_pairs (set by update_index).
-    stored_pos: FNx3,
+    stored_pos: Fnx3,
 }
 
 impl BruteForce {
@@ -47,7 +47,7 @@ impl BruteForce {
         Self {
             cutoff,
             bx: None,
-            stored_pos: FNx3::zeros((0, 3)),
+            stored_pos: Fnx3::zeros((0, 3)),
         }
     }
 }
@@ -61,7 +61,7 @@ impl Backend for BruteForce {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
     }
@@ -73,7 +73,7 @@ impl Backend for BruteForce {
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
-    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.stored_pos = points.to_owned();
         self.bx = Some(bx.clone());
@@ -138,7 +138,7 @@ mod tests {
     }
 
     /// Three points on the x axis of a 10 Å cube: 0, 1 and 9.
-    fn line() -> FNx3 {
+    fn line() -> Fnx3 {
         array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [9.0, 0.0, 0.0]]
     }
 

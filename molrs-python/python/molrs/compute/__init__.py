@@ -18,7 +18,7 @@ The Rust compute facade is flat, and so is this module: every analysis is
   observables (``dipole_moment``, ``current_density``,
   ``static_dielectric_constant``, ``decompose_current``), the Voronoi
   analyses (``VoronoiDomainAnalysis``, ``VoronoiVoidAnalysis``) and ``Pca`` /
-  ``KMeans`` over descriptor rows, and the kinetic readings of one state
+  ``Kmeans`` over descriptor rows, and the kinetic readings of one state
   (``kinetic_energy``, ``kinetic_temperature``, ``center_of_mass_velocity``).
 * **Fits and transforms** turn a raw curve into the derived quantity:
   ``LinearFit``, ``CumulativeTrapezoid``, ``Plateau``, ``DebyeFit`` and the
@@ -76,8 +76,8 @@ from .._lib import (
     Hexatic,
     InertiaTensor,
     IrSpectrum,
-    KMeans,
-    KMeansResult,
+    Kmeans,
+    KmeansResult,
     KramersKronig,
     LegendreReorientation,
     LegendreReorientationResult,
@@ -168,8 +168,8 @@ __all__ = [
     "Hexatic",
     "InertiaTensor",
     "IrSpectrum",
-    "KMeans",
-    "KMeansResult",
+    "Kmeans",
+    "KmeansResult",
     "KramersKronig",
     "LegendreReorientation",
     "LegendreReorientationResult",

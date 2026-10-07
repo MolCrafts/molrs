@@ -165,7 +165,7 @@ mod voronoi;
 // Re-exports
 pub use analysis_contract::{Check, Compute, ComputeResult, DescriptorRow, Fit, Verdict};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
-pub use clustering::{KMeans, KMeansResult};
+pub use clustering::{Kmeans, KmeansResult};
 pub use decomposition::{Pca, PcaResult};
 pub use density::{
     CorrelationArgs, CorrelationFunction, CorrelationFunctionResult, GaussianDensity,

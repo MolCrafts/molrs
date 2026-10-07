@@ -18,7 +18,7 @@ use crate::core::molgraph::PyAtomistic;
 /// Examples
 /// --------
 /// >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIr("c1ccccc1").to_atomistic())
-/// >>> rings.num_rings()
+/// >>> rings.n_rings()
 /// 1
 /// >>> rings.ring_sizes()
 /// [6]
@@ -82,7 +82,7 @@ impl PyRingInfo {
 
     fn __repr__(&self) -> String {
         format!(
-            "RingInfo(num_rings={}, sizes={:?})",
+            "RingInfo(n_rings={}, sizes={:?})",
             self.inner.n_rings(),
             self.inner.ring_sizes()
         )

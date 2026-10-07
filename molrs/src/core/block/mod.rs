@@ -1151,10 +1151,10 @@ impl Block {
     /// block.set_coords(array![[0.0 as F, 1.0, 2.0], [3.0, 4.0, 5.0]].view()).unwrap();
     /// assert_eq!(block.coords().unwrap(), array![[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]);
     /// ```
-    pub fn coords(&self) -> Result<crate::op::FNx3, BlockError> {
+    pub fn coords(&self) -> Result<crate::op::Fnx3, BlockError> {
         use crate::core::keys::COORDS;
         let n = self.nrows.unwrap_or(0);
-        let mut out = crate::op::FNx3::zeros((n, 3));
+        let mut out = crate::op::Fnx3::zeros((n, 3));
         for (axis, key) in COORDS.into_iter().enumerate() {
             let col = self.get(key).ok_or_else(|| BlockError::MissingColumn {
                 key: key.to_owned(),
@@ -1187,7 +1187,7 @@ impl Block {
     ///   row count from the block's.
     ///
     /// The block is unchanged on error.
-    pub fn set_coords(&mut self, coords: crate::op::FNx3View<'_>) -> Result<(), BlockError> {
+    pub fn set_coords(&mut self, coords: crate::op::Fnx3View<'_>) -> Result<(), BlockError> {
         use crate::core::keys::COORDS;
         if coords.ncols() != 3 {
             return Err(BlockError::validation(format!(

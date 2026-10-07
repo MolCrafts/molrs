@@ -22,7 +22,7 @@
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
 use crate::core::{CellGrid, Neighbors};
-use crate::op::{F, FNx3View};
+use crate::op::{F, Fnx3View};
 use ndarray::array;
 
 /// Occupied-cell count from which materializing the pair table in parallel pays
@@ -167,12 +167,12 @@ impl Backend for LinkCell {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         self.update_index(points, bx);
     }
 
-    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         assert!(points.ncols() == 3, "points must have shape (N, 3)");
         self.counting_sort(points, bx);
@@ -323,7 +323,7 @@ impl LinkCell {
     /// Counting sort particles by cell index (interleaved `Array2` input).
     ///
     /// Thin adapter over [`counting_sort_impl`](Self::counting_sort_impl).
-    fn counting_sort(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn counting_sort(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         let n_points = points.nrows();
         self.counting_sort_impl(
             n_points,
@@ -490,7 +490,7 @@ mod tests {
 
     /// Half-shell self pairs of `pts` from the cell-list backend, every column
     /// present.
-    fn cell_pairs(cutoff: F, pts: FNx3View<'_>, bx: &SimBox) -> Neighbors {
+    fn cell_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
         let mut nl = NeighborList::new(cutoff);
         nl.build(pts, bx);
         nl.neighbors(NeighborsStorage::FULL)
@@ -498,7 +498,7 @@ mod tests {
 
     /// The same, from the O(N²) reference backend — the oracle the cell list is
     /// checked against.
-    fn brute_pairs(cutoff: F, pts: FNx3View<'_>, bx: &SimBox) -> Neighbors {
+    fn brute_pairs(cutoff: F, pts: Fnx3View<'_>, bx: &SimBox) -> Neighbors {
         let mut nl = NeighborList::brute_force(cutoff);
         nl.build(pts, bx);
         nl.neighbors(NeighborsStorage::FULL)
@@ -907,7 +907,7 @@ mod equivalence {
     use crate::core::NeighborQuery;
     use crate::core::NeighborsStorage;
     use crate::core::SimBox;
-    use crate::op::FNx3;
+    use crate::op::Fnx3;
     use ndarray::{Array2, array};
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -925,7 +925,7 @@ mod equivalence {
         }
     }
 
-    fn cells() -> Vec<(&'static str, FNx3)> {
+    fn cells() -> Vec<(&'static str, Fnx3)> {
         vec![
             (
                 "ortho",

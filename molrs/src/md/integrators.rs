@@ -1,4 +1,4 @@
-//! Integrator components: advance an [`MDState`].
+//! Integrator components: advance an [`MdState`].
 //!
 //! Required pieces go in the constructor — no `bind_*` afterthoughts:
 //!
@@ -38,10 +38,10 @@ use molrs::core::SimBox;
 
 use super::forces::ForceProvider;
 use crate::op::standard_normal;
-use molrs::op::{F, FNx3, I};
+use molrs::op::{F, Fnx3, I};
 
 use super::error::MdError;
-use super::state::{ForceOutput, MDState};
+use super::state::{ForceOutput, MdState};
 
 fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
     if mass.iter().any(|&m| !m.is_finite() || m <= 0.0) {
@@ -62,7 +62,7 @@ fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
 ///
 /// `m` is the shift the wrap actually applied, so the flags cannot disagree
 /// with the positions they belong to.
-fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MDState) -> Array2<I> {
+fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MdState) -> Array2<I> {
     let Some(bx) = simbox else {
         return Array2::zeros((state.pos.nrows(), 3));
     };
@@ -146,19 +146,19 @@ impl Stepper {
         self.forces.compute(pos, no_fold.view())
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
         // Fold the entry configuration too, so step 0 already satisfies the
         // invariant every later step maintains. Flags start at zero: they count
         // crossings *during this run*, and an atom's history before it is not
         // this integrator's to claim.
         let n_atoms = pos.nrows();
-        let mut state = MDState {
+        let mut state = MdState {
             pos,
             images: Array2::zeros((n_atoms, 3)),
             vel,
-            forces: FNx3::zeros((n_atoms, 3)),
+            forces: Fnx3::zeros((n_atoms, 3)),
             energy: 0.0,
             virial: None,
         };
@@ -172,7 +172,7 @@ impl Stepper {
     }
 
     /// **B** — half kick, `v += (Δt/2)·f/m`.
-    fn kick(&self, state: &mut MDState, half_dt: F) {
+    fn kick(&self, state: &mut MdState, half_dt: F) {
         Zip::from(state.vel.rows_mut())
             .and(state.forces.rows())
             .and(&self.inv_mass)
@@ -185,7 +185,7 @@ impl Stepper {
 
     /// **A** — half drift, `x += (Δt/2)·v`. The two halves of a full drift stay
     /// separate adds rather than one `dt * v`.
-    fn drift(&self, state: &mut MDState, half_dt: F) {
+    fn drift(&self, state: &mut MdState, half_dt: F) {
         Zip::from(state.pos.rows_mut())
             .and(state.vel.rows())
             .for_each(|mut p, v| {
@@ -203,7 +203,7 @@ impl Stepper {
     /// that fold in the same breath — which is why the shift is handed to
     /// [`ForceProvider::compute`] rather than re-derived from the positions,
     /// where it cannot be seen: a fold relabels an atom without moving it.
-    fn refold_and_eval(&mut self, state: &mut MDState) -> Result<(), MdError> {
+    fn refold_and_eval(&mut self, state: &mut MdState) -> Result<(), MdError> {
         let folded = wrap_and_bank(self.simbox.as_ref(), state);
         // Lend the state's force array to the provider and take it back: a
         // provider that accumulates in place swaps rather than clones, so the
@@ -211,7 +211,7 @@ impl Stepper {
         // array, which is fine — a failed force evaluation ends the run.
         let mut out = ForceOutput {
             energy: 0.0,
-            forces: std::mem::replace(&mut state.forces, FNx3::zeros((0, 3))),
+            forces: std::mem::replace(&mut state.forces, Fnx3::zeros((0, 3))),
             virial: None,
         };
         self.forces
@@ -272,13 +272,13 @@ impl VelocityVerlet {
         self.inner.eval_force(pos)
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    pub fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         self.inner.initial(pos, vel)
     }
 
     /// One NVE step from the cached entry force: **B-A-A-B**.
-    pub fn step(&mut self, mut state: MDState) -> Result<MDState, MdError> {
+    pub fn step(&mut self, mut state: MdState) -> Result<MdState, MdError> {
         let half_dt = 0.5 * self.inner.dt;
         self.inner.kick(&mut state, half_dt);
         self.inner.drift(&mut state, half_dt);
@@ -289,12 +289,12 @@ impl VelocityVerlet {
     }
 
     /// One eager step.
-    pub fn advance(&mut self, state: MDState) -> Result<MDState, MdError> {
+    pub fn advance(&mut self, state: MdState) -> Result<MdState, MdError> {
         self.step(state)
     }
 
     /// Advance `n_steps` eagerly.
-    pub fn advance_n(&mut self, mut state: MDState, n_steps: usize) -> Result<MDState, MdError> {
+    pub fn advance_n(&mut self, mut state: MdState, n_steps: usize) -> Result<MdState, MdError> {
         for _ in 0..n_steps {
             state = self.advance(state)?;
         }
@@ -417,8 +417,8 @@ impl Langevin {
         self.inner.eval_force(pos)
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    pub fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         self.inner.initial(pos, vel)
     }
 
@@ -427,9 +427,9 @@ impl Langevin {
     /// [`advance`](Self::advance) draws from the seeded internal RNG instead.
     pub fn step(
         &mut self,
-        mut state: MDState,
+        mut state: MdState,
         noise: ArrayView2<'_, F>,
-    ) -> Result<MDState, MdError> {
+    ) -> Result<MdState, MdError> {
         if noise.shape() != state.vel.shape() {
             return Err(MdError::Invalid(format!(
                 "noise shape {:?} disagrees with vel shape {:?}",
@@ -449,7 +449,7 @@ impl Langevin {
 
     /// **O** — `v ← c1·v + c2·σ·ξ`. The only move `VelocityVerlet` does not
     /// make, and the only reason these are two types.
-    fn ornstein_uhlenbeck(&self, state: &mut MDState, noise: ArrayView2<'_, F>) {
+    fn ornstein_uhlenbeck(&self, state: &mut MdState, noise: ArrayView2<'_, F>) {
         let (c1, c2) = (self.c1, self.c2);
         Zip::from(state.vel.rows_mut())
             .and(&self.sigma)
@@ -471,13 +471,13 @@ impl Langevin {
     }
 
     /// One step with noise drawn from the seeded internal RNG.
-    pub fn advance(&mut self, state: MDState) -> Result<MDState, MdError> {
+    pub fn advance(&mut self, state: MdState) -> Result<MdState, MdError> {
         let noise = self.draw_noise(state.vel.nrows());
         self.step(state, noise.view())
     }
 
     /// Advance `n_steps` eagerly.
-    pub fn advance_n(&mut self, mut state: MDState, n_steps: usize) -> Result<MDState, MdError> {
+    pub fn advance_n(&mut self, mut state: MdState, n_steps: usize) -> Result<MdState, MdError> {
         for _ in 0..n_steps {
             state = self.advance(state)?;
         }
@@ -895,7 +895,7 @@ mod ghost_path_tests {
         // could absorb a pair appearing or vanishing.
         let drift = 0.02_f64;
         let vel0 =
-            FNx3::from_shape_fn((pos0.nrows(), 3), |(_, k)| if k == 0 { drift } else { 0.0 });
+            Fnx3::from_shape_fn((pos0.nrows(), 3), |(_, k)| if k == 0 { drift } else { 0.0 });
 
         // A skin large enough that the halo survives many steps, so folds
         // happen *between* rebuilds — the case the reconciliation exists for.
@@ -917,7 +917,7 @@ mod ghost_path_tests {
 
         let mass = uniform_masses(12.0, pos0.nrows()).unwrap();
         let mut state = ig.initial(pos0, vel0).unwrap();
-        let total = |st: &MDState| {
+        let total = |st: &MdState| {
             st.energy + crate::compute::kinetic_energy(mass.view(), st.vel.view()).unwrap()
         };
         let e0 = total(&state);
@@ -1004,7 +1004,7 @@ mod ghost_path_tests {
                 Some(bx.clone()),
             )
             .unwrap();
-            let state = ig.initial(wrapped, FNx3::zeros((n, 3))).unwrap();
+            let state = ig.initial(wrapped, Fnx3::zeros((n, 3))).unwrap();
             state
                 .virial
                 .expect("the ghost provider tallies a virial, and the state keeps it")

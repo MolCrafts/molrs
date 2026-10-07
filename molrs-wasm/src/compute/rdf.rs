@@ -213,7 +213,7 @@ fn apply_volume_override(result: &mut molrs::compute::RdfResult, volume: F) {
 /// const gr = result.rdf();         // Float64Array, normalized g(r)
 /// const nr = result.pairCounts();  // Float64Array, raw counts
 /// console.log("Volume:", result.volume, "A^3");
-/// console.log("N_ref:", result.numPoints);
+/// console.log("N_ref:", result.nPoints);
 /// ```
 #[wasm_bindgen(js_name = RdfResult)]
 pub struct RdfResult {

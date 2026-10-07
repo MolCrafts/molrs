@@ -43,7 +43,7 @@ use std::fmt;
 use ndarray::{Array2, ArrayView2};
 
 use crate::core::SimBox;
-use crate::op::{F, FNx3};
+use crate::op::{F, Fnx3};
 
 use super::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
 
@@ -128,7 +128,7 @@ pub struct VerletSkin {
     /// minimum image is ambiguous and a displacement cannot be read.
     ambiguity_guard_sq: F,
     danger_ago: usize,
-    x_hold: FNx3,
+    x_hold: Fnx3,
     pairs_buf: Neighbors,
     /// Per-edge squared distance and displacement, reused across steps.
     ///

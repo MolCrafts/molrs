@@ -33,7 +33,7 @@ use molrs::core::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
-use molrs::op::FNx3;
+use molrs::op::Fnx3;
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -541,7 +541,7 @@ impl PyParallelepiped {
             return Err(PyValueError::new_err("h must have shape (3, 3)"));
         }
         let o = vec3(origin, "origin")?;
-        let mut mat: FNx3 = Array2::zeros((3, 3));
+        let mut mat: Fnx3 = Array2::zeros((3, 3));
         for i in 0..3 {
             for j in 0..3 {
                 mat[[i, j]] = h_arr[[i, j]];

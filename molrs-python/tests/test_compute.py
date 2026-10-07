@@ -333,7 +333,7 @@ class TestRustNames:
 
 class TestKinetic:
     """``kinetic_energy`` / ``kinetic_temperature`` /
-    ``center_of_mass_velocity`` — the readings ``md.MD`` thermo prints."""
+    ``center_of_mass_velocity`` — the readings ``md.MdDriver`` thermo prints."""
 
     def test_kinetic_energy_and_temperature(self):
         mass = np.array([2.0, 1.0])

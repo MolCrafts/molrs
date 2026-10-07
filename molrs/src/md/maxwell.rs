@@ -6,7 +6,7 @@ use rand::rngs::StdRng;
 
 use crate::compute::center_of_mass_velocity;
 use crate::op::standard_normal;
-use molrs::op::{F, FNx3};
+use molrs::op::{F, Fnx3};
 
 use super::error::MdError;
 
@@ -68,7 +68,7 @@ impl MaxwellBoltzmann {
         &self,
         pos: ArrayView2<'_, F>,
         mass: ArrayView1<'_, F>,
-    ) -> Result<FNx3, MdError> {
+    ) -> Result<Fnx3, MdError> {
         let n = pos.nrows();
         if pos.ncols() != 3 {
             return Err(MdError::Invalid(format!(

@@ -95,9 +95,9 @@ fn check_cutoff(cutoff: f64) -> PyResult<()> {
 /// ----------
 /// n_pairs : int
 ///     Number of pairs — the row count every column shares.
-/// num_points : int
+/// n_points : int
 ///     Number of reference points.
-/// num_query_points : int
+/// n_query_points : int
 ///     Number of query points (equal to ``n_points`` for a self search).
 /// is_self_query : bool
 ///     ``True`` when both index columns address the same point set.
@@ -281,7 +281,7 @@ impl PyNeighbors {
         };
         let storage = self.inner.storage();
         format!(
-            "Neighbors(n_pairs={}, mode={}, num_points={}, num_query_points={}, \
+            "Neighbors(n_pairs={}, mode={}, n_points={}, n_query_points={}, \
              dist_sq={}, disp={})",
             self.inner.n_pairs(),
             mode,
@@ -634,7 +634,7 @@ impl PyNeighborQuery {
 
     fn __repr__(&self) -> String {
         format!(
-            "NeighborQuery(num_points={}, cutoff={})",
+            "NeighborQuery(n_points={}, cutoff={})",
             self.inner.points().nrows(),
             self.inner.cutoff(),
         )

@@ -114,7 +114,7 @@
 //! table.query_point_indices()   // &[u32]           — i of each pair
 //! table.point_indices()         // &[u32]           — j of each pair
 //! table.dist_sq()               // Option<&[F]>     — Å², None if not stored
-//! table.disp()                  // Option<FNx3View> — Å,  None if not stored
+//! table.disp()                  // Option<Fnx3View> — Å,  None if not stored
 //! ```
 //!
 //! ## Name mapping from freud
@@ -136,7 +136,7 @@
 //! | `freud.locality.FilterSANN` / `FilterRAD` | [`filter_sann`] / [`filter_rad`] | — |
 
 use crate::core::SimBox;
-use crate::op::{F, FNx3, FNx3View};
+use crate::op::{F, Fnx3, Fnx3View};
 use ndarray::ArrayView2;
 
 mod aabb;
@@ -265,7 +265,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// # Panics
     /// Panics if the cutoff is not positive or `points` does not have exactly
     /// 3 columns.
-    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox);
+    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox);
 
     /// The interaction cutoff (Å) this backend indexes at.
     ///
@@ -278,7 +278,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// Implementations may reuse internal buffers. There is no skin/Verlet
     /// shortcut: this re-indexes, it does not decide for you whether a rebuild
     /// was necessary.
-    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox);
+    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox);
 
     /// Build the spatial index from three coordinate columns (Å) — NO pair
     /// enumeration. Column sibling of [`build_index`](Self::build_index).
@@ -292,7 +292,7 @@ pub(crate) trait Backend: std::fmt::Debug {
     /// does — overrides this to avoid it; for an O(N²) backend the copy is
     /// dominated by the search itself, so correctness beats avoiding it.
     fn build_index_columns(&mut self, xs: &[F], ys: &[F], zs: &[F], bx: &SimBox) {
-        let mut points = FNx3::zeros((xs.len(), 3));
+        let mut points = Fnx3::zeros((xs.len(), 3));
         for i in 0..xs.len() {
             points[[i, 0]] = xs[i];
             points[[i, 1]] = ys[i];
@@ -520,7 +520,7 @@ impl NeighborList {
     ///
     /// # Panics
     /// Panics if `points` does not have exactly 3 columns.
-    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    pub fn build(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
         self.backend.build_index(points, bx);
         self.bx = Some(bx.clone());
@@ -584,7 +584,7 @@ impl NeighborList {
     /// [`build_columns`](Self::build_columns) has run — the box is then unknown,
     /// and the panic message says to call `build` first. Panics too if `points`
     /// does not have exactly 3 columns.
-    pub fn update(&mut self, points: FNx3View<'_>) {
+    pub fn update(&mut self, points: Fnx3View<'_>) {
         assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
         let bx = self
             .bx
@@ -1152,7 +1152,7 @@ impl Neighbors {
     /// is not the same as a zero vector, which would mean two coincident
     /// particles.
     #[inline]
-    pub fn disp(&self) -> Option<FNx3View<'_>> {
+    pub fn disp(&self) -> Option<Fnx3View<'_>> {
         if !self.storage.disp {
             return None;
         }

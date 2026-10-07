@@ -8,7 +8,7 @@ import molrs
 import numpy as np
 import pytest
 from molrs.ff.potential import PairLjCut, Potential
-from molrs.md import MD, MaxwellBoltzmann, VelocityVerlet
+from molrs.md import MdDriver, MaxwellBoltzmann, VelocityVerlet
 
 
 class Harmonic:
@@ -41,12 +41,12 @@ class TestPotentialProtocol:
 
 class TestMDDtype:
     def test_float64_is_accepted(self) -> None:
-        md = MD(dtype=np.float64)
+        md = MdDriver(dtype=np.float64)
         assert md.dtype == np.dtype(np.float64)
 
     def test_float32_is_rejected_with_rust_message(self) -> None:
         with pytest.raises(ValueError, match="Rust"):
-            MD(dtype=np.float32)
+            MdDriver(dtype=np.float32)
 
 
 class TestAbsence:

@@ -204,7 +204,7 @@ impl SmartsPattern {
     }
 
     /// Number of query atoms.
-    pub fn num_query_atoms(&self) -> usize {
+    pub fn n_query_atoms(&self) -> usize {
         self.graph.atoms.len()
     }
 

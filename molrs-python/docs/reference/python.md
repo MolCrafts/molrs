@@ -42,7 +42,7 @@ and the docs build.
 | `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability`, `clpol_fragment_scaling` |
 | `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj` (the shipped table is `molrs.ff.params.clpol_fragment_scaling`) |
 | `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
-| `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
+| `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MdState`, `MaxwellBoltzmann`, `MdDriver` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
 | `molrs.builder` | `molrs::builder` | `GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler` and its placers / orienter, `Coarsener` |
 | `molrs.compute` | `molrs::compute` | every analysis, flat, and the `Compute` protocol |
@@ -539,9 +539,9 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ::: molrs.compute.PcaResult
 
-::: molrs.compute.KMeans
+::: molrs.compute.Kmeans
 
-::: molrs.compute.KMeansResult
+::: molrs.compute.KmeansResult
 
 ### Transport
 

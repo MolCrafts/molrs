@@ -6,7 +6,7 @@
 //! - Lattice vectors are the columns of H.
 
 use crate::op::vec3::{cross, dot, norm};
-use crate::op::{F, F3, F3View, FNx3, FNx3View, I, Pbc3};
+use crate::op::{F, F3, F3View, Fnx3, Fnx3View, I, Pbc3};
 use crate::op::{Vec3, to_mat3, to_vec3};
 use crate::op::{det3, inv3};
 use ndarray::{Array1, Array2, Array3, ArrayView1, ArrayView2, Zip, array};
@@ -24,9 +24,9 @@ pub enum BoxKind {
 #[derive(Debug, Clone)]
 pub struct SimBox {
     /// Triclinic cell matrix H (columns are lattice vectors)
-    h: FNx3,
+    h: Fnx3,
     /// Precomputed inverse of H
-    inv: FNx3,
+    inv: Fnx3,
     /// Origin of the cell in Cartesian coordinates
     origin: F3,
     /// Per-axis periodic boundary condition flags (x, y, z)
@@ -67,7 +67,7 @@ impl SimBox {
     const WRAP_REFINE_PASSES: usize = 2;
 
     /// Construct from triclinic cell matrix `H`, origin `O`, and per-axis PBC flags
-    pub fn new(h: FNx3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
+    pub fn new(h: Fnx3, origin: F3, pbc: Pbc3) -> Result<Self, BoxError> {
         Self::new_cell(h, origin, pbc, true)
     }
 
@@ -83,12 +83,12 @@ impl SimBox {
     ///
     /// # Errors
     /// [`BoxError::SingularCell`] when the cell is defined and `h` is singular.
-    pub fn new_cell(h: FNx3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
+    pub fn new_cell(h: Fnx3, origin: F3, pbc: Pbc3, cell_defined: bool) -> Result<Self, BoxError> {
         let (h, inv) = if cell_defined {
             let inv = inv3(&to_mat3(h.view())).ok_or(BoxError::SingularCell)?;
             (h, ndarray::arr2(&inv))
         } else {
-            (FNx3::eye(3), FNx3::eye(3))
+            (Fnx3::eye(3), Fnx3::eye(3))
         };
         let kind = detect_box_kind(&h);
         let mic = Mic::of_cell(&kind, &h, &inv, pbc);
@@ -191,7 +191,7 @@ impl SimBox {
     }
 
     /// Restricted-triclinic matrix from edge lengths and angles in degrees.
-    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<FNx3, BoxError> {
+    pub fn matrix_from_lengths_angles(lengths: [F; 3], angles: [F; 3]) -> Result<Fnx3, BoxError> {
         let [a, b, c] = lengths;
         let [alpha, beta, gamma] = angles.map(F::to_radians);
         if [a, b, c].iter().any(|value| *value <= 0.0)
@@ -217,7 +217,7 @@ impl SimBox {
     }
 
     /// Restricted-triclinic matrix from diagonal sizes and `(xy, xz, yz)` tilts.
-    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> FNx3 {
+    pub fn matrix_from_lengths_tilts(lengths: [F; 3], tilts: [F; 3]) -> Fnx3 {
         array![
             [lengths[0], tilts[0], tilts[1]],
             [0.0, lengths[1], tilts[2]],
@@ -226,7 +226,7 @@ impl SimBox {
     }
 
     /// Convert a general cell matrix to LAMMPS restricted-triclinic form.
-    pub fn restricted_matrix(matrix: FNx3View<'_>) -> Result<FNx3, BoxError> {
+    pub fn restricted_matrix(matrix: Fnx3View<'_>) -> Result<Fnx3, BoxError> {
         if matrix.dim() != (3, 3) {
             return Err(BoxError::InvalidMatrixShape {
                 rows: matrix.nrows(),
@@ -272,7 +272,7 @@ impl SimBox {
     ///
     /// # Panics
     /// Panics if `padding <= 0`.
-    pub fn free(points: FNx3View<'_>, padding: F) -> Result<Self, BoxError> {
+    pub fn free(points: Fnx3View<'_>, padding: F) -> Result<Self, BoxError> {
         assert!(padding > 0.0, "padding must be positive");
         let n = points.nrows();
         if n == 0 {
@@ -305,7 +305,7 @@ impl SimBox {
     /// Unlike [`free`](Self::free), padding is specified per axis and may be
     /// zero. Periodicity is supplied by the caller instead of being forced to
     /// free-boundary semantics.
-    pub fn from_bounds(points: FNx3View<'_>, padding: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
+    pub fn from_bounds(points: Fnx3View<'_>, padding: [F; 3], pbc: Pbc3) -> Result<Self, BoxError> {
         if points.nrows() == 0 {
             return Err(BoxError::InvalidVectorLength { len: 0 });
         }
@@ -381,12 +381,12 @@ impl SimBox {
     }
 
     /// View of the cell matrix
-    pub fn h_view(&self) -> FNx3View<'_> {
+    pub fn h_view(&self) -> Fnx3View<'_> {
         self.h.view()
     }
 
     /// View of the inverse cell matrix
-    pub fn inv_view(&self) -> FNx3View<'_> {
+    pub fn inv_view(&self) -> Fnx3View<'_> {
         self.inv.view()
     }
 
@@ -609,9 +609,9 @@ impl SimBox {
     }
 
     /// Convert Cartesian points to fractional coordinates (N×3)
-    pub fn to_frac(&self, xyz: FNx3View<'_>) -> FNx3 {
+    pub fn to_frac(&self, xyz: Fnx3View<'_>) -> Fnx3 {
         let n = xyz.nrows();
-        let mut result = FNx3::zeros((n, 3));
+        let mut result = Fnx3::zeros((n, 3));
         for i in 0..n {
             let dr = &xyz.row(i) - &self.origin.view();
             result.row_mut(i).assign(&self.inv.dot(&dr));
@@ -620,9 +620,9 @@ impl SimBox {
     }
 
     /// Convert fractional coordinates to Cartesian points (N×3)
-    pub fn to_cart(&self, frac: FNx3View<'_>) -> FNx3 {
+    pub fn to_cart(&self, frac: Fnx3View<'_>) -> Fnx3 {
         let n = frac.nrows();
-        let mut result = FNx3::zeros((n, 3));
+        let mut result = Fnx3::zeros((n, 3));
         for i in 0..n {
             let cart = &self.origin + &self.h.dot(&frac.row(i));
             result.row_mut(i).assign(&cart);
@@ -631,7 +631,7 @@ impl SimBox {
     }
 
     /// Check if points lie within [0,1) in fractional space.
-    pub fn contains(&self, xyz: FNx3View<'_>) -> Array1<bool> {
+    pub fn contains(&self, xyz: Fnx3View<'_>) -> Array1<bool> {
         let n = xyz.nrows();
         let mut mask = Vec::with_capacity(n);
         for i in 0..n {
@@ -647,9 +647,9 @@ impl SimBox {
     /// Writes result into `out` to avoid allocation.
     pub fn delta_out(
         &self,
-        xyzu1: FNx3View<'_>,
-        xyzu2: FNx3View<'_>,
-        out: &mut FNx3,
+        xyzu1: Fnx3View<'_>,
+        xyzu2: Fnx3View<'_>,
+        out: &mut Fnx3,
         minimum_image: bool,
     ) {
         assert_eq!(xyzu1.nrows(), xyzu2.nrows());
@@ -668,16 +668,16 @@ impl SimBox {
     }
 
     /// Batched displacement vectors row-wise (N×3)
-    pub fn delta(&self, xyzu1: FNx3View<'_>, xyzu2: FNx3View<'_>, minimum_image: bool) -> FNx3 {
+    pub fn delta(&self, xyzu1: Fnx3View<'_>, xyzu2: Fnx3View<'_>, minimum_image: bool) -> Fnx3 {
         assert_eq!(xyzu1.nrows(), xyzu2.nrows());
         let n = xyzu1.nrows();
-        let mut out = FNx3::zeros((n, 3));
+        let mut out = Fnx3::zeros((n, 3));
         self.delta_out(xyzu1, xyzu2, &mut out, minimum_image);
         out
     }
 
     /// Row-wise minimum-image distances between equally sized point arrays.
-    pub fn distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array1<F> {
+    pub fn distances(&self, points1: Fnx3View<'_>, points2: Fnx3View<'_>) -> Array1<F> {
         assert_eq!(points1.raw_dim(), points2.raw_dim());
         let values = points1
             .rows()
@@ -692,7 +692,7 @@ impl SimBox {
     }
 
     /// All pairwise minimum-image displacement vectors (`points2 - points1`).
-    pub fn pairwise_delta(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array3<F> {
+    pub fn pairwise_delta(&self, points1: Fnx3View<'_>, points2: Fnx3View<'_>) -> Array3<F> {
         let mut out = Array3::zeros((points1.nrows(), points2.nrows(), 3));
         for (i, a) in points1.rows().into_iter().enumerate() {
             for (j, b) in points2.rows().into_iter().enumerate() {
@@ -706,7 +706,7 @@ impl SimBox {
     }
 
     /// All pairwise minimum-image distances.
-    pub fn pairwise_distances(&self, points1: FNx3View<'_>, points2: FNx3View<'_>) -> Array2<F> {
+    pub fn pairwise_distances(&self, points1: Fnx3View<'_>, points2: Fnx3View<'_>) -> Array2<F> {
         let mut out = Array2::zeros((points1.nrows(), points2.nrows()));
         for (i, a) in points1.rows().into_iter().enumerate() {
             for (j, b) in points2.rows().into_iter().enumerate() {
@@ -718,7 +718,7 @@ impl SimBox {
     }
 
     /// Return a box with its cell matrix right-multiplied by a transform.
-    pub fn transformed(&self, transformation: &FNx3) -> Result<Self, BoxError> {
+    pub fn transformed(&self, transformation: &Fnx3) -> Result<Self, BoxError> {
         Self::new_cell(
             self.h.dot(transformation),
             self.origin.clone(),
@@ -912,7 +912,7 @@ impl SimBox {
     /// products, so it perturbs points that never left the cell by a rounding
     /// error each call. MD wraps after every integration step, which would turn
     /// that into a per-step perturbation of the whole system.
-    pub fn wrap(&self, xyz: FNx3View<'_>) -> FNx3 {
+    pub fn wrap(&self, xyz: Fnx3View<'_>) -> Fnx3 {
         let mut out = xyz.to_owned();
         Zip::from(out.rows_mut()).for_each(|mut row| {
             let w = self.wrap_row([row[0], row[1], row[2]]);
@@ -943,7 +943,7 @@ impl SimBox {
     ///
     /// `m` is the schema's image integer type ([`I`], i32) — the same type as
     /// the `ix`/`iy`/`iz` columns it is banked into.
-    pub fn wrap_shifts(&self, xyz: FNx3View<'_>) -> (FNx3, Array2<I>) {
+    pub fn wrap_shifts(&self, xyz: Fnx3View<'_>) -> (Fnx3, Array2<I>) {
         let n = xyz.nrows();
         let mut out = xyz.to_owned();
         let mut shifts = Array2::<I>::zeros((n, 3));
@@ -973,7 +973,7 @@ impl SimBox {
     /// The flags are the schema's image integer type ([`I`], i32), matching the
     /// `ix`/`iy`/`iz` columns. A point would have to sit two billion cells away
     /// before the count overflowed — far past any physical configuration.
-    pub fn images(&self, xyz: FNx3View<'_>) -> Array2<I> {
+    pub fn images(&self, xyz: Fnx3View<'_>) -> Array2<I> {
         let frac = self.to_frac(xyz);
         let mut images = Array2::zeros((frac.nrows(), 3));
         for i in 0..frac.nrows() {
@@ -990,7 +990,7 @@ impl SimBox {
     ///
     /// `images` is the schema's image integer type ([`I`], i32), so the
     /// `ix`/`iy`/`iz` columns of a frame pass straight in.
-    pub fn unwrap(&self, xyz: FNx3View<'_>, images: ArrayView2<'_, I>) -> FNx3 {
+    pub fn unwrap(&self, xyz: Fnx3View<'_>, images: ArrayView2<'_, I>) -> Fnx3 {
         assert_eq!(xyz.raw_dim(), images.raw_dim());
         assert_eq!(xyz.ncols(), 3);
         let mut result = xyz.to_owned();
@@ -1008,7 +1008,7 @@ impl SimBox {
         result
     }
 
-    pub fn get_corners(&self) -> FNx3 {
+    pub fn get_corners(&self) -> Fnx3 {
         self.to_cart(
             array![
                 [0.0, 0.0, 0.0],
@@ -1031,7 +1031,7 @@ impl SimBox {
     /// use [`contains`](Self::contains) for membership. Geometric region types that
     /// describe the same volume live in the regions (`crate::core::Region`)
     /// (`Cuboid` / `Parallelepiped`) — not on this type.
-    pub fn bounds(&self) -> FNx3 {
+    pub fn bounds(&self) -> Fnx3 {
         let corners = self.get_corners();
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
@@ -1075,7 +1075,7 @@ pub enum Mic {
 impl Mic {
     /// The convention of a cell: the ortho fast path for a diagonal `h`, the
     /// general `H · round(H⁻¹ · d)` form otherwise.
-    fn of_cell(kind: &BoxKind, h: &FNx3, inv: &FNx3, pbc: Pbc3) -> Mic {
+    fn of_cell(kind: &BoxKind, h: &Fnx3, inv: &Fnx3, pbc: Pbc3) -> Mic {
         match kind {
             BoxKind::Ortho { len, inv_len } => Mic::Ortho {
                 len: [len[0], len[1], len[2]],
@@ -1164,7 +1164,7 @@ impl Mic {
     }
 }
 
-fn detect_box_kind(h: &FNx3) -> BoxKind {
+fn detect_box_kind(h: &Fnx3) -> BoxKind {
     let eps: F = 1e-12;
     let is_ortho = h[[0, 1]].abs() < eps
         && h[[0, 2]].abs() < eps

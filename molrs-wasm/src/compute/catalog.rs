@@ -1143,7 +1143,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "ml.kmeans",
             "ml",
             "k-means",
-            "KMeans",
+            "Kmeans",
             "series",
             "custom",
             &["descriptorMatrix"],

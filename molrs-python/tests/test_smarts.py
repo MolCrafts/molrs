@@ -139,15 +139,15 @@ def test_map_number_adds_no_constraint():
 
 
 def test_map_label_and_num_query_atoms():
-    """map_label / num_query_atoms expose the parsed query metadata."""
+    """map_label / n_query_atoms expose the parsed query metadata."""
     pat = molrs.perceive.SmartsPattern("[C:1][O:2][H:3]")
-    assert pat.num_query_atoms == 3
+    assert pat.n_query_atoms == 3
     assert pat.map_label(0) == 1
     assert pat.map_label(1) == 2
     assert pat.map_label(2) == 3
 
     plain = molrs.perceive.SmartsPattern("[C]")
-    assert plain.num_query_atoms == 1
+    assert plain.n_query_atoms == 1
     assert plain.map_label(0) is None
 
 

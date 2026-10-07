@@ -1,7 +1,7 @@
 //! An axis-aligned ellipsoid.
 
 use super::primitives::Region;
-use crate::op::{F, FNx3};
+use crate::op::{F, Fnx3};
 use ndarray::Array2;
 
 /// A solid axis-aligned ellipsoid with semi-axes `(a, b, c)` about `center`.
@@ -58,7 +58,7 @@ impl Ellipsoid {
 }
 
 impl Region for Ellipsoid {
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
             b[[d, 0]] = self.center[d] - self.semi_axes[d];

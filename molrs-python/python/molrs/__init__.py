@@ -23,7 +23,7 @@ so the Python path and the Rust path are the same words
   ``params``, ``clpol_scaling``).
 * :mod:`molrs.optimize` — geometry optimizers.
 * :mod:`molrs.md` — in-process molecular dynamics: the integrators and the
-  ``MD`` driver; it integrates potentials, it defines none.
+  ``MdDriver``; it integrates potentials, it defines none.
 * :mod:`molrs.conformer` — 3D conformer generation.
 * :mod:`molrs.builder` — structure builders, site-graph assembly,
   coarse-graining.

@@ -180,7 +180,7 @@ impl LayeredTypingEngine {
             let pattern = compile_def(def).map_err(|e| {
                 format!("OPLS type {name:?}: failed to parse SMARTS def {def:?}: {e}")
             })?;
-            let specificity = pattern.num_query_atoms();
+            let specificity = pattern.n_query_atoms();
             let level = analyzer.level(name).unwrap_or(0);
             if level >= by_level.len() {
                 by_level.resize_with(level + 1, Vec::new);

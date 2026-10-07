@@ -23,7 +23,7 @@ use ndarray::{Array2, ArrayView2};
 
 use molrs::core::GhostHalo;
 use molrs::ff::potential::ForceTerm;
-use molrs::op::{F, FNx3View, I};
+use molrs::op::{F, Fnx3View, I};
 
 use super::error::MdError;
 
@@ -143,7 +143,7 @@ impl BondedLists {
     pub fn refresh(
         &mut self,
         halo: &GhostHalo,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), MdError> {
         let stale = self.generation != Some(halo.ghosts().generation());
@@ -196,7 +196,7 @@ impl BondedLists {
     fn resolve(
         &mut self,
         halo: &GhostHalo,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         folded: Option<&[bool]>,
     ) -> Result<(), MdError> {
         let set = halo.ghosts();
@@ -290,7 +290,7 @@ mod remap_tests {
     /// wrong.
     fn resolve_one(
         pot: ForceTerm,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         halo: &GhostHalo,
     ) -> Result<Array2<u32>, MdError> {
         let members = vec![pot];

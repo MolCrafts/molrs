@@ -14,11 +14,11 @@
 //! - Boolean composition: [`AndRegion`], [`OrRegion`], [`NotRegion`]
 //!
 //! Type layout conventions:
-//! - Points: N×3 row-major [`FNx3`], each row is `(x, y, z)`, Å.
-//! - Bounds: 3×2 [`FNx3`], col 0 = min, col 1 = max, rows = x/y/z.
+//! - Points: N×3 row-major [`Fnx3`], each row is `(x, y, z)`, Å.
+//! - Bounds: 3×2 [`Fnx3`], col 0 = min, col 1 = max, rows = x/y/z.
 
 use crate::op::to_mat3;
-use crate::op::{F, F3, FNx3};
+use crate::op::{F, F3, Fnx3};
 use crate::op::{det3, inv3};
 use ndarray::{Array1, Array2, array};
 use std::sync::Arc;
@@ -44,7 +44,7 @@ pub trait Region: Send + Sync + std::fmt::Debug {
     ///
     /// Layout: rows = x/y/z; col 0 = min, col 1 = max. An unbounded region
     /// reports `±∞` on its open sides.
-    fn bounds(&self) -> FNx3;
+    fn bounds(&self) -> Fnx3;
 
     /// Signed distance from `point` to the boundary, Å: negative inside,
     /// positive outside, zero on it.
@@ -102,7 +102,7 @@ pub trait Region: Send + Sync + std::fmt::Debug {
     /// # Panics
     ///
     /// Panics if `points` does not have exactly 3 columns.
-    fn contains(&self, points: &FNx3) -> Array1<bool> {
+    fn contains(&self, points: &Fnx3) -> Array1<bool> {
         assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
         points
             .rows()
@@ -112,7 +112,7 @@ pub trait Region: Send + Sync + std::fmt::Debug {
     }
 }
 
-fn aabb(lo: [F; 3], hi: [F; 3]) -> FNx3 {
+fn aabb(lo: [F; 3], hi: [F; 3]) -> Fnx3 {
     let mut b = Array2::zeros((3, 2));
     for d in 0..3 {
         b[[d, 0]] = lo[d];
@@ -158,7 +158,7 @@ impl Sphere {
 }
 
 impl Region for Sphere {
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let r = self.radius;
         let c = &self.center;
         aabb(
@@ -222,7 +222,7 @@ impl Cuboid {
 }
 
 impl Region for Cuboid {
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let o = &self.origin;
         let l = &self.lengths;
         aabb([o[0], o[1], o[2]], [o[0] + l[0], o[1] + l[1], o[2] + l[2]])
@@ -263,9 +263,9 @@ pub struct Parallelepiped {
     /// One corner of the parallelepiped, Å.
     origin: F3,
     /// Edge matrix `H` (columns are the three edge vectors), Å.
-    h: FNx3,
+    h: Fnx3,
     /// Cached `H⁻¹`.
-    inv: FNx3,
+    inv: Fnx3,
     /// Interplanar spacing of each face pair, Å: turns a fractional offset
     /// into a perpendicular distance.
     spacing: [F; 3],
@@ -279,8 +279,8 @@ impl Parallelepiped {
     /// # Errors
     ///
     /// Returns `Err` if `H` is singular (zero volume) or not finite.
-    pub fn new(h: FNx3, origin: F3) -> Result<Self, String> {
-        let inv: FNx3 =
+    pub fn new(h: Fnx3, origin: F3) -> Result<Self, String> {
+        let inv: Fnx3 =
             ndarray::arr2(&inv3(&to_mat3(h.view())).ok_or_else(|| {
                 "Parallelepiped: singular edge matrix H (zero volume)".to_string()
             })?);
@@ -362,7 +362,7 @@ impl Parallelepiped {
     }
 
     /// Edge matrix `H` (columns are edge vectors), Å.
-    pub fn h(&self) -> &FNx3 {
+    pub fn h(&self) -> &Fnx3 {
         &self.h
     }
 
@@ -404,7 +404,7 @@ impl Parallelepiped {
 }
 
 impl Region for Parallelepiped {
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         // AABB of the eight corners: origin + Σ ε_i · edge_i, ε ∈ {0,1}.
         let o = [self.origin[0], self.origin[1], self.origin[2]];
         let edge = |i: usize| [self.h[[0, i]], self.h[[1, i]], self.h[[2, i]]];
@@ -457,7 +457,7 @@ impl Region for AndRegion {
         self.a.repeats_along(shift) && self.b.repeats_along(shift)
     }
 
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         // Intersection bounds: max of mins, min of maxs
         let a_bounds = self.a.bounds();
         let b_bounds = self.b.bounds();
@@ -504,7 +504,7 @@ impl Region for NotRegion {
         self.a.repeats_along(shift)
     }
 
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         self.a.bounds()
     }
 
@@ -540,7 +540,7 @@ impl Region for OrRegion {
         self.a.repeats_along(shift) && self.b.repeats_along(shift)
     }
 
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         // Union bounds: min of mins, max of maxs
         let a_bounds = self.a.bounds();
         let b_bounds = self.b.bounds();
@@ -836,7 +836,7 @@ pub(crate) mod tests {
     #[test]
     fn sphere_contains_points() {
         let s = Sphere::with_radius(2.0);
-        let pts: FNx3 = Array2::from_shape_vec(
+        let pts: Fnx3 = Array2::from_shape_vec(
             (3, 3),
             vec![
                 0.0, 0.0, 0.0, // inside (center)

@@ -30,7 +30,7 @@ pub mod vec3;
 pub use geometry::{CenterError, center, rotate, scale, translate};
 pub use linalg::{det3, eigh_sym_3x3, eigh_sym_4x4, inv3};
 pub use numeric::{
-    F, F3, F3View, FNx3, FNx3View, I, Idx, Mat3, Pbc3, Quat, Vec3, to_mat3, to_vec3,
+    F, F3, F3View, Fnx3, Fnx3View, I, Idx, Mat3, Pbc3, Quat, Vec3, to_mat3, to_vec3,
 };
 pub use random::standard_normal;
 pub use rigid::{

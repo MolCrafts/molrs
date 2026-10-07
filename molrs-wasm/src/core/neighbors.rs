@@ -299,7 +299,7 @@ fn storage_flag(storage: &JsValue, key: &str) -> Result<bool, JsValue> {
 ///
 /// ```js
 /// const neigh = nl.neighbors();
-/// console.log(neigh.numPairs);
+/// console.log(neigh.nPairs);
 ///
 /// const i  = neigh.queryPointIndices(); // Uint32Array
 /// const j  = neigh.pointIndices();      // Uint32Array
@@ -419,7 +419,7 @@ impl Neighbors {
 /// ```js
 /// const nq = new NeighborQuery(refFrame, 3.0);   // index the reference atoms
 /// const cross = nq.query(otherFrame);            // directed, no i < j rule
-/// console.log(cross.numPairs, cross.isSelfQuery); // …, false
+/// console.log(cross.nPairs, cross.isSelfQuery); // …, false
 /// ```
 #[wasm_bindgen(js_name = NeighborQuery)]
 pub struct NeighborQuery {

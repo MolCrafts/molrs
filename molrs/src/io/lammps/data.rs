@@ -43,19 +43,19 @@ use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS};
 
 #[derive(Debug, Clone, Default)]
 struct LAMMPSHeader {
-    num_atoms: usize,
-    num_bonds: usize,
-    num_angles: usize,
-    num_dihedrals: usize,
-    num_impropers: usize,
+    n_atoms: usize,
+    n_bonds: usize,
+    n_angles: usize,
+    n_dihedrals: usize,
+    n_impropers: usize,
     /// `N crossterms` (or `N cmap crossterms`): the rows of the `CMAP`
     /// section LAMMPS `fix cmap` reads.
-    num_crossterms: usize,
-    num_atom_types: usize,
-    num_bond_types: usize,
-    num_angle_types: usize,
-    num_dihedral_types: usize,
-    num_improper_types: usize,
+    n_crossterms: usize,
+    n_atom_types: usize,
+    n_bond_types: usize,
+    n_angle_types: usize,
+    n_dihedral_types: usize,
+    n_improper_types: usize,
     bounds: BoxBounds,
     /// The `units = <style>` field of the title line, as `write_data` writes
     /// it; `None` when the title does not state one.
@@ -561,14 +561,14 @@ fn parse_header_with_first_section<R: BufRead>(
             invalid_data(format!("Invalid LAMMPS data header line `{trimmed}`: {e}"))
         };
         match tokens.as_slice() {
-            [n, "atoms", ..] => header.num_atoms = n.parse().map_err(bad_count)?,
-            [n, "bonds", ..] => header.num_bonds = n.parse().map_err(bad_count)?,
-            [n, "angles", ..] => header.num_angles = n.parse().map_err(bad_count)?,
-            [n, "dihedrals", ..] => header.num_dihedrals = n.parse().map_err(bad_count)?,
-            [n, "impropers", ..] => header.num_impropers = n.parse().map_err(bad_count)?,
+            [n, "atoms", ..] => header.n_atoms = n.parse().map_err(bad_count)?,
+            [n, "bonds", ..] => header.n_bonds = n.parse().map_err(bad_count)?,
+            [n, "angles", ..] => header.n_angles = n.parse().map_err(bad_count)?,
+            [n, "dihedrals", ..] => header.n_dihedrals = n.parse().map_err(bad_count)?,
+            [n, "impropers", ..] => header.n_impropers = n.parse().map_err(bad_count)?,
             // `fix cmap`'s header line, in either of the two spellings it reads.
             [n, "crossterms"] | [n, "cmap", "crossterms"] => {
-                header.num_crossterms = n.parse().map_err(bad_count)?
+                header.n_crossterms = n.parse().map_err(bad_count)?
             }
             [
                 n,
@@ -578,11 +578,11 @@ fn parse_header_with_first_section<R: BufRead>(
             ] => {
                 let n = n.parse().map_err(bad_count)?;
                 match *kind {
-                    "atom" => header.num_atom_types = n,
-                    "bond" => header.num_bond_types = n,
-                    "angle" => header.num_angle_types = n,
-                    "dihedral" => header.num_dihedral_types = n,
-                    _ => header.num_improper_types = n,
+                    "atom" => header.n_atom_types = n,
+                    "bond" => header.n_bond_types = n,
+                    "angle" => header.n_angle_types = n,
+                    "dihedral" => header.n_dihedral_types = n,
+                    _ => header.n_improper_types = n,
                 }
             }
             // Counts this reader has no use for: the body sections they size
@@ -794,15 +794,15 @@ fn parse_masses<R: BufRead>(
 
 fn parse_atoms_streamed<R: BufRead>(
     reader: &mut R,
-    num_atoms: usize,
+    n_atoms: usize,
     style_hint: Option<&str>,
 ) -> std::io::Result<AtomColumns> {
-    let mut cols = AtomColumns::with_capacity(num_atoms);
+    let mut cols = AtomColumns::with_capacity(n_atoms);
     let mut line = String::new();
     let known = style_hint.and_then(layout_for_atom_style);
     let style_known = known.is_some();
 
-    while cols.len() < num_atoms {
+    while cols.len() < n_atoms {
         line.clear();
         if reader.read_line(&mut line)? == 0 {
             break;
@@ -815,9 +815,9 @@ fn parse_atoms_streamed<R: BufRead>(
         let layout = resolve_layout(&tokens, known, style_known)?;
         push_atom_line(&mut cols, &tokens, layout)?;
     }
-    if cols.len() > 0 && cols.len() < num_atoms {
+    if cols.len() > 0 && cols.len() < n_atoms {
         return Err(invalid_data(format!(
-            "Atoms section has {} rows, the header declares {num_atoms} atoms",
+            "Atoms section has {} rows, the header declares {n_atoms} atoms",
             cols.len()
         )));
     }
@@ -1126,17 +1126,17 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
             "atoms={},bonds={},angles={},dihedrals={},impropers={},crossterms={},\
              atom_types={},bond_types={},angle_types={},dihedral_types={},\
              improper_types={}",
-            h.num_atoms,
-            h.num_bonds,
-            h.num_angles,
-            h.num_dihedrals,
-            h.num_impropers,
-            h.num_crossterms,
-            h.num_atom_types,
-            h.num_bond_types,
-            h.num_angle_types,
-            h.num_dihedral_types,
-            h.num_improper_types,
+            h.n_atoms,
+            h.n_bonds,
+            h.n_angles,
+            h.n_dihedrals,
+            h.n_impropers,
+            h.n_crossterms,
+            h.n_atom_types,
+            h.n_bond_types,
+            h.n_angle_types,
+            h.n_dihedral_types,
+            h.n_improper_types,
         ),
     );
     // Unit style from the `write_data` title line; absent when not stated.
@@ -1219,7 +1219,7 @@ fn dispatch_section<R: BufRead>(
                 Some(style) => Some(style.to_owned()),
                 None => parse_atoms_style_hint(header.line.trim()),
             };
-            data.atoms = parse_atoms_streamed(reader, data.header.num_atoms, hint.as_deref())?;
+            data.atoms = parse_atoms_streamed(reader, data.header.n_atoms, hint.as_deref())?;
             Ok(None)
         }
         "Velocities" => {
@@ -1241,30 +1241,30 @@ fn dispatch_section<R: BufRead>(
             Ok(next)
         }
         "Bonds" => {
-            data.bonds = parse_topology_section(reader, data.header.num_bonds, 2, "Bonds")?;
+            data.bonds = parse_topology_section(reader, data.header.n_bonds, 2, "Bonds")?;
             Ok(None)
         }
         "Angles" => {
-            data.angles = parse_topology_section(reader, data.header.num_angles, 3, "Angles")?;
+            data.angles = parse_topology_section(reader, data.header.n_angles, 3, "Angles")?;
             Ok(None)
         }
         "Dihedrals" => {
             data.dihedrals =
-                parse_topology_section(reader, data.header.num_dihedrals, 4, "Dihedrals")?;
+                parse_topology_section(reader, data.header.n_dihedrals, 4, "Dihedrals")?;
             Ok(None)
         }
         "Impropers" => {
             data.impropers =
-                parse_topology_section(reader, data.header.num_impropers, 4, "Impropers")?;
+                parse_topology_section(reader, data.header.n_impropers, 4, "Impropers")?;
             Ok(None)
         }
         "CMAP" => {
-            if data.header.num_crossterms == 0 {
+            if data.header.n_crossterms == 0 {
                 return Err(invalid_data(
                     "LAMMPS data section `CMAP` without a `N crossterms` header line",
                 ));
             }
-            data.cmaps = parse_topology_section(reader, data.header.num_crossterms, 5, "CMAP")?;
+            data.cmaps = parse_topology_section(reader, data.header.n_crossterms, 5, "CMAP")?;
             Ok(None)
         }
         // Force-field coefficient blocks — the header line (`# style` comment
@@ -1447,7 +1447,7 @@ impl<R: BufRead + Seek> LammpsDataReader<R> {
             pending = Some(section);
         }
 
-        if data.atoms.len() == 0 && data.header.num_atoms > 0 {
+        if data.atoms.len() == 0 && data.header.n_atoms > 0 {
             return Err(invalid_data("No atoms found in file"));
         }
         Ok(Some(build_frame(data)?))
@@ -1910,10 +1910,10 @@ fn write_lammps_data_frame_with<W: Write>(
     writeln!(writer, "# LAMMPS data file generated by molrs")?;
     writeln!(writer)?;
 
-    let num_atoms = frame
+    let n_atoms = frame
         .visit_block("atoms", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
-    if num_atoms == 0 {
+    if n_atoms == 0 {
         return Err(invalid_data("Frame has no atoms to write"));
     }
 
@@ -1978,66 +1978,66 @@ fn write_lammps_data_frame_with<W: Write>(
     let improper_rt = type_labels.block("impropers");
     let cmap_rt = type_labels.block("cmaps");
 
-    let atom_ids = resolve_atom_ids(frame, num_atoms);
-    let row_masses = resolve_row_masses(frame, num_atoms);
+    let atom_ids = resolve_atom_ids(frame, n_atoms);
+    let row_masses = resolve_row_masses(frame, n_atoms);
 
-    let num_bonds = frame
+    let n_bonds = frame
         .visit_block("bonds", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
-    let num_angles = frame
+    let n_angles = frame
         .visit_block("angles", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
-    let num_dihedrals = frame
+    let n_dihedrals = frame
         .visit_block("dihedrals", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
-    let num_impropers = frame
+    let n_impropers = frame
         .visit_block("impropers", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
-    let num_crossterms = frame
+    let n_crossterms = frame
         .visit_block("cmaps", |b| b.nrows().unwrap_or(0))
         .unwrap_or(0);
 
-    let num_atom_types = atom_rt.n_types().max(1);
-    let num_bond_types = bond_rt.map(|r| r.n_types()).unwrap_or(0);
-    let num_angle_types = angle_rt.map(|r| r.n_types()).unwrap_or(0);
-    let num_dihedral_types = dihedral_rt.map(|r| r.n_types()).unwrap_or(0);
-    let num_improper_types = improper_rt.map(|r| r.n_types()).unwrap_or(0);
+    let n_atom_types = atom_rt.n_types().max(1);
+    let n_bond_types = bond_rt.map(|r| r.n_types()).unwrap_or(0);
+    let n_angle_types = angle_rt.map(|r| r.n_types()).unwrap_or(0);
+    let n_dihedral_types = dihedral_rt.map(|r| r.n_types()).unwrap_or(0);
+    let n_improper_types = improper_rt.map(|r| r.n_types()).unwrap_or(0);
 
-    if let Some(flags) = drude_flags(frame, atom_rt.type_ids(), num_atom_types) {
+    if let Some(flags) = drude_flags(frame, atom_rt.type_ids(), n_atom_types) {
         // LAMMPS skips comment lines in the header; the DRUDE package's
         // `fix drude` wants exactly this list, in atom-type order.
         writeln!(writer, "# fix drude flags (atom-type order): {flags}")?;
     }
-    writeln!(writer, "{num_atoms} atoms")?;
-    if num_bonds > 0 {
-        writeln!(writer, "{num_bonds} bonds")?;
+    writeln!(writer, "{n_atoms} atoms")?;
+    if n_bonds > 0 {
+        writeln!(writer, "{n_bonds} bonds")?;
     }
-    if num_angles > 0 {
-        writeln!(writer, "{num_angles} angles")?;
+    if n_angles > 0 {
+        writeln!(writer, "{n_angles} angles")?;
     }
-    if num_dihedrals > 0 {
-        writeln!(writer, "{num_dihedrals} dihedrals")?;
+    if n_dihedrals > 0 {
+        writeln!(writer, "{n_dihedrals} dihedrals")?;
     }
-    if num_impropers > 0 {
-        writeln!(writer, "{num_impropers} impropers")?;
+    if n_impropers > 0 {
+        writeln!(writer, "{n_impropers} impropers")?;
     }
     // `fix cmap`'s header line; the file is read with
     // `read_data <file> fix <id> crossterm CMAP`.
-    if num_crossterms > 0 {
-        writeln!(writer, "{num_crossterms} crossterms")?;
+    if n_crossterms > 0 {
+        writeln!(writer, "{n_crossterms} crossterms")?;
     }
-    writeln!(writer, "{num_atom_types} atom types")?;
-    if num_bond_types > 0 {
-        writeln!(writer, "{num_bond_types} bond types")?;
+    writeln!(writer, "{n_atom_types} atom types")?;
+    if n_bond_types > 0 {
+        writeln!(writer, "{n_bond_types} bond types")?;
     }
-    if num_angle_types > 0 {
-        writeln!(writer, "{num_angle_types} angle types")?;
+    if n_angle_types > 0 {
+        writeln!(writer, "{n_angle_types} angle types")?;
     }
-    if num_dihedral_types > 0 {
-        writeln!(writer, "{num_dihedral_types} dihedral types")?;
+    if n_dihedral_types > 0 {
+        writeln!(writer, "{n_dihedral_types} dihedral types")?;
     }
-    if num_improper_types > 0 {
-        writeln!(writer, "{num_improper_types} improper types")?;
+    if n_improper_types > 0 {
+        writeln!(writer, "{n_improper_types} improper types")?;
     }
     writeln!(writer)?;
 
@@ -2101,11 +2101,11 @@ fn write_lammps_data_frame_with<W: Write>(
     if !body_style {
         writeln!(writer, "Masses")?;
         writeln!(writer)?;
-        let mut type_mass = vec![1.0_f64; num_atom_types + 1];
-        let mut seen = vec![false; num_atom_types + 1];
-        for (i, &mass) in row_masses.iter().enumerate().take(num_atoms) {
+        let mut type_mass = vec![1.0_f64; n_atom_types + 1];
+        let mut seen = vec![false; n_atom_types + 1];
+        for (i, &mass) in row_masses.iter().enumerate().take(n_atoms) {
             let t = atom_rt.type_ids()[i] as usize;
-            if t > 0 && t <= num_atom_types && !seen[t] {
+            if t > 0 && t <= n_atom_types && !seen[t] {
                 seen[t] = true;
                 type_mass[t] = mass;
             }
@@ -2113,7 +2113,7 @@ fn write_lammps_data_frame_with<W: Write>(
         if let Some(labels) = atom_rt.labels() {
             for (k, label) in labels.iter().enumerate() {
                 let t = k + 1;
-                if t <= num_atom_types
+                if t <= n_atom_types
                     && !seen[t]
                     && let Some(&m) = label_masses.get(label)
                 {
@@ -2121,12 +2121,7 @@ fn write_lammps_data_frame_with<W: Write>(
                 }
             }
         }
-        for (t, m) in type_mass
-            .iter()
-            .enumerate()
-            .take(num_atom_types + 1)
-            .skip(1)
-        {
+        for (t, m) in type_mass.iter().enumerate().take(n_atom_types + 1).skip(1) {
             writeln!(writer, "{t} {m}")?;
         }
         writeln!(writer)?;
@@ -2150,7 +2145,7 @@ fn write_lammps_data_frame_with<W: Write>(
     ) {
         writeln!(writer, "Velocities")?;
         writeln!(writer)?;
-        for i in 0..num_atoms {
+        for i in 0..n_atoms {
             writeln!(
                 writer,
                 "{} {} {} {}",

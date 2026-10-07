@@ -3,9 +3,9 @@
 //! Three families live here:
 //!
 //! - The **F-prefix family** of ndarray-backed aliases over the scalar [`F`]
-//!   (always `f64`): [`F3`] (any `Array1<F>`), [`FNx3`] (any `Array2<F>`) and
+//!   (always `f64`): [`F3`] (any `Array1<F>`), [`Fnx3`] (any `Array2<F>`) and
 //!   their views — the API types of the crate's column stores. One name per
-//!   type: a 3×3 box matrix is an `FNx3`, an N-vector an `F3`.
+//!   type: a 3×3 box matrix is an `Fnx3`, an N-vector an `F3`.
 //! - The **non-float aliases** [`I`] (signed integer), [`Idx`] (an index or
 //!   stable identifier) and [`Pbc3`] (per-axis periodic flags).
 //! - The **stack aliases** [`Vec3`], [`Mat3`] and [`Quat`] that the `op`
@@ -33,7 +33,7 @@ pub type F3 = Array1<F>;
 
 /// An owned float matrix: N×3 (a collection of 3D vectors) or 3×3 (a box
 /// matrix, rotation or stress tensor).
-pub type FNx3 = Array2<F>;
+pub type Fnx3 = Array2<F>;
 
 // ---- Views ----
 
@@ -41,7 +41,7 @@ pub type FNx3 = Array2<F>;
 pub type F3View<'a> = ArrayView1<'a, F>;
 
 /// Borrowed N×3 view.
-pub type FNx3View<'a> = ArrayView2<'a, F>;
+pub type Fnx3View<'a> = ArrayView2<'a, F>;
 
 // ---- Non-float ----
 

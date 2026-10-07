@@ -30,7 +30,7 @@ use molrs::core::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
-use molrs::op::{F3, FNx3};
+use molrs::op::{F3, Fnx3};
 use molrs_ffi::RegionRef;
 use ndarray::{Array2, ArrayView2};
 
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn molrs_region_contains(
         null_check!(out);
         let p = unsafe { std::slice::from_raw_parts(points, n * 3) };
         let dst = unsafe { std::slice::from_raw_parts_mut(out, n) };
-        let pts: FNx3 = match Array2::from_shape_vec((n, 3), p.to_vec()) {
+        let pts: Fnx3 = match Array2::from_shape_vec((n, 3), p.to_vec()) {
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("points: {e}"));

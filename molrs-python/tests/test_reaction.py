@@ -63,8 +63,8 @@ def test_parse_two_reactant_components_and_product():
     assert len(pats) == 2
     assert all(isinstance(p, molrs.perceive.SmartsPattern) for p in pats)
     # component 0 is the amine (1 query atom), component 1 the ester (4 atoms)
-    assert pats[0].num_query_atoms == 1
-    assert pats[1].num_query_atoms == 4
+    assert pats[0].n_query_atoms == 1
+    assert pats[1].n_query_atoms == 4
 
 
 def test_parse_tolerates_agent_field():

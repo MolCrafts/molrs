@@ -3,7 +3,7 @@ use ndarray::{Array2, ArrayView2};
 use molrs::core::VerletSkin;
 use molrs::core::Virial;
 use molrs::ff::potential::{ForceTerm, Potential};
-use molrs::op::{F, FNx3, FNx3View, I};
+use molrs::op::{F, Fnx3, Fnx3View, I};
 
 use super::error::MdError;
 use super::ghost_topology::BondedLists;
@@ -83,7 +83,7 @@ pub trait ForceProvider: Send + Sync {
     /// `(pos.nrows(), 3)`.
     fn compute_into(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError>;
@@ -91,12 +91,12 @@ pub trait ForceProvider: Send + Sync {
     /// [`compute_into`](Self::compute_into) into a fresh [`ForceOutput`].
     fn compute(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<ForceOutput, MdError> {
         let mut out = ForceOutput {
             energy: 0.0,
-            forces: FNx3::zeros((0, 3)),
+            forces: Fnx3::zeros((0, 3)),
             virial: None,
         };
         self.compute_into(pos, wrap_shifts, &mut out)?;
@@ -112,7 +112,7 @@ pub trait ForceProvider: Send + Sync {
 impl ForceProvider for Box<dyn ForceProvider> {
     fn compute_into(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError> {
@@ -121,7 +121,7 @@ impl ForceProvider for Box<dyn ForceProvider> {
 
     fn compute(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<ForceOutput, MdError> {
         (**self).compute(pos, wrap_shifts)
@@ -169,7 +169,7 @@ impl SelfPairedForces {
 impl ForceProvider for SelfPairedForces {
     fn compute_into(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         _wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError> {
@@ -246,7 +246,7 @@ pub struct MicPairs {
     skin: VerletSkin,
     /// Force accumulator, reused across steps. Every member adds into it, so
     /// a step allocates one of these rather than one per member.
-    acc: FNx3,
+    acc: Fnx3,
     /// Per-pair weights for the member being evaluated, reused across steps.
     factors: Vec<F>,
     /// One bonded member's forces, reused across steps: its virial is tallied
@@ -276,7 +276,7 @@ impl MicPairs {
             members,
             special,
             skin,
-            acc: FNx3::zeros((0, 3)),
+            acc: Fnx3::zeros((0, 3)),
             factors: Vec::new(),
             term: Vec::new(),
         })
@@ -286,7 +286,7 @@ impl MicPairs {
 impl ForceProvider for MicPairs {
     fn compute_into(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         _wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError> {
@@ -422,7 +422,7 @@ pub struct GhostPairs {
     /// or `None` before the first gather.
     gathered: Option<u64>,
     /// Force accumulator over `[owned | ghost]`, reused across steps.
-    acc: FNx3,
+    acc: Fnx3,
     /// Per-pair weights for the member being evaluated, reused across steps.
     factors: Vec<F>,
 }
@@ -460,7 +460,7 @@ impl GhostPairs {
             lists,
             special,
             gathered: None,
-            acc: FNx3::zeros((0, 3)),
+            acc: Fnx3::zeros((0, 3)),
             factors: Vec::new(),
         })
     }
@@ -474,7 +474,7 @@ impl GhostPairs {
 impl ForceProvider for GhostPairs {
     fn compute_into(
         &mut self,
-        pos: FNx3View<'_>,
+        pos: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
         out: &mut ForceOutput,
     ) -> Result<(), MdError> {

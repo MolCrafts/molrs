@@ -1,6 +1,6 @@
 //! k-means clustering with k-means++ initialization.
 //!
-//! [`KMeans`] is a [`Compute`] consuming an upstream [`PcaResult`]. The 2D
+//! [`Kmeans`] is a [`Compute`] consuming an upstream [`PcaResult`]. The 2D
 //! PCA scores are interpreted as a row-major `[n_rows, 2]` matrix and
 //! clustered via Lloyd's algorithm with k-means++ init. Deterministic given a
 //! fixed seed.
@@ -17,13 +17,13 @@ use crate::compute::PcaResult;
 
 /// Per-row cluster labels in `0..k`.
 #[derive(Debug, Clone, Default)]
-pub struct KMeansResult(pub Vec<i32>);
+pub struct KmeansResult(pub Vec<i32>);
 
-impl ComputeResult for KMeansResult {}
+impl ComputeResult for KmeansResult {}
 
 /// Configuration handle for k-means clustering.
 #[derive(Debug, Clone, Copy)]
-pub struct KMeans {
+pub struct Kmeans {
     k: usize,
     max_iter: usize,
     seed: u64,
@@ -31,18 +31,18 @@ pub struct KMeans {
 
 const CENTROID_MOVE_SQ: F = 1e-16;
 
-impl KMeans {
+impl Kmeans {
     /// `k` clusters, at most `max_iter` Lloyd iterations, deterministic RNG `seed`.
     pub fn new(k: usize, max_iter: usize, seed: u64) -> Result<Self, ComputeError> {
         if k == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "KMeans::k",
+                field: "Kmeans::k",
                 value: k.to_string(),
             });
         }
         if max_iter == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "KMeans::max_iter",
+                field: "Kmeans::max_iter",
                 value: max_iter.to_string(),
             });
         }
@@ -57,13 +57,13 @@ impl KMeans {
     ) -> Result<Vec<i32>, ComputeError> {
         if n_dims == 0 {
             return Err(ComputeError::OutOfRange {
-                field: "KMeans::n_dims",
+                field: "Kmeans::n_dims",
                 value: n_dims.to_string(),
             });
         }
         if self.k > n_rows {
             return Err(ComputeError::OutOfRange {
-                field: "KMeans::k",
+                field: "Kmeans::k",
                 value: format!("k={} exceeds n_rows={}", self.k, n_rows),
             });
         }
@@ -71,13 +71,13 @@ impl KMeans {
             return Err(ComputeError::DimensionMismatch {
                 expected: n_rows * n_dims,
                 got: coords.len(),
-                what: "KMeans coords length",
+                what: "Kmeans coords length",
             });
         }
         for (i, &v) in coords.iter().enumerate() {
             if !v.is_finite() {
                 return Err(ComputeError::NonFinite {
-                    where_: "KMeans coords",
+                    where_: "Kmeans coords",
                     index: i,
                 });
             }
@@ -103,15 +103,15 @@ impl KMeans {
     }
 }
 
-impl Compute for KMeans {
+impl Compute for Kmeans {
     type Args<'a> = &'a PcaResult;
-    type Output = KMeansResult;
+    type Output = KmeansResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         _frames: &[&'a FA],
         pca: &'a PcaResult,
-    ) -> Result<KMeansResult, ComputeError> {
+    ) -> Result<KmeansResult, ComputeError> {
         let n_dims = 2usize;
         if !pca.coords.len().is_multiple_of(n_dims) {
             return Err(ComputeError::BadShape {
@@ -121,7 +121,7 @@ impl Compute for KMeans {
         }
         let n_rows = pca.coords.len() / n_dims;
         let labels = self.fit_coords(&pca.coords, n_rows, n_dims)?;
-        Ok(KMeansResult(labels))
+        Ok(KmeansResult(labels))
     }
 }
 
@@ -275,18 +275,18 @@ mod tests {
 
     #[test]
     fn new_rejects_zero_k() {
-        assert!(KMeans::new(0, 100, 42).is_err());
+        assert!(Kmeans::new(0, 100, 42).is_err());
     }
 
     #[test]
     fn new_rejects_zero_max_iter() {
-        assert!(KMeans::new(3, 0, 42).is_err());
+        assert!(Kmeans::new(3, 0, 42).is_err());
     }
 
     #[test]
     fn three_blobs_produce_three_clusters() {
         let pca = three_blobs(20, 7);
-        let km = KMeans::new(3, 100, 42).unwrap();
+        let km = Kmeans::new(3, 100, 42).unwrap();
         let frame = Frame::new();
         let labels = km.compute(&[&frame], &pca).unwrap();
 
@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn same_seed_identical_labels() {
         let pca = three_blobs(20, 7);
-        let km = KMeans::new(3, 100, 42).unwrap();
+        let km = Kmeans::new(3, 100, 42).unwrap();
         let frame = Frame::new();
         let a = km.compute(&[&frame], &pca).unwrap();
         let b = km.compute(&[&frame], &pca).unwrap();
@@ -320,7 +320,7 @@ mod tests {
             coords: vec![0.0, 0.0, 1.0, 1.0],
             variance: [1.0, 1.0],
         };
-        let km = KMeans::new(5, 10, 42).unwrap();
+        let km = Kmeans::new(5, 10, 42).unwrap();
         let frame = Frame::new();
         let err = km.compute(&[&frame], &pca).unwrap_err();
         assert!(matches!(err, ComputeError::OutOfRange { .. }));
@@ -332,7 +332,7 @@ mod tests {
             coords: vec![0.0, F::NAN, 1.0, 1.0, 2.0, 2.0],
             variance: [1.0, 1.0],
         };
-        let km = KMeans::new(2, 10, 42).unwrap();
+        let km = Kmeans::new(2, 10, 42).unwrap();
         let frame = Frame::new();
         let err = km.compute(&[&frame], &pca).unwrap_err();
         assert!(matches!(err, ComputeError::NonFinite { .. }));

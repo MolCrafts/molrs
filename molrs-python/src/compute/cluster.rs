@@ -50,7 +50,7 @@ impl PyClusterResult {
 
     fn __repr__(&self) -> String {
         format!(
-            "ClusterResult(num_clusters={}, largest={})",
+            "ClusterResult(n_clusters={}, largest={})",
             self.inner.n_clusters,
             self.inner.cluster_sizes.iter().max().unwrap_or(&0),
         )

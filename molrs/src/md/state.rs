@@ -1,6 +1,6 @@
 //! Typed array containers for the MD engine.
 //!
-//! [`ForceOutput`] and [`MDState`] are the data contract crossing the
+//! [`ForceOutput`] and [`MdState`] are the data contract crossing the
 //! component boundary: a force evaluation hands back energy, forces and
 //! virial, and the state carries them at `pos` alongside the coordinates and
 //! their image flags. Frame topology stays at the composer; the hot step sees
@@ -21,7 +21,7 @@ use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::keys;
 use molrs::core::schema::block_names::ATOMS;
-use molrs::op::{F, FNx3, I};
+use molrs::op::{F, Fnx3, I};
 
 use super::error::MdError;
 use molrs::core::Virial;
@@ -35,7 +35,7 @@ pub struct ForceOutput {
     /// Scalar total energy `()` in amu·Å²/fs².
     pub energy: F,
     /// Per-atom forces `(N, 3)`.
-    pub forces: FNx3,
+    pub forces: Fnx3,
     /// `Σ f ⊗ r` at `pos`, when the provider tallies one.
     ///
     /// `None` is not zero. A provider that does not tally says so, because a
@@ -64,9 +64,9 @@ pub struct ForceOutput {
 /// displacement, diffusion, and any other quantity that must not see a
 /// boundary crossing as a jump.
 #[derive(Clone, Debug)]
-pub struct MDState {
+pub struct MdState {
     /// Wrapped positions `(N, 3)` in Å — inside the primary cell.
-    pub pos: FNx3,
+    pub pos: Fnx3,
     /// Accumulated box crossings `(N, 3)`, one signed count per lattice
     /// vector, in the schema's image integer type ([`I`], i32) — the type of
     /// the `ix`/`iy`/`iz` columns it is written to. `pos + H·images` is the
@@ -74,9 +74,9 @@ pub struct MDState {
     /// billion times before the count overflowed, far beyond any physical run.
     pub images: Array2<I>,
     /// Velocities `(N, 3)` in Å/fs.
-    pub vel: FNx3,
+    pub vel: Fnx3,
     /// Cached forces `(N, 3)` at `pos`.
-    pub forces: FNx3,
+    pub forces: Fnx3,
     /// Cached scalar energy at `pos`.
     pub energy: F,
     /// Cached virial at `pos`, from the same evaluation as `forces`.
@@ -101,7 +101,7 @@ mod tests {
             virial: None,
         };
         assert_eq!(out.forces.nrows(), 1);
-        let state = MDState {
+        let state = MdState {
             pos: array![[0.0, 0.0, 0.0]],
             images: Array2::zeros((1, 3)),
             vel: array![[0.0, 0.0, 0.0]],
@@ -113,7 +113,7 @@ mod tests {
     }
 }
 
-impl MDState {
+impl MdState {
     /// Write the canonical state into a frame's `atoms` block: wrapped
     /// positions **and** the image flags that go with them.
     ///
@@ -170,7 +170,7 @@ impl MDState {
     /// must not use it: the numbers grow without bound, and a potential handed
     /// them is being asked to subtract two large coordinates to recover a small
     /// separation.
-    pub fn unwrapped(&self, bx: &SimBox) -> FNx3 {
+    pub fn unwrapped(&self, bx: &SimBox) -> Fnx3 {
         bx.unwrap(self.pos.view(), self.images.view())
     }
 }
@@ -207,7 +207,7 @@ mod persistence_tests {
     /// keys, so a writer that emits what the block holds carries both.
     #[test]
     fn the_state_writes_its_flags_beside_its_coordinates() {
-        let state = MDState {
+        let state = MdState {
             pos: array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
             images: array![[1 as I, 0, -2], [0, 3, 0]],
             vel: Array2::zeros((2, 3)),
@@ -244,7 +244,7 @@ mod persistence_tests {
     fn a_trajectory_written_with_flags_can_be_unwrapped_again() {
         let bx = SimBox::cube(10.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // An atom that has crossed +x three times: stored at 2.0, really at 32.
-        let state = MDState {
+        let state = MdState {
             pos: array![[2.0, 5.0, 5.0]],
             images: array![[3 as I, 0, 0]],
             vel: Array2::zeros((1, 3)),
@@ -276,7 +276,7 @@ mod persistence_tests {
     /// caller error, and saying so beats writing a column of the wrong length.
     #[test]
     fn a_size_mismatch_is_refused() {
-        let state = MDState {
+        let state = MdState {
             pos: array![[0.0, 0.0, 0.0]],
             images: Array2::zeros((1, 3)),
             vel: Array2::zeros((1, 3)),

@@ -11,7 +11,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 use super::images::{GhostError, ImageRange};
 use crate::core::SimBox;
 use crate::core::{NeighborList, Neighbors, NeighborsStorage, QueryMode};
-use crate::op::{F, FNx3, FNx3View, I};
+use crate::op::{F, Fnx3, Fnx3View, I};
 
 /// The periodic copies of one owned point set.
 ///
@@ -45,7 +45,7 @@ use crate::op::{F, FNx3, FNx3View, I};
 #[derive(Debug, Clone)]
 pub struct GhostSet {
     /// Ghost positions `(n_ghost, 3)` in Å, rebuilt by `refresh`.
-    positions: FNx3,
+    positions: Fnx3,
     /// Owned index each ghost copies.
     owner: Vec<u32>,
     /// Integer lattice translation each ghost carries.
@@ -81,7 +81,7 @@ impl GhostSet {
     ///
     /// `owned` is expected to be wrapped (inside the cell). Nothing breaks if
     /// it is not; the halo is simply built around wherever the atoms are.
-    pub fn borders(bx: &SimBox, owned: FNx3View<'_>, reach: F) -> Result<Self, GhostError> {
+    pub fn borders(bx: &SimBox, owned: Fnx3View<'_>, reach: F) -> Result<Self, GhostError> {
         let range = ImageRange::new(bx, reach)?;
         let d = bx.nearest_plane_distance();
         let frac = bx.to_frac(owned);
@@ -115,7 +115,7 @@ impl GhostSet {
         }
 
         let mut set = Self {
-            positions: FNx3::zeros((owner.len(), 3)),
+            positions: Fnx3::zeros((owner.len(), 3)),
             owner,
             shift,
             n_owned,
@@ -179,7 +179,7 @@ impl GhostSet {
     pub fn forward_comm(
         &mut self,
         bx: &SimBox,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), GhostError> {
         if owned.nrows() != self.n_owned {
@@ -204,7 +204,7 @@ impl GhostSet {
     }
 
     /// `r_g = r_owner + H·s_g` for every ghost.
-    fn place(&mut self, bx: &SimBox, owned: FNx3View<'_>) -> Result<(), GhostError> {
+    fn place(&mut self, bx: &SimBox, owned: Fnx3View<'_>) -> Result<(), GhostError> {
         if owned.nrows() != self.n_owned {
             return Err(GhostError::Shape {
                 expected: self.n_owned,
@@ -224,7 +224,7 @@ impl GhostSet {
     }
 
     /// Ghost positions `(n_ghost, 3)` in Å.
-    pub fn positions(&self) -> FNx3View<'_> {
+    pub fn positions(&self) -> Fnx3View<'_> {
         self.positions.view()
     }
 
@@ -275,7 +275,7 @@ impl GhostSet {
     /// the ghosts. Only the first `n_owned` are degrees of freedom, which is
     /// why a force array over this layout has to be reduced before it means
     /// anything physical.
-    pub fn combined(&self, owned: FNx3View<'_>) -> Result<FNx3, GhostError> {
+    pub fn combined(&self, owned: Fnx3View<'_>) -> Result<Fnx3, GhostError> {
         if owned.nrows() != self.n_owned {
             return Err(GhostError::Shape {
                 expected: self.n_owned,
@@ -341,7 +341,7 @@ impl GhostSet {
     /// stay within half the smallest plane spacing for the *direct* and
     /// *imaged* separations of a pair not to both fall inside it, which would
     /// double-count in a way no tie-break can see.
-    pub fn pairs(&self, owned: FNx3View<'_>, cutoff: F) -> Result<Neighbors, GhostError> {
+    pub fn pairs(&self, owned: Fnx3View<'_>, cutoff: F) -> Result<Neighbors, GhostError> {
         let all = self.combined(owned)?;
         let edges = self.candidate_edges(all.view(), cutoff)?;
         let mut table = self.empty_table();
@@ -379,7 +379,7 @@ impl GhostSet {
     /// closest when the table is next filled.
     pub fn candidate_edges(
         &self,
-        all: FNx3View<'_>,
+        all: Fnx3View<'_>,
         reach: F,
     ) -> Result<Vec<(u32, u32)>, GhostError> {
         if reach > self.reach {
@@ -441,7 +441,7 @@ impl GhostSet {
     /// knows that periodic boundaries exist.
     pub fn fill_pairs(
         &self,
-        all: FNx3View<'_>,
+        all: Fnx3View<'_>,
         edges: &[(u32, u32)],
         cutoff: F,
         out: &mut Neighbors,
@@ -499,7 +499,7 @@ impl GhostSet {
     /// relative to a single point.
     pub fn closest_image(
         &self,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         centre: usize,
         partner: usize,
     ) -> Result<usize, GhostError> {

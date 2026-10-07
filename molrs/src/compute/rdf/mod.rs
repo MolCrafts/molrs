@@ -18,7 +18,7 @@ use molrs::core::FrameAccess;
 use molrs::core::SimBox;
 use molrs::core::neighbors::Backend;
 use molrs::core::{LinkCell, NeighborList, Neighbors};
-use molrs::op::{F, FNx3View};
+use molrs::op::{F, Fnx3View};
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -164,7 +164,7 @@ impl Rdf {
     /// \(O(P)\) for materialized pairs.
     pub fn compute_self(
         &self,
-        points: FNx3View<'_>,
+        points: Fnx3View<'_>,
         bx: &SimBox,
     ) -> Result<RdfResult, ComputeError> {
         let vol = bx.volume();
@@ -193,8 +193,8 @@ impl Rdf {
     /// `ref_points` become the spatial index (B); `query_points` are A.
     pub fn compute_cross(
         &self,
-        ref_points: FNx3View<'_>,
-        query_points: FNx3View<'_>,
+        ref_points: Fnx3View<'_>,
+        query_points: Fnx3View<'_>,
         bx: &SimBox,
     ) -> Result<RdfResult, ComputeError> {
         let vol = bx.volume();

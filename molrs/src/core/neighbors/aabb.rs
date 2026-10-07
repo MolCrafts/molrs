@@ -62,7 +62,7 @@
 use super::{Backend, PairVisitor};
 use crate::core::SimBox;
 use crate::core::bvh::Bvh;
-use crate::op::{F, FNx3, FNx3View};
+use crate::op::{F, Fnx3, Fnx3View};
 
 /// AABB-tree k-nearest-neighbor query.
 ///
@@ -83,7 +83,7 @@ pub struct AabbQuery {
     cutoff: F,
     bx: Option<SimBox>,
     tree: Bvh,
-    stored_pos: FNx3,
+    stored_pos: Fnx3,
 }
 
 impl AabbQuery {
@@ -103,7 +103,7 @@ impl AabbQuery {
             cutoff,
             bx: None,
             tree: Bvh::build(&[]),
-            stored_pos: FNx3::zeros((0, 3)),
+            stored_pos: Fnx3::zeros((0, 3)),
         }
     }
 
@@ -276,7 +276,7 @@ impl AabbQuery {
     ///
     /// # Panics
     /// Panics if the cutoff is not positive.
-    pub fn build(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    pub fn build(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         assert!(self.cutoff > 0.0, "cutoff must be positive");
         // Fold into the primary cell first. The image-shift range is bounded by
         // the cell's own geometry, so it can only reach the images of a point
@@ -305,11 +305,11 @@ impl Backend for AabbQuery {
         self.cutoff
     }
 
-    fn build_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn build_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         self.build(points, bx);
     }
 
-    fn update_index(&mut self, points: FNx3View<'_>, bx: &SimBox) {
+    fn update_index(&mut self, points: Fnx3View<'_>, bx: &SimBox) {
         self.build(points, bx);
     }
 
@@ -485,7 +485,7 @@ mod tests {
         // tree is built on the coordinates exactly as given, and an
         // under-estimated reach loses its outermost ring of shifts, which only
         // shows up once a query sits far outside the primary cell.
-        let pts: FNx3 = array![
+        let pts: Fnx3 = array![
             [0.2_f64, 0.3, 0.4],
             [9.6, 0.5, 9.5],
             [5.0, 7.7, 5.0],
@@ -533,7 +533,7 @@ mod tests {
     fn aabb_backend_matches_brute_force() {
         use crate::core::{NeighborList, NeighborsStorage};
 
-        let pts: FNx3 = array![
+        let pts: Fnx3 = array![
             [0.2_f64, 0.3, 0.4],
             [9.6, 0.5, 9.5],
             [5.0, 7.7, 5.0],
@@ -631,7 +631,7 @@ mod tests {
     /// question against it answers "nothing" instead of panicking.
     #[test]
     fn empty_input_yields_empty_knn() {
-        let pts: FNx3 = ndarray::Array2::zeros((0, 3));
+        let pts: Fnx3 = ndarray::Array2::zeros((0, 3));
         let bx = cube_bx(10.0, [false; 3]);
         let mut aabb = AabbQuery::new(1.0);
         aabb.build(pts.view(), &bx);
@@ -735,7 +735,7 @@ mod tests {
         use rand::rngs::StdRng;
         let mut rng = StdRng::seed_from_u64(11);
         let n = 100;
-        let mut pts = FNx3::zeros((n, 3));
+        let mut pts = Fnx3::zeros((n, 3));
         for i in 0..n {
             pts[[i, 0]] = rng.random::<F>() * 10.0;
             pts[[i, 1]] = rng.random::<F>() * 10.0;

@@ -11,7 +11,7 @@ use ndarray::{Array2, ArrayView2};
 use crate::core::Neighbors;
 use crate::core::SimBox;
 use crate::core::Virial;
-use crate::op::{F, FNx3, FNx3View, I};
+use crate::op::{F, Fnx3, Fnx3View, I};
 
 use super::{GhostError, GhostSet};
 
@@ -50,10 +50,10 @@ pub struct GhostHalo {
     cutoff: F,
     skin: F,
     /// Owned positions at the last halo build, for the displacement test.
-    x_hold: FNx3,
+    x_hold: Fnx3,
     rebuilds: usize,
     /// `[owned | ghost]` coordinates, refilled each step rather than rebuilt.
-    all: FNx3,
+    all: Fnx3,
     /// Candidate pairs out to `cutoff + skin`, from the last halo rebuild.
     ///
     /// This is the halo's Verlet skin, and it is the whole reason the `skin`
@@ -72,7 +72,7 @@ impl GhostHalo {
     /// The halo reaches `cutoff + skin`, so it stays complete while no atom has
     /// moved more than `skin/2` since the build — the same bookkeeping a Verlet
     /// skin does, applied to copies instead of to a pair list.
-    pub fn new(bx: SimBox, owned: FNx3View<'_>, cutoff: F, skin: F) -> Result<Self, GhostError> {
+    pub fn new(bx: SimBox, owned: Fnx3View<'_>, cutoff: F, skin: F) -> Result<Self, GhostError> {
         if cutoff.is_nan() || cutoff <= 0.0 {
             return Err(GhostError::InvalidCutoff(cutoff));
         }
@@ -146,7 +146,7 @@ impl GhostHalo {
     /// and no cache at all.
     fn reimage(
         &mut self,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), GhostError> {
         let n_owned = self.set.n_owned();
@@ -195,7 +195,7 @@ impl GhostHalo {
     /// the atom took rather than as a jump of one cell.
     pub fn advance(
         &mut self,
-        owned: FNx3View<'_>,
+        owned: Fnx3View<'_>,
         wrap_shifts: ArrayView2<'_, I>,
     ) -> Result<(), GhostError> {
         self.set.forward_comm(&self.bx, owned, wrap_shifts)?;
@@ -243,7 +243,7 @@ impl GhostHalo {
     }
 
     /// The `[owned | ghost]` coordinates the pair table indexes.
-    pub fn combined(&self) -> &FNx3 {
+    pub fn combined(&self) -> &Fnx3 {
         &self.all
     }
 
@@ -284,7 +284,7 @@ impl GhostHalo {
     pub fn reverse_comm_with_virial(
         &self,
         forces: &mut Array2<F>,
-        all: FNx3View<'_>,
+        all: Fnx3View<'_>,
     ) -> Result<Virial, GhostError> {
         let set = self.ghosts();
         let expected = set.n_owned() + set.len();

@@ -26,7 +26,7 @@ use super::Backend;
 use crate::core::LinkCell;
 use crate::core::SimBox;
 use crate::core::{Neighbors, NeighborsStorage, QueryMode};
-use crate::op::{F, FNx3, FNx3View};
+use crate::op::{F, Fnx3, Fnx3View};
 
 /// Cross-query search over a fixed set of reference points.
 ///
@@ -54,7 +54,7 @@ pub struct NeighborQuery {
     /// The underlying cell-list spatial index (built once at construction).
     lc: LinkCell,
     /// Copy of the reference points (owned for self-query).
-    points: FNx3,
+    points: Fnx3,
     /// Copy of the simulation box.
     simbox: SimBox,
 }
@@ -69,7 +69,7 @@ impl NeighborQuery {
     ///
     /// # Panics
     /// Panics if `cutoff <= 0` or `points` does not have 3 columns.
-    pub fn new(simbox: &SimBox, points: FNx3View<'_>, cutoff: F) -> Self {
+    pub fn new(simbox: &SimBox, points: Fnx3View<'_>, cutoff: F) -> Self {
         assert!(cutoff > 0.0, "cutoff must be positive");
         assert_eq!(points.ncols(), 3, "points must have shape (N, 3)");
 
@@ -95,7 +95,7 @@ impl NeighborQuery {
     /// Panics if `cutoff <= 0` or `points` does not have 3 columns. An empty
     /// point set is not an error: it yields an empty index whose queries return
     /// no pairs.
-    pub fn unbounded(points: FNx3View<'_>, cutoff: F) -> Self {
+    pub fn unbounded(points: Fnx3View<'_>, cutoff: F) -> Self {
         let bx =
             SimBox::free(points, cutoff).expect("degenerate point cloud for free-boundary box");
         Self::new(&bx, points, cutoff)
@@ -117,7 +117,7 @@ impl NeighborQuery {
     ///
     /// # Panics
     /// Panics if `query_points` does not have 3 columns.
-    pub fn query(&self, query_points: FNx3View<'_>) -> Neighbors {
+    pub fn query(&self, query_points: Fnx3View<'_>) -> Neighbors {
         assert_eq!(
             query_points.ncols(),
             3,
@@ -192,7 +192,7 @@ impl NeighborQuery {
     }
 
     /// Reference to the stored reference points (`N × 3`, Å).
-    pub fn points(&self) -> FNx3View<'_> {
+    pub fn points(&self) -> Fnx3View<'_> {
         self.points.view()
     }
 
@@ -227,7 +227,7 @@ impl NeighborQuery {
 
         // Owned interleaved copy for self-query, mirroring `new`.
         let n = xs.len();
-        let mut points = FNx3::zeros((n, 3));
+        let mut points = Fnx3::zeros((n, 3));
         for i in 0..n {
             points[[i, 0]] = xs[i];
             points[[i, 1]] = ys[i];

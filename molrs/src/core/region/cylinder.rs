@@ -1,7 +1,7 @@
 //! A finite, capped cylinder.
 
 use super::primitives::Region;
-use crate::op::{F, FNx3};
+use crate::op::{F, Fnx3};
 use ndarray::Array2;
 
 /// A solid cylinder of radius `r` and length `L`, closed at both ends,
@@ -103,7 +103,7 @@ impl Cylinder {
 
 impl Region for Cylinder {
     /// AABB of the two end discs.
-    fn bounds(&self) -> FNx3 {
+    fn bounds(&self) -> Fnx3 {
         let mut b = Array2::zeros((3, 2));
         for d in 0..3 {
             let reach = self.radius * (1.0 - self.axis[d] * self.axis[d]).max(0.0).sqrt();
