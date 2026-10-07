@@ -39,8 +39,8 @@ import numpy as np
 import parmed as pmd
 import sander
 from parmed.amber import AmberParm
-from parmed.charmm import CharmmParameterSet, CharmmPsfFile
 from parmed.amber._chamberparm import ConvertFromPSF
+from parmed.charmm import CharmmParameterSet, CharmmPsfFile
 
 AMBERHOME = os.environ["AMBERHOME"]
 CHAMBER_DAT = os.path.join(AMBERHOME, "dat", "chamber")
@@ -236,8 +236,7 @@ def rtf_block(path, resname):
 
 def chamber(out, work, glycam_dir):
     from parmed import Structure
-    from parmed.topologyobjects import (Angle, Atom, Bond, Cmap, Dihedral,
-                                        Improper)
+    from parmed.topologyobjects import Angle, Atom, Bond, Cmap, Dihedral, Improper
 
     d = os.path.join(work, "chamber")
     os.makedirs(d, exist_ok=True)

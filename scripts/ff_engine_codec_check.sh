@@ -15,7 +15,7 @@
 # Run it where cargo may build (a compute node). Engines (override by env):
 #   LMP     LAMMPS with MOLECULE (lmp); `bond_style fene`, `pair_style
 #           lj/smooth/linear`, `buck`, `morse` are in its standard packages
-#   PYTHON  python with openmm 8.x (python3)
+#   PYTHON  python with openmm 8.x and molrs (python3)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 LMP=${LMP:-lmp}

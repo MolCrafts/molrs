@@ -27,9 +27,12 @@
 #   LMP               LAMMPS with MOLECULE (lmp)
 #   MOLRS_LMP_CLASS2  LAMMPS with CLASS2 (unset: the bond_angle cases are skipped)
 #   MOLRS_PYTHON      python with molrs installed (unset: the python cases are skipped)
+#   PYTHON            python with molrs installed, which reads LAMMPS's logs
+#                     (molrs.io.read_lammps_log; python3)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 LMP=${LMP:-lmp}
+PYTHON=${PYTHON:-python3}
 pin=
 [[ ${1:-} == --pin ]] && pin=--pin
 dir=${MOLRS_FFEXT_DIR:-$(mktemp -d)}
@@ -82,9 +85,11 @@ IN
     done
 done
 
-python3 - "$dir" $pin <<'PY'
+PYTHONPATH=scripts "$PYTHON" - "$dir" $pin <<'PY'
 import sys
 from pathlib import Path
+
+from engine_check_tables import lammps_thermo
 
 root = Path(sys.argv[1])
 pin = "--pin" in sys.argv
@@ -96,9 +101,7 @@ HEADER = "# case\tconfig\tpe | f atom\tLAMMPS's value(s) (scripts/ff_ir_extensio
 
 
 def lammps(case: Path, k: str) -> tuple[float, list[list[float]]]:
-    lines = (case / f"log.{k}").read_text().splitlines()
-    head = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Step", "PotEng"])
-    pe = float(lines[head + 1].split()[1])
+    pe = lammps_thermo(case / f"log.{k}")["PotEng"]
     dump = (case / f"forces_{k}.dump").read_text().splitlines()
     start = dump.index("ITEM: ATOMS id fx fy fz") + 1
     forces = [[float(v) for v in row.split()[1:]] for row in dump[start:]]

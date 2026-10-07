@@ -9,7 +9,7 @@ LAMMPS run; see that script for what each run changes) and prints
 import sys
 from pathlib import Path
 
-QQR2E_REAL = 332.06371  # LAMMPS's Coulomb constant, units real
+from molrs.core.constants import COULOMB_REAL  # LAMMPS's qqr2e, units real
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
             weights[int(words[1])] = (float(words[2]), float(words[3]))
         else:
             runs[words[0]] = {k: float(v) for k, v in (w.split("=") for w in words[1:])}
-    f = coulomb / QQR2E_REAL
+    f = coulomb / COULOMB_REAL
     a, b = runs["A"], runs["B"]
     ff = (path.parent / "body.ff").read_text()
     charmm_improper = "improper_style harmonic" in ff

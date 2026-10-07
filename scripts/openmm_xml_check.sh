@@ -8,8 +8,11 @@
 # OpenMM's numbers come from scripts/openmm_xml_check.py (needs OpenMM). Run it
 # where cargo may build (a compute node), with `lmp` (or $LMP) built with the
 # MOLECULE package.
+# $PYTHON (default python3) needs molrs installed: it reads LAMMPS's log
+# with molrs.io.read_lammps_log (scripts/engine_check_tables.py).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+PYTHON=${PYTHON:-python3}
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 
@@ -39,12 +42,12 @@ thermo_modify   format float %.17g
 run             0
 IN
     (cd "$dir" && "${LMP:-lmp}" -in "in.$case" -log "log.$case" -screen none)
-    python3 - "$dir/log.$case" "$case" <<'PY'
+    PYTHONPATH=scripts "$PYTHON" - "$dir/log.$case" "$case" <<'PY'
 import sys
 
-lines = open(sys.argv[1]).read().splitlines()
-head = next(i for i, l in enumerate(lines) if l.split()[:2] == ["Step", "E_vdwl"])
-for key, value in zip(lines[head].split()[1:], lines[head + 1].split()[1:]):
-    print(f"{sys.argv[2]} lammps {key:8s} {float(value):.17e}")
+from engine_check_tables import lammps_thermo
+
+for key, value in list(lammps_thermo(sys.argv[1]).items())[1:]:
+    print(f"{sys.argv[2]} lammps {key:8s} {value:.17e}")
 PY
 done

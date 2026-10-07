@@ -30,7 +30,8 @@ prints are the ones the test pins.
 ``--written`` also prices the XML molrs writes back from each fixture (the
 ``report`` test writes ``<case>.written.xml`` there) with OpenMM.
 
-Needs ``openmm`` (8.x) and ``rdkit`` (for the conformers only).
+Needs ``openmm`` (8.x), ``rdkit`` (for the conformers only) and molrs (the
+unit constants, ``molrs.core.constants``).
 """
 
 from __future__ import annotations
@@ -46,12 +47,12 @@ from pathlib import Path
 
 import numpy as np
 import openmm as mm
-import openmm.app as app
 import openmm.unit as u
+from molrs.core.constants import ANGSTROM_PER_NM, KJ_PER_KCAL
+from openmm import app
 from rdkit import Chem
 from rdkit.Chem import AllChem
 
-KJ_PER_KCAL = 4.184
 FORCE_TAGS = (
     "HarmonicBondForce",
     "HarmonicAngleForce",
@@ -231,7 +232,7 @@ def graph_terms(mol: Chem.Mol):
 
 
 def is_chain(bonds: set, t) -> bool:
-    return all(tuple(sorted(p)) in bonds for p in zip(t, t[1:]))
+    return all(tuple(sorted(p)) in bonds for p in itertools.pairwise(t))
 
 
 def split_system(system: mm.System, bonds: set, foyer_geometric: bool):
@@ -283,8 +284,8 @@ def split_system(system: mm.System, bonds: set, foyer_geometric: bool):
                 a, b, qq, s, e = f.getExceptionParameters(i)
                 if foyer_geometric and e._value != 0.0:
                     # foyer: the 1-4 sigma mixes geometrically too.
-                    _, si, ei = f.getParticleParameters(a)
-                    _, sj, ej = f.getParticleParameters(b)
+                    _, si, _ = f.getParticleParameters(a)
+                    _, sj, _ = f.getParticleParameters(b)
                     s = math.sqrt(si._value * sj._value)
                 lj.setExceptionParameters(i, a, b, 0.0, s, e)
                 coul.setExceptionParameters(i, a, b, qq, 1.0, 0.0)
@@ -334,7 +335,7 @@ def price(xml_path: Path, mol, x, atoms, foyer_geometric: bool) -> dict:
     system = ff.createSystem(topology(mol, atoms), nonbondedMethod=app.NoCutoff, constraints=None, rigidWater=False)
     bonds, _, _ = graph_terms(mol)
     groups = split_system(system, set(bonds), foyer_geometric)
-    return energies(system, groups, x * 0.1)
+    return energies(system, groups, x / ANGSTROM_PER_NM)
 
 
 def written(name, out_dir, written_dir, mol, x, atoms, foyer_geometric=False):
@@ -382,7 +383,7 @@ def case(name, xml_text, mol, x, atoms, out_dir, foyer_geometric=False):
         if isinstance(f, mm.NonbondedForce):
             charges = [f.getParticleParameters(i)[0].value_in_unit(u.elementary_charge) for i in range(f.getNumParticles())]
     groups = split_system(system, bond_set, foyer_geometric)
-    e = energies(system, groups, x * 0.1)
+    e = energies(system, groups, x / ANGSTROM_PER_NM)
     data = {
         "source": "scripts/openmm_xml_check.py, OpenMM " + mm.__version__ + ", Reference platform, NoCutoff",
         "types": [a[1] for a in atoms],
