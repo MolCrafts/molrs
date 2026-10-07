@@ -110,7 +110,7 @@ def test_a_native_gaff_subclass_cannot_override_match() -> None:
     with pytest.raises(TypeError, match="native typifier"):
 
         class _Bad(molrs.ff.typifier.GaffTypifier):  # pragma: no cover - refused
-            def match(self, graph):
+            def assign(self, graph):
                 return None
 
 

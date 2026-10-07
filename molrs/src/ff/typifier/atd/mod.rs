@@ -69,7 +69,7 @@ use crate::ff::params::atomtype_gff::ATOMTYPE_GFF;
 use crate::ff::params::atomtype_gff2::ATOMTYPE_GFF2;
 use crate::ff::params::atomtype_sybyl::ATOMTYPE_SYBYL;
 use crate::ff::params::{AtdRule, AtdTable};
-use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 
 /// Which `ATOMTYPE_*.DEF` table an [`AtdTypifier`] walks.
 ///
@@ -124,7 +124,7 @@ pub(crate) const DUMMY_TYPE: &str = "DU";
 /// Why the engine could not type a molecule.
 ///
 /// The typed twin of the `String` that [`AtdTypifier`]'s
-/// `r#match` ([`Typifier`]) returns. A charge model
+/// `assign` ([`Typifier`]) returns. A charge model
 /// has to tell "no rule covers this atom" (a permanent property of the table — boron
 /// and bare sulfur are the real cases) apart from "this graph is malformed", because
 /// the C++ and Python bridges have to report them differently.
@@ -178,7 +178,7 @@ pub enum AtdBondOrders {
 
 /// The ATD rule engine, bound to one atom-type table.
 ///
-/// Its `r#match` ([`Typifier`]) perceives antechamber bond types, derives
+/// Its `assign` ([`Typifier`]) perceives antechamber bond types, derives
 /// the facts each rule can ask about, and labels every atom with the first rule
 /// of the table that matches it. An atom no rule matches is an **error**, not an
 /// untyped or defaulted atom.
@@ -228,7 +228,7 @@ impl AtdTypifier {
 
     /// The types this table assigns, in graph atom order — **computed, not written**.
     ///
-    /// The half of `r#match` ([`Typifier`]) that a charge model wants: the atom
+    /// The half of `assign` ([`Typifier`]) that a charge model wants: the atom
     /// types come back as a `Vec`, so the model can look its corrections up without
     /// ever putting a BCC code into the caller's [`keys::TYPE`] column (where their
     /// GAFF / OPLS force-field types live).
@@ -285,10 +285,10 @@ impl Typifier for AtdTypifier {
     /// # Errors
     ///
     /// A message naming the atom no rule of the table matched.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         *graph = self.perceive_bond_types(graph);
         let types = self.types_of(graph).map_err(|e| e.to_string())?;
-        Ok(Match {
+        Ok(TypeAssignment {
             nodes: types
                 .into_iter()
                 .map(|t| {
@@ -298,13 +298,13 @@ impl Typifier for AtdTypifier {
                     )]
                 })
                 .collect(),
-            ..Match::default()
+            ..TypeAssignment::default()
         })
     }
 
     /// An empty force field named `ATD`: the ATD rules assign labels, not
     /// parameters, so there is nothing to match against. Built once.
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         static LIBRARY: OnceLock<ForceField> = OnceLock::new();
         LIBRARY.get_or_init(|| ForceField::new("ATD"))
     }
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn library_is_an_empty_forcefield() {
         let typing = Typing::new(AtdTypifier::new(AtdParameterSet::Bcc));
-        assert!(typing.library().styles().is_empty());
+        assert!(typing.typifier().source_forcefield().styles().is_empty());
     }
 
     /// A molecule as a mol2 file lists it — atoms by element, bonds in file

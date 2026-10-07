@@ -1,6 +1,6 @@
-//! Python bindings for `molrs::ff::scale_lj` (`molrs.ff.scale_lj`): CL&Pol
+//! Python bindings for `molrs::ff::clpol_scaling` (`molrs.ff.clpol_scaling`): CL&Pol
 //! fragment scaling of Lennard-Jones parameters — the fragment table
-//! ([`PyFragmentScaling`], `fragment_scaling_data`), the SAPT pair factor
+//! ([`PyFragmentScaling`]; the shipped table is `molrs.ff.params.clpol_fragment_scaling`), the SAPT pair factor
 //! (`compute_k_ij`) and the scaled force field (`scale_lj`).
 
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ use crate::ff::forcefield::PyForceField;
 
 /// CL&Pol fragment scaling data backed by the native force-field layer.
 #[pyclass(
-    module = "molrs.ff.scale_lj",
+    module = "molrs.ff.clpol_scaling",
     name = "FragmentScaling",
     frozen,
     get_all,
@@ -30,7 +30,7 @@ pub struct PyFragmentScaling {
     polarizable: bool,
 }
 
-impl From<PyFragmentScaling> for molrs::ff::scale_lj::FragmentScaling {
+impl From<PyFragmentScaling> for molrs::ff::clpol_scaling::FragmentScaling {
     fn from(value: PyFragmentScaling) -> Self {
         Self {
             name: value.name,
@@ -42,8 +42,8 @@ impl From<PyFragmentScaling> for molrs::ff::scale_lj::FragmentScaling {
     }
 }
 
-impl From<molrs::ff::scale_lj::FragmentScaling> for PyFragmentScaling {
-    fn from(value: molrs::ff::scale_lj::FragmentScaling) -> Self {
+impl From<molrs::ff::clpol_scaling::FragmentScaling> for PyFragmentScaling {
+    fn from(value: molrs::ff::clpol_scaling::FragmentScaling) -> Self {
         Self {
             name: value.name,
             q: value.q,
@@ -80,28 +80,18 @@ pub fn compute_k_ij_py(
     fr_j: PyRef<'_, PyFragmentScaling>,
     r: f64,
 ) -> PyResult<f64> {
-    molrs::ff::scale_lj::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
+    molrs::ff::clpol_scaling::compute_k_ij(&fr_i.clone().into(), &fr_j.clone().into(), r)
         .map_err(py_value_err)
-}
-
-/// Return the compiled-in CL&Pol fragment table.
-#[pyfunction(name = "fragment_scaling_data")]
-pub fn fragment_scaling_data_py(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
-    let result = PyDict::new(py);
-    for (name, scaling) in molrs::ff::scale_lj::builtin_fragment_scaling() {
-        result.set_item(name, Py::new(py, PyFragmentScaling::from(scaling))?)?;
-    }
-    Ok(result)
 }
 
 /// Clone and scale LJ parameters using native COM and force-field transforms.
 #[pyfunction(name = "scale_lj")]
-#[pyo3(signature = (ff, fragments, frag_data=None, scale_sigma=false))]
+#[pyo3(signature = (ff, fragments, fragment_table=None, scale_sigma=false))]
 pub fn scale_lj_py(
     py: Python<'_>,
     ff: &Bound<'_, PyForceField>,
     fragments: &Bound<'_, PyDict>,
-    frag_data: Option<&Bound<'_, PyDict>>,
+    fragment_table: Option<&Bound<'_, PyDict>>,
     scale_sigma: bool,
 ) -> PyResult<Py<PyForceField>> {
     let mut native_fragments = Vec::with_capacity(fragments.len());
@@ -109,7 +99,7 @@ pub fn scale_lj_py(
         let name = label.extract::<String>()?;
         let (atom_types, coords, masses) =
             value.extract::<(Vec<String>, Vec<[f64; 3]>, Vec<f64>)>()?;
-        native_fragments.push(molrs::ff::scale_lj::FragmentAtoms {
+        native_fragments.push(molrs::ff::clpol_scaling::FragmentAtoms {
             name,
             atom_types,
             coords,
@@ -118,39 +108,42 @@ pub fn scale_lj_py(
     }
 
     let mut scaling = HashMap::new();
-    if let Some(data) = frag_data {
+    if let Some(data) = fragment_table {
         for (label, value) in data.iter() {
             let item = value.extract::<PyRef<'_, PyFragmentScaling>>()?;
             scaling.insert(label.extract::<String>()?, item.clone().into());
         }
     } else {
-        scaling = molrs::ff::scale_lj::builtin_fragment_scaling();
+        scaling = molrs::ff::params::clpol_fragment_scaling();
     }
 
-    let inner =
-        molrs::ff::scale_lj::scale_lj(&ff.borrow().inner, &native_fragments, &scaling, scale_sigma)
-            .map_err(|error| match error {
-                molrs::ff::scale_lj::ScaleLjError::MissingFragment(name) => {
-                    PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
-                }
-                other => py_value_err(other),
-            })?;
+    let inner = molrs::ff::clpol_scaling::scale_lj(
+        &ff.borrow().inner,
+        &native_fragments,
+        &scaling,
+        scale_sigma,
+    )
+    .map_err(|error| match error {
+        molrs::ff::clpol_scaling::ScaleLjError::MissingFragment(name) => {
+            PyKeyError::new_err(format!("no scaling data for fragment '{name}'"))
+        }
+        other => py_value_err(other),
+    })?;
     PyForceField::from_core(py, inner)
 }
 
-/// Register `molrs.ff.scale_lj`.
+/// Register `molrs.ff.clpol_scaling`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFragmentScaling>()?;
     crate::add_function(
         m,
-        "molrs.ff.scale_lj",
+        "molrs.ff.clpol_scaling",
         wrap_pyfunction!(compute_k_ij_py, m)?,
     )?;
     crate::add_function(
         m,
-        "molrs.ff.scale_lj",
-        wrap_pyfunction!(fragment_scaling_data_py, m)?,
+        "molrs.ff.clpol_scaling",
+        wrap_pyfunction!(scale_lj_py, m)?,
     )?;
-    crate::add_function(m, "molrs.ff.scale_lj", wrap_pyfunction!(scale_lj_py, m)?)?;
     Ok(())
 }

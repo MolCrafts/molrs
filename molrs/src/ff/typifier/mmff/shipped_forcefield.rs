@@ -1,6 +1,6 @@
 //! The shipped MMFF parameter set, assembled from the compiled table.
 //!
-//! `MMFF94Typifier::new()` and `MMFF94STypifier::new()` used to `include_str!` a
+//! `Mmff94Typifier::new()` and `Mmff94sTypifier::new()` used to `include_str!` a
 //! 68 KB XML each and re-parse it on every construction. Both now share one
 //! library per variant ([`library`]), built once from the compiled table
 //! ([`crate::ff::params::mmff`]); the two differ by exactly two things:
@@ -9,10 +9,9 @@
 //! here is a number: every value comes from the table.
 //!
 //! A caller's own parameter set still comes from XML — `molrs::io::forcefield::xml`
-//! reads it and [`MMFF94Typifier::from_parts`] takes it — but the *shipped*
+//! reads it and [`Mmff94Typifier::from_parts`] takes it — but the *shipped*
 //! set is no longer text.
 
-use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use super::properties::MmffVariant;
@@ -21,8 +20,8 @@ use crate::ff::params::mmff::{
     MMFF_ELE_STYLE, MMFF_PROP, MMFF_STYLES, MMFF_VDW, MMFF_VDW_STYLE, encode_da_byte,
 };
 
+use super::atom_properties::MmffAtomProperties;
 use super::engine::MmffLibrary;
-use super::params::{MMFFAtomProp, MMFFParams};
 
 /// MMFF's vdW 1-4 weight.
 ///
@@ -62,7 +61,7 @@ pub(super) fn library(variant: MmffVariant) -> Arc<MmffLibrary> {
 fn force_field(name: &str) -> ForceField {
     try_force_field(name).expect(
         "MMFF table defines without conflict — proved by \
-         ff::typifier::mmff::embedded::tests::force_field_defines_without_conflict",
+         ff::typifier::mmff::shipped_forcefield::tests::force_field_defines_without_conflict",
     )
 }
 
@@ -140,25 +139,8 @@ fn try_force_field(name: &str) -> Result<ForceField, DefError> {
 /// `sbmb` picks the stretch-bend row, `arom` / `pilp` / `mltb` drive bond
 /// classification, `crd` / `val` gate the type assignment. None of them appears
 /// in an energy.
-fn typing_params() -> MMFFParams {
-    let props: HashMap<u32, MMFFAtomProp> = MMFF_PROP
-        .iter()
-        .map(|p| {
-            let prop = MMFFAtomProp {
-                type_id: u32::from(p.atom_type),
-                atno: u32::from(p.atno),
-                crd: u32::from(p.crd),
-                val: u32::from(p.val),
-                pilp: u32::from(p.pilp),
-                mltb: u32::from(p.mltb),
-                arom: u32::from(p.arom),
-                linh: u32::from(p.linh),
-                sbmb: u32::from(p.sbmb),
-            };
-            (prop.type_id, prop)
-        })
-        .collect();
-    MMFFParams::new(props)
+fn typing_params() -> MmffAtomProperties {
+    MmffAtomProperties::new(MMFF_PROP.iter().copied())
 }
 
 #[cfg(test)]

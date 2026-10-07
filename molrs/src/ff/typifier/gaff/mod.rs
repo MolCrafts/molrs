@@ -71,7 +71,7 @@ use crate::ff::params::{
     ParmNonbondedRow, ParmTable, ParmType,
 };
 use crate::ff::typifier::BondedTerm;
-use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 use crate::ff::typifier::{EmpiricalSet, EstimateMethod, Provenance};
 
 mod analog;
@@ -126,7 +126,7 @@ impl GaffParameterSet {
     /// 5,900 rows for every molecule ever parameterised; rebuilding them per call
     /// cost more than the whole rest of the typing put together. The library is
     /// named after the set ([`name`](Self::name)).
-    fn library(self) -> &'static ForceField {
+    fn forcefield(self) -> &'static ForceField {
         static GAFF_LIBRARY: OnceLock<ForceField> = OnceLock::new();
         static GAFF2_LIBRARY: OnceLock<ForceField> = OnceLock::new();
 
@@ -456,20 +456,20 @@ impl GaffTypifier {
     }
 
     /// The body of [`Typifier::r#match`], with the typed error.
-    fn match_terms(&self, graph: &mut Atomistic) -> Result<Match, GaffError> {
+    fn match_terms(&self, graph: &mut Atomistic) -> Result<TypeAssignment, GaffError> {
         let index = TableIndex::new(self.set.table());
         let type_of = index.intern_atoms(graph)?;
         let mut missed = Misses::default();
 
         // Topology first, so every positional vector below is read off the
-        // graph `Match::write_onto` stamps: angles and dihedrals regenerated
+        // graph `TypeAssignment::write_onto` stamps: angles and dihedrals regenerated
         // from the bond graph, impropers rebuilt as AmberTools builds them.
         graph
             .generate_topology(true, true, false, true)
             .map_err(malformed)?;
         let mut improper_terms = add_impropers(graph, &index, &type_of)?;
 
-        let mut m = Match::default();
+        let mut m = TypeAssignment::default();
 
         // --- atoms: mass (atom/full) + Lennard-Jones (pair rows) ---
         let used: BTreeSet<ParmType> = type_of.values().copied().collect();
@@ -480,7 +480,7 @@ impl GaffTypifier {
                 missed.note(MissingTerm::Nonbonded(index.name_of(ty).to_owned()));
             }
         }
-        let library = self.set.library();
+        let library = self.set.forcefield();
         m.nodes = graph
             .atoms()
             .map(|(id, _)| {
@@ -652,7 +652,7 @@ impl GaffTypifier {
 }
 
 impl Typifier for GaffTypifier {
-    /// Match the bonded terms of a molecule whose atoms carry GAFF types.
+    /// TypeAssignment the bonded terms of a molecule whose atoms carry GAFF types.
     ///
     /// Angles and dihedrals are regenerated from the bond graph onto `graph`;
     /// impropers are rebuilt as parmchk2 + tleap build them (see the `improper` stage of this typifier),
@@ -683,7 +683,7 @@ impl Typifier for GaffTypifier {
     /// An atom that carries no [`keys::TYPE`]; a table that declares none of an
     /// atom's type, or covers — exactly, by wildcard or by estimate — none of a
     /// term, listing **every** such term; a graph that cannot be walked.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         self.match_terms(graph).map_err(|e| e.to_string())
     }
 
@@ -692,8 +692,8 @@ impl Typifier for GaffTypifier {
     /// `pair/coul/cut`, `bond/harmonic`, `angle/harmonic`, `dihedral/periodic`
     /// and `improper/periodic` styles, and AMBER's special_bonds. Built once per
     /// set.
-    fn library(&self) -> &ForceField {
-        self.set.library()
+    fn source_forcefield(&self) -> &ForceField {
+        self.set.forcefield()
     }
 }
 

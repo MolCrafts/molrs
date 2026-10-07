@@ -433,7 +433,7 @@ impl PyWeightedTerms {
 ///
 /// Examples
 /// --------
-/// >>> typifier = MMFF94Typifier()
+/// >>> typifier = Mmff94Typifier()
 /// >>> frame = typifier.typify(mol).to_frame()
 /// >>> frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame)
 /// >>> potentials = molrs.ff.potential.PotentialCompiler(typifier.forcefield()).compile(frame)

@@ -48,11 +48,12 @@
 
 use super::charges::mmff_bond_type;
 use super::properties::MmffVariant;
-use super::topo::{BondOrder, Topo};
+use crate::core::BondOrder;
 use crate::ff::params::mmff::{
     mmff_angle, mmff_bndk, mmff_bond, mmff_cov_rad_pau_ele, mmff_def, mmff_dfsb,
     mmff_herschbach_laurie, mmff_oop, mmff_oop_s, mmff_prop, mmff_stbn, mmff_tor, mmff_tor_s,
 };
+use crate::perceive::mmff_aromaticity::MmffTopology;
 
 // MMFF's degree → radian conversion, from the crate-level `constants` module so
 // the `potential` kernels share one definition. (The MMFF tables store reference
@@ -136,14 +137,14 @@ fn periodic_row_hl(atno: u8) -> u8 {
 /// biphenyl is the shape that gets a 1. Reading the raw bond order instead (and
 /// calling ~1.5 "aromatic → 1") inverts the rule, and on a Kekulé input labels
 /// the two halves of a six-fold-symmetric ring differently.
-pub(crate) fn bond_type(topo: &Topo, types: &[u8], i: usize, j: usize) -> u8 {
+pub(crate) fn bond_type(topo: &MmffTopology, types: &[u8], i: usize, j: usize) -> u8 {
     mmff_bond_type(topo, types, i, j)
 }
 
 // --- ring-size helpers (AtomTyper.cpp) -----------------------------------
 
 /// RDKit `isAngleInRingOfSize3or4`.
-fn angle_ring_size(topo: &Topo, i: usize, j: usize, k: usize) -> u8 {
+fn angle_ring_size(topo: &MmffTopology, i: usize, j: usize, k: usize) -> u8 {
     if topo.bond_order(i, j).is_none() || topo.bond_order(j, k).is_none() {
         return 0;
     }
@@ -163,7 +164,7 @@ fn angle_ring_size(topo: &Topo, i: usize, j: usize, k: usize) -> u8 {
 }
 
 /// RDKit `isTorsionInRingOfSize4or5`.
-fn torsion_ring_size(topo: &Topo, i: usize, j: usize, k: usize, l: usize) -> u8 {
+fn torsion_ring_size(topo: &MmffTopology, i: usize, j: usize, k: usize, l: usize) -> u8 {
     if topo.bond_order(i, j).is_none()
         || topo.bond_order(j, k).is_none()
         || topo.bond_order(k, l).is_none()
@@ -193,7 +194,7 @@ fn torsion_ring_size(topo: &Topo, i: usize, j: usize, k: usize, l: usize) -> u8 
 /// sum with the ring size (cyclopropane's C-C-C angles are type 3). A classifier
 /// whose arguments are only `(bt_ij, bt_jk)` cannot express that at any input —
 /// ring membership is not among them.
-pub(crate) fn angle_type(topo: &Topo, types: &[u8], i: usize, j: usize, k: usize) -> u8 {
+pub(crate) fn angle_type(topo: &MmffTopology, types: &[u8], i: usize, j: usize, k: usize) -> u8 {
     let bts = bond_type(topo, types, i, j) + bond_type(topo, types, j, k);
     let mut at = bts;
     let size = angle_ring_size(topo, i, j, k);
@@ -248,7 +249,7 @@ pub(crate) fn stretch_bend_type(angle_type: u8, bt1: u8, bt2: u8) -> u8 {
 /// Same disease as [`angle_type`] if you try to key it off bond types alone: the
 /// 4-/5-membered-ring promotions ([`torsion_ring_size`]) need the topology.
 pub(crate) fn torsion_type(
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     i: usize,
     j: usize,
@@ -410,7 +411,12 @@ fn torsion_lookup(
 // --- bond stretch (explicit + empirical) ---------------------------------
 
 /// RDKit `getMMFFBondStretchParams` + `getMMFFBondStretchEmpiricalRuleParams`.
-pub(crate) fn bond_params(topo: &Topo, types: &[u8], i: usize, j: usize) -> Option<BondParams> {
+pub(crate) fn bond_params(
+    topo: &MmffTopology,
+    types: &[u8],
+    i: usize,
+    j: usize,
+) -> Option<BondParams> {
     let bt = bond_type(topo, types, i, j);
     let (ti, tj) = (types[i].min(types[j]), types[i].max(types[j]));
     if let Some(b) = mmff_bond(bt, ti, tj) {
@@ -420,7 +426,7 @@ pub(crate) fn bond_params(topo: &Topo, types: &[u8], i: usize, j: usize) -> Opti
 }
 
 /// RDKit `getMMFFBondStretchEmpiricalRuleParams` (MMFF.V eq. 18/19 + HL rule).
-fn bond_empirical(topo: &Topo, i: usize, j: usize) -> Option<BondParams> {
+fn bond_empirical(topo: &MmffTopology, i: usize, j: usize) -> Option<BondParams> {
     let (an1, an2) = (topo.atno[i], topo.atno[j]);
     let cr1 = mmff_cov_rad_pau_ele(an1)?;
     let cr2 = mmff_cov_rad_pau_ele(an2)?;
@@ -442,7 +448,7 @@ fn bond_empirical(topo: &Topo, i: usize, j: usize) -> Option<BondParams> {
 
 /// RDKit `getMMFFAngleBendParams`.
 pub(crate) fn angle_params(
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     i: usize,
     j: usize,
@@ -462,7 +468,7 @@ pub(crate) fn angle_params(
 
 /// RDKit `getMMFFAngleBendEmpiricalRuleParams` (MMFF.V eq. 20 + Table VI).
 fn angle_empirical(
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     old: Option<AngleParams>,
     bonds: (&BondParams, &BondParams),
@@ -540,7 +546,7 @@ fn angle_empirical(
 /// RDKit `getMMFFStretchBendParams`. Returns the resolved params plus the
 /// two bond rest lengths and the angle theta0 (needed by the energy term).
 pub(crate) fn stretch_bend_params(
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     i: usize,
     j: usize,
@@ -684,7 +690,7 @@ pub(crate) enum JkBond {
 
 /// The empirical rules' reading of the j–k bond — the one place it is derived,
 /// so the parameters and the typifier's label cannot disagree about it.
-fn jk_bond(topo: &Topo, types: &[u8], j: usize, k: usize) -> JkBond {
+fn jk_bond(topo: &MmffTopology, types: &[u8], j: usize, k: usize) -> JkBond {
     match topo.bond_order(j, k) {
         Some(BondOrder::Single) => JkBond::Single,
         Some(BondOrder::Double) => JkBond::Double,
@@ -705,7 +711,7 @@ fn jk_bond(topo: &Topo, types: &[u8], j: usize, k: usize) -> JkBond {
 /// know neither central type).
 pub(crate) fn torsion_params(
     variant: MmffVariant,
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     i: usize,
     j: usize,
@@ -731,7 +737,7 @@ pub(crate) fn torsion_params(
 /// RDKit `getMMFFTorsionEmpiricalRuleParams` (MMFF.V rules a-h, p.632), for
 /// the j–k bond class `bond` ([`jk_bond`]).
 fn torsion_empirical(
-    topo: &Topo,
+    topo: &MmffTopology,
     types: &[u8],
     j: usize,
     k: usize,

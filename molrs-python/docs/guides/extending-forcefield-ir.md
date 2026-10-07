@@ -224,7 +224,7 @@ ff.def_style("urey_bradley", "spring").def_type("A-B-A", a, b, a, k_ub=20.0, r_u
 `ForceField.def_style` on a custom category returns a `RelationStyle` whose
 `def_type(name, *endpoints, **params)` takes exactly the category's arity
 (`Arity` otherwise); the terms are the rows of the Frame block `<name>s`. A
-typifier's `Match(links={kind: rows})` fills any registered relation kind
+typifier's `TypeAssignment(links={kind: rows})` fills any registered relation kind
 (by `MolGraph` kind name or class); `assign_terms` matches endpoints by the
 category's `EndpointOrder` and molrec's wildcard rule.
 
@@ -370,7 +370,7 @@ the force field" snippet, run as written by its
 ```python
 import molpy as mp
 from molpy.potential import ParamSpec, StyleDeclaration
-from molpy.typifier import Match, Typifier
+from molpy.typifier import TypeAssignment, Typifier
 
 class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
     category, name = "bond", "fene"
@@ -379,14 +379,14 @@ class Fene(StyleDeclaration):  # LAMMPS bond_style fene, by its expression
                   "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)")
 
 class BeadSpring(Typifier):  # every bead B, every bond FENE; lj units
-    def library(self):
+    def source_forcefield(self):
         return mp.ForceField("bead-spring", units="lj")
-    def match(self, graph):
+    def assign(self, graph):
         bead = {"type": ("full", "B", (), {"mass": 1.0})}
         spring = {"type": ("fene", "B-B", ("B", "B"),
                            {"k": 30.0, "r0": 1.5, "epsilon": 1.0, "sigma": 1.0})}
         bonds = graph.links.exact_bucket(mp.Bond)
-        return Match([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
+        return TypeAssignment([bead] * len(graph.atoms), links={mp.Bond: [spring] * len(bonds)},
                      styles=[("atom", "full", {}), ("bond", "fene", {})])
 
 typifier = BeadSpring()

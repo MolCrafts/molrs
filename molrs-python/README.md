@@ -29,10 +29,10 @@ from molrs.conformer import Conformer
 mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
-from molrs.ff.typifier import MMFF94Typifier
+from molrs.ff.typifier import Mmff94Typifier
 from molrs.ff.potential import PotentialCompiler, intramolecular_pairs
 
-typifier = MMFF94Typifier()
+typifier = Mmff94Typifier()
 typed = typifier.typify(mol)
 frame = typed.to_frame()
 ff = typifier.forcefield()  # a copy of exactly the types typify assigned
@@ -54,7 +54,7 @@ symbol has one path, named after its Rust owner (`molrs.core.Frame` is
 | `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
 | `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_*` / `write_*`; per-format classes in `io.trajectory`, `io.smiles`, `io.log`, `io.lammps_bond_react`, `io.mrec` |
 | `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
-| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
+| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
 | `molrs.optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | Integrators and the `MD` driver |
 | `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |

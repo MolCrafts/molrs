@@ -1,6 +1,6 @@
 //! The shipped OPLS-AA parameter set, assembled from the compiled tables.
 //!
-//! [`OPLSAATypifier::oplsaa`](super::OPLSAATypifier::oplsaa) used to `include_str!`
+//! [`OplsAaTypifier::oplsaa`](super::OplsAaTypifier::oplsaa) used to `include_str!`
 //! 346 KB of XML and run two parsers over it — one for the potential
 //! [`ForceField`], one for the typing metadata — on every construction. The
 //! potential half now comes from [`crate::ff::params::oplsaa`] (generated from
@@ -10,7 +10,7 @@
 //!
 //! A caller's own OPLS / CL&P / CL&Pol file, layers and all, is still read —
 //! by `molrs::io::forcefield` — and handed to
-//! [`OPLSAATypifier::new`](super::OPLSAATypifier::new). What is gone is molrs
+//! [`OplsAaTypifier::new`](super::OplsAaTypifier::new). What is gone is molrs
 //! re-parsing *its own* parameter set at runtime.
 
 use std::collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ use crate::ff::params::{OplsAtomRow, OplsRuleRow};
 use molrs::core::TypeName;
 use molrs::core::constants::COULOMB_REAL;
 
-use super::meta::{OplsTypeRow, OplsTypingMeta};
+use super::typing_metadata::{OplsTypeRow, OplsTypingMetadata};
 
 /// Build the shipped [`ForceField`].
 ///
@@ -36,7 +36,7 @@ use super::meta::{OplsTypeRow, OplsTypingMeta};
 pub(super) fn force_field() -> ForceField {
     try_force_field().expect(
         "OPLS-AA table defines without conflict — proved by \
-         ff::typifier::opls::embedded::tests::force_field_defines_without_conflict",
+         ff::typifier::opls::shipped_forcefield::tests::force_field_defines_without_conflict",
     )
 }
 
@@ -131,16 +131,16 @@ fn try_force_field() -> Result<ForceField, DefError> {
 ///
 /// An input-free constructor over compiled tables, like [`force_field`]:
 /// `tests::typing_meta_joins_every_rule` proves the join `Ok`.
-pub(super) fn typing_meta() -> OplsTypingMeta {
+pub(super) fn typing_meta() -> OplsTypingMetadata {
     try_typing_meta().expect(
         "OPLS-AA typing rules join their atom rows — proved by \
-         ff::typifier::opls::embedded::tests::typing_meta_joins_every_rule",
+         ff::typifier::opls::shipped_forcefield::tests::typing_meta_joins_every_rule",
     )
 }
 
 /// The fallible body of [`typing_meta`]: the shipped rules joined to the
 /// shipped atom rows.
-fn try_typing_meta() -> Result<OplsTypingMeta, String> {
+fn try_typing_meta() -> Result<OplsTypingMetadata, String> {
     try_typing_meta_from(OPLSAA_TYPING, OPLSAA_ATOMS)
 }
 
@@ -152,10 +152,10 @@ fn try_typing_meta() -> Result<OplsTypingMeta, String> {
 fn try_typing_meta_from(
     rules: &[OplsRuleRow],
     atoms: &[OplsAtomRow],
-) -> Result<OplsTypingMeta, String> {
+) -> Result<OplsTypingMetadata, String> {
     let classes: HashMap<&str, &str> = atoms.iter().map(|row| (row.name, row.class)).collect();
     let ruled: HashSet<&str> = rules.iter().map(|rule| rule.name).collect();
-    let mut meta = OplsTypingMeta::new();
+    let mut meta = OplsTypingMetadata::new();
     for rule in rules {
         let class = classes
             .get(rule.name)
@@ -197,7 +197,7 @@ mod tests {
     use crate::ff::forcefield::{Style, StyleDefs};
     use crate::ff::params::OPLSAA_TYPING;
     use crate::ff::params::{OplsAtomRow, OplsRuleRow};
-    use crate::ff::typifier::OPLSAATypifier;
+    use crate::ff::typifier::OplsAaTypifier;
     use crate::ff::typifier::{Typifier, Typing};
     use molrs::core::BondOrder;
     use molrs::core::PropValue;
@@ -278,8 +278,8 @@ mod tests {
     /// mixes arithmetically and CT–HC σ comes out 2.958 Å instead of 3.000 Å.
     #[test]
     fn library_lj_cut_declares_geometric_mixing() {
-        let typifier = OPLSAATypifier::oplsaa();
-        let lj = style(typifier.library(), "pair", "lj/cut");
+        let typifier = OplsAaTypifier::oplsaa();
+        let lj = style(typifier.source_forcefield(), "pair", "lj/cut");
         assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
     }
 
@@ -482,7 +482,7 @@ mod tests {
     // -- Golden typing (opls-gromacs-03 Testing strategy) ----------------------
     //
     // Every molecule is hand-built with explicit hydrogens and typed by the
-    // shipped rules through `Typing<OPLSAATypifier::oplsaa().with_strict(false)>`.
+    // shipped rules through `Typing<OplsAaTypifier::oplsaa().with_strict(false)>`.
     // Every atom's expected type is the spec's golden table, checked against the
     // GROMACS v2026.3 `atomtypes.atp` description of that type; each molecule is
     // neutral, so the `OPLSAA_ATOMS` charges of its types sum to 0.
@@ -553,7 +553,7 @@ mod tests {
         /// Type the molecule with the shipped rules (non-strict); assert every
         /// atom's type and that the charges of the assigned types sum to 0.
         fn assert_typed(&self) {
-            let typed = Typing::new(OPLSAATypifier::oplsaa().with_strict(false))
+            let typed = Typing::new(OplsAaTypifier::oplsaa().with_strict(false))
                 .typify(&self.graph)
                 .expect("non-strict OPLS-AA typing is Ok");
 

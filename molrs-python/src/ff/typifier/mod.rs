@@ -1,5 +1,5 @@
 //! Python bindings for `molrs::ff::typifier` (`molrs.ff.typifier`): the
-//! subclassable [`PyTypifier`] base and the [`PyMatch`] its ``match`` hook
+//! subclassable [`PyTypifier`] base and the [`PyTypeAssignment`] its ``assign`` hook
 //! returns, the native typifiers — MMFF94 / MMFF94s, OPLS-AA, element, and
 //! the antechamber-derived [`atd`] and [`gaff`] — and `assign_cmaps`, which
 //! types a frame's CMAP crossterms from its dihedrals.
@@ -26,9 +26,9 @@ use pyo3::types::{PyDict, PyMapping, PySuper, PyTuple, PyType};
 
 use molrs::ff::forcefield::ForceField;
 use molrs::ff::typifier::ElementTypifier;
-use molrs::ff::typifier::OPLSAATypifier;
-use molrs::ff::typifier::mmff::{MMFF94STypifier, MMFF94Typifier};
-use molrs::ff::typifier::{Annotation, Match, Typifier, Typing};
+use molrs::ff::typifier::OplsAaTypifier;
+use molrs::ff::typifier::mmff::{Mmff94Typifier, Mmff94sTypifier};
+use molrs::ff::typifier::{Annotation, TypeAssignment, Typifier, Typing};
 use molrs::io::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 use molrs::io::forcefield::xml::read_opls_typing_xml_str;
 
@@ -41,7 +41,7 @@ use crate::ff::forcefield::{PyForceField, params_from_dict};
 enum TypifierState {
     /// A native typifier class: the Rust base owns the matcher and the output.
     Native(Typing<Box<dyn Typifier + Send + Sync>>),
-    /// A Python subclass: the matcher is its ``match`` method and this base
+    /// A Python subclass: the matcher is its ``assign`` method and this base
     /// holds the output, unset until first seeded (see [`PyTypifier::seed`]).
     Python(Option<ForceField>),
 }
@@ -50,18 +50,18 @@ fn unseeded_output() -> PyErr {
     PyRuntimeError::new_err("typifier output accessed before it was seeded")
 }
 
-/// The base of every graph typifier: one ``match`` hook plus the output force
+/// The base of every graph typifier: one ``assign`` hook plus the output force
 /// field its typing accumulates.
 ///
 /// Exposed to Python as ``molrs.ff.typifier.Typifier`` and subclassable. A
-/// subclass implements :meth:`match` (and optionally :meth:`library`) and
+/// subclass implements :meth:`assign` (and optionally :meth:`source_forcefield`) and
 /// nothing else; :meth:`typify` is the one execution path and the only writer
 /// of :meth:`forcefield`. Defining ``typify`` on a subclass raises
 /// ``TypeError`` at class creation.
 ///
-/// The native typifier classes (``MMFF94Typifier``, ``MMFF94STypifier``,
-/// ``OPLSAATypifier``, ``AtdTypifier``) extend this base and only construct:
-/// their ``match`` runs the Rust matcher and their ``typify`` the Rust
+/// The native typifier classes (``Mmff94Typifier``, ``Mmff94sTypifier``,
+/// ``OplsAaTypifier``, ``AtdTypifier``) extend this base and only construct:
+/// their ``assign`` runs the Rust matcher and their ``typify`` the Rust
 /// ``Typing::typify``.
 #[pyclass(module = "molrs.ff.typifier", name = "Typifier", subclass)]
 pub struct PyTypifier {
@@ -70,7 +70,7 @@ pub struct PyTypifier {
 
 impl PyTypifier {
     /// The base of a native typifier class: `typifier` wrapped in [`Typing`],
-    /// whose output starts as `typifier.library().empty_like()`.
+    /// whose output starts as `typifier.source_forcefield().empty_like()`.
     pub(crate) fn native(typifier: impl Typifier + Send + Sync + 'static) -> Self {
         Self {
             state: TypifierState::Native(Typing::new(Box::new(typifier))),
@@ -78,30 +78,32 @@ impl PyTypifier {
     }
 
     /// The library's name, for the native classes' `__repr__`; empty for a
-    /// Python subclass, whose library is whatever its `library()` returns.
-    pub(crate) fn library_name(&self) -> &str {
+    /// Python subclass, whose library is whatever its `source_forcefield()` returns.
+    pub(crate) fn source_forcefield_name(&self) -> &str {
         match &self.state {
-            TypifierState::Native(typing) => &typing.library().name,
+            TypifierState::Native(typing) => &typing.typifier().source_forcefield().name,
             TypifierState::Python(_) => "",
         }
     }
 
     /// Seed a Python subclass's output on first access, exactly as
-    /// [`Typing::new`] does: `self.library().empty_like()` — the library's
+    /// [`Typing::new`] does: `self.source_forcefield().empty_like()` — the library's
     /// name and declared units and special_bonds. A subclass without a
-    /// `library()` (it raises `NotImplementedError`) gets an empty force field
+    /// `source_forcefield()` (it raises `NotImplementedError`) gets an empty force field
     /// named after its class. A no-op once seeded, and for a native typifier.
     fn seed(slf: &Bound<'_, Self>) -> PyResult<()> {
         if !matches!(slf.borrow().state, TypifierState::Python(None)) {
             return Ok(());
         }
         let py = slf.py();
-        // `library()` is dispatched through Python (a subclass overrides it),
+        // `source_forcefield()` is dispatched through Python (a subclass overrides it),
         // so no borrow of `slf` is held across the call.
-        let seed = match slf.call_method0(intern!(py, "library")) {
+        let seed = match slf.call_method0(intern!(py, "source_forcefield")) {
             Ok(library) => {
                 let library = library.cast_into::<PyForceField>().map_err(|err| {
-                    PyTypeError::new_err(format!("library() must return a ForceField: {err}"))
+                    PyTypeError::new_err(format!(
+                        "source_forcefield() must return a ForceField: {err}"
+                    ))
                 })?;
                 library.borrow().inner.empty_like()
             }
@@ -111,7 +113,7 @@ impl PyTypifier {
             Err(err) => return Err(err),
         };
         if let TypifierState::Python(output) = &mut slf.borrow_mut().state {
-            // `library()` may itself have reached `forcefield()` and seeded.
+            // `source_forcefield()` may itself have reached `forcefield()` and seeded.
             output.get_or_insert(seed);
         }
         Ok(())
@@ -133,12 +135,12 @@ impl PyTypifier {
     }
 
     /// Reject a subclass that defines ``typify`` in its own body, and a
-    /// subclass of a native typifier that defines ``match`` or ``library``.
+    /// subclass of a native typifier that defines ``assign`` or ``source_forcefield``.
     ///
     /// ``typify`` is the only writer of :meth:`forcefield`; an override would
-    /// silently bypass the output. A native typifier (``OPLSAATypifier``,
-    /// ``MMFF94Typifier``, …) types in Rust and never calls a Python ``match``
-    /// or ``library``, so overriding either on its subclass would be silently
+    /// silently bypass the output. A native typifier (``OplsAaTypifier``,
+    /// ``Mmff94Typifier``, …) types in Rust and never calls a Python ``assign``
+    /// or ``source_forcefield``, so overriding either on its subclass would be silently
     /// ignored. ``typing.final`` is only a static check.
     #[classmethod]
     #[pyo3(signature = (**kwargs))]
@@ -150,19 +152,19 @@ impl PyTypifier {
         let own = cls.getattr(intern!(py, "__dict__"))?;
         if own.contains(intern!(py, "typify"))? {
             return Err(PyTypeError::new_err(format!(
-                "{} defines typify; a Typifier subclass implements match (and optionally \
-                 library) only — typify is the base's and the only writer of forcefield()",
+                "{} defines typify; a Typifier subclass implements assign (and optionally \
+                 source_forcefield) only — typify is the base's and the only writer of forcefield()",
                 cls.name()?
             )));
         }
-        let native = cls.is_subclass_of::<PyOPLSAATypifier>()?
-            || cls.is_subclass_of::<PyMMFF94Typifier>()?
-            || cls.is_subclass_of::<PyMMFF94STypifier>()?
+        let native = cls.is_subclass_of::<PyOplsAaTypifier>()?
+            || cls.is_subclass_of::<PyMmff94Typifier>()?
+            || cls.is_subclass_of::<PyMmff94sTypifier>()?
             || cls.is_subclass_of::<PyElementTypifier>()?
             || cls.is_subclass_of::<atd::PyAtdTypifier>()?
             || cls.is_subclass_of::<gaff::PyGaffTypifier>()?;
         if native {
-            for hook in ["match", "library"] {
+            for hook in ["assign", "source_forcefield"] {
                 if own.contains(hook)? {
                     return Err(PyTypeError::new_err(format!(
                         "{} defines {hook} on a native typifier, whose typify runs in Rust \
@@ -181,9 +183,9 @@ impl PyTypifier {
         Ok(())
     }
 
-    /// Match ``graph`` and return what it assigns, as a :class:`Match`.
+    /// TypeAssignment ``graph`` and return what it assigns, as a :class:`TypeAssignment`.
     ///
-    /// The one hook a subclass implements. ``match`` may write intermediate
+    /// The one hook a subclass implements. ``assign`` may write intermediate
     /// results (generated topology, perceived bond types) onto the graph it is
     /// given; :meth:`typify` always gives it a private copy. On a native
     /// typifier this runs the Rust matcher on ``graph``.
@@ -191,30 +193,29 @@ impl PyTypifier {
     /// Raises
     /// ------
     /// NotImplementedError
-    ///     On the base, when a subclass does not implement ``match``.
+    ///     On the base, when a subclass does not implement ``assign``.
     /// ValueError
     ///     If a native matcher cannot match the graph.
-    #[pyo3(name = "match")]
-    fn r#match(&self, graph: &Bound<'_, PyAny>) -> PyResult<PyMatch> {
+    fn assign(&self, graph: &Bound<'_, PyAny>) -> PyResult<PyTypeAssignment> {
         match &self.state {
             TypifierState::Native(typing) => {
                 let graph = graph.cast::<PyAtomistic>()?;
                 let inner = typing
                     .typifier()
-                    .r#match(graph.borrow_mut().core_mut())
+                    .assign(graph.borrow_mut().core_mut())
                     .map_err(PyValueError::new_err)?;
-                Ok(PyMatch { inner })
+                Ok(PyTypeAssignment { inner })
             }
             TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
-                "Typifier.match must be implemented by a concrete typifier",
+                "Typifier.assign must be implemented by a concrete typifier",
             )),
         }
     }
 
     /// Type ``mol``: do not override; the only writer of :meth:`forcefield`.
     ///
-    /// Copies ``mol`` (``mol.copy()``), calls :meth:`match` on the copy and
-    /// writes the returned :class:`Match` onto the copy and the output force
+    /// Copies ``mol`` (``mol.copy()``), calls :meth:`assign` on the copy and
+    /// writes the returned :class:`TypeAssignment` onto the copy and the output force
     /// field — stamping every annotation and defining every type. ``mol`` is
     /// never touched.
     ///
@@ -226,9 +227,9 @@ impl PyTypifier {
     /// Raises
     /// ------
     /// NotImplementedError
-    ///     If the typifier has no ``match``.
+    ///     If the typifier has no ``assign``.
     /// TypeError
-    ///     If ``match`` returns something other than a :class:`Match`.
+    ///     If ``assign`` returns something other than a :class:`TypeAssignment`.
     /// ValueError
     ///     If the match does not fit the graph or contradicts a definition the
     ///     output already holds. The output is then unchanged.
@@ -250,12 +251,12 @@ impl PyTypifier {
         let typed = mol
             .call_method0(intern!(py, "copy"))?
             .cast_into::<PyAtomistic>()?;
-        let returned = slf.call_method1(intern!(py, "match"), (&typed,))?;
+        let returned = slf.call_method1(intern!(py, "assign"), (&typed,))?;
         let matched = returned
-            .cast::<PyMatch>()
+            .cast::<PyTypeAssignment>()
             .map_err(|_| {
                 PyTypeError::new_err(format!(
-                    "match must return a Match, got {}",
+                    "assign must return a TypeAssignment, got {}",
                     returned.get_type()
                 ))
             })?
@@ -278,7 +279,7 @@ impl PyTypifier {
     ///
     /// Edits to the returned force field do not reach the typifier;
     /// :meth:`typify` is the only writer. Before the first ``typify`` this is
-    /// the seeded empty output (see :meth:`library`).
+    /// the seeded empty output (see :meth:`source_forcefield`).
     fn forcefield(slf: &Bound<'_, Self>) -> PyResult<Py<PyForceField>> {
         Self::seed(slf)?;
         let output = match &slf.borrow().state {
@@ -296,18 +297,20 @@ impl PyTypifier {
     /// may override it; one that does not has no library (this raises
     /// ``NotImplementedError``), and its output starts as an empty force field
     /// named after the class, with nothing declared.
-    fn library(&self, py: Python<'_>) -> PyResult<Py<PyForceField>> {
+    fn source_forcefield(&self, py: Python<'_>) -> PyResult<Py<PyForceField>> {
         match &self.state {
-            TypifierState::Native(typing) => PyForceField::from_core(py, typing.library().clone()),
+            TypifierState::Native(typing) => {
+                PyForceField::from_core(py, typing.typifier().source_forcefield().clone())
+            }
             TypifierState::Python(_) => Err(PyNotImplementedError::new_err(
-                "Typifier.library is not implemented by this typifier",
+                "Typifier.source_forcefield is not implemented by this typifier",
             )),
         }
     }
 }
 
-/// What a typifier's ``match`` assigns to one graph, exposed to Python as
-/// ``molrs.ff.typifier.Match`` (the Rust `Match`).
+/// What a typifier's ``assign`` assigns to one graph, exposed to Python as
+/// ``molrs.ff.typifier.TypeAssignment`` (the Rust `TypeAssignment`).
 ///
 /// Parameters
 /// ----------
@@ -336,12 +339,17 @@ impl PyTypifier {
 /// ``name`` and every param and defines the type ``name`` on ``endpoints``
 /// (atom-type names; empty for an atom type) under the style. The name is
 /// never read for endpoints. Param values are numbers or strings.
-#[pyclass(module = "molrs.ff.typifier", name = "Match", frozen, subclass)]
-pub struct PyMatch {
-    inner: Match,
+#[pyclass(
+    module = "molrs.ff.typifier",
+    name = "TypeAssignment",
+    frozen,
+    subclass
+)]
+pub struct PyTypeAssignment {
+    inner: TypeAssignment,
 }
 
-impl PyMatch {
+impl PyTypeAssignment {
     /// One positional vector: a sequence of `key -> annotation` mappings.
     fn rows(rows: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<(String, Annotation)>>> {
         rows.try_iter()?
@@ -390,7 +398,7 @@ fn prefix_err(py: Python<'_>, err: PyErr, context: &str) -> PyErr {
 }
 
 #[pymethods]
-impl PyMatch {
+impl PyTypeAssignment {
     #[new]
     #[pyo3(
         signature = (nodes, links = None, *, styles = Vec::new(), pairs = Vec::new()),
@@ -402,9 +410,9 @@ impl PyMatch {
         styles: Vec<(String, String, Bound<'_, PyDict>)>,
         pairs: Vec<(String, String, Vec<String>, Bound<'_, PyDict>)>,
     ) -> PyResult<Self> {
-        let mut inner = Match {
+        let mut inner = TypeAssignment {
             nodes: Self::rows(nodes)?,
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         if let Some(links) = links {
             for item in links.cast::<PyMapping>()?.items()?.iter() {
@@ -446,7 +454,7 @@ impl PyMatch {
             .map(|(kind, rows)| format!("{kind}={}", rows.len()))
             .collect();
         format!(
-            "Match(nodes={}, links={{{}}}, styles={}, pairs={})",
+            "TypeAssignment(nodes={}, links={{{}}}, styles={}, pairs={})",
             m.nodes.len(),
             links.join(", "),
             m.styles.len(),
@@ -481,7 +489,7 @@ macro_rules! py_mmff_front_door {
             }
 
             fn __repr__(slf: PyRef<'_, Self>) -> String {
-                format!("{}(forcefield='{}')", $name, slf.as_super().library_name())
+                format!("{}(forcefield='{}')", $name, slf.as_super().source_forcefield_name())
             }
         }
     };
@@ -490,7 +498,7 @@ macro_rules! py_mmff_front_door {
 py_mmff_front_door! {
     /// MMFF94 atom-type assigner.
     ///
-    /// Exposed to Python as `molrs.ff.typifier.MMFF94Typifier`.
+    /// Exposed to Python as `molrs.ff.typifier.Mmff94Typifier`.
     ///
     /// Loads the embedded MMFF94 parameter tables at construction time. Use
     /// :meth:`typify` to label a molecular graph (atom types, partial charges, and
@@ -501,7 +509,7 @@ py_mmff_front_door! {
     /// :meth:`typify` raises ``ValueError`` when atom types cannot be determined
     /// (e.g. unsupported elements).
     ///
-    /// See :class:`MMFF94STypifier` for the "static" variant used in energy
+    /// See :class:`Mmff94sTypifier` for the "static" variant used in energy
     /// minimization.
     ///
     /// # References
@@ -510,19 +518,19 @@ py_mmff_front_door! {
     ///
     /// Examples
     /// --------
-    /// >>> typifier = MMFF94Typifier()
+    /// >>> typifier = Mmff94Typifier()
     /// >>> frame = typifier.typify(mol).to_frame()          # labels + charges
     /// >>> frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame)
     /// >>> pots = molrs.ff.potential.PotentialCompiler(typifier.forcefield()).compile(frame)
-    PyMMFF94Typifier, MMFF94Typifier, "MMFF94Typifier"
+    PyMmff94Typifier, Mmff94Typifier, "Mmff94Typifier"
 }
 
 py_mmff_front_door! {
     /// MMFF94s ("static") atom-type assigner and potential builder.
     ///
-    /// Exposed to Python as `molrs.ff.typifier.MMFF94STypifier`.
+    /// Exposed to Python as `molrs.ff.typifier.Mmff94sTypifier`.
     ///
-    /// Identical to :class:`MMFF94Typifier` except on delocalised trivalent
+    /// Identical to :class:`Mmff94Typifier` except on delocalised trivalent
     /// nitrogen (MMFF numeric types 10 ``NC=O`` and 40 ``NC=C``), where MMFF94s
     /// re-parameterises 11 out-of-plane rows and 42 torsion rows so the nitrogen
     /// minimizes to a **planar** geometry — the one seen in crystal structures.
@@ -544,10 +552,10 @@ py_mmff_front_door! {
     ///
     /// Examples
     /// --------
-    /// >>> typifier = MMFF94STypifier()
+    /// >>> typifier = Mmff94sTypifier()
     /// >>> typifier.forcefield().name
     /// 'MMFF94s'
-    PyMMFF94STypifier, MMFF94STypifier, "MMFF94STypifier"
+    PyMmff94sTypifier, Mmff94sTypifier, "Mmff94sTypifier"
 }
 
 fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
@@ -568,7 +576,7 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 
 /// OPLS-AA atom-type assigner and potential builder.
 ///
-/// Exposed to Python as `molrs.ff.typifier.OPLSAATypifier`. It loads the embedded canonical
+/// Exposed to Python as `molrs.ff.typifier.OplsAaTypifier`. It loads the embedded canonical
 /// OPLS-AA parameter set by default, or reads one XML source at construction.
 /// :meth:`typify` returns a typed :class:`Atomistic` (``ValueError`` when atom
 /// typing fails); :meth:`forcefield` holds the definitions it assigned.
@@ -584,14 +592,14 @@ fn oplsaa_source_xml(source: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Strin
 ///
 /// Examples
 /// --------
-/// >>> typifier = OPLSAATypifier()
+/// >>> typifier = OplsAaTypifier()
 /// >>> typed = typifier.typify(mol)        # typed Atomistic
 /// >>> # compose: typify → to_frame → intramolecular_pairs → PotentialCompiler(forcefield()).compile
-#[pyclass(module = "molrs.ff.typifier", name = "OPLSAATypifier", extends = PyTypifier, subclass)]
-pub struct PyOPLSAATypifier;
+#[pyclass(module = "molrs.ff.typifier", name = "OplsAaTypifier", extends = PyTypifier, subclass)]
+pub struct PyOplsAaTypifier;
 
 #[pymethods]
-impl PyOPLSAATypifier {
+impl PyOplsAaTypifier {
     /// Create an OPLS-AA typifier from embedded data, XML text, or an XML path.
     #[new]
     #[pyo3(signature = (source = None, *, strict = true))]
@@ -604,9 +612,9 @@ impl PyOPLSAATypifier {
                 let ff = OplsXmlReader::new()
                     .read_str(&xml)
                     .map_err(PyValueError::new_err)?;
-                OPLSAATypifier::new(meta, ff)
+                OplsAaTypifier::new(meta, ff)
             }
-            None => OPLSAATypifier::oplsaa(),
+            None => OplsAaTypifier::oplsaa(),
         }
         .with_strict(strict);
         Ok((Self, PyTypifier::native(typifier)))
@@ -614,8 +622,8 @@ impl PyOPLSAATypifier {
 
     fn __repr__(slf: PyRef<'_, Self>) -> String {
         format!(
-            "OPLSAATypifier(forcefield='{}')",
-            slf.as_super().library_name()
+            "OplsAaTypifier(forcefield='{}')",
+            slf.as_super().source_forcefield_name()
         )
     }
 }
@@ -682,10 +690,10 @@ pub fn assign_cmaps_py(frame: &PyFrame, forcefield: &PyForceField) -> PyResult<u
 /// Register `molrs.ff.typifier` (the base before its subclasses).
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTypifier>()?;
-    m.add_class::<PyMatch>()?;
-    m.add_class::<PyMMFF94Typifier>()?;
-    m.add_class::<PyMMFF94STypifier>()?;
-    m.add_class::<PyOPLSAATypifier>()?;
+    m.add_class::<PyTypeAssignment>()?;
+    m.add_class::<PyMmff94Typifier>()?;
+    m.add_class::<PyMmff94sTypifier>()?;
+    m.add_class::<PyOplsAaTypifier>()?;
     m.add_class::<atd::PyAtdTypifier>()?;
     m.add_class::<gaff::PyGaffTypifier>()?;
     m.add_class::<PyElementTypifier>()?;

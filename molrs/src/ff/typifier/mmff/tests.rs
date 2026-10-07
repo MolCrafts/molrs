@@ -7,7 +7,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use crate::ff::forcefield::ForceField;
-    use crate::ff::typifier::mmff::MMFF94Typifier;
+    use crate::ff::typifier::mmff::Mmff94Typifier;
     use molrs::core::{Atom, PropValue};
     use molrs::core::{Atomistic, NodeId};
 
@@ -32,8 +32,8 @@ mod tests {
         }
     }
 
-    fn test_typifier() -> MMFF94Typifier {
-        MMFF94Typifier::new()
+    fn test_typifier() -> Mmff94Typifier {
+        Mmff94Typifier::new()
     }
 
     // -----------------------------------------------------------------------
@@ -46,12 +46,12 @@ mod tests {
         let params = typifier.params();
         // Should have loaded ~90+ atom types
         assert!(
-            params.props.len() > 80,
+            params.rows.len() > 80,
             "expected >80 atom props, got {}",
-            params.props.len()
+            params.rows.len()
         );
         // Type 1 = CR (sp3 carbon)
-        let p1 = params.get_prop(1).expect("type 1 should exist");
+        let p1 = params.get(1).expect("type 1 should exist");
         assert_eq!(p1.atno, 6);
         assert_eq!(p1.crd, 4);
         assert_eq!(p1.val, 4);
@@ -102,7 +102,7 @@ mod tests {
     // Bond / angle / torsion type classification
     // -----------------------------------------------------------------------
     //
-    // The seven unit tests that lived here drove `MMFF94Typifier::typify_bond` /
+    // The seven unit tests that lived here drove `Mmff94Typifier::typify_bond` /
     // `typify_angle` / `typify_dihedral` — three front-door methods over
     // `typifier/mmff/classify.rs`, a second implementation of MMFF's context
     // rules that `ff/mmff/params.rs` already implements correctly. All three are
@@ -121,7 +121,7 @@ mod tests {
     // bare integers: `tests/ff/typifier/mmff_labels.rs`.
 
     // -----------------------------------------------------------------------
-    // Typing<MMFF94Typifier> output (system-forcefield-07)
+    // Typing<Mmff94Typifier> output (system-forcefield-07)
     // -----------------------------------------------------------------------
 
     /// Explicit-H 1,3-butadiene `H2C=CH-CH=CH2`, hand-built: carbons
@@ -178,7 +178,7 @@ mod tests {
     #[test]
     fn typing_butadiene_gives_its_two_stbn_orientations_distinct_names() {
         let (mol, c) = butadiene();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing
             .typify(&mol)
             .expect("butadiene types without a TypeConflict");
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn typing_butadiene_output_names_equal_the_stamped_labels() {
         let (mol, _) = butadiene();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing.typify(&mol).expect("butadiene types");
 
         let atoms: BTreeSet<String> = typed
@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn typing_names_ring_torsions_with_different_secondary_types_apart() {
         let (mol, [c_co, c_im, c_h2, n]) = azetone();
-        let mut typing = crate::ff::typifier::Typing::new(MMFF94Typifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(Mmff94Typifier::new());
         let typed = typing
             .typify(&mol)
             .expect("one torsion label names one parameter set, so no TypeConflict");

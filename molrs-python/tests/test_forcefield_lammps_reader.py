@@ -99,7 +99,7 @@ def test_read_lammps_forcefield_from_path(tmp_path):
     p.write_text(_FF)
     ff = molrs.io.read_lammps_forcefield(str(p))
     # LAMMPS `dihedral_style fourier` is molrs's `dihedral periodic`.
-    assert len(ff.get_style("dihedral", "periodic").types) == 1
+    assert len(ff.get_style("dihedral", "periodic").get_types()) == 1
 
 
 def test_unknown_keyword_maps_to_value_error(read_ff):

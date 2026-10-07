@@ -1,4 +1,4 @@
-//! MMFF atom typing — the [`Match`] of an [`Atomistic`]: MMFF type labels,
+//! MMFF atom typing — the [`TypeAssignment`] of an [`Atomistic`]: MMFF type labels,
 //! partial charges, and the per-instance force constants the kernels read.
 //!
 //! This is the **typifier** half of MMFF: it takes a molecular graph and returns
@@ -37,7 +37,7 @@
 //! This is the path that bakes `koop` (impropers) and `(v1, v2, v3)` (dihedrals)
 //! into the Frame columns that `mmff_oop` / `mmff_torsion` consume, so a hardcoded
 //! variant here silently produces MMFF94 numbers no matter which typifier the user
-//! constructed — the exact bug `MMFF94STypifier` exists to make impossible.
+//! constructed — the exact bug `Mmff94sTypifier` exists to make impossible.
 
 use std::collections::{HashMap, HashSet};
 
@@ -47,11 +47,11 @@ use molrs::core::{Atomistic, NodeId};
 
 use super::properties::{MmffMolProperties, MmffVariant};
 use super::resolve as eparams;
-use super::topo::Topo;
 use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::typifier::{Annotation, Match};
+use crate::ff::typifier::{Annotation, TypeAssignment};
+use crate::perceive::mmff_aromaticity::MmffTopology;
 
-use super::params::MMFFParams;
+use super::atom_properties::MmffAtomProperties;
 
 /// Positional annotations of one kind of graph element.
 type Annotations = Vec<Vec<(String, Annotation)>>;
@@ -60,7 +60,7 @@ type Annotations = Vec<Vec<(String, Annotation)>>;
 /// the MMFF topology (with aromaticity perceived) and numeric atom types the
 /// resolver keys off, and the caller's variant.
 ///
-/// Assembled once. `Topo::build` + `set_mmff_aromaticity` is the expensive part
+/// Assembled once. `MmffTopology::build` + `set_mmff_aromaticity` is the expensive part
 /// of MMFF typing and every step needs the result, so it is not re-derived.
 struct MmffContext<'a> {
     /// Molecule atom-iteration order — the index space `props` / `types` use.
@@ -69,11 +69,11 @@ struct MmffContext<'a> {
     props: MmffMolProperties,
     /// MMFF topology with perceived aromaticity — the resolver's ring / bond-order
     /// source, and the reason the type codes below can see what `classify.rs` could not.
-    topo: Topo,
+    topo: MmffTopology,
     /// Numeric MMFF atom types, indexed as `atom_ids`.
     types: Vec<u8>,
     /// Typing metadata (atom-type properties), for the linear-centre flag.
-    params: &'a MMFFParams,
+    params: &'a MmffAtomProperties,
     variant: MmffVariant,
 }
 
@@ -109,7 +109,7 @@ fn typed(
     )
 }
 
-/// The MMFF [`Match`] of `graph` for `variant`:
+/// The MMFF [`TypeAssignment`] of `graph` for `variant`:
 /// - atoms: `type` (MMFF numeric type as string) + `charge` (MMFF partial
 ///   charge), both plain values — MMFF declares no atom style and its charges
 ///   are per-instance;
@@ -135,21 +135,21 @@ fn typed(
 /// both halves come from the same resolver call as the row's numbers.
 ///
 /// `variant` is supplied by the typifier front door
-/// ([`MMFF94Typifier`](super::MMFF94Typifier) /
-/// [`MMFF94STypifier`](super::MMFF94STypifier)) and is threaded to **every**
+/// ([`Mmff94Typifier`](super::Mmff94Typifier) /
+/// [`Mmff94sTypifier`](super::Mmff94sTypifier)) and is threaded to **every**
 /// parameter lookup below. Atom types and charges are variant-independent by
 /// construction (MMFF94 and MMFF94s share all 95 types); `koop` and `(v1, v2, v3)`
 /// are not.
 pub(crate) fn annotate_mmff(
     graph: &mut Atomistic,
-    params: &MMFFParams,
+    params: &MmffAtomProperties,
     library: &ForceField,
     variant: MmffVariant,
-) -> Result<Match, String> {
+) -> Result<TypeAssignment, String> {
     let ctx = build_context(graph, params, variant)?;
-    let mut m = Match {
+    let mut m = TypeAssignment {
         nodes: annotate_atoms(&ctx),
-        ..Match::default()
+        ..TypeAssignment::default()
     };
     *m.link_mut(BONDS) = annotate_bonds(graph, &ctx);
 
@@ -171,7 +171,7 @@ pub(crate) fn annotate_mmff(
 /// The shared front-end: atom types, partial charges, MMFF topology.
 fn build_context<'a>(
     mol: &Atomistic,
-    params: &'a MMFFParams,
+    params: &'a MmffAtomProperties,
     variant: MmffVariant,
 ) -> Result<MmffContext<'a>, String> {
     // The RDKit-validated front-end for atom types + MMFF partial charges. Its
@@ -189,8 +189,8 @@ fn build_context<'a>(
     // The MMFF topology drives every per-instance parameter and type-code lookup
     // below. Aromaticity is *perceived* here — which is precisely the fact the
     // deleted classifier never saw, because it was handed raw bond orders instead.
-    let base = Topo::build(mol).map_err(|s| format!("MMFF Topo: {s}"))?;
-    let topo = super::aromaticity::set_mmff_aromaticity(&base);
+    let base = MmffTopology::build(mol).map_err(|s| format!("MMFF MmffTopology: {s}"))?;
+    let topo = crate::perceive::mmff_aromaticity::set_mmff_aromaticity(&base);
     let types: Vec<u8> = (0..atom_ids.len()).map(|i| props.atom_type(i)).collect();
 
     Ok(MmffContext {
@@ -287,7 +287,7 @@ fn annotate_angles(graph: &Atomistic, ctx: &MmffContext) -> Annotations {
             // string columns into the Frame; a bool would be silently dropped.
             let linear = ctx
                 .params
-                .get_prop(tb)
+                .get(tb as u8)
                 .map(|p| p.linh != 0)
                 .unwrap_or(false);
 

@@ -8,7 +8,7 @@ use molrs::core::{Atomistic, Element, NodeId};
 use crate::core::constants::UFF_COULOMB;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::uff::{AtomicParams, LAMBDA, params_for_label};
-use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 use crate::perceive::rings::find_rings;
 use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
 
@@ -56,7 +56,7 @@ use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
 /// # Route
 ///
 /// ```ignore
-/// let mut typing = Typing::new(UFFTypifier::new());
+/// let mut typing = Typing::new(UffTypifier::new());
 /// let mut frame = typing.typify(&mol)?.to_frame()?;
 /// let ff = typing.forcefield();
 /// frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
@@ -64,17 +64,17 @@ use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
 /// ```
 ///
 /// Organic / main-group subset only (see [`crate::ff::params::uff`]). No GFN-FF.
-pub struct UFFTypifier {
+pub struct UffTypifier {
     ff: ForceField,
 }
 
-impl Default for UFFTypifier {
+impl Default for UffTypifier {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl UFFTypifier {
+impl UffTypifier {
     /// Infallible: parameters are compile-time constants.
     ///
     /// An input-free constructor over the `ff/params` UFF table: the one
@@ -145,17 +145,17 @@ fn qualified(labels: &[&str], fields: &[f64]) -> Result<TypeName, String> {
     TypeName::join(labels)?.with_qualifier(&fields)
 }
 
-impl Typifier for UFFTypifier {
+impl Typifier for UffTypifier {
     /// Label atoms and resolve per-instance UFF parameters.
     ///
     /// Angles, dihedrals (regenerated) and inversions (added) are enumerated
     /// onto `graph`. Atoms get `type` (the UFF label), `x1` and `D1` as plain
     /// values; every bond, angle, dihedral and generated improper gets `type`
-    /// — its label (see the [type docs](UFFTypifier#labels)) — as a type defined
+    /// — its label (see the [type docs](UffTypifier#labels)) — as a type defined
     /// under `uff_bond` / `uff_angle` / `uff_torsion` / `uff_inversion` with
     /// the params the kernels read. The `uff_lj` rows `{x1, D1}` of the labels
     /// used are pairs; every library style is declared.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         graph
             .generate_topology(true, true, false, true)
             .map_err(|e| e.to_string())?;
@@ -243,7 +243,7 @@ impl Typifier for UFFTypifier {
         let hyb = hybridizations(graph);
         let conjugated = conjugated_atoms(graph);
         let mut z: Vec<u8> = Vec::with_capacity(n);
-        let mut m = Match::default();
+        let mut m = TypeAssignment::default();
         let mut lj_used: HashSet<String> = HashSet::new();
 
         for (i, &aid) in atom_ids.iter().enumerate() {
@@ -498,7 +498,7 @@ impl Typifier for UFFTypifier {
 
     /// The UFF style skeleton: five styles, no rows (every UFF parameter is
     /// resolved per instance), and UFF's special_bonds.
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         &self.ff
     }
 }
@@ -785,7 +785,7 @@ mod tests {
         m
     }
 
-    // -- Typing<UFFTypifier> output (system-forcefield-07) --------------------
+    // -- Typing<UffTypifier> output (system-forcefield-07) --------------------
 
     /// N-methylacetamide `CH3-C(=O)-NH-CH3`, hand-built: methyl C is atom 0,
     /// carbonyl C atom 1, O atom 2 (C=O double), amide N atom 3, N-methyl C
@@ -840,8 +840,8 @@ mod tests {
         m
     }
 
-    fn uff_typed(mol: &Atomistic) -> (Atomistic, crate::ff::typifier::Typing<UFFTypifier>) {
-        let mut typing = crate::ff::typifier::Typing::new(UFFTypifier::new());
+    fn uff_typed(mol: &Atomistic) -> (Atomistic, crate::ff::typifier::Typing<UffTypifier>) {
+        let mut typing = crate::ff::typifier::Typing::new(UffTypifier::new());
         let typed = typing.typify(mol).expect("UFF types the molecule");
         (typed, typing)
     }
@@ -1036,7 +1036,7 @@ mod tests {
     /// params), and their labels keep node order with the centre first.
     #[test]
     fn typing_triphenylphosphine_has_no_type_conflict() {
-        let mut typing = crate::ff::typifier::Typing::new(UFFTypifier::new());
+        let mut typing = crate::ff::typifier::Typing::new(UffTypifier::new());
         let result = typing.typify(&triphenylphosphine());
         assert!(result.is_ok(), "{:?}", result.err());
         let n = assert_improper_labels_keep_node_order(&triphenylphosphine());
@@ -1117,12 +1117,12 @@ mod tests {
     /// result and names this test.
     #[test]
     fn new_defines_without_conflict() {
-        assert_eq!(UFFTypifier::try_new().err(), None);
+        assert_eq!(UffTypifier::try_new().err(), None);
     }
 
     #[test]
     fn uff_types_ethanol() {
-        let typed = crate::ff::typifier::Typing::new(UFFTypifier::new())
+        let typed = crate::ff::typifier::Typing::new(UffTypifier::new())
             .typify(&ethanol())
             .unwrap();
         let mut c3 = 0;

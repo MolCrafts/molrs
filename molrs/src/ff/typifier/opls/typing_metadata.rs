@@ -11,7 +11,7 @@
 //! ([`OplsXmlReader`](crate::io::forcefield::readers::opls::OplsXmlReader))
 //! drops the `def` / `overrides` / `priority` / `layer` attributes and
 //! [`read_opls_typing_xml_str`](crate::io::forcefield::xml::read_opls_typing_xml_str)
-//! reads them into the [`OplsTypingMeta`] table here.
+//! reads them into the [`OplsTypingMetadata`] table here.
 //!
 //! # How the fields rank candidates
 //!
@@ -65,11 +65,11 @@ pub struct OplsTypeRow {
 /// but kept separate — this table drives SMARTS atom typing, the `ForceField`
 /// drives energy evaluation.
 #[derive(Debug, Clone, Default)]
-pub struct OplsTypingMeta {
+pub struct OplsTypingMetadata {
     rows: HashMap<String, OplsTypeRow>,
 }
 
-impl OplsTypingMeta {
+impl OplsTypingMetadata {
     /// Create an empty metadata table.
     pub fn new() -> Self {
         Self::default()

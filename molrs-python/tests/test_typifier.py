@@ -1,8 +1,8 @@
-"""Seam tests for the subclassable ``molrs.ff.typifier.Typifier`` base and ``Match``.
+"""Seam tests for the subclassable ``molrs.ff.typifier.Typifier`` base and ``TypeAssignment``.
 
 The base owns one output force field per instance. For a Python subclass,
-``typify`` copies the graph, calls the subclass ``match`` on the copy, and hands
-the returned ``Match`` to the Rust ``Match::write_onto``; for a native typifier
+``typify`` copies the graph, calls the subclass ``assign`` on the copy, and hands
+the returned ``TypeAssignment`` to the Rust ``TypeAssignment::write_onto``; for a native typifier
 it runs ``Typing::typify``. The science of both paths (validation, stamping,
 definition order) is proven by the Rust unit tests in ``ff/typifier/mod.rs``;
 these tests only cover the binding seam: construction, the subclass path,
@@ -16,7 +16,7 @@ import itertools
 import molrs
 import pytest
 from molrs.core import Dihedral, Improper
-from molrs.ff.typifier import Match, MMFF94Typifier, Typifier
+from molrs.ff.typifier import TypeAssignment, Mmff94Typifier, Typifier
 
 _SPECIAL_LJ = (0.0, 0.0, 0.5)
 _SPECIAL_COUL = (0.0, 0.0, 0.75)
@@ -73,7 +73,7 @@ def _ethane() -> molrs.core.Atomistic:
 
 def _atom_rows(ff: molrs.ff.forcefield.ForceField) -> dict[str, dict]:
     """``{name: params}`` of the ``atom``/``full`` style of ``ff``."""
-    return {t.name: t.params for t in ff.get_style("atom", "full").types}
+    return {t.name: t.params for t in ff.get_style("atom", "full").get_types()}
 
 
 def _assert_declares_library_special_bonds(ff: molrs.ff.forcefield.ForceField) -> None:
@@ -98,8 +98,8 @@ class _FirstAtomX(Typifier):
     def __init__(self, mass: float = 1.0) -> None:
         self.mass = mass
 
-    def match(self, graph: molrs.core.Atomistic) -> Match:
-        return Match(
+    def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
+        return TypeAssignment(
             [{"type": ("full", "X", (), {"mass": self.mass})}, {}],
             styles=[("atom", "full", {})],
         )
@@ -108,32 +108,32 @@ class _FirstAtomX(Typifier):
 class _DihedralTagger(Typifier):
     """Stamps each node and each dihedral with a label derived from the element itself."""
 
-    def match(self, graph: molrs.core.Atomistic) -> Match:
+    def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
         nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
         dihedrals = [
             {"tag": _endpoint_label(link)}
             for link in graph.links.exact_bucket(Dihedral)
         ]
-        return Match(nodes, {Dihedral: dihedrals})
+        return TypeAssignment(nodes, {Dihedral: dihedrals})
 
 
 class _SpecialBondsLibrary(Typifier):
     """A stamp-only typifier whose library declares special_bonds."""
 
-    def library(self) -> molrs.ff.forcefield.ForceField:
+    def source_forcefield(self) -> molrs.ff.forcefield.ForceField:
         lib = molrs.ff.forcefield.ForceField("lib")
         lib.set_special_bonds(list(_SPECIAL_LJ), list(_SPECIAL_COUL))
         return lib
 
-    def match(self, graph: molrs.core.Atomistic) -> Match:
-        return Match([{} for _ in graph.atoms])
+    def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
+        return TypeAssignment([{} for _ in graph.atoms])
 
 
 def test_a_type_annotation_without_endpoints_raises_type_error() -> None:
     """A type annotation carries its endpoints: ``(style, name, params)`` is not
     a form — a name is never read for endpoints."""
     with pytest.raises(TypeError, match="endpoints"):
-        Match([{"type": ("harmonic", "C-C", {"k": 1.0})}])
+        TypeAssignment([{"type": ("harmonic", "C-C", {"k": 1.0})}])
 
 
 class TestTypifierSubclass:
@@ -217,24 +217,24 @@ class TestNativeTypifierSubclass:
     """A native typifier can be extended, but its hooks run in Rust."""
 
     def test_a_native_typifier_subclass_typifies_as_the_native(self) -> None:
-        class _Tagged(MMFF94Typifier):
+        class _Tagged(Mmff94Typifier):
             tag = "mine"
 
         typed = _Tagged().typify(_ethane())
-        reference = MMFF94Typifier().typify(_ethane())
+        reference = Mmff94Typifier().typify(_ethane())
         assert typed.to_frame()["atoms"]["type"].tolist() == (
             reference.to_frame()["atoms"]["type"].tolist()
         )
 
-    @pytest.mark.parametrize("hook", ["match", "library"])
+    @pytest.mark.parametrize("hook", ["assign", "source_forcefield"])
     def test_a_native_subclass_overriding_a_hook_is_rejected(self, hook: str) -> None:
         with pytest.raises(TypeError, match=hook):
-            type("_Overrides", (MMFF94Typifier,), {hook: lambda self, *a: None})
+            type("_Overrides", (Mmff94Typifier,), {hook: lambda self, *a: None})
 
     def test_the_native_typifiers_live_in_the_typifier_module(self) -> None:
-        assert MMFF94Typifier.__module__ == "molrs.ff.typifier"
+        assert Mmff94Typifier.__module__ == "molrs.ff.typifier"
 
 
 class TestNativeTypifierMatch:
     def test_mmff94_match_returns_match(self) -> None:
-        assert isinstance(MMFF94Typifier().match(_ethane()), Match)
+        assert isinstance(Mmff94Typifier().assign(_ethane()), TypeAssignment)

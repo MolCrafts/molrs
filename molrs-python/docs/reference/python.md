@@ -34,13 +34,13 @@ and the docs build.
 | `molrs.io.log` | `molrs::io::log` | the `Lammps*` log records |
 | `molrs.io.lammps_bond_react` | `molrs::io::data::lammps_bond_react` | `BondReactTemplate` |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
-| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles (the data model; its files are `molrs.io`'s) |
+| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `WeightedTerms`, `kernel`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
-| `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
+| `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `TypeAssignment`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
-| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
-| `molrs.ff.scale_lj` | `molrs::ff::scale_lj` | `FragmentScaling`, `compute_k_ij`, `fragment_scaling_data`, `scale_lj` |
+| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability`, `clpol_fragment_scaling` |
+| `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj` (the shipped table is `molrs.ff.params.clpol_fragment_scaling`) |
 | `molrs.optimize` | `molrs::optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
@@ -287,7 +287,7 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ### `molrs.ff.forcefield`
 
-The native force-field model exposes a `Style`/`Type` handle hierarchy
+The native force-field model exposes a `Style`/`ForceFieldType` handle hierarchy
 (`BondStyle`/`BondType`, `PairStyle`/`PairType`, `CmapStyle`/`CmapType`,
 …); a handle's `params` is a plain dict of numbers, strings and float64
 arrays (a CMAP `grid`).
@@ -310,7 +310,7 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.forcefield.CmapStyle
 
-::: molrs.ff.forcefield.Type
+::: molrs.ff.forcefield.ForceFieldType
 
 ::: molrs.ff.forcefield.AtomType
 
@@ -334,11 +334,11 @@ arrays (a CMAP `grid`).
 
 ### `molrs.ff.typifier`
 
-::: molrs.ff.typifier.MMFF94Typifier
+::: molrs.ff.typifier.Mmff94Typifier
 
-::: molrs.ff.typifier.MMFF94STypifier
+::: molrs.ff.typifier.Mmff94sTypifier
 
-::: molrs.ff.typifier.OPLSAATypifier
+::: molrs.ff.typifier.OplsAaTypifier
 
 ::: molrs.ff.typifier.AtdTypifier
 
@@ -346,7 +346,7 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.typifier.Typifier
 
-::: molrs.ff.typifier.Match
+::: molrs.ff.typifier.TypeAssignment
 
 ### `molrs.ff.charge`
 

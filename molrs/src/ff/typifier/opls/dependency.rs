@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use molrs::perceive::smarts::SmartsPattern;
 
-use super::meta::OplsTypingMeta;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// Topological dependency analysis over the `%label`-referencing OPLS defs.
 ///
@@ -51,7 +51,7 @@ impl OplsDependencyAnalyzer {
     /// references; unparseable defs are skipped here (they fail-fast later, at
     /// [`LayeredTypingEngine::build`](super::layered::LayeredTypingEngine::build)).
     /// A def with no `def` string is not a node.
-    pub fn new(meta: &OplsTypingMeta) -> Self {
+    pub fn new(meta: &OplsTypingMetadata) -> Self {
         // Node set: every type carrying a (parseable) def.
         let mut pattern_types: HashSet<String> = HashSet::new();
         let mut raw_deps: HashMap<String, HashSet<String>> = HashMap::new();
@@ -300,8 +300,8 @@ mod tests {
         }
     }
 
-    fn meta_with(rows: &[(&str, Option<&str>)]) -> OplsTypingMeta {
-        let mut m = OplsTypingMeta::new();
+    fn meta_with(rows: &[(&str, Option<&str>)]) -> OplsTypingMetadata {
+        let mut m = OplsTypingMetadata::new();
         for (name, def) in rows {
             m.insert(*name, row(*def));
         }

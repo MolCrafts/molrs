@@ -579,10 +579,10 @@ fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
 /// per-instance columns (θ0 in degrees, the out-of-plane centre first).
 #[test]
 fn typed_molecules_price_as_in_0_15() {
-    use crate::ff::typifier::mmff::MMFF94Typifier;
+    use crate::ff::typifier::mmff::Mmff94Typifier;
     use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
     use crate::ff::typifier::{GaffParameterSet, GaffTypifier};
-    use crate::ff::typifier::{OPLSAATypifier, Typing, UFFTypifier};
+    use crate::ff::typifier::{OplsAaTypifier, Typing, UffTypifier};
 
     let mol = acetanilide();
 
@@ -609,7 +609,7 @@ fn typed_molecules_price_as_in_0_15() {
         ],
     );
 
-    let mut opls = Typing::new(OPLSAATypifier::oplsaa());
+    let mut opls = Typing::new(OplsAaTypifier::oplsaa());
     let typed = opls.typify(&mol).unwrap();
     let ff = opls.forcefield();
     assert_energies(
@@ -624,7 +624,7 @@ fn typed_molecules_price_as_in_0_15() {
         ],
     );
 
-    let mut mmff = Typing::new(MMFF94Typifier::new());
+    let mut mmff = Typing::new(Mmff94Typifier::new());
     let typed = mmff.typify(&mol).unwrap();
     let ff = mmff.forcefield();
     assert_energies(
@@ -641,7 +641,7 @@ fn typed_molecules_price_as_in_0_15() {
         ],
     );
 
-    let mut uff = Typing::new(UFFTypifier::new());
+    let mut uff = Typing::new(UffTypifier::new());
     let typed = uff.typify(&mol).unwrap();
     let ff = uff.forcefield();
     assert_energies(

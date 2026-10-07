@@ -196,26 +196,6 @@ pub fn scale_lj(
     Ok(output)
 }
 
-/// CL&Pol fragment parameters compiled from paduagroup/clandpol fragment.ff.
-pub fn builtin_fragment_scaling() -> HashMap<String, FragmentScaling> {
-    super::params::CLPOL_FRAGMENTS
-        .iter()
-        .copied()
-        .map(|(name, q, mu, alpha, polarizable)| {
-            (
-                name.to_string(),
-                FragmentScaling {
-                    name: name.to_string(),
-                    q,
-                    mu,
-                    alpha,
-                    polarizable,
-                },
-            )
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

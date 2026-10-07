@@ -445,7 +445,7 @@ impl PyForceField {
 
     /// The types of a category — a name (``"bond"``) or a type class
     /// (``BondType``; ``RelationType`` selects every category beyond the
-    /// seven, ``Type`` every category) — style by style.
+    /// seven, ``ForceFieldType`` every category) — style by style.
     fn get_types(slf: &Bound<'_, Self>, category: &Bound<'_, PyAny>) -> PyResult<Vec<Py<PyAny>>> {
         let py = slf.py();
         let mut types = Vec::new();
@@ -454,7 +454,7 @@ impl PyForceField {
             types.extend(
                 style
                     .bind(py)
-                    .getattr(intern!(py, "types"))?
+                    .call_method0(intern!(py, "get_types"))?
                     .extract::<Vec<Py<PyAny>>>()?,
             );
         }

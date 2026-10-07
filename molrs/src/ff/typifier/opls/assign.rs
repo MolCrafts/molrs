@@ -48,9 +48,9 @@ use molrs::core::{Atomistic, NodeId};
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
 use crate::ff::typifier::ParameterInterpolator;
 use crate::ff::typifier::estimate::candidate::is_wildcard;
-use crate::ff::typifier::{Annotation, Match};
+use crate::ff::typifier::{Annotation, TypeAssignment};
 
-use super::meta::OplsTypingMeta;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// Specificity of one bonded-type *end pattern* against one atom.
 ///
@@ -150,7 +150,7 @@ impl CandidateTables {
     /// The class→layer map (used to compute each candidate's overlay layer) is
     /// derived from `meta`: `class → max(layer)` over every type carrying that
     /// class, replicating molpy's `_build_type_class_layer`.
-    pub fn build(ff: &ForceField, meta: &OplsTypingMeta) -> Self {
+    pub fn build(ff: &ForceField, meta: &OplsTypingMetadata) -> Self {
         let (type_to_class, class_to_layer) = build_type_class_layer(meta);
 
         let layer_of = |classes: &[&str]| -> u32 {
@@ -316,9 +316,9 @@ impl CandidateTables {
 
 /// Map each `opls_NNN` type to its class, and each class to its highest overlay
 /// layer. Replicates molpy's `_build_type_class_layer`, sourced from chain-1's
-/// [`OplsTypingMeta`] (each row carries `class` + `layer`).
+/// [`OplsTypingMetadata`] (each row carries `class` + `layer`).
 fn build_type_class_layer(
-    meta: &OplsTypingMeta,
+    meta: &OplsTypingMetadata,
 ) -> (HashMap<String, String>, HashMap<String, u32>) {
     let mut type_to_class = HashMap::new();
     let mut class_to_layer: HashMap<String, u32> = HashMap::new();
@@ -359,7 +359,7 @@ use crate::ff::typifier::BondedTerm;
 ///
 /// Angles and dihedrals are enumerated onto `graph` from the bond graph via
 /// the shared typifier topology helper (clearing any pre-existing generated
-/// ones), mirroring the MMFF typifier; the returned [`Match`] holds `bonds`,
+/// ones), mirroring the MMFF typifier; the returned [`TypeAssignment`] holds `bonds`,
 /// `angles` and `dihedrals`, positional against `graph` after that
 /// enumeration. Only atoms in `types` participate: under [`NoMatch::Error`] a
 /// term with any untyped endpoint is an `Err` naming that endpoint; under
@@ -376,8 +376,8 @@ pub(crate) fn typify_bonded_with(
     tables: &CandidateTables,
     policy: NoMatch,
     estimator: Option<&dyn ParameterInterpolator<Term = BondedTerm>>,
-) -> Result<Match, String> {
-    let mut m = Match::default();
+) -> Result<TypeAssignment, String> {
+    let mut m = TypeAssignment::default();
 
     // --- bonds (already present from the input topology) ---
     let bonds: Vec<[NodeId; 2]> = graph
@@ -607,7 +607,7 @@ mod tests {
     #[test]
     fn class_to_layer_takes_the_max() {
         use crate::ff::typifier::OplsTypeRow;
-        let mut meta = OplsTypingMeta::new();
+        let mut meta = OplsTypingMetadata::new();
         let row = |class: &str, layer: u32| OplsTypeRow {
             class: class.to_string(),
             def: Some("[C]".into()),
@@ -643,7 +643,7 @@ mod tests {
     /// failure can only come from an untyped endpoint.
     fn wildcard_bond_tables() -> CandidateTables {
         use crate::ff::typifier::OplsTypeRow;
-        let mut meta = OplsTypingMeta::new();
+        let mut meta = OplsTypingMetadata::new();
         meta.insert(
             "opls_135",
             OplsTypeRow {

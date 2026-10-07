@@ -23,10 +23,10 @@ def test_native_scale_lj_clones_and_scales_cross_pair():
         "c2c1im": (["CR"], [(0.0, 0.0, 0.0)], [12.0]),
         "bf4": (["B"], [(4.0, 0.0, 0.0)], [11.0]),
     }
-    output = molrs.ff.scale_lj.scale_lj(ff, fragments)
-    expected = molrs.ff.scale_lj.compute_k_ij(
-        molrs.ff.scale_lj.fragment_scaling_data()["c2c1im"],
-        molrs.ff.scale_lj.fragment_scaling_data()["bf4"],
+    output = molrs.ff.clpol_scaling.scale_lj(ff, fragments)
+    expected = molrs.ff.clpol_scaling.compute_k_ij(
+        molrs.ff.params.clpol_fragment_scaling()["c2c1im"],
+        molrs.ff.params.clpol_fragment_scaling()["bf4"],
         4.0,
     )
     assert isinstance(output, molrs.ff.forcefield.ForceField)
@@ -38,7 +38,7 @@ def test_native_scale_lj_clones_and_scales_cross_pair():
 def test_native_scale_lj_missing_data_is_key_error():
     fragments = {"missing": (["CR"], [(0.0, 0.0, 0.0)], [12.0])}
     with pytest.raises(KeyError, match="no scaling data"):
-        molrs.ff.scale_lj.scale_lj(_forcefield(), fragments)
+        molrs.ff.clpol_scaling.scale_lj(_forcefield(), fragments)
 
 
 def test_clpol_polarizability_ships_alpha_ff():

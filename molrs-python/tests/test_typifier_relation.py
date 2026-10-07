@@ -1,6 +1,6 @@
 """A typifier emits terms of any relation kind (``ff-ir-02-protocol`` §6, WP6).
 
-``Match(nodes, links=...)`` keys its link rows by a relation class (``Bond``,
+``TypeAssignment(nodes, links=...)`` keys its link rows by a relation class (``Bond``,
 ``Angle``, …) or by a relation kind name (``"bonds"``, or a custom
 ``"urey_bradleys"`` the graph registered with ``register_kind``). A type
 annotation under a kind defines a type of the category whose Frame block the
@@ -15,7 +15,7 @@ import molrs
 import numpy as np
 import pytest
 from molrs.core import Angle, Bond
-from molrs.ff.typifier import Match, Typifier
+from molrs.ff.typifier import TypeAssignment, Typifier
 
 UB_EXPRESSION = "k_ub*(distance(p1,p3)-r_ub)^2"
 XYZ = [(0.0, 0.0, 0.0), (1.52, 0.1, 0.05), (2.1, 1.45, -0.1), (3.55, 1.6, 0.6)]
@@ -47,13 +47,13 @@ class _Chain(Typifier):
             {"expression": UB_EXPRESSION} if category == "urey_bradley" else {}
         )
 
-    def match(self, graph: molrs.core.Atomistic) -> Match:
+    def assign(self, graph: molrs.core.Atomistic) -> TypeAssignment:
         nodes = [{"type": ("full", t, (), {"mass": 12.0})} for t in ATOM_TYPES]
         rows = [
             {"type": (self.style, name, ends, {"k_ub": k_ub, "r_ub": r_ub, **self.extra})}
             for name, ends, k_ub, r_ub in TERMS
         ]
-        return Match(
+        return TypeAssignment(
             nodes,
             {self.key: rows},
             styles=[
@@ -81,7 +81,7 @@ def test_a_custom_relation_kind_is_typified_and_priced_like_angle_charmm() -> No
     assert block["type"].tolist() == ["t", "u"]
     style = ub.forcefield().get_style("urey_bradley", "spring")
     assert isinstance(style, molrs.ff.forcefield.RelationStyle)
-    assert [t.name for t in style.types] == ["t", "u"]
+    assert [t.name for t in style.get_types()] == ["t", "u"]
     assert [e.name for e in style.get_type_by_name("t").endpoints] == ["A", "B", "C"]
 
     charmm = _Chain(Angle, "angle", "charmm", k=0.0, theta0=109.5)
@@ -101,13 +101,13 @@ def test_a_built_in_kind_by_name_is_the_kind_by_class() -> None:
 
 def test_a_kind_named_twice_is_refused() -> None:
     with pytest.raises(ValueError, match="'bonds' more than once"):
-        Match([], {Bond: [], "bonds": []})
+        TypeAssignment([], {Bond: [], "bonds": []})
 
 
 @pytest.mark.parametrize("key", [3, molrs.core.Atom])
 def test_a_key_that_names_no_kind_is_refused(key: object) -> None:
     with pytest.raises(TypeError, match="relation kind names"):
-        Match([], {key: []})
+        TypeAssignment([], {key: []})
 
 
 def test_a_kind_the_graph_lacks_is_refused_by_name() -> None:
@@ -118,5 +118,5 @@ def test_a_kind_the_graph_lacks_is_refused_by_name() -> None:
 
 
 def test_repr_lists_the_kinds() -> None:
-    m = Match([{}], {Bond: [{}], "urey_bradleys": [{}, {}]})
-    assert repr(m) == "Match(nodes=1, links={bonds=1, urey_bradleys=2}, styles=0, pairs=0)"
+    m = TypeAssignment([{}], {Bond: [{}], "urey_bradleys": [{}, {}]})
+    assert repr(m) == "TypeAssignment(nodes=1, links={bonds=1, urey_bradleys=2}, styles=0, pairs=0)"
