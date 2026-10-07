@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use pyo3::prelude::*;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::path::path_str;
 

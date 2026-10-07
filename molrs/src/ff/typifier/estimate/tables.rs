@@ -28,7 +28,7 @@
 //! Bond length Å, bond force constant kcal/mol/Å², angle force constant
 //! kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 
-use molrs::system::Element;
+use molrs::core::Element;
 
 use crate::ff::params::{
     EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, PARMCHK, ParmchkCorr,

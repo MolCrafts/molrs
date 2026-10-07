@@ -37,12 +37,12 @@ use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
     forcefield::writers::xml::XmlForceFieldWriter,
 };
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeLabels;
 
 fn dim(s: &str) -> Dim {
     s.parse().unwrap()

@@ -1,9 +1,9 @@
-//! The frame handle for the C++ engine — the CXX face of `molrs::store::Frame`
+//! The frame handle for the C++ engine — the CXX face of `molrs::core::Frame`
 //! (through `molrs_ffi::FrameRef`): introspection, typed column readers and
 //! create-or-update writers, exact-dtype metadata and the simulation box.
 
-use molrs::spatial::SimBox;
-use molrs::store::{Block, Frame, MetaValue};
+use molrs::core::SimBox;
+use molrs::core::{Block, Frame, MetaValue};
 use ndarray::{Array1, Array2, ArrayD};
 
 use crate::bridge;

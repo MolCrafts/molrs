@@ -10,7 +10,7 @@
 use std::fmt;
 
 use crate::io::smiles::{BondKind, Span};
-use molrs::error::MolRsError;
+use molrs::core::MolRsError;
 
 /// Which line notation was being read or written when an error was raised.
 ///

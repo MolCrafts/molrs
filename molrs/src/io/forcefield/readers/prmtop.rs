@@ -55,10 +55,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use super::ForceFieldReader;
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{AMBER_COULOMB, CHARMM_COULOMB};
+use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::potential::pair::lj_ab_to_sigma_epsilon;
 use crate::io::data::prmtop::{frame_from_sections, parse_flag_sections};
 use crate::io::data::prmtop_tables::{
@@ -66,11 +67,10 @@ use crate::io::data::prmtop_tables::{
     chamber_impropers, cmap_terms, decode_torsions, is_chamber, parse_tokens, proper_type_names,
     section, table_value, torsion_rows,
 };
-use crate::units::constants::{AMBER_COULOMB, CHARMM_COULOMB};
+use molrs::core::TypeName;
+use molrs::core::keys;
+use molrs::core::{Block, Frame};
 use molrs::op::types::{F, Idx};
-use molrs::store::keys;
-use molrs::store::type_labels::TypeName;
-use molrs::store::{Block, Frame};
 
 /// `(sigma_Å, epsilon_kcal_per_mol)` of one LJ entry.
 type Lj = (f64, f64);
@@ -114,7 +114,7 @@ impl AmberPrmtopFfReader {
         let ff = build_forcefield(&sections)?;
         let mut frame = frame_from_sections(&sections).map_err(|e| e.to_string())?;
         if let Some(pairs) = one_four_pairs(&sections, &frame)? {
-            frame.insert(molrs::store::schema::block_names::PAIRS, pairs);
+            frame.insert(molrs::core::schema::block_names::PAIRS, pairs);
         }
         Ok((ff, frame))
     }
@@ -634,7 +634,7 @@ struct OneFourWeights {
 /// A file without `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` (pre-Amber-11)
 /// states no divisors; they are then its force field's. `default` is the
 /// `(SCEE, SCNB)` the caller assumes for such a file (the force field takes
-/// AMBER's, `ff::params::amber`); with `None` the weights of such a file —
+/// AMBER's, `core::constants::AMBER_SCEE` / `AMBER_SCNB`); with `None` the weights of such a file —
 /// and the field weights of a file with no 1-4 row — are unknown,
 /// `Ok(None)` (the per-pair rows assume nothing).
 ///
@@ -858,7 +858,7 @@ fn one_four_pairs(
     if rows.is_empty() {
         return Ok(None);
     }
-    let column_err = |e: molrs::store::BlockError| e.to_string();
+    let column_err = |e: molrs::core::BlockError| e.to_string();
     let mut block = Block::new();
     for (column, pick) in [(keys::ATOMI, 0usize), (keys::ATOMJ, 1usize)] {
         let ids: Vec<Idx> = rows

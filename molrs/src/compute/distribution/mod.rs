@@ -29,8 +29,8 @@ pub use distance::DistanceObservable;
 pub use histogram1d::{Histogram1d, renormalize_density};
 pub use observable::{AtomGroups, Observable};
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;

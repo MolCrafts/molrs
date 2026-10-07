@@ -31,7 +31,7 @@
 
 use std::sync::Arc;
 
-use molrs::spatial::region::Region;
+use molrs::core::Region;
 
 /// Shared-ownership handle to a [`Region`]. Cheap to clone (one `Arc` bump).
 #[derive(Clone)]
@@ -65,7 +65,7 @@ impl RegionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::spatial::region::Sphere;
+    use molrs::core::Sphere;
     use ndarray::Array1;
 
     #[test]

@@ -8,7 +8,7 @@
 //!     `getExperimentalTorsions`
 //!     (`$RDBASE/Code/GraphMol/ForceFieldHelpers/CrystalFF/TorsionPreferences.cpp`).
 //!
-//! `molrs::system::MolGraph` does not carry an RDKit-style `ChiralTag`. For a
+//! `molrs::core::MolGraph` does not carry an RDKit-style `ChiralTag`. For a
 //! stereocentre we therefore take the **sign of the signed tetrahedral volume
 //! of the supplied 3D coordinates** as the chirality reference: this is what
 //! actually distinguishes R from S, and is the quantity the downstream
@@ -16,8 +16,8 @@
 //! `Unknown` and only the volume magnitude bounds are emitted.
 
 use crate::op::vec3::{cross, dot, sub};
-use molrs::system::Atomistic;
-use molrs::system::NodeId;
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
 
 use super::mol_features::Perceived;
 use molrs::perceive::Hybridization;

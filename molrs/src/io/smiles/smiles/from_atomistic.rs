@@ -6,11 +6,11 @@ use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::write_smiles;
 use crate::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use molrs::system::Atomistic;
-use molrs::system::Element;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
-use molrs::system::{BondNumber, BondType};
+use molrs::core::Atomistic;
+use molrs::core::Element;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
+use molrs::core::{BondNumber, BondOrder};
 
 /// Convert a molecular graph into a concrete SMILES IR.
 pub fn from_atomistic(mol: &Atomistic, opts: &SmilesEmitOptions) -> Result<SmilesIR, SmilesError> {
@@ -155,7 +155,7 @@ fn choose_root(
     }
     // Prefer non-H, lowest handle order in component.
     let mut ids = comp.to_vec();
-    ids.sort_by_key(|id| molrs::system::node_to_u64(*id));
+    ids.sort_by_key(|id| molrs::core::node_to_u64(*id));
     ids.into_iter()
         .find(|&id| !is_hydrogen(mol, id))
         .or_else(|| comp.first().copied())
@@ -215,7 +215,7 @@ fn build_tree(
                 order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
             nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
         } else {
-            nbs.sort_by_key(|id| molrs::system::node_to_u64(*id));
+            nbs.sort_by_key(|id| molrs::core::node_to_u64(*id));
         }
 
         for nb in nbs {
@@ -243,7 +243,7 @@ fn build_tree(
             if !include_h && is_hydrogen(mol, b) {
                 continue;
             }
-            let edge = if molrs::system::node_to_u64(a) < molrs::system::node_to_u64(b) {
+            let edge = if molrs::core::node_to_u64(a) < molrs::core::node_to_u64(b) {
                 (a, b)
             } else {
                 (b, a)
@@ -272,7 +272,7 @@ fn build_tree(
 
 fn bond_kind_for(
     mol: &Atomistic,
-    bid: molrs::system::RelationId,
+    bid: molrs::core::RelationId,
     opts: &SmilesEmitOptions,
 ) -> Result<Option<BondKind>, SmilesError> {
     let bt = mol.bond_type(bid);
@@ -291,11 +291,11 @@ fn bond_kind_for(
             }
         }
         _ => match bt {
-            BondType::Single => Ok(None), // default single omitted
-            BondType::Double => Ok(Some(BondKind::Double)),
-            BondType::Triple => Ok(Some(BondKind::Triple)),
-            BondType::Aromatic => Ok(Some(BondKind::Aromatic)),
-            BondType::Unknown => match mol.bond_number(bid) {
+            BondOrder::Single => Ok(None), // default single omitted
+            BondOrder::Double => Ok(Some(BondKind::Double)),
+            BondOrder::Triple => Ok(Some(BondKind::Triple)),
+            BondOrder::Aromatic => Ok(Some(BondKind::Aromatic)),
+            BondOrder::Unknown => match mol.bond_number(bid) {
                 BondNumber::Double => Ok(Some(BondKind::Double)),
                 BondNumber::Triple => Ok(Some(BondKind::Triple)),
                 BondNumber::Quadruple => Ok(Some(BondKind::Quadruple)),
@@ -305,7 +305,7 @@ fn bond_kind_for(
     }
 }
 
-fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::system::RelationId> {
+fn find_bond(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<molrs::core::RelationId> {
     mol.neighbor_bonds(a)
         .find(|(nb, _)| *nb == b)
         .map(|(_, bid)| bid)

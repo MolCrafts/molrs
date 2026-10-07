@@ -121,7 +121,7 @@
 //! [`with_durable(false)`](MrecWriter::with_durable) says otherwise;
 //! the automatic chunk-boundary landings are not synced.
 //!
-//! [`Trajectory`]: molrs::store::Trajectory
+//! [`Trajectory`]: molrs::core::Trajectory
 //! [`TrajectoryReader`]: crate::io::reader::TrajectoryReader
 
 use std::collections::{BTreeMap, VecDeque};
@@ -149,13 +149,13 @@ use zarrs::storage::{
 };
 
 use super::record_io::V1Upgrade;
-use molrs::error::MolRsError;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
+use molrs::core::SimBox;
+use molrs::core::Trajectory;
+use molrs::core::{Block, Column, DType};
+use molrs::core::{MetaMap, MetaValue};
 use molrs::op::types::F;
-use molrs::spatial::SimBox;
-use molrs::store::Frame;
-use molrs::store::Trajectory;
-use molrs::store::{Block, Column, DType};
-use molrs::store::{MetaMap, MetaValue};
 
 use crate::io::reader::TrajectoryReader;
 
@@ -281,7 +281,7 @@ const CHUNK_CACHE_ENTRIES: usize = 2;
 /// not — 52 random mantissa bits gzip to about 95 % of their size at a real
 /// CPU cost — so their compression is a producer's choice, `None` by default.
 ///
-/// A column with a [declared precision](molrs::store::precision) is the
+/// A column with a [declared precision](molrs::core::check_precision) is the
 /// exception: its values are rounded onto a binary grid, its pipeline opens
 /// with a byte shuffle, and it is compressed whatever this says — `None`
 /// selects the reference compressor (`zstd` level 3, or `gzip` level 1 in a
@@ -833,13 +833,13 @@ struct ColumnSchema {
     #[serde(default)]
     trailing: Vec<u64>,
     /// Whether the column carries a [validity
-    /// mask](crate::store::Block::validity), stored as a `bool` array
+    /// mask](crate::core::Block::validity), stored as a `bool` array
     /// under the section's `_validity` subgroup. Absent from the serialized
     /// pin while false, so a pin written before masks existed deserializes as
     /// a run of plain columns -- which is what it is.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     nullable: bool,
-    /// The column's [declared precision](molrs::store::precision) — on a
+    /// The column's [declared precision](molrs::core::check_precision) — on a
     /// trajectory, stated here and nowhere else. Every presented value is
     /// rounded to its grid before the change detection and the landing.
     /// Absent while undeclared.
@@ -1180,7 +1180,7 @@ impl SequenceSchema {
             })
     }
 
-    /// Declare the [precision](molrs::store::precision) of `column` of
+    /// Declare the [precision](molrs::core::check_precision) of `column` of
     /// `block`: an absolute tolerance in the column's units.
     ///
     /// Every frame's values of the column are rounded to the binary grid the
@@ -1190,7 +1190,7 @@ impl SequenceSchema {
     /// declaration is pinned with the schema and is the only place a
     /// trajectory states it. [`from_frames`](Self::from_frames) declares the
     /// precision every presented column carries
-    /// ([`Block::precision`](molrs::store::Block::precision)).
+    /// ([`Block::precision`](molrs::core::Block::precision)).
     ///
     /// # Errors
     ///
@@ -1220,7 +1220,7 @@ impl SequenceSchema {
                 declared.dtype
             )));
         }
-        molrs::store::precision::check_precision(precision)
+        molrs::core::check_precision(precision)
             .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
         match declared.precision {
             Some(existing) if existing.to_bits() != precision.to_bits() => {
@@ -1245,7 +1245,7 @@ impl SequenceSchema {
     /// referencing block has rows, or a non-null value past its row count),
     /// and the reader refuses a store that does.
     /// [`from_frames`](Self::from_frames) declares every
-    /// [`Block::target`](molrs::store::Block::target) it sees.
+    /// [`Block::target`](molrs::core::Block::target) it sees.
     ///
     /// # Errors
     ///
@@ -1276,7 +1276,7 @@ impl SequenceSchema {
                 pinned.dtype
             )));
         }
-        molrs::store::schema::check_target(target)
+        molrs::core::schema::check_target(target)
             .map_err(|e| MolRsError::zarr(format!("column {column:?} of block {block:?}: {e}")))?;
         match declared.targets.get(column) {
             Some(existing) if existing != target => Err(MolRsError::zarr(format!(
@@ -3824,11 +3824,11 @@ impl MrecWriter {
         // Frames appended now are current-version frames; a store of an
         // earlier version is read (and converted), never continued.
         let version = super::schema::read_version(&super::record_io::read_meta(&store)?)?;
-        if version != crate::store::MOLREC_VERSION {
+        if version != crate::io::mrec::MOLREC_VERSION {
             return Err(MolRsError::zarr(format!(
                 "the store is a molrec_version {version} record; appending would mix version \
                  {} frames into it. Read it and write a new record",
-                crate::store::MOLREC_VERSION
+                crate::io::mrec::MOLREC_VERSION
             )));
         }
         let schema = schema_of(&store)?;
@@ -4210,7 +4210,7 @@ impl MrecWriter {
     ///
     /// The schema pins a dtype, a trailing shape and a nullability per column.
     /// A column declared nullable carries its [validity
-    /// mask](crate::store::Block::validity) into the store — a `bool`
+    /// mask](crate::core::Block::validity) into the store — a `bool`
     /// array under the section's reserved `_validity` subgroup, grown row for
     /// row with the values — so a masked column round-trips masked, and a
     /// frame that leaves it whole round-trips whole.
@@ -5590,10 +5590,10 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
 
-    use molrs::spatial::SimBox;
-    use molrs::store::Frame;
-    use molrs::store::MetaValue;
-    use molrs::store::{Block, Column, DType};
+    use molrs::core::Frame;
+    use molrs::core::MetaValue;
+    use molrs::core::SimBox;
+    use molrs::core::{Block, Column, DType};
     use ndarray::{ArrayD, array};
     use tempfile::TempDir;
     use zarrs::array::{Array, ArrayBuilder, ArraySubset, data_type};
@@ -5634,7 +5634,7 @@ mod tests {
     /// The `u64` column of [`BONDS`].
     const I: &str = "i";
     /// A column name outside the canonical schema vocabulary
-    /// (`core/store/schema/mod.rs`), so the same name can carry two dtypes.
+    /// (`core/schema/mod.rs`), so the same name can carry two dtypes.
     ///
     /// [`X`] cannot: `x` is pinned `Float` there, and `Block::insert_column`
     /// rejects a `u64` under that name before any sequence code runs — the
@@ -7984,7 +7984,7 @@ mod tests {
             meta.attributes()
                 .get("molrec_version")
                 .and_then(|v| v.as_u64()),
-            Some(crate::store::MOLREC_VERSION),
+            Some(crate::io::mrec::MOLREC_VERSION),
             "{:?}",
             meta.attributes()
         );
@@ -8695,10 +8695,10 @@ mod tests {
     }
 
     fn stored(values: &[f64], p: f64) -> Vec<f64> {
-        let q = molrs::store::precision::quantum(p).unwrap();
+        let q = molrs::core::quantum(p).unwrap();
         values
             .iter()
-            .map(|&x| molrs::store::precision::quantize(x, q))
+            .map(|&x| molrs::core::quantize(x, q))
             .collect()
     }
 
@@ -8743,7 +8743,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = store_in(&dir);
         let p = 1e-3;
-        let q = molrs::store::precision::quantum(p).unwrap();
+        let q = molrs::core::quantum(p).unwrap();
         let first = [1.0, 2.0, 3.0];
         let nudged: Vec<f64> = first.iter().map(|x| x + 0.4 * q).collect();
         write_all(

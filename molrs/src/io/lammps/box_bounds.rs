@@ -1,8 +1,8 @@
 //! Orthogonal / triclinic box bounds → [`SimBox`].
 
 use crate::io::invalid_data;
+use molrs::core::SimBox;
 use molrs::op::types::Pbc3;
-use molrs::spatial::SimBox;
 use ndarray::array;
 
 /// Simulation-box extents as written in LAMMPS data headers or dump

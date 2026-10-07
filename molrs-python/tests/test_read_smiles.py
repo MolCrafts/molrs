@@ -9,7 +9,7 @@ import pytest
 
 def test_reads_one_molecule_without_adding_hydrogens() -> None:
     mol = molrs.io.read_smiles("CCO")
-    assert isinstance(mol, molrs.system.Atomistic)
+    assert isinstance(mol, molrs.core.Atomistic)
     assert mol.n_atoms == 3
     assert mol.n_bonds == 2
 

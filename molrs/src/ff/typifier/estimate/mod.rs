@@ -8,7 +8,7 @@ mod term;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use molrs::system::Element;
+use molrs::core::Element;
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::params::{EmpiricalTable, ParmchkTable};
@@ -84,7 +84,7 @@ impl TypifierParameterContext {
     /// The empirical formulas need a per-atom **element**, but a force-field reader
     /// keeps only `name` + `mass` per type. Rather than plumb a new element channel
     /// through every reader, each type's element is inferred from its tabulated mass
-    /// by nearest standard-atomic-mass match ([`molrs::system::Element`]). This is
+    /// by nearest standard-atomic-mass match ([`molrs::core::Element`]). This is
     /// force-field agnostic, and the analogy cascade itself never needs an element —
     /// it works on type / class names.
     ///

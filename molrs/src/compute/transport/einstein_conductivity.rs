@@ -1,7 +1,7 @@
 //! Einstein–Helfand conductivity raw compute — the collective-dipole-MSD route
 //! to σ.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 
@@ -112,7 +112,7 @@ impl Compute for EinsteinConductivity {
 mod tests {
     use super::super::green_kubo_conductivity::GreenKuboConductivity;
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
@@ -120,7 +120,7 @@ mod tests {
     /// (removed) Einstein–Helfand conductivity free fn so the tests fold in the exact
     /// same constant the legacy free function used.
     fn einstein_helfand_prefactor() -> f64 {
-        use molrs::units::constants::{
+        use molrs::core::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
         (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S) / (6.0 * ANGSTROM_M.powi(3) * K_B_SI)
@@ -264,7 +264,7 @@ mod tests {
         // σ over many realisations. Seed is fixed → deterministic across CI.
         use crate::compute::Fit;
         use crate::compute::LinearFit;
-        use molrs::units::constants::{
+        use molrs::core::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
 

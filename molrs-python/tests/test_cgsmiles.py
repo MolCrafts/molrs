@@ -401,7 +401,7 @@ def test_cgsmiles_f2_public_api() -> None:
     assert len(ir.pairs[0]) == 4
 
     mol = ir.to_atomistic()
-    assert isinstance(mol, molrs.system.Atomistic)
+    assert isinstance(mol, molrs.core.Atomistic)
     assert mol.n_atoms == 11
     assert mol.n_relations("bonds") == 10
 
@@ -416,6 +416,6 @@ def test_to_coarsegrain_crosses_as_a_coarse_grain() -> None:
     # Rust doctest of ``CGSmilesIR::to_coarsegrain`` pins.
     cg = molrs.io.smiles.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
 
-    assert type(cg) is molrs.system.CoarseGrain
+    assert type(cg) is molrs.core.CoarseGrain
     assert cg.n_beads == 4
     assert cg.n_relations("bonds") == 3

@@ -22,10 +22,10 @@ mod potential;
 #[cfg(feature = "ff")]
 pub use potential::LBFGS;
 
+use crate::core::Frame;
+use crate::core::keys::FREE;
+use crate::core::schema::block_names::ATOMS;
 use crate::op::types::F;
-use crate::store::Frame;
-use crate::store::keys::FREE;
-use crate::store::schema::block_names::ATOMS;
 use ndarray::Array1;
 
 #[cfg(feature = "conformer")]

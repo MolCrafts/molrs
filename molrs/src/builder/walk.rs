@@ -15,10 +15,10 @@ use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use super::occupancy::{OccupancyGrid, OccupancyMode};
+use crate::core::BoxError;
+use crate::core::SimBox;
+use crate::core::Trace;
 use crate::op::types::{F, Pbc3};
-use crate::spatial::BoxError;
-use crate::spatial::SimBox;
-use crate::spatial::Trace;
 
 /// How many attempts a strategy gets to seed the first monomer of a chain
 /// before reporting a dead-end for that placement.

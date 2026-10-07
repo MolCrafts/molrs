@@ -9,8 +9,8 @@
 //! `with_masses` supplies; 1 per particle by default).
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 
 use crate::compute::COMResult;
 use crate::compute::ClusterResult;
@@ -18,7 +18,7 @@ use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
-use molrs::spatial::{Mic, SimBox};
+use molrs::core::{Mic, SimBox};
 
 /// Moment of inertia tensor per cluster, per frame.
 ///
@@ -171,9 +171,9 @@ impl ComputeResult for InertiaTensorResult {}
 mod tests {
     use super::*;
     use crate::compute::CenterOfMass;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

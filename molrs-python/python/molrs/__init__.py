@@ -3,16 +3,14 @@
 **The top level is the subsystems, and nothing else** — exactly as the Rust
 crate's root is. Every symbol lives in the module named after its Rust owner,
 so the Python path and the Rust path are the same words
-(``molrs.store.Frame`` is ``molrs::store::Frame``):
+(``molrs.core.Frame`` is ``molrs::core::Frame``):
 
-* :mod:`molrs.store` — the column store and the frame: ``Block``, ``Frame``
-  and its metadata, ``Trajectory`` and its observables; the column vocabulary
-  :mod:`molrs.store.keys` and :mod:`molrs.store.schema`.
-* :mod:`molrs.spatial` — the simulation cell (``Box``), neighbour search,
-  geometric regions, triangle meshes, point paths.
-* :mod:`molrs.system` — the molecular-graph hierarchy (``Graph``,
-  ``Atomistic``, ``CoarseGrain``) and its live node / relation views.
-* :mod:`molrs.units` — the native unit engine.
+* :mod:`molrs.core` — the core data model: the column store and the frame
+  (``Block``, ``Frame``, ``Trajectory``), space (``Box``, neighbour search,
+  regions, meshes, point paths), the molecular graph (``MolGraph``,
+  ``Atomistic``, ``CoarseGrain`` and their live views), elements and the
+  unit engine; the vocabularies :mod:`molrs.core.keys`,
+  :mod:`molrs.core.schema` and :mod:`molrs.core.constants`.
 * :mod:`molrs.op` — pure numeric base: weighted superposition, centroids.
 * :mod:`molrs.perceive` — chemical perception: rings, aromaticity,
   hydrogens, stereochemistry, SMARTS matching and reactions, coarse-grained
@@ -41,6 +39,7 @@ from . import (
     builder,
     compute,
     conformer,
+    core,
     ff,
     io,
     md,
@@ -48,21 +47,19 @@ from . import (
     optimize,
     perceive,
     signal,
-    spatial,
-    store,
     stream,
-    system,
-    units,
 )
 
 # FFI ABI handshake, read by name by downstream handle-bridge extensions
 # (molpack) at their import time.
 from ._lib import _ffi_abi_token  # noqa: F401
+from ._lib import __version__
 
 __all__ = [
     "builder",
     "compute",
     "conformer",
+    "core",
     "ff",
     "io",
     "md",
@@ -70,9 +67,5 @@ __all__ = [
     "optimize",
     "perceive",
     "signal",
-    "spatial",
-    "store",
     "stream",
-    "system",
-    "units",
 ]

@@ -7,9 +7,9 @@
 //! analysis math lives here. The engine measures; molrs analyzes.
 
 use molrs::compute::RDFAccumulator as RDFAccumulatorCore;
+use molrs::core::SimBox;
+use molrs::core::{Block, Frame};
 use molrs::op::types::F;
-use molrs::spatial::SimBox;
-use molrs::store::{Block, Frame};
 use ndarray::{Array1, Array2};
 
 /// Build a bare frame carrying only `atoms.{x,y,z}` (+ optional simbox).
@@ -295,8 +295,8 @@ fn frame_and_self_nlist(
     positions: &[f64],
     box9: &[f64],
     r_max: f64,
-) -> Option<(Frame, molrs::spatial::neighbors::Neighbors)> {
-    use molrs::spatial::neighbors::{NeighborList, NeighborsStorage};
+) -> Option<(Frame, molrs::core::Neighbors)> {
+    use molrs::core::{NeighborList, NeighborsStorage};
     if positions.is_empty() || !positions.len().is_multiple_of(3) || box9.len() != 9 {
         return None;
     }

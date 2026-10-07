@@ -14,9 +14,9 @@
 //! that flavour is exposed via the `with_query_orientations` builder.
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use crate::compute::Compute;
@@ -156,9 +156,9 @@ impl ComputeResult for LocalBondProjectionResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     const TOL: F = 1e-12;

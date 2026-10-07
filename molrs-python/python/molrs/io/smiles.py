@@ -23,7 +23,7 @@ A :class:`BondingDescriptor` reports its ``kind`` as the grammar glyph
 (``"$"``, ``"<"``, ``">"``, ``"!"``), which is both what a user writes and
 what a stored port's ``port_kind`` prop holds — one spelling for the notation,
 the column and this boundary, so a descriptor kind reaches
-:meth:`Atomistic.def_port <molrs.system.Atomistic.def_port>` untranslated. The enums
+:meth:`Atomistic.def_port <molrs.core.Atomistic.def_port>` untranslated. The enums
 the notation does not spell out keep lowercase variant names:
 ``BondingDescriptor.order`` and ``ResolvedPair.kind`` are bond kinds
 (``"single"``, ``"aromatic"``, …) and ``PairEnd.end`` is ``"sub"`` or

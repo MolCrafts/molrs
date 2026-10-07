@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use pyo3::prelude::*;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::ff::forcefield::PyForceField;
 use crate::path::path_str;
@@ -169,12 +169,12 @@ pub fn write_lammps_forcefield_py(
     units: &str,
     cmap_file: Option<String>,
 ) -> PyResult<()> {
+    use molrs::core::TypeLabels;
     use molrs::io::forcefield::lammps_units::parse_style;
     use molrs::io::{
         forcefield::writers::ForceFieldWriter, forcefield::writers::lammps::LammpsFfWriter,
         forcefield::writers::lammps::LammpsWriteOptions,
     };
-    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
         .with_frame(molrs::io::forcefield::writers::lammps::refuse_pair_overrides)?
@@ -226,12 +226,12 @@ pub fn write_lammps_forcefield_str_py(
     units: &str,
     cmap_file: Option<String>,
 ) -> PyResult<String> {
+    use molrs::core::TypeLabels;
     use molrs::io::forcefield::lammps_units::parse_style;
     use molrs::io::{
         forcefield::writers::ForceFieldWriter, forcefield::writers::lammps::LammpsFfWriter,
         forcefield::writers::lammps::LammpsWriteOptions,
     };
-    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
         .with_frame(molrs::io::forcefield::writers::lammps::refuse_pair_overrides)?
@@ -280,12 +280,12 @@ pub fn write_lammps_data_coeffs_py(
     precision: usize,
     units: &str,
 ) -> PyResult<String> {
+    use molrs::core::TypeLabels;
     use molrs::io::forcefield::lammps_units::parse_style;
     use molrs::io::{
         forcefield::writers::lammps::LammpsFfWriter,
         forcefield::writers::lammps::LammpsWriteOptions,
     };
-    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     frame
         .with_frame(molrs::io::forcefield::writers::lammps::refuse_pair_overrides)?
@@ -333,12 +333,12 @@ pub fn write_lammps_cmap_py(
     precision: usize,
     units: &str,
 ) -> PyResult<()> {
+    use molrs::core::TypeLabels;
     use molrs::io::forcefield::lammps_units::parse_style;
     use molrs::io::{
         forcefield::writers::lammps::LammpsFfWriter,
         forcefield::writers::lammps::LammpsWriteOptions,
     };
-    use molrs::store::type_labels::TypeLabels;
     let units = parse_style(units).map_err(pyo3::exceptions::PyValueError::new_err)?;
     let labels = frame
         .with_frame(TypeLabels::from_frame)?

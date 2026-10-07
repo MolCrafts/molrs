@@ -41,7 +41,7 @@ use std::sync::Arc;
 use super::properties::MmffVariant;
 use crate::ff::forcefield::ForceField;
 use crate::ff::typifier::Match;
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
 
 use super::frame_builder;
 use super::params::MMFFParams;

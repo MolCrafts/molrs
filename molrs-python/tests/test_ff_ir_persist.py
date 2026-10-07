@@ -101,7 +101,7 @@ def _table() -> molrs.ff.forcefield.ForceField:
 def _bespoke() -> molrs.io.mrec.ForceFieldSection:
     """A record whose ``bespoke`` category nothing registers in any process:
     the native-only ``urey_bradley`` force field with its category renamed."""
-    section = _ub("spring", None).to_section()
+    section = molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("spring", None))
     document, tables = section.document, section.tables
     (entry,) = [s for s in document["styles"] if s["category"] == "urey_bradley"]
     entry["category"] = "bespoke"
@@ -115,18 +115,18 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
     """Every record written here, and what a fresh process makes of it."""
     tmp = tmp_path_factory.mktemp("persist")
     records = {
-        "fene": (_fene().to_section(), "bonds", [[0, 1]], ["t"]),
-        "fene_registered": (_fene_registered().to_section(), "bonds", [[0, 1]], ["t"]),
-        "ub_expr": (_ub("spring", UB).to_section(), "urey_bradleys", *UB_ROWS),
-        "ub_native": (_ub("harmonic", None).to_section(), "urey_bradleys", *UB_ROWS),
-        "table": (_table().to_section(), "dihedrals", [[0, 1, 2, 3]], ["t"]),
+        "fene": (molrs.io.mrec.ForceFieldSection.from_forcefield(_fene()), "bonds", [[0, 1]], ["t"]),
+        "fene_registered": (molrs.io.mrec.ForceFieldSection.from_forcefield(_fene_registered()), "bonds", [[0, 1]], ["t"]),
+        "ub_expr": (molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("spring", UB)), "urey_bradleys", *UB_ROWS),
+        "ub_native": (molrs.io.mrec.ForceFieldSection.from_forcefield(_ub("harmonic", None)), "urey_bradleys", *UB_ROWS),
+        "table": (molrs.io.mrec.ForceFieldSection.from_forcefield(_table()), "dihedrals", [[0, 1, 2, 3]], ["t"]),
         "bespoke": (_bespoke(), "bespokes", *UB_ROWS),
     }
     here_out, cases = {}, {}
     for name, (section, block, rows, types) in records.items():
         path = tmp / f"{name}.mrec"
         molrs.io.write_mrec_forcefield(path, section)
-        ff = molrs.ff.forcefield.ForceField.from_section(section)
+        ff = section.to_forcefield()
         here_out[name] = {
             "price": price(ff, block, rows, types),
             "section": exact(section),
@@ -238,6 +238,6 @@ def test_an_array_param_round_trips_bit_for_bit_as_an_f64_t_n_column(
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (2, 12)
     assert column.tobytes() == want.tobytes()
-    back = molrs.ff.forcefield.ForceField.from_section(section)
+    back = section.to_forcefield()
     t = back.get_style("dihedral", "table/linear").get_type_by_name("t")
     assert np.asarray(t["table"]).tobytes() == TABLE.tobytes()

@@ -24,9 +24,9 @@ use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use crate::io::forcefield::readers::ForceFieldReader;
 use crate::io::forcefield::readers::lammps::LammpsFfReader;
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
 
 const TYPES: [&str; 7] = ["CT3", "CT2", "CT2", "CT2", "OH1", "H", "CT3"];
 const CHARGES: [F; 7] = [-0.09, 0.03, -0.12, 0.05, -0.66, 0.43, 0.36];
@@ -474,7 +474,7 @@ fn a_weight_of_one_is_the_1_4_parameters_priced_directly() {
             .sqrt();
         let x = (sigma / r).powi(6);
         lj += 4.0 * eps * (x * x - x);
-        coul += molrs::units::constants::COULOMB_REAL * CHARGES[i] * CHARGES[j] / r;
+        coul += molrs::core::constants::COULOMB_REAL * CHARGES[i] * CHARGES[j] / r;
     }
     let (got_lj, got_coul) = k.energy_terms(&coords());
     close("1-4 LJ", got_lj, lj, 1e-12);
@@ -740,7 +740,7 @@ fn forces_are_the_gradient_inside_the_switches() {
 fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     use crate::ff::potential::Member;
     use crate::ff::potential::pair::testing::table_over;
-    let topo = molrs::system::Topology::from_frame(frame).unwrap();
+    let topo = molrs::core::Topology::from_frame(frame).unwrap();
     let x = coords();
     let links: Vec<(usize, usize)> = (0..7)
         .flat_map(|i| ((i + 1)..7).map(move |j| (i, j)))
@@ -815,7 +815,7 @@ fn an_override_beside_a_non_lj_style_is_refused() {
 fn lammps_round_trip_and_override_refusal() {
     use crate::io::forcefield::writers::ForceFieldWriter;
     use crate::io::forcefield::writers::lammps::{LammpsFfWriter, refuse_pair_overrides};
-    use molrs::store::type_labels::TypeLabels;
+    use molrs::core::TypeLabels;
 
     let ff = read(CHARMM, "0.5");
     let frame = frame(ff.special_bonds(), false);

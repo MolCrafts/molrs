@@ -6,7 +6,7 @@ use crate::error::py_value_err;
 use molrs::compute::{
     AcfResult, Compute, SurvivalMethod, VanHove, VanHoveResult, pair_survival_tcf,
 };
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDictMethods};

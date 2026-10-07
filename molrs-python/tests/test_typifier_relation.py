@@ -14,7 +14,7 @@ from __future__ import annotations
 import molrs
 import numpy as np
 import pytest
-from molrs.system import Angle, Bond
+from molrs.core import Angle, Bond
 from molrs.ff.typifier import Match, Typifier
 
 UB_EXPRESSION = "k_ub*(distance(p1,p3)-r_ub)^2"
@@ -27,9 +27,9 @@ TERMS = [("t", ("A", "B", "C"), 20.0, 2.45), ("u", ("B", "C", "D"), 11.0, 2.2)]
 molrs.ff.ir.register_category("urey_bradley", 3)
 
 
-def _chain(kind: str) -> molrs.system.Atomistic:
+def _chain(kind: str) -> molrs.core.Atomistic:
     """Four atoms with two three-atom relations of ``kind``."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     atoms = [mol.def_atom(element="C", x=x, y=y, z=z) for x, y, z in XYZ]
     if kind != "angles":
         mol.register_kind(kind, 3)
@@ -47,7 +47,7 @@ class _Chain(Typifier):
             {"expression": UB_EXPRESSION} if category == "urey_bradley" else {}
         )
 
-    def match(self, graph: molrs.system.Atomistic) -> Match:
+    def match(self, graph: molrs.core.Atomistic) -> Match:
         nodes = [{"type": ("full", t, (), {"mass": 12.0})} for t in ATOM_TYPES]
         rows = [
             {"type": (self.style, name, ends, {"k_ub": k_ub, "r_ub": r_ub, **self.extra})}
@@ -63,7 +63,7 @@ class _Chain(Typifier):
         )
 
 
-def _energy_forces(typifier: Typifier, kind: str) -> tuple[float, np.ndarray, molrs.store.Frame]:
+def _energy_forces(typifier: Typifier, kind: str) -> tuple[float, np.ndarray, molrs.core.Frame]:
     frame = typifier.typify(_chain(kind)).to_frame()
     ff = typifier.forcefield()
     e, f = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(frame)
@@ -104,7 +104,7 @@ def test_a_kind_named_twice_is_refused() -> None:
         Match([], {Bond: [], "bonds": []})
 
 
-@pytest.mark.parametrize("key", [3, molrs.system.Atom])
+@pytest.mark.parametrize("key", [3, molrs.core.Atom])
 def test_a_key_that_names_no_kind_is_refused(key: object) -> None:
     with pytest.raises(TypeError, match="relation kind names"):
         Match([], {key: []})

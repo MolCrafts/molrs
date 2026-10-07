@@ -11,8 +11,8 @@
 
 use std::ffi::{CStr, CString, c_char};
 
-use molrs::store::DType;
-use molrs::store::schema;
+use molrs::core::DType;
+use molrs::core::schema;
 
 /// The whole Frame vocabulary as a JSON document.
 ///

@@ -21,7 +21,7 @@
 use libm::lgamma;
 use ndarray::Array2;
 
-use crate::math::complex::Complex;
+use crate::core::Complex;
 use crate::op::types::F;
 
 #[inline]

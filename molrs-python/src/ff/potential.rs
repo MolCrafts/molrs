@@ -36,9 +36,9 @@
 
 use super::ir;
 use super::ir::{column, declared};
-use crate::core::spatial::neighborlist::{PyNeighbors, PyVerletSkin};
-use crate::core::store::block::PyBlock;
-use crate::core::store::frame::PyFrame;
+use crate::core::block::PyBlock;
+use crate::core::frame::PyFrame;
+use crate::core::neighborlist::{PyNeighbors, PyVerletSkin};
 use crate::ff::forcefield::PyForceField;
 use molrs::ff::forcefield::{ForceField, Params};
 use molrs::ff::ir::{self as rir, ParamKind, StyleSpec};
@@ -749,7 +749,7 @@ impl PyPotentialCompiler {
     ///     neighbour-driven form.
     fn compile_typed(&self, frame: &PyFrame) -> PyResult<PyTypedPotentials> {
         let (topo, members) = frame.with_frame(|core| -> PyResult<_> {
-            let topo = molrs::system::Topology::from_frame(core)
+            let topo = molrs::core::Topology::from_frame(core)
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
             ir::clear_kernel_err();
             let members = PotentialCompiler::new(&self.ff)

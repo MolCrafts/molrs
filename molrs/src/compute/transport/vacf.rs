@@ -7,7 +7,7 @@
 //! [`PowerSpectrum`](crate::compute::PowerSpectrum) (VDOS) or
 //! [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + `1/d` (D).
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf_scaled};
@@ -92,8 +92,8 @@ impl Compute for VACF {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::core::Frame;
     use molrs::signal as sig;
-    use molrs::store::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
     use rustfft::FftPlanner;

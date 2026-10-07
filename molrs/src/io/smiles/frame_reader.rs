@@ -8,9 +8,9 @@
 
 use std::io::{BufRead, Result};
 
+use crate::core::Atomistic;
+use crate::core::Frame;
 use crate::io::reader::{FrameReader, FromFrame, Reader};
-use crate::store::Frame;
-use crate::system::Atomistic;
 
 /// Parse one SMILES string into an [`Atomistic`].
 ///
@@ -97,7 +97,7 @@ mod tests {
         let frame = reader("CCO\n").read().unwrap().expect("one record");
         assert_eq!(frame["atoms"].nrows(), Some(3));
         // `read` returns through the schema check, so this frame conforms.
-        crate::store::schema::Validator::canonical()
+        crate::core::schema::Validator::canonical()
             .validate(&frame)
             .expect("smiles frames conform");
     }

@@ -12,9 +12,9 @@
 
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, Reader};
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
 use ndarray::{Array1, IxDyn};
 use std::io::BufRead;
 
@@ -423,7 +423,7 @@ impl FrameIndexBuilder for SdfIndexBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::FrameAccess;
+    use molrs::core::FrameAccess;
     use std::io::Cursor;
 
     const WATER_SDF: &str = "962\n  -OEChem-\n\n  3  2  0     0  0  0  0  0  0999 V2000\n    0.0000    0.0000    0.1173 O   0  0  0  0  0  0  0  0  0  0  0  0\n    0.7572    0.0000   -0.4692 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7572    0.0000   -0.4692 H   0  0  0  0  0  0  0  0  0  0  0  0\n  1  2  1  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n$$$$\n";

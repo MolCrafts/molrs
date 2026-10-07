@@ -6,10 +6,10 @@
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};
+use molrs::core::MetaMap;
+use molrs::core::SimBox;
+use molrs::core::{Block, Frame};
 use molrs::op::types::{F, I, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::MetaMap;
-use molrs::store::{Block, Frame};
 use slotmap::SlotMap;
 use std::collections::{HashMap, HashSet};
 

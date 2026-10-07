@@ -14,9 +14,9 @@ use crate::ff::forcefield::{ForceField, Params, pair_key};
 use crate::ff::ir::{Dim, IrError, ParamSpec, Registry, StyleSpec};
 use crate::ff::ir::{FormCodec, Metric, Refusal, TypeParams};
 use crate::ff::potential::PotentialCompiler;
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
 use ndarray::Array1;
 
 const SEED: u64 = 0x0070_1510_0009;

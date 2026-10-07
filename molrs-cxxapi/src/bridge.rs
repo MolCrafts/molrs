@@ -5,7 +5,7 @@ pub mod ffi {
     /// Chemical element exported from molrs' canonical Rust periodic table.
     ///
     /// The variants are injected by build.rs from
-    /// `molrs/src/core/system/element.rs`; this bridge never owns a second
+    /// `molrs/src/core/element.rs`; this bridge never owns a second
     /// hand-maintained element table.
     #[repr(u8)]
     enum Element {

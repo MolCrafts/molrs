@@ -22,7 +22,7 @@
 //!   - `symbol` — element symbol (omitted when the file did not declare them).
 //!   - `sd_x`, `sd_y`, `sd_z` — selective-dynamics flags, if present.
 //!   - `vx`, `vy`, `vz` — atomic velocities, if present.
-//! - `frame.simbox` — periodic [`SimBox`](molrs::spatial::SimBox) from the lattice vectors.
+//! - `frame.simbox` — periodic [`SimBox`](molrs::core::SimBox) from the lattice vectors.
 //! - `frame.meta` — `title`, plus `poscar_mode = "direct" | "cartesian"`.
 
 use crate::io::invalid_data;
@@ -31,9 +31,9 @@ use std::path::Path;
 
 use ndarray::{Array1, IxDyn};
 
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Block;
-use molrs::store::Frame;
 
 use crate::io::data::vasp_header::{
     AtomRow, CoordMode, expand_symbols, parse_atom_row, read_coords, read_header,

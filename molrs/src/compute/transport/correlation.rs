@@ -17,7 +17,7 @@
 //!
 //! Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
@@ -308,7 +308,7 @@ impl Compute for DipoleRateCross {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

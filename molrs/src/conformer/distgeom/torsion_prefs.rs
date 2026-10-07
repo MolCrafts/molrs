@@ -35,10 +35,10 @@
 
 use std::collections::HashMap;
 
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::system::Atomistic;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
 
 use super::mol_features::Perceived;
 use super::torsion_tables::{self, TorsionRow};

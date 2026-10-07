@@ -1,11 +1,11 @@
 //! Pair potential kernels.
 
-use molrs::store::schema::block_names::ATOMS;
+use molrs::core::schema::block_names::ATOMS;
 use ndarray::{Array2, ArrayView2};
 
+use molrs::core::Frame;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 /// Pair kernel: already-reduced geometry in, energy / force on `j` out.
 pub trait PairPotential: Send + Sync {
@@ -89,7 +89,7 @@ pub trait PairPotential: Send + Sync {
 /// `Σ f ⊗ r` there is free; the entry points that do not report one say so by
 /// discarding it here rather than by keeping a second loop that does not.
 #[inline]
-pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::math::Virial)) -> (F, Vec<F>) {
+pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::core::Virial)) -> (F, Vec<F>) {
     (e, f)
 }
 
@@ -140,11 +140,11 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
 /// A scatter needs one accumulator per chunk, and below the threshold those
 /// cost more to allocate and merge than the fold costs to run — so a small
 /// table stays serial and touches no pool.
-pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::math::Virial)
+pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::core::Virial)
 where
-    R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::math::Virial) + Sync,
+    R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::core::Virial) + Sync,
 {
-    use molrs::math::Virial;
+    use molrs::core::Virial;
     /// Pairs per chunk. Fixed, because it decides the grouping of a
     /// floating-point sum and so is part of the answer.
     const CHUNK: usize = 4_096;
@@ -250,8 +250,8 @@ pub use uff::{UffVdW, uff_lj_ctor};
 
 #[cfg(test)]
 pub(crate) mod testing {
+    use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
     use molrs::op::types::F;
-    use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 
     /// A neighbour table over exactly `links`, with the displacements a
     /// neighbour engine would have computed for them.
@@ -301,11 +301,11 @@ pub(crate) mod testing {
     pub(crate) fn assert_virial_matches_forces(
         label: &str,
         coords: &[F],
-        out: (F, Vec<F>, Option<molrs::math::Virial>),
+        out: (F, Vec<F>, Option<molrs::core::Virial>),
     ) {
         let (_, forces, virial) = out;
         let virial = virial.unwrap_or_else(|| panic!("{label}: this kernel must tally a virial"));
-        let mut from_forces = molrs::math::Virial::ZERO;
+        let mut from_forces = molrs::core::Virial::ZERO;
         for a in 0..coords.len() / 3 {
             from_forces.add_outer(
                 [forces[a * 3], forces[a * 3 + 1], forces[a * 3 + 2]],

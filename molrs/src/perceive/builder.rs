@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
-use super::equivalence::{EQUIV_CLASS, EquivalenceOptions};
+use super::equivalence::EquivalenceOptions;
 use super::stereo::{BondStereo, TetrahedralStereo};
 use super::{aromaticity, bond_order, bond_type, equivalence, hydrogens, rings, rotatable, stereo};
-use crate::system::Atomistic;
-use crate::system::{NodeId, RelationId};
-use molrs::error::MolRsError;
+use crate::core::Atomistic;
+use crate::core::keys::EQUIV_CLASS;
+use crate::core::{NodeId, RelationId};
+use molrs::core::MolRsError;
 
 /// Atom / bond prop: `1` when the atom / bond lies on at least one SSSR ring.
 const IS_IN_RING: &str = "is_in_ring";
@@ -28,7 +29,7 @@ const STEREO: &str = "stereo";
 /// # Examples
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::perceive::Perceive;
 ///
 /// let mol = Atomistic::new();
@@ -282,7 +283,7 @@ impl Perceive {
     /// [`find_bond_types_from_connectivity`](Self::find_bond_types_from_connectivity).)
     ///
     /// Wraps `bond_type::find_bond_types`, which is already graph-in /
-    /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE)
+    /// graph-out. Every bond receives a [`BCC_BOND_TYPE`](crate::core::keys::BCC_BOND_TYPE)
     /// prop in `{1, 2, 3, 6, 7, 8, 9}` — the alphabet AM1-BCC's atom-type rules and
     /// correction table are keyed on, which distinguishes aromatic bonds (7/8) and
     /// *delocalized* ones (9, e.g. a carboxylate's two equivalent C–O bonds) from
@@ -298,7 +299,7 @@ impl Perceive {
     ///
     /// # Returns
     ///
-    /// A clone of `mol` with a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE) on every
+    /// A clone of `mol` with a [`BCC_BOND_TYPE`](crate::core::keys::BCC_BOND_TYPE) on every
     /// bond.
     pub fn find_bond_types(&self, mol: &Atomistic) -> Atomistic {
         bond_type::find_bond_types(mol)
@@ -316,7 +317,7 @@ impl Perceive {
     ///
     /// # Returns
     ///
-    /// A clone of `mol` with a [`BCC_BOND_TYPE`](bond_type::BCC_BOND_TYPE) on
+    /// A clone of `mol` with a [`BCC_BOND_TYPE`](crate::core::keys::BCC_BOND_TYPE) on
     /// every bond.
     pub fn find_bond_types_from_connectivity(&self, mol: &Atomistic) -> Atomistic {
         bond_type::find_bond_types_from_connectivity(mol)
@@ -414,7 +415,7 @@ fn bond_label(s: BondStereo) -> Option<&'static str> {
     }
 }
 
-/// Narrow a count to the `i32` that [`crate::system::PropValue`]
+/// Narrow a count to the `i32` that [`crate::core::PropValue`]
 /// Does the input already declare which bonds are aromatic?
 ///
 /// This is what separates "the notation told us" from "we have to work it out",

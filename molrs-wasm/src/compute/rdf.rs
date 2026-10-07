@@ -146,7 +146,7 @@ impl RDF {
                         )
                     })?;
                     let box_len = v.cbrt();
-                    owned_box = molrs::spatial::SimBox::cube(
+                    owned_box = molrs::core::SimBox::cube(
                         box_len,
                         ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
                         [false, false, false],
@@ -171,7 +171,7 @@ impl RDF {
 
     fn compute_with_synth_box(
         &self,
-        rs_frame: &molrs::store::Frame,
+        rs_frame: &molrs::core::Frame,
         volume: F,
     ) -> Result<RDFResult, JsValue> {
         // Temporarily attach a cubic box for the streaming path, then restore.
@@ -179,7 +179,7 @@ impl RDF {
         // positions and call compute_self with an owned box instead.
         let pos = positions_from_frame(rs_frame)?;
         let box_len = volume.cbrt();
-        let bx = molrs::spatial::SimBox::cube(
+        let bx = molrs::core::SimBox::cube(
             box_len,
             ndarray::array![0.0 as F, 0.0 as F, 0.0 as F],
             [false, false, false],

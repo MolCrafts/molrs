@@ -56,15 +56,16 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
-use molrs::store::keys;
-use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::store::type_labels::TypeName;
-use molrs::system::RelationId;
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::RelationId;
+use molrs::core::TypeName;
+use molrs::core::keys;
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
+use molrs::core::{Atomistic, NodeId};
 
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::AMBER_COULOMB;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::params::{
     GAFF, GAFF2, PARMCHK, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow,
     ParmNonbondedRow, ParmTable, ParmType,
@@ -72,7 +73,6 @@ use crate::ff::params::{
 use crate::ff::typifier::BondedTerm;
 use crate::ff::typifier::{Annotation, Match, Typifier};
 use crate::ff::typifier::{EmpiricalSet, EstimateMethod, Provenance};
-use crate::units::constants::AMBER_COULOMB;
 
 mod analog;
 mod improper;
@@ -402,13 +402,13 @@ impl std::error::Error for GaffError {}
 /// Methane, end to end — perceive + type atoms, match terms, evaluate:
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 /// use molrs::ff::typifier::Typing;
 /// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 /// use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
-/// use molrs::store::keys;
-/// use molrs::system::PropValue;
+/// use molrs::core::keys;
+/// use molrs::core::PropValue;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();
@@ -673,7 +673,7 @@ impl Typifier for GaffTypifier {
     /// # The bond `type` is the force field's
     ///
     /// Perception keeps its answer in its own
-    /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) prop, so the
+    /// [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) prop, so the
     /// bond's [`keys::TYPE`] is free for the force-field type *name* (`c3-hc`),
     /// which `to_frame` writes to the `bonds` block's `type` column and every
     /// bonded kernel resolves its parameters by.
@@ -1001,8 +1001,8 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use molrs::store::keys;
-    use molrs::system::Atomistic;
+    use molrs::core::Atomistic;
+    use molrs::core::keys;
 
     use super::{
         GaffParameterSet, GaffTypifier, angle_params, bond_params, try_candidate_forcefield,

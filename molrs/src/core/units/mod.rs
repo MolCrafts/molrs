@@ -19,7 +19,7 @@
 //! Energy conversion and dimension checking:
 //!
 //! ```
-//! use molrs::units::{UnitRegistry, UnitsError};
+//! use molrs::core::{UnitRegistry, UnitsError};
 //!
 //! let reg = UnitRegistry::new();
 //!
@@ -34,7 +34,6 @@
 //! # Ok::<(), UnitsError>(())
 //! ```
 
-pub mod constants;
 mod dimension;
 mod error;
 mod parse;
@@ -46,8 +45,8 @@ mod unit;
 pub use dimension::Dimension;
 pub use error::UnitsError;
 pub use preset::{
-    PresetDim, UnitPreset, UnitPresetRegistry, lookup_preset, preset_names, register_preset,
-    replace_preset,
+    PresetDim, UnitPreset, UnitPresetRegistry, lookup_unit_preset, register_unit_preset,
+    replace_unit_preset, unit_preset_names,
 };
 pub use quantity::Quantity;
 pub use registry::{UnitDef, UnitRegistry};

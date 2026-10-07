@@ -1,14 +1,14 @@
 """Structure builders — ``molrs::builder``.
 
 Graphene sheets (:class:`GrapheneBuilder`) and single-wall carbon nanotubes
-(:class:`CarbonTubeBuilder`), each building a fresh :class:`molrs.store.Frame`.
+(:class:`CarbonTubeBuilder`), each building a fresh :class:`molrs.core.Frame`.
 
 Site-graph assembly: ``Assembler(library, SitePlacer(),
 AxisOrienter()).assemble(sites)`` places one template copy per site of a
-:class:`molrs.system.CoarseGrain`, joins bonded sites through their ports
+:class:`molrs.core.CoarseGrain`, joins bonded sites through their ports
 (any topology), and returns the world as the graph class the caller names
-(``assemble(sites, molrs.system.Atomistic)``; a bare
-:class:`molrs.system.Graph` by default);
+(``assemble(sites, molrs.core.Atomistic)``; a bare
+:class:`molrs.core.MolGraph` by default);
 ``Assembler(library, GrowthPlacer()).assemble(sites)`` grows a site graph
 without positions (e.g. ``CGSmilesIR(...).to_coarsegrain()``).
 

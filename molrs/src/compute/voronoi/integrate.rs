@@ -33,16 +33,16 @@
 //! converts the density `e/Bohr³ → e/Å³` (divide by `a³`, `a = 0.529177… Å/Bohr`)
 //! so `∫ρ dV` is a pure electron count and `μ` is in `e·Å`.
 
+use molrs::core::Frame;
+use molrs::core::{Mic, SimBox};
 use molrs::op::types::F;
-use molrs::spatial::{Mic, SimBox};
-use molrs::store::Frame;
 use ndarray::{Array2, ArrayView2};
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
+use crate::core::constants::ANGSTROM_PER_BOHR;
 use crate::op::linalg::det3;
 use crate::op::vec3::sub;
-use crate::units::constants::ANGSTROM_PER_BOHR;
 
 /// A volumetric scalar density on a regular (possibly sheared) grid, in molrs
 /// units: positions Å, density `e/Å³`.
@@ -75,7 +75,7 @@ impl DensityGrid {
         }
     }
 
-    /// Extract a [`DensityGrid`] from a cube [`Frame`](molrs::store::Frame) (the output
+    /// Extract a [`DensityGrid`] from a cube [`Frame`](molrs::core::Frame) (the output
     /// of `io::data::cube::read_cube`): grid block `"grid"`, density column
     /// `"density"`. The cube reader leaves the density in its native `e/Bohr³`;
     /// this converts it to `e/Å³` (÷ `a³`) so downstream integration yields

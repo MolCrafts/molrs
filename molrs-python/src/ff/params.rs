@@ -1,7 +1,7 @@
 //! Python bindings for `molrs::ff::params` (`molrs.ff.params`): the parameter
-//! tables molrs ships — the AMBER 1-4 scale factors (`AMBER_SCEE`,
-//! `AMBER_SCNB`) and the CL&Pol `alpha.ff` polarizability table
-//! (`clpol_polarizability`).
+//! tables molrs ships: the CL&Pol `alpha.ff` polarizability table
+//! (`clpol_polarizability`). The AMBER 1-4 divisors are engine constants,
+//! `molrs.core.constants.AMBER_SCEE` / `AMBER_SCNB`.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -79,8 +79,6 @@ pub fn clpol_polarizability(
 
 /// Register `molrs.ff.params`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add("AMBER_SCEE", molrs::ff::params::amber::AMBER_SCEE)?;
-    m.add("AMBER_SCNB", molrs::ff::params::amber::AMBER_SCNB)?;
     crate::add_function(
         m,
         "molrs.ff.params",

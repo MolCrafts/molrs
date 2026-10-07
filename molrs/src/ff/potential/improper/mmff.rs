@@ -7,17 +7,17 @@
 //! read centre first.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::IMPROPERS;
+use molrs::core::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::{cross, dot, norm};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
-use crate::ff::constants::MDYNE_A_TO_KCAL;
+use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 
 pub struct MMFFOutOfPlane {
     atom_i: Vec<usize>,
@@ -42,7 +42,7 @@ impl MMFFOutOfPlane {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let forces = out;
-        let conv = MDYNE_A_TO_KCAL as F;
+        let conv = KCAL_MOL_PER_MDYNE_ANGSTROM as F;
 
         for idx in 0..n_terms {
             // Stored centre first; the Wilson math below names the centre `j`.

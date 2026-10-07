@@ -24,10 +24,10 @@ use crate::io::smiles::cgsmiles::resolve::FragmentCache;
 use crate::io::smiles::cgsmiles::templates::cg_build;
 use crate::io::smiles::{CGFragmentDef, CGGraph, CGSmilesIR, FragmentBody, PairEnd, ResolvedPair};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
 use molrs::op::rigid::Rigid;
 use molrs::op::types::I;
-use molrs::system::Atomistic;
-use molrs::system::NodeId;
 
 /// The lowest level of an IR, with the fragment table that defines its
 /// nodes and its resolved pairs, as [`CGSmilesIR::lowest_level`] reads them.
@@ -52,7 +52,7 @@ impl CGSmilesIR {
     ///
     /// # Per-atom instance membership
     ///
-    /// Every atom carries the key **`frag_id`**, a [`PropValue::Int`](molrs::system::PropValue::Int) holding
+    /// Every atom carries the key **`frag_id`**, a [`PropValue::Int`](molrs::core::PropValue::Int) holding
     /// the index of the lowest-level node it came from, so a caller can
     /// partition the result by instance without re-deriving the grouping. It
     /// is not `mol_id` (a molecule id — coarse instances are sub-molecular)
@@ -324,11 +324,11 @@ mod tests {
         BondKind, CGBondOrder, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, EdgeOrigin,
         FragmentBody, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
-    use molrs::store::keys;
-    use molrs::system::Atomistic;
-    use molrs::system::NodeId;
-    use molrs::system::PropValue;
-    use molrs::system::{BondNumber, BondType};
+    use molrs::core::Atomistic;
+    use molrs::core::NodeId;
+    use molrs::core::PropValue;
+    use molrs::core::keys;
+    use molrs::core::{BondNumber, BondOrder};
 
     // Every count below is hand-derived from the fixtures of § Domain basis of
     // `.claude/specs/cgsmiles-01d-resolve.md`: heavy atoms are counted off the
@@ -372,7 +372,7 @@ mod tests {
     /// The class of every bond whose two atoms belong to **different**
     /// instances — the bonds resolution created, told from the bodies' own by
     /// the stamp rather than by index arithmetic.
-    fn inter_fragment_bonds(mol: &Atomistic) -> Vec<(BondType, BondNumber)> {
+    fn inter_fragment_bonds(mol: &Atomistic) -> Vec<(BondOrder, BondNumber)> {
         let mut classes = Vec::new();
         for (bid, bond) in mol.bonds() {
             let (i, j) = (bond.nodes[0], bond.nodes[1]);
@@ -543,7 +543,7 @@ mod tests {
         let mol = expanded(F2);
         assert_eq!(
             inter_fragment_bonds(&mol),
-            vec![(BondType::Single, BondNumber::Single); 4]
+            vec![(BondOrder::Single, BondNumber::Single); 4]
         );
     }
 
@@ -565,7 +565,7 @@ mod tests {
         let mol = expanded("{[#TC5]1[#TC5][#TC5]1}.{#TC5=[$]cc[$]}");
         assert_eq!(
             inter_fragment_bonds(&mol),
-            vec![(BondType::Aromatic, BondNumber::Unknown); 3]
+            vec![(BondOrder::Aromatic, BondNumber::Unknown); 3]
         );
     }
 
@@ -587,7 +587,7 @@ mod tests {
         let mol = expanded("{[#SC3]=[#SC3]}.{#SC3=[$]CCC[$]}");
         assert_eq!(
             inter_fragment_bonds(&mol),
-            vec![(BondType::Single, BondNumber::Single); 2]
+            vec![(BondOrder::Single, BondNumber::Single); 2]
         );
     }
 

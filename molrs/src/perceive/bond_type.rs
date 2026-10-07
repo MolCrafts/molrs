@@ -121,28 +121,17 @@
 use indexmap::IndexMap;
 use std::collections::HashMap;
 
+use crate::core::Atomistic;
+use crate::core::PropValue;
+use crate::core::keys;
+use crate::core::keys::BCC_BOND_TYPE;
+use crate::core::{BondNumber, BondOrder};
+use crate::core::{NodeId, RelationId};
 use crate::perceive::aromaticity::perceive_aromaticity;
 use crate::perceive::bond_order::judge_bond_orders;
 use crate::perceive::ring_class::{RingClasses, ring_classes};
 use crate::perceive::rings::find_rings;
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::PropValue;
-use crate::system::{BondNumber, BondType};
-use crate::system::{NodeId, RelationId};
-use molrs::system::Element;
-
-/// Bond prop holding the perceived BCC bond type, as an `i32` in
-/// `{1, 2, 3, 6, 7, 8, 9}`.
-///
-/// Written by `find_bond_types` and read by everything keyed on the antechamber
-/// alphabet — the `ATOMTYPE_*.DEF` rule engine (`ff::typifier::AtdTypifier`)
-/// and the `BCCPARM.DAT` corrections (`ff::charge::BccModel`);
-/// `perceive` sits below `ff` and names no item of it.
-///
-/// Deliberately **not** [`keys::TYPE`]: that key is the caller's, and holds the
-/// force-field type *name*. See the [module docs](self).
-pub const BCC_BOND_TYPE: &str = "bcc_bond_type";
+use molrs::core::Element;
 
 /// BCC bond type: a plain single bond.
 const SINGLE: i32 = 1;
@@ -205,11 +194,11 @@ const FORBIDDEN: u32 = 1000;
 /// # Examples
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::perceive::Perceive;
-/// use molrs::perceive::bond_type::BCC_BOND_TYPE;
-/// use molrs::store::keys;
-/// use molrs::system::BondType;
+/// use molrs::core::keys::BCC_BOND_TYPE;
+/// use molrs::core::keys;
+/// use molrs::core::BondOrder;
 ///
 /// // Acetate: both C–O bonds are delocalized, so both oxygens must correct
 /// // identically.
@@ -219,7 +208,7 @@ const FORBIDDEN: u32 = 1000;
 /// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
 /// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
 /// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_type(b1, BondType::Double).unwrap();
+/// mol.set_bond_type(b1, BondOrder::Double).unwrap();
 /// let b2 = mol.add_bond(c, o2).unwrap();
 /// mol.add_bond(c, me).unwrap();
 ///
@@ -235,12 +224,12 @@ const FORBIDDEN: u32 = 1000;
 /// and is still usable to build a force field:
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::perceive::Perceive;
-/// use molrs::perceive::bond_type::BCC_BOND_TYPE;
-/// use molrs::store::keys;
-/// use molrs::system::BondType;
-/// use molrs::system::PropValue;
+/// use molrs::core::keys::BCC_BOND_TYPE;
+/// use molrs::core::keys;
+/// use molrs::core::BondOrder;
+/// use molrs::core::PropValue;
 ///
 /// let mut mol = Atomistic::new();
 /// let c = mol.add_atom_xyz("C", 0.86, 0.12, 0.13);
@@ -248,7 +237,7 @@ const FORBIDDEN: u32 = 1000;
 /// let o2 = mol.add_atom_xyz("O", 1.59, -0.86, -0.19);
 /// let me = mol.add_atom_xyz("C", -0.63, -0.09, -0.09);
 /// let b1 = mol.add_bond(c, o1).unwrap();
-/// mol.set_bond_type(b1, BondType::Double).unwrap();
+/// mol.set_bond_type(b1, BondOrder::Double).unwrap();
 /// mol.set_bond_prop(b1, keys::TYPE, "c-o").unwrap(); // the caller's FF bond type NAME
 /// let b2 = mol.add_bond(c, o2).unwrap();
 /// mol.set_bond_prop(b2, keys::TYPE, "c-o").unwrap();
@@ -516,7 +505,7 @@ fn has_aromatic_marking(mol: &Atomistic) -> bool {
 /// `keys::TYPE` is the caller's, and a LAMMPS bond-type id that happened to be 7
 /// must not make a bond aromatic.
 fn aromatic_marking(props: &IndexMap<String, PropValue>) -> bool {
-    BondType::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
+    BondOrder::from_prop(props.get(keys::BOND_TYPE)).is_aromatic()
         || props
             .get(BCC_BOND_TYPE)
             .and_then(PropValue::as_f64)

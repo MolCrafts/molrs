@@ -13,19 +13,19 @@ from conftest import make_frame, octahedron_frame
 from molrs.compute import Cluster, ClusterProperties
 from molrs.compute import GaussianDensity, LocalDensity
 from molrs.compute import StaticStructureFactorDebye
-from molrs.compute import BondOrder
+from molrs.compute import BondOrientationalOrder
 from molrs.compute import Hexatic, Nematic, SolidLiquid, Steinhardt
 from molrs.compute import PMFTXY
 
 
 def _nlist(frame, pts, cutoff=1.2):
-    nq = molrs.spatial.NeighborQuery(frame.box, pts, cutoff)
+    nq = molrs.core.NeighborQuery(frame.box, pts, cutoff)
     return nq.query_self()
 
 
 def test_neighbor_query_free_boundary():
     points = np.array([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    query = molrs.spatial.NeighborQuery.free(points, 1.0)
+    query = molrs.core.NeighborQuery.free(points, 1.0)
     result = query.query(np.array([[0.0, 0.0, 0.0]]))
 
     assert np.array_equal(result.point_indices(), np.array([0, 1], dtype=np.uint32))
@@ -34,11 +34,11 @@ def test_neighbor_query_free_boundary():
 
 def test_neighbor_query_rejects_non_positive_cutoff():
     points = np.zeros((1, 3))
-    box = molrs.spatial.Box.cube(1.0)
+    box = molrs.core.Box.cube(1.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.spatial.NeighborQuery(box, points, 0.0)
+        molrs.core.NeighborQuery(box, points, 0.0)
     with pytest.raises(ValueError, match="positive"):
-        molrs.spatial.NeighborQuery.free(points, 0.0)
+        molrs.core.NeighborQuery.free(points, 0.0)
 
 
 class TestSteinhardt:
@@ -74,7 +74,7 @@ class TestNematic:
             dtype=np.float64,
         )
         frame = make_frame(pts, box_len=20.0)
-        ori = molrs.store.Block()
+        ori = molrs.core.Block()
         ori.insert("atomi", np.array([0, 2, 4, 6, 8], dtype=np.uint32))
         ori.insert("atomj", np.array([1, 3, 5, 7, 9], dtype=np.uint32))
         frame["orientations"] = ori
@@ -126,11 +126,11 @@ class TestGaussianDensity:
         assert abs(g.sum() * voxel - 7.0) < 0.5
 
 
-class TestBondOrder:
+class TestBondOrientationalOrder:
     def test_octahedron_counts(self):
         frame, pts = octahedron_frame()
         nl = _nlist(frame, pts)
-        out = BondOrder(8, 8).compute(frame, nl)
+        out = BondOrientationalOrder(8, 8).compute(frame, nl)
         counts, _bo, _t_edges, _p_edges = out[0]
         # 6 unique self-query bonds × 2 (symmetric counterparts) = 12.
         assert counts.sum() == 12
@@ -186,7 +186,7 @@ class TestMSDMethodSelection:
         pos = np.cumsum(rng.normal(size=(n_frames, n_particles, 3)), axis=0)
         frames = []
         for t in range(n_frames):
-            f, b = molrs.store.Frame(), molrs.store.Block()
+            f, b = molrs.core.Frame(), molrs.core.Block()
             b["x"] = pos[t, :, 0].copy()
             b["y"] = pos[t, :, 1].copy()
             b["z"] = pos[t, :, 2].copy()

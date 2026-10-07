@@ -31,7 +31,7 @@ fn array3(
 
 #[wasm_bindgen(js_name = VanHove)]
 pub struct VanHove {
-    frames: Vec<molrs::store::Frame>,
+    frames: Vec<molrs::core::Frame>,
     n_r_bins: usize,
     r_max: F,
     lags: Vec<usize>,
@@ -71,7 +71,7 @@ impl VanHove {
             dr: F,
             has_distinct: bool,
         }
-        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
         let calc = molrs::compute::VanHove::new(self.n_r_bins, self.r_max, self.lags.clone())
             .map_err(|e| JsValue::from_str(&format!("VanHove: {e}")))?
             .with_stride(self.stride);

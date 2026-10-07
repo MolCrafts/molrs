@@ -19,7 +19,7 @@ LAMMPS log records), :mod:`molrs.io.lammps_bond_react`
 :mod:`molrs.io.trajectory`.
 
 Every structure reader emits the project-wide canonical column names
-(:mod:`molrs.store.keys`: ``element``, ``res_id``, ``charge``, ``mol_id``,
+(:mod:`molrs.core.keys`: ``element``, ``res_id``, ``charge``, ``mol_id``,
 …) — the Rust readers map a format's own spelling (``symbol``, ``resSeq``,
 ``q``, ``mol``) at the boundary — and every writer takes them.
 

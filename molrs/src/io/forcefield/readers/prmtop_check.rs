@@ -27,12 +27,12 @@ use crate::io::forcefield::writers::ForceFieldWriter;
 use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::op::types::F;
-use molrs::spatial::SimBox;
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeLabels;
 
 /// One energy decomposition, kcal/mol, in sander's terms.
 #[derive(Debug, Clone, Copy, Default)]
@@ -568,14 +568,14 @@ fn molecules(frame: &Frame) -> Vec<molrs::op::types::Idx> {
 fn gaff2_typing_prices_the_gaff2_case_as_sander() {
     use crate::ff::typifier::Typing;
     use crate::ff::typifier::{GaffParameterSet, GaffTypifier};
-    use molrs::store::keys;
+    use molrs::core::keys;
 
     let case = cases().into_iter().find(|c| c.name == "gaff2").unwrap();
     let (prmtop, _, coords) = system(&case);
     let atoms = prmtop.get("atoms").unwrap();
     let element = atoms.get("element").unwrap().as_string().unwrap();
     let types = atoms.get("type").unwrap().as_string().unwrap();
-    let mut mol = molrs::system::Atomistic::new();
+    let mut mol = molrs::core::Atomistic::new();
     let ids: Vec<_> = (0..element.len())
         .map(|i| {
             let id = mol.add_atom_xyz(

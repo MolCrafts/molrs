@@ -2,8 +2,8 @@
 //! configure and dispatch the analyses this module exports.
 
 use super::js_value;
+use molrs::core::keys;
 use molrs::op::types::F;
-use molrs::store::keys;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -841,7 +841,7 @@ pub fn molrs_compute_catalog() -> Result<JsValue, JsValue> {
             "environment.bond_order",
             "environment",
             "Bond order",
-            "BondOrder",
+            "BondOrientationalOrder",
             "frameNeighbors",
             "matrix",
             &[],

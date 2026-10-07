@@ -7,7 +7,7 @@
 //! Each style is a sequence of [`DataField`]s; optional trailing image flags
 //! (`nx ny nz`) are handled separately by the parser.
 
-pub(crate) use molrs::store::type_labels::is_int_token;
+pub(crate) use molrs::core::type_labels::is_int_token;
 
 /// One column in a data-file Atoms line (excluding optional image flags).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,7 +417,7 @@ pub(crate) fn is_noninteger_float_token(token: &str) -> bool {
 
 /// Frame column key for a data-file Atoms field (canonical names where they exist).
 pub(crate) fn field_column_key(field: DataField) -> &'static str {
-    use molrs::store::keys;
+    use molrs::core::keys;
     match field {
         DataField::Id => keys::ID,
         // LAMMPS numbers its types; the label lives in `type`.

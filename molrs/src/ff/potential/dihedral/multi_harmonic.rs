@@ -9,7 +9,7 @@
 //! prices both.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -20,8 +20,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Multi/harmonic (or nharmonic) proper dihedral with pre-resolved flat arrays.
 pub struct DihedralMultiHarmonic {
@@ -285,9 +285,9 @@ mod tests {
 mod nharmonic_tests {
     use crate::ff::forcefield::{ForceField, Params};
     use crate::ff::potential::PotentialCompiler;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use molrs::op::types::{F, Idx};
-    use molrs::store::Block;
-    use molrs::store::Frame;
     use ndarray::Array1;
 
     fn one_dihedral(

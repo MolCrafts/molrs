@@ -1,7 +1,7 @@
 //! Radical (Laguerre) Voronoi tessellation and integration
 //! (`molrs::compute::voronoi`).
 
-use crate::core::spatial::simbox::PyBox;
+use crate::core::simbox::PyBox;
 use crate::error::py_value_err;
 use molrs::compute::{
     DensityGrid, DomainAnalysis, MolecularMoments, RadicalVoronoi, VoidAnalysis, VoronoiCells,

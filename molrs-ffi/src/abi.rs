@@ -12,7 +12,9 @@ use std::ffi::{CStr, CString};
 use std::sync::OnceLock;
 
 /// The ABI line of this build: `major.minor` of the statically linked
-/// `molcrafts-molrs` core (e.g. `"0.14"`).
+/// `molcrafts-molrs` core (e.g. `"0.14"`). This crate's version is the core's
+/// by policy, and its dependency on the core is pinned to that minor line, so
+/// its own `CARGO_PKG_VERSION` names the line.
 ///
 /// Two extensions may exchange `molrs_ffi` handles if and only if their ABI
 /// lines are equal. Patch versions may differ — layout is frozen within a
@@ -20,9 +22,9 @@ use std::sync::OnceLock;
 pub fn abi_line() -> &'static str {
     static LINE: OnceLock<String> = OnceLock::new();
     LINE.get_or_init(|| {
-        let mut parts = molrs::VERSION.split('.');
-        let major = parts.next().expect("molrs::VERSION has a major component");
-        let minor = parts.next().expect("molrs::VERSION has a minor component");
+        let mut parts = env!("CARGO_PKG_VERSION").split('.');
+        let major = parts.next().expect("the version has a major component");
+        let minor = parts.next().expect("the version has a minor component");
         format!("{major}.{minor}")
     })
 }
@@ -67,7 +69,7 @@ mod tests {
 
     #[test]
     fn abi_line_is_major_minor_of_molrs_version() {
-        let expected: Vec<&str> = molrs::VERSION.split('.').take(2).collect();
+        let expected: Vec<&str> = env!("CARGO_PKG_VERSION").split('.').take(2).collect();
         assert_eq!(abi_line(), expected.join("."));
         assert_eq!(abi_line().split('.').count(), 2);
     }

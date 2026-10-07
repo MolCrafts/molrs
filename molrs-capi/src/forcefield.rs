@@ -6,7 +6,7 @@
 //! from C, serialize/deserialize it as JSON, and query its contents.
 //!
 //! The JSON is molrs's one force-field serialization: the core `forcefield`
-//! record section (`ForceField::to_section` / `ForceField::from_section`) in
+//! record section (`ForceFieldSection::from_forcefield` / `ForceFieldSection::to_forcefield`) in
 //! its serde form, `{"document": {…}, "tables": {<block>: Block}}` — the
 //! same section an `*.mrec` record stores. The C API has no format of its
 //! own.
@@ -52,7 +52,7 @@
 use std::ffi::{CStr, CString, c_char};
 
 use molrs::ff::forcefield::{DefError, ForceField, Params};
-use molrs::store::ForceFieldSection;
+use molrs::io::mrec::ForceFieldSection;
 
 use crate::error::{self, MolrsStatus};
 use crate::handle::{MolrsForceFieldHandle, ff_key_to_handle, handle_to_ff_key};
@@ -536,7 +536,7 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 // ---------------------------------------------------------------------------
 
 /// Serialize a ForceField to a JSON string: its core `forcefield` section
-/// (`ForceField::to_section`) in serde form,
+/// (`ForceFieldSection::from_forcefield`) in serde form,
 /// `{"document": {…}, "tables": {<block>: Block}}` — molrs's one force-field
 /// serialization, the section an `*.mrec` record stores.
 ///
@@ -564,7 +564,7 @@ pub unsafe extern "C" fn molrs_ff_get_style_name(
 /// * `MolrsStatus::NullPointer` if `out_json` or `out_len` is null.
 /// * `MolrsStatus::InvalidForceFieldHandle` if `ff` is stale.
 /// * `MolrsStatus::InvalidArgument` if the force field has no section form
-///   (`ForceField::to_section` refuses it — e.g. units that are no preset).
+///   (`ForceFieldSection::from_forcefield` refuses it — e.g. units that are no preset).
 ///
 /// # Safety
 ///
@@ -603,11 +603,11 @@ pub unsafe extern "C" fn molrs_ff_to_json(
 
 /// Deserialize a ForceField from a JSON string: a core `forcefield`
 /// section in the serde form [`molrs_ff_to_json`] writes, turned into a
-/// force field by `ForceField::from_section`.
+/// force field by `ForceFieldSection::to_forcefield`.
 ///
 /// The section is carried whole or refused: JSON that is no section (a
 /// missing `document`, an unknown top-level key, a malformed table) or a
-/// section `ForceField::from_section` refuses is `InvalidArgument` --
+/// section `ForceFieldSection::to_forcefield` refuses is `InvalidArgument` --
 /// nothing is skipped.
 ///
 /// # C signature
@@ -667,18 +667,18 @@ pub unsafe extern "C" fn molrs_ff_from_json(
 // JSON: the core forcefield section
 // ---------------------------------------------------------------------------
 
-/// The force field's core section (`ForceField::to_section`) as JSON.
+/// The force field's core section (`ForceFieldSection::from_forcefield`) as JSON.
 fn ff_to_json_string(ff: &ForceField) -> Result<String, String> {
-    let section = ff.to_section()?;
+    let section = ForceFieldSection::from_forcefield(ff)?;
     serde_json::to_string(&section).map_err(|e| format!("JSON encode error: {e}"))
 }
 
 /// The force field the JSON form of a core section describes
-/// (`ForceField::from_section`).
+/// (`ForceFieldSection::to_forcefield`).
 fn ff_from_json_string(json: &str) -> Result<ForceField, String> {
     let section: ForceFieldSection =
         serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
-    ForceField::from_section(&section)
+    section.to_forcefield()
 }
 
 #[cfg(test)]
@@ -837,7 +837,7 @@ mod tests {
         }
     }
 
-    /// The JSON is the core section's serde form: what `to_section` gives,
+    /// The JSON is the core section's serde form: what `ForceFieldSection::from_forcefield` gives,
     /// key for key.
     #[test]
     fn json_is_the_core_forcefield_section() {
@@ -851,7 +851,8 @@ mod tests {
             )
             .unwrap();
         let json = ff_to_json_string(&ff).unwrap();
-        let expected = serde_json::to_string(&ff.to_section().unwrap()).unwrap();
+        let expected =
+            serde_json::to_string(&ForceFieldSection::from_forcefield(&ff).unwrap()).unwrap();
         assert_eq!(json, expected);
     }
 

@@ -41,7 +41,7 @@
 //! zero, as LAMMPS does — as every pair style's compiled form truncates at
 //! its `cutoff`.
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::mixing::Mixing;
@@ -51,10 +51,10 @@ use crate::ff::potential::gather_copies;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 const MIN_R2: F = 1e-24;
 

@@ -51,13 +51,13 @@ use std::path::Path;
 
 use ndarray::{Array1, ArrayD, IxDyn};
 
-use crate::units::constants::ANGSTROM_PER_BOHR;
-use molrs::error::MolRsError;
+use crate::core::constants::ANGSTROM_PER_BOHR;
+use molrs::core::Block;
+use molrs::core::Element;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
+use molrs::core::SimBox;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::system::Element;
 
 // ---------------------------------------------------------------------------
 // Public API

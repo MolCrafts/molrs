@@ -1,6 +1,6 @@
 //! Debye dipole-relaxation raw compute — the dipole-ACF route to ε(ω) and τ_D.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf};
@@ -229,7 +229,7 @@ impl Fit for DebyeFit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

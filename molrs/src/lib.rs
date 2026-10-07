@@ -44,9 +44,8 @@
 //! ## Paths
 //!
 //! Every public item has exactly one path: `molrs::<subsystem>::Item`, where
-//! the subsystem is a top-level module (`store`, `system`, `spatial`, `units`,
-//! `ff`, `io`, …) or a namespace its facade keeps (`ff::potential::pair`,
-//! `spatial::neighbors`, `store::keys`, …). Implementation files are private
+//! the subsystem is a top-level module (`core`, `ff`, `io`, …) or a namespace
+//! its facade keeps (`ff::potential::pair`, `core::keys`, …). Implementation files are private
 //! and their facade re-exports them; nothing is flattened to the crate root.
 //!
 //! Default: core only, plus `rayon`. Every sub-system is opt-in; name the
@@ -64,31 +63,21 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 
 // Let in-crate paths refer to this crate by its public name `molrs::` (e.g.
-// `molrs::store::Frame`, `molrs::io::read_xyz`), matching how downstream code and
+// `molrs::core::Frame`, `molrs::io::read_xyz`), matching how downstream code and
 // doctests spell them. Sub-system modules below were absorbed from the former
 // `molrs-*` member crates and rely on this alias for their cross-module paths.
 extern crate self as molrs;
 
-/// The version of the `molcrafts-molrs` crate compiled into this binary.
-///
-/// This is the crate every binder statically links, so its major.minor is the
-/// ABI line of any FFI handle the binary mints — `molrs_ffi::abi` derives the
-/// versioned capsule names and the handshake token from it. Downstream pins
-/// major.minor only; layout of the FFI-crossing types is frozen within a minor
-/// line.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 // Op is always compiled: the numeric base beneath core (vector, rigid-motion,
-// linear-algebra kernels); it names no other molrs module.
+// linear-algebra kernels), plus the whole-graph transforms of
+// `op::geometry`, the one part of `op` that acts on a core `MolGraph`.
 pub mod op;
 
-// Core is always compiled. It is a source directory, not a namespace: its
-// domains are top-level facades of their own — `molrs::store` (Frame, Block,
-// Trajectory, …), `molrs::system` (Atomistic, MolGraph, Topology, Element, …),
-// `molrs::spatial` (SimBox, regions, neighbour search), `molrs::math`,
-// `molrs::units` and `molrs::error`.
-mod core;
-pub use crate::core::{error, math, spatial, store, system, units};
+// Core is always compiled: the data model (Frame, Block, Trajectory), the
+// molecular graph (MolGraph, Atomistic, Topology, Element), space (SimBox,
+// regions, neighbour search), numerics and units, all flat on `molrs::core`,
+// with the vocabularies `core::keys`, `core::schema` and `core::constants`.
+pub mod core;
 
 // Structure builders (graphene, nanotubes, self-avoiding walks, trace
 // assembly, …). Builders sit above `core` and produce frames / paths without
@@ -122,7 +111,7 @@ pub mod optimize;
 /// through the one [`ff::potential::Potential`]/[`ff::potential::Potentials`]
 /// seam (the `md` feature therefore enables `ff`). Required pieces go in the
 /// constructor (`VelocityVerlet::new(dt, forces, mass, simbox)`); pair search
-/// is core [`spatial::neighbors::VerletSkin`]. Frame/`ForceField` wiring lives
+/// is core [`core::VerletSkin`]. Frame/`ForceField` wiring lives
 /// in molpy / molrs-python.
 #[cfg(feature = "md")]
 pub mod md;

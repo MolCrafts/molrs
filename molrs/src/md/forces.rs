@@ -1,9 +1,9 @@
 use ndarray::{Array2, ArrayView2};
 
+use molrs::core::VerletSkin;
+use molrs::core::Virial;
 use molrs::ff::potential::{Member, Potential};
-use molrs::math::Virial;
 use molrs::op::types::{F, FNx3, FNx3View, I};
-use molrs::spatial::neighbors::VerletSkin;
 
 use super::error::MdError;
 use super::pairs::{BondedLists, Comm};
@@ -601,10 +601,10 @@ fn owned_output(energy: F, forces: Vec<F>, n_atoms: usize) -> Result<ForceOutput
 mod tests {
     use ndarray::array;
 
+    use molrs::core::SimBox;
+    use molrs::core::{NeighborList, NeighborPolicy};
     use molrs::ff::potential::pair::LJCut;
     use molrs::ff::potential::{PotentialCompiler, Potentials};
-    use molrs::spatial::SimBox;
-    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy};
 
     use super::*;
     use molrs::ff::potential::SpecialWeights;
@@ -626,8 +626,8 @@ mod tests {
         LJCut::new(0.3, 3.4, 5.0, 12, 6, false, false).unwrap()
     }
 
-    fn skin(pos: ndarray::ArrayView2<'_, F>) -> molrs::spatial::neighbors::VerletSkin {
-        molrs::spatial::neighbors::VerletSkin::new(
+    fn skin(pos: ndarray::ArrayView2<'_, F>) -> molrs::core::VerletSkin {
+        molrs::core::VerletSkin::new(
             NeighborList::new(5.0),
             5.0,
             NeighborPolicy {
@@ -697,10 +697,10 @@ mod tests {
     /// ghost régime exists to remove.
     #[test]
     fn a_molecule_across_a_face_scores_as_one_that_is_not() {
+        use molrs::core::Block;
+        use molrs::core::Frame;
         use molrs::ff::forcefield::{ForceField, Params};
         use molrs::op::types::Idx;
-        use molrs::store::Block;
-        use molrs::store::Frame;
         use ndarray::Array1;
 
         let l = 20.0_f64;
@@ -869,7 +869,7 @@ mod tests {
 
         // Zero skin on both sides: a skin is a caching policy, not a periodic
         // one, and a stale edge would be a difference this test is not about.
-        let skin = molrs::spatial::neighbors::VerletSkin::new(
+        let skin = molrs::core::VerletSkin::new(
             NeighborList::new(cutoff),
             cutoff,
             NeighborPolicy {
@@ -925,9 +925,9 @@ mod tests {
     /// Exactly, because an exclusion drops the pair rather than scaling it.
     #[test]
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
+        use molrs::core::BondDistanceWeights;
+        use molrs::core::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::BondDistanceWeights;
-        use molrs::system::Topology;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // A bent chain, every atom well inside the 6 Å cutoff of the others.
@@ -1002,9 +1002,9 @@ mod tests {
     /// it matters.
     #[test]
     fn exclusions_follow_a_molecule_through_a_face() {
+        use molrs::core::BondDistanceWeights;
+        use molrs::core::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::BondDistanceWeights;
-        use molrs::system::Topology;
 
         let l = 20.0_f64;
         let cutoff = 6.0;
@@ -1134,12 +1134,12 @@ mod tests {
     /// other, silently. Both doors now read the weights.
     #[test]
     fn both_doors_keep_the_1_3_pairs_a_fene_field_asks_for() {
+        use molrs::core::Block;
+        use molrs::core::Frame;
+        use molrs::core::Topology;
         use molrs::ff::forcefield::{ForceField, Params, SpecialBonds};
         use molrs::ff::potential::intramolecular_pairs;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
-        use molrs::store::Frame;
-        use molrs::system::Topology;
         use ndarray::Array1;
 
         // Three beads, 0-1-2: (0,1) and (1,2) are 1-2, (0,2) is 1-3.
@@ -1253,9 +1253,9 @@ mod tests {
     /// index past the end of an empty slice, or quietly weight the wrong pair.
     #[test]
     fn the_minimum_image_route_excludes_the_same_pairs() {
+        use molrs::core::BondDistanceWeights;
+        use molrs::core::Topology;
         use molrs::ff::forcefield::mixing::Mixing;
-        use molrs::system::BondDistanceWeights;
-        use molrs::system::Topology;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let pos = array![
@@ -1279,7 +1279,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let skin = molrs::spatial::neighbors::VerletSkin::new(
+        let skin = molrs::core::VerletSkin::new(
             NeighborList::new(6.0),
             6.0,
             NeighborPolicy {

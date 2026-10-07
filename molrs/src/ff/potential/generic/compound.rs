@@ -10,8 +10,8 @@ use crate::ff::ir::{CategorySpec, StyleSpec};
 use crate::ff::potential::generic::{CompoundForm, TermParams, resolve_terms};
 use crate::ff::potential::geometry::{term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// The rows of a block, `arity` atoms each, priced by one N-body form.
 ///

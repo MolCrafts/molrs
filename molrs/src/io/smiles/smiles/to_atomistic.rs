@@ -20,12 +20,12 @@ use std::collections::{HashMap, HashSet};
 use crate::io::smiles::chem::ast::*;
 use crate::io::smiles::smiles::canonical_element_symbol;
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use molrs::error::MolRsError;
-use molrs::store::keys;
-use molrs::system::Atomistic;
-use molrs::system::Element;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
+use molrs::core::Atomistic;
+use molrs::core::Element;
+use molrs::core::MolRsError;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
+use molrs::core::keys;
 
 /// Convert a parsed SMILES IR into an [`Atomistic`] molecular graph.
 ///
@@ -807,7 +807,7 @@ mod tests {
     /// the `f64` a mass prop stores.
     fn table_mass(symbol: &str) -> f64 {
         f64::from(
-            molrs::system::Element::by_symbol(symbol)
+            molrs::core::Element::by_symbol(symbol)
                 .unwrap_or_else(|| panic!("{symbol:?} is not in the Element table"))
                 .atomic_mass(),
         )
@@ -821,7 +821,7 @@ mod tests {
             .map(|(_, a)| {
                 (
                     a.get_str("element").unwrap_or("").to_owned(),
-                    a.get_f64(molrs::store::keys::MASS),
+                    a.get_f64(molrs::core::keys::MASS),
                 )
             })
             .collect();
@@ -843,7 +843,7 @@ mod tests {
         let mol = smiles_to_mol("[13CH4]");
         let (_, atom) = mol.atoms().next().unwrap();
         let mass = atom
-            .get_f64(molrs::store::keys::MASS)
+            .get_f64(molrs::core::keys::MASS)
             .expect("an isotope atom carries a mass");
         assert!((mass - 13.0).abs() < 1e-12, "mass {mass} != 13.0");
     }
@@ -855,12 +855,12 @@ mod tests {
         assert_eq!(atoms.len(), 2);
         assert_eq!(atoms[0].get_str("element"), Some("*"));
         assert!(
-            !atoms[0].contains_key(molrs::store::keys::MASS),
+            !atoms[0].contains_key(molrs::core::keys::MASS),
             "the wildcard has no element, hence no mass"
         );
         assert_eq!(atoms[1].get_str("element"), Some("C"));
         let mass = atoms[1]
-            .get_f64(molrs::store::keys::MASS)
+            .get_f64(molrs::core::keys::MASS)
             .expect("the carbon carries a mass");
         assert!((mass - table_mass("C")).abs() < 1e-12);
     }

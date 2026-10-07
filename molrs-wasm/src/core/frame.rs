@@ -1,7 +1,7 @@
 //! WASM bindings for [`Frame`] -- the top-level hierarchical data container.
 //!
 //! A `Frame` holds a collection of named [`Block`]s (e.g., `"atoms"`,
-//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::spatial::simbox::Box)
+//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::simbox::Box)
 //! defining periodic boundary conditions.
 //!
 //! # Typical block layout
@@ -33,9 +33,9 @@
 
 use wasm_bindgen::prelude::*;
 
+use molrs::core::Block as RsBlock;
+use molrs::core::MetaValue;
 use molrs::op::types::F;
-use molrs::store::Block as RsBlock;
-use molrs::store::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
@@ -44,7 +44,7 @@ use super::js_err;
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
 ///
 /// A `Frame` owns a set of named blocks (column stores) and an optional
-/// simulation box ([`Box`](super::spatial::simbox::Box)). This is the
+/// simulation box ([`Box`](super::simbox::Box)). This is the
 /// primary interchange type for molecular data in the WASM API.
 ///
 /// # Conventions
@@ -413,7 +413,7 @@ impl Frame {
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(
                     name.to_string(),
-                    molrs::store::MetaValue::String(value.to_string()),
+                    molrs::core::MetaValue::String(value.to_string()),
                 );
             })
             .map_err(js_err)
@@ -426,7 +426,7 @@ impl Frame {
             .store
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
-                meta.insert(name.to_string(), molrs::store::MetaValue::F64(value));
+                meta.insert(name.to_string(), molrs::core::MetaValue::F64(value));
             })
             .map_err(js_err)
     }
@@ -435,7 +435,7 @@ impl Frame {
     ///
     /// # Returns
     ///
-    /// The [`Box`](super::spatial::simbox::Box) if one has been set,
+    /// The [`Box`](super::simbox::Box) if one has been set,
     /// or `undefined` otherwise.
     ///
     /// # Example (JavaScript)
@@ -447,19 +447,19 @@ impl Frame {
     /// }
     /// ```
     #[wasm_bindgen(getter, js_name = box)]
-    pub fn get_box(&self) -> Option<super::spatial::simbox::Box> {
+    pub fn get_box(&self) -> Option<super::simbox::Box> {
         self.inner
             .store
             .borrow()
             .with_frame_box(self.inner.id, |sb| {
-                sb.map(|s| super::spatial::simbox::Box { inner: s.clone() })
+                sb.map(|s| super::simbox::Box { inner: s.clone() })
             })
             .ok()?
     }
 
     /// Attach or detach a simulation box.
     ///
-    /// Pass a [`Box`](super::spatial::simbox::Box) to attach, or
+    /// Pass a [`Box`](super::simbox::Box) to attach, or
     /// `undefined`/`null` to detach.
     ///
     /// # Arguments
@@ -477,7 +477,7 @@ impl Frame {
     /// frame.simbox = Box.cube(10.0, origin, true, true, true);
     /// ```
     #[wasm_bindgen(setter, js_name = box)]
-    pub fn set_box(&self, simbox: Option<super::spatial::simbox::Box>) -> Result<(), JsValue> {
+    pub fn set_box(&self, simbox: Option<super::simbox::Box>) -> Result<(), JsValue> {
         self.inner
             .store
             .borrow_mut()
@@ -540,7 +540,7 @@ impl Default for Frame {
 
 /// Internal helpers (not exposed to JS).
 impl Frame {
-    pub(crate) fn from_rs(rs_frame: molrs::store::Frame) -> Result<Self, JsValue> {
+    pub(crate) fn from_rs(rs_frame: molrs::core::Frame) -> Result<Self, JsValue> {
         let store = molrs_ffi::new_shared();
         let id = store.borrow_mut().frame_new();
         store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
@@ -555,7 +555,7 @@ impl Frame {
     /// immutably borrowed, so it must not attempt to mutate the store.
     pub(crate) fn with_frame<R>(
         &self,
-        f: impl FnOnce(&molrs::store::Frame) -> Result<R, JsValue>,
+        f: impl FnOnce(&molrs::core::Frame) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.inner
             .store
@@ -566,18 +566,18 @@ impl Frame {
 }
 
 /// Extract an Nx3 position matrix from the `"atoms"` block of a core
-/// [`Frame`](molrs::store::Frame).
+/// [`Frame`](molrs::core::Frame).
 ///
 /// Reads the `x`, `y`, `z` columns (F, angstrom) and assembles
 /// them into a contiguous row-major matrix.
 pub(crate) fn positions_from_frame(
-    frame: &molrs::store::Frame,
+    frame: &molrs::core::Frame,
 ) -> Result<ndarray::Array2<F>, JsValue> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
     let get = |col: &str| -> Result<&[F], JsValue> {
-        use molrs::store::BlockDtype;
+        use molrs::core::BlockDtype;
         let c = atoms
             .get(col)
             .ok_or_else(|| JsValue::from_str(&format!("atoms block missing '{col}' column")))?;
@@ -614,8 +614,8 @@ mod tests {
 
     /// Helper: build a wrapped `Frame` with two typed meta entries.
     fn frame_with_meta() -> Frame {
-        use molrs::store::MetaValue;
-        let mut rs_frame = molrs::store::Frame::new();
+        use molrs::core::MetaValue;
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame
             .meta
             .insert("energy".to_string(), MetaValue::F64(-1.23));

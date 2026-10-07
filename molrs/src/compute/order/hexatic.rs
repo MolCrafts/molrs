@@ -30,18 +30,18 @@
 //!
 //! Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
 //! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). A `DIST_SQ`
+//! [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
+//! or [`FULL`](molrs::core::NeighborsStorage::FULL). A `DIST_SQ`
 //! or `INDICES_ONLY` table stores no directions and reads back `None` rather
 //! than zeros, so [`Hexatic::compute`](Compute::compute) answers
 //! [`ComputeError::BadShape`] naming the missing column instead of indexing an
 //! empty view.
 
 use crate::compute::ComputeResult;
-use molrs::math::complex::Complex;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -56,9 +56,9 @@ use crate::compute::{require_disp, require_self_query};
 /// a table without it is [`ComputeError::BadShape`], never a silent zero.
 ///
 /// Each table must also be a half-shell
-/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): every row is
+/// [`SelfQuery`](molrs::core::QueryMode::SelfQuery): every row is
 /// visited once and credited to *both* of its particles, which double-counts on
-/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table, so
+/// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table, so
 /// that table is [`ComputeError::BadShape`] too.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
@@ -201,9 +201,9 @@ impl ComputeResult for HexaticResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
@@ -327,7 +327,7 @@ mod tests {
     /// `SelfQuery { num_points: 7 }` is a legal label.
     #[test]
     fn hexatic_indices_only_neighbors_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         let frame = hex_environment(20.0);
         let pairs: Vec<NeighborPair> = (0..6u32)
@@ -382,7 +382,7 @@ mod tests {
     /// `disp` stays `r_j − r_i`, so the reversed row carries `−disp`.
     #[test]
     fn hexatic_cross_query_table_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         let frame = hex_environment(20.0);
         let mut pairs: Vec<NeighborPair> = Vec::with_capacity(12);

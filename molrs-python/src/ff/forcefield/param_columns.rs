@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use super::PyForceField;
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
 
 #[pymethods]

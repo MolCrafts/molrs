@@ -19,10 +19,10 @@ use std::collections::{BTreeMap, HashMap};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, Style, pair_key};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS};
 use molrs::op::types::F;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, CMAPS, DIHEDRALS, IMPROPERS};
 
 /// The relation categories and the frame block each one's rows live in.
 const RELATIONS: [(&str, &str); 5] = [

@@ -1,8 +1,8 @@
 //! Partial charges for the C++ engine — the CXX face of `molrs::ff::charge`
 //! (AM1-BCC corrections over engine-supplied AM1 base charges).
 
+use molrs::core::keys;
 use molrs::ff::charge::{BccModel, BccParameterSet};
-use molrs::store::keys;
 use ndarray::Array1;
 
 use crate::frame::{FrameRef, with_block_inserted_res};
@@ -50,7 +50,7 @@ pub(crate) fn am1_bcc_assign_frame_from_base(
 
     fref.0
         .with_mut(|frame| -> Result<Vec<f64>, String> {
-            let mol = molrs::system::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
+            let mol = molrs::core::Atomistic::from_frame(frame).map_err(|e| e.to_string())?;
             let charges = BccModel::new(set)
                 .correct(&mol, am1_charges)
                 .map_err(|e| e.to_string())?;
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn am1_bcc_bridge_applies_molrs_typifier_to_frame_from_base_charges() {
-        let mut mol = molrs::system::Atomistic::new();
+        let mut mol = molrs::core::Atomistic::new();
         let c = mol.add_atom_xyz("C", 0.0, 0.0, 0.0);
         let mut hydrogens = Vec::new();
         for [x, y, z] in [

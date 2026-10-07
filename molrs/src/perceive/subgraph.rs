@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::store::keys;
-use crate::system::CoarseGrain;
-use crate::system::graph_hash::{GraphView, adjacency_map, feasible};
-use crate::system::{MolGraph, NodeId};
+use crate::core::CoarseGrain;
+use crate::core::graph_hash::{GraphView, adjacency_map, feasible};
+use crate::core::keys;
+use crate::core::{MolGraph, NodeId};
 
 /// Empty slot in a partial map.
 const UNMAPPED: usize = usize::MAX;
@@ -57,8 +57,8 @@ impl MatchGraph {
 ///
 /// ```
 /// use molrs::perceive::SubgraphMatcher;
-/// use molrs::system::CoarseGrain;
-/// use molrs::system::NodeId;
+/// use molrs::core::CoarseGrain;
+/// use molrs::core::NodeId;
 ///
 /// let chain = || {
 ///     let mut g = CoarseGrain::new();
@@ -141,7 +141,7 @@ impl MatchGraph {
 /// P. Foggia, C. Sansone and M. Vento, "A (sub)graph isomorphism algorithm for
 /// matching large graphs", *IEEE TPAMI* **26**, 1367–1372 (2004),
 /// doi:10.1109/TPAMI.2004.75). It is the same lineage as
-/// [`is_isomorphic`](crate::system::is_isomorphic), whose
+/// [`is_isomorphic`](crate::core::is_isomorphic), whose
 /// structural feasibility check (`feasible`) this search shares. The worst
 /// case is exponential in the pattern size.
 ///
@@ -319,10 +319,10 @@ impl Search<'_> {
 #[cfg(test)]
 mod tests {
     use super::SubgraphMatcher;
-    use crate::store::keys;
-    use crate::system::BondNumber;
-    use crate::system::CoarseGrain;
-    use crate::system::NodeId;
+    use crate::core::BondNumber;
+    use crate::core::CoarseGrain;
+    use crate::core::NodeId;
+    use crate::core::keys;
 
     /// A coarse-grained graph with one bead per entry of `types` (row = index)
     /// and one CG bond per `(row, row)` pair.

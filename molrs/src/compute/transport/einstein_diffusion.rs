@@ -1,6 +1,6 @@
 //! Einstein diffusion raw compute — the windowed-MSD route to D.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -63,8 +63,8 @@ impl Compute for EinsteinDiffusion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[f64], y: &[f64], z: &[f64]) -> Frame {

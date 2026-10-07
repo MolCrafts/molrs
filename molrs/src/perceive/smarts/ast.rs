@@ -11,10 +11,10 @@
 
 use std::collections::HashMap;
 
+use crate::core::Atomistic;
+use crate::core::NodeId;
+use crate::core::PropValue;
 use crate::perceive::rings::{RingInfo, find_rings};
-use crate::system::Atomistic;
-use crate::system::NodeId;
-use crate::system::PropValue;
 
 /// Precomputed, read-only context shared by every primitive evaluation.
 ///
@@ -268,7 +268,7 @@ impl AtomPrimitive {
 
 /// Whether the element symbol corresponds to atomic number `z`.
 fn symbol_matches_z(sym: &str, z: u8) -> bool {
-    molrs::system::Element::by_symbol(sym).map(|e| e.z()) == Some(z)
+    molrs::core::Element::by_symbol(sym).map(|e| e.z()) == Some(z)
 }
 
 // ---------------------------------------------------------------------------

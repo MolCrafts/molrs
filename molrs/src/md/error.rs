@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use molrs::spatial::neighbors::SkinError;
+use molrs::core::SkinError;
 
 /// Failures on the MD surface: construction, binding, and policy guards.
 #[derive(Debug)]

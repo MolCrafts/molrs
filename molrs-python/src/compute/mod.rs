@@ -27,11 +27,11 @@ mod voronoi;
 
 use pyo3::prelude::*;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 
 /// No frames: what a compute over arrays alone passes where its trait takes
 /// a frame slice.
-const EMPTY_FRAMES: &[&molrs::store::Frame] = &[];
+const EMPTY_FRAMES: &[&molrs::core::Frame] = &[];
 
 pub(crate) fn was_batched(frames: &Bound<'_, PyAny>) -> bool {
     frames.extract::<PyRef<'_, PyFrame>>().is_err()
@@ -41,9 +41,9 @@ pub(crate) fn was_batched(frames: &Bound<'_, PyAny>) -> bool {
 /// Collect owned core [`Frame`]s from a single `Frame` or a list of them.
 /// Used by every batch-`compute` binding to accept both shapes.
 ///
-/// [`Frame`]: molrs::store::Frame
-pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::store::Frame>> {
-    use crate::core::store::frame::PyFrame;
+/// [`Frame`]: molrs::core::Frame
+pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::core::Frame>> {
+    use crate::core::frame::PyFrame;
     if let Ok(single) = frames.extract::<PyRef<'_, PyFrame>>() {
         return Ok(vec![single.clone_core_frame()?]);
     }
@@ -59,11 +59,9 @@ pub(crate) fn collect_frames(frames: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::s
 /// column policy, and a guess that drops `disp` is exactly the silent failure
 /// this chain removed.
 ///
-/// [`Neighbors`]: molrs::spatial::neighbors::Neighbors
-pub(crate) fn collect_neighbors(
-    arg: &Bound<'_, PyAny>,
-) -> PyResult<Vec<molrs::spatial::neighbors::Neighbors>> {
-    use crate::core::spatial::neighborlist::PyNeighbors;
+/// [`Neighbors`]: molrs::core::Neighbors
+pub(crate) fn collect_neighbors(arg: &Bound<'_, PyAny>) -> PyResult<Vec<molrs::core::Neighbors>> {
+    use crate::core::neighborlist::PyNeighbors;
     if let Ok(single) = arg.extract::<PyRef<'_, PyNeighbors>>() {
         return Ok(vec![single.inner.clone()]);
     }

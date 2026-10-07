@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use pyo3::prelude::*;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::ff::forcefield::PyForceField;
 use crate::path::path_str;
 

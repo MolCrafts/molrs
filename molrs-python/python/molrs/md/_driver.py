@@ -44,7 +44,7 @@ class MD:
         driver = md.MD()
         driver.set_forcefield(ff)
         driver.set_neighbors(cutoff=7.5, skin=2.0)
-        state = driver.run(frame, 1000, dt=1.0, kb=molrs.units.UnitPreset("real").boltzmann())
+        state = driver.run(frame, 1000, dt=1.0, kb=molrs.core.UnitPreset("real").boltzmann())
 
     The driver is unit-agnostic: nothing here converts units.
     Force-field parameters must already be consistent with ``dt`` / ``mass``
@@ -342,7 +342,7 @@ class MD:
         ``step`` / ``pe`` / ``ke`` / ``etotal`` / ``temp`` every N steps into
         :attr:`thermo` (the ``temp`` column uses ``kb=``). Every quantity is in
         the caller's unit system — ``kb`` is Boltzmann's constant in it, e.g.
-        ``molrs.units.UnitPreset("real").boltzmann()`` — and nothing is
+        ``molrs.core.UnitPreset("real").boltzmann()`` — and nothing is
         converted. Returns the final ``MDState``.
         """
         if self._forcefield is None and self._potential is None:

@@ -15,30 +15,30 @@ import itertools
 
 import molrs
 import pytest
-from molrs.system import Dihedral, Improper
+from molrs.core import Dihedral, Improper
 from molrs.ff.typifier import Match, MMFF94Typifier, Typifier
 
 _SPECIAL_LJ = (0.0, 0.0, 0.5)
 _SPECIAL_COUL = (0.0, 0.0, 0.75)
 
 
-def _pair() -> molrs.system.Atomistic:
+def _pair() -> molrs.core.Atomistic:
     """Two bonded carbon atoms, nothing typed."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     a = mol.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     b = mol.def_atom(element="C", x=1.54, y=0.0, z=0.0)
     mol.def_bond(a, b)
     return mol
 
 
-def _chain_with_improper() -> molrs.system.Atomistic:
+def _chain_with_improper() -> molrs.core.Atomistic:
     """Five named atoms; two dihedrals with one improper created between them.
 
     The improper is created after the first dihedral and before the second, so
     a mapping that mixed impropers into the dihedral positions
     (``links.bucket(Dihedral)``) would disagree with the kind's own rows.
     """
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     atoms = [
         mol.def_atom(element="C", name=f"a{i}", x=1.5 * i, y=0.0, z=0.0)
         for i in range(5)
@@ -51,9 +51,9 @@ def _chain_with_improper() -> molrs.system.Atomistic:
     return mol
 
 
-def _ethane() -> molrs.system.Atomistic:
+def _ethane() -> molrs.core.Atomistic:
     """Ethane (C2H6) with explicit hydrogens, as the native typifiers expect."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     hpos = [
@@ -98,7 +98,7 @@ class _FirstAtomX(Typifier):
     def __init__(self, mass: float = 1.0) -> None:
         self.mass = mass
 
-    def match(self, graph: molrs.system.Atomistic) -> Match:
+    def match(self, graph: molrs.core.Atomistic) -> Match:
         return Match(
             [{"type": ("full", "X", (), {"mass": self.mass})}, {}],
             styles=[("atom", "full", {})],
@@ -108,7 +108,7 @@ class _FirstAtomX(Typifier):
 class _DihedralTagger(Typifier):
     """Stamps each node and each dihedral with a label derived from the element itself."""
 
-    def match(self, graph: molrs.system.Atomistic) -> Match:
+    def match(self, graph: molrs.core.Atomistic) -> Match:
         nodes = [{"seen": str(atom["name"])} for atom in graph.atoms]
         dihedrals = [
             {"tag": _endpoint_label(link)}
@@ -125,7 +125,7 @@ class _SpecialBondsLibrary(Typifier):
         lib.set_special_bonds(list(_SPECIAL_LJ), list(_SPECIAL_COUL))
         return lib
 
-    def match(self, graph: molrs.system.Atomistic) -> Match:
+    def match(self, graph: molrs.core.Atomistic) -> Match:
         return Match([{} for _ in graph.atoms])
 
 
@@ -144,7 +144,7 @@ class TestTypifierSubclass:
 
         typed = typifier.typify(mol)
 
-        assert isinstance(typed, molrs.system.Atomistic)
+        assert isinstance(typed, molrs.core.Atomistic)
         assert typed is not mol
         first, second = typed.atoms[0], typed.atoms[1]
         assert first["type"] == "X"
@@ -196,7 +196,7 @@ class TestTypifierSubclass:
         with pytest.raises(TypeError):
 
             class _Overrides(Typifier):
-                def typify(self, mol: molrs.system.Atomistic) -> molrs.system.Atomistic:
+                def typify(self, mol: molrs.core.Atomistic) -> molrs.core.Atomistic:
                     return mol
 
 

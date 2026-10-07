@@ -8,8 +8,8 @@ mod tests {
 
     use crate::ff::forcefield::ForceField;
     use crate::ff::typifier::mmff::MMFF94Typifier;
-    use molrs::system::{Atom, PropValue};
-    use molrs::system::{Atomistic, NodeId};
+    use molrs::core::{Atom, PropValue};
+    use molrs::core::{Atomistic, NodeId};
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -23,11 +23,11 @@ mod tests {
             let _ = if (order - 1.5).abs() < 1e-6 {
                 mol.set_bond_class(
                     bid,
-                    crate::system::BondType::Aromatic,
-                    crate::system::BondNumber::Unknown,
+                    crate::core::BondOrder::Aromatic,
+                    crate::core::BondNumber::Unknown,
                 )
             } else {
-                mol.set_bond_type(bid, crate::system::BondType::from_code(order as u32))
+                mol.set_bond_type(bid, crate::core::BondOrder::from_code(order as u32))
             };
         }
     }

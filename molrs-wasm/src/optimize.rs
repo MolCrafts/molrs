@@ -7,7 +7,7 @@
 //! const report = new LBFGS(pots, nl.neighbors()).run(typed, 200);
 //! ```
 //!
-//! The non-bonded pairs come from a [`NeighborList`](crate::core::spatial::NeighborList)
+//! The non-bonded pairs come from a [`NeighborList`](crate::core::NeighborList)
 //! and nowhere else: the optimizer builds no pair list of its own.
 
 use std::collections::HashSet;
@@ -16,16 +16,16 @@ use std::sync::Arc;
 use js_sys::Uint32Array;
 use wasm_bindgen::prelude::*;
 
+use molrs::core::Block as RsBlock;
+use molrs::core::Frame as RsFrame;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{Potential, PotentialCompiler, Potentials as RsPotentials};
 use molrs::op::types::Idx;
 use molrs::optimize::{LBFGS as RsLBFGS, Optimizer, set_free_mask};
-use molrs::store::Block as RsBlock;
-use molrs::store::Frame as RsFrame;
 use ndarray::Array1;
 
+use crate::core::Neighbors;
 use crate::core::frame::Frame;
-use crate::core::spatial::Neighbors;
 use crate::ff::Potentials;
 
 // ── LBFGS ───────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ use crate::ff::Potentials;
 ///
 /// Construct with potentials and a neighbor table, then `run(frame, nSteps)`.
 ///
-/// The table is a [`NeighborList`](crate::core::spatial::NeighborList)'s
+/// The table is a [`NeighborList`](crate::core::NeighborList)'s
 /// [`Neighbors`], built at the force field's non-bonded cutoff (or
 /// `NeighborList.bruteForce` for a small molecule). Its pairs are installed
 /// as the frame's `pairs` with the force field's `special_bonds` applied: a
@@ -56,7 +56,7 @@ pub struct LBFGS {
 #[wasm_bindgen(js_class = LBFGS)]
 impl LBFGS {
     /// Bind `pots` and the [`Neighbors`] table from
-    /// [`NeighborList::neighbors`](crate::core::spatial::NeighborList::neighbors).
+    /// [`NeighborList::neighbors`](crate::core::NeighborList::neighbors).
     ///
     /// Knobs: `fmax` (default 0.05), `maxStep` (0.2), `memory` (8).
     /// Step count is the second argument of [`run`](Self::run).

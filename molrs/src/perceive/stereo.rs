@@ -32,11 +32,11 @@
 
 use std::collections::HashMap;
 
+use crate::core::Atomistic;
+use crate::core::BondOrder;
+use crate::core::keys;
+use crate::core::{NodeId, RelationId};
 use crate::op::vec3::{cross, dot, norm, scale, sub};
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::BondType;
-use crate::system::{NodeId, RelationId};
 
 // ---------------------------------------------------------------------------
 // Public enums
@@ -188,7 +188,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
     for (bid, bond) in mol.bonds() {
         // A genuine double bond. An aromatic ring bond has no E/Z even when its
         // Kekulé phase is double — the ring is planar and the phase arbitrary.
-        if BondType::from_prop(bond.props.get(keys::BOND_TYPE)) != BondType::Double {
+        if BondOrder::from_prop(bond.props.get(keys::BOND_TYPE)) != BondOrder::Double {
             result.insert(bid, BondStereo::None);
             continue;
         }
@@ -229,7 +229,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
                 .ok()
                 .and_then(|a| {
                     a.get_str("element")
-                        .and_then(molrs::system::Element::by_symbol)
+                        .and_then(molrs::core::Element::by_symbol)
                         .map(|e| e.z())
                 })
                 .unwrap_or(0)
@@ -298,7 +298,7 @@ pub fn assign_bond_stereo_from_3d(mol: &Atomistic) -> HashMap<RelationId, BondSt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::Atom;
+    use crate::core::Atom;
 
     fn atom_xyz(sym: &str, x: f64, y: f64, z: f64) -> Atom {
         Atom::xyz(sym, x, y, z)
@@ -306,7 +306,7 @@ mod tests {
 
     fn add_double_bond(mol: &mut Atomistic, a: NodeId, b: NodeId) {
         if let Ok(bid) = mol.add_bond(a, b) {
-            let _ = mol.set_bond_type(bid, BondType::Double);
+            let _ = mol.set_bond_type(bid, BondOrder::Double);
         }
     }
 
@@ -464,7 +464,7 @@ mod tests {
             let et = mol.add_atom(Atom::xyz("C", 1.3, -0.1, 0.0));
             mol.add_bond(c1, c2).unwrap();
             let d = mol.add_bond(c2, c3).unwrap();
-            mol.set_bond_type(d, crate::system::BondType::Double)
+            mol.set_bond_type(d, crate::core::BondOrder::Double)
                 .unwrap();
             if methyl_first {
                 mol.add_bond(c3, me).unwrap();

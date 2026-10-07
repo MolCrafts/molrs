@@ -13,9 +13,9 @@
 //! first downstream consumer (e.g. `LocalDescriptors` in Phase 6) needs it.
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -92,10 +92,7 @@ impl CorrelationFunction {
         // Every pair is binned by its separation; a table without `dist_sq`
         // cannot say which bin.
         let dist_sq = require_dist_sq(nlist)?;
-        let symmetric = matches!(
-            nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-        );
+        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
 
         let mut sum = Array1::<F>::zeros(self.n_bins);
         let mut counts = Array1::<u64>::zeros(self.n_bins);
@@ -216,9 +213,9 @@ impl ComputeResult for CorrelationFunctionResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

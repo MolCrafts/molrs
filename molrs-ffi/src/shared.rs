@@ -35,11 +35,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use molrs::core::Frame;
+use molrs::core::MetaMap;
+use molrs::core::SimBox;
+use molrs::core::{Block, DType};
 use molrs::op::types::{F, I, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Frame;
-use molrs::store::MetaMap;
-use molrs::store::{Block, DType};
 
 use crate::error::FfiError;
 use crate::handle::{BlockHandle, FrameId};

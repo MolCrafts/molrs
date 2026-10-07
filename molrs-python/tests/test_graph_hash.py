@@ -1,7 +1,7 @@
 """Python-binding coverage for the Weisfeiler-Lehman structural graph hash.
 
 Exercises the PyO3 surface of the native ``graph_hash`` primitive
-(``molrs/src/core/system/graph_hash.rs``) exposed on ``Atomistic`` and
+(``molrs/src/core/graph_hash.rs``) exposed on ``Atomistic`` and
 ``CoarseGrain``:
 
 - ``structural_hash()`` — isomorphism-invariant 64-bit dedup key,
@@ -27,7 +27,7 @@ def _ethanol(order=(0, 1, 2, 3, 4, 5, 6, 7, 8)):
     whose handles differ but whose graph is identical.
     """
     elems = ["C", "C", "O", "H", "H", "H", "H", "H", "H"]
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     handle = {}
     for orig in order:
         handle[orig] = mol.add_atom(elems[orig])
@@ -38,7 +38,7 @@ def _ethanol(order=(0, 1, 2, 3, 4, 5, 6, 7, 8)):
 
 def _linear_chain(n=9, element="C"):
     """A linear ``n``-atom chain (same atom count as ethanol, different topo)."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     ids = [mol.add_atom(element) for _ in range(n)]
     for k in range(n - 1):
         mol.add_bond(ids[k], ids[k + 1])
@@ -90,7 +90,7 @@ def test_identical_junctions_hash_equal():
 def test_element_change_changes_hash():
     a, _ = _ethanol()
     # Replace O(2) with S -> a different local environment.
-    b = molrs.system.Atomistic()
+    b = molrs.core.Atomistic()
     elems = ["C", "C", "S", "H", "H", "H", "H", "H", "H"]
     ids = [b.add_atom(e) for e in elems]
     for i, j in [(0, 1), (1, 2), (2, 8), (0, 3), (0, 4), (0, 5), (1, 6), (1, 7)]:
@@ -172,7 +172,7 @@ def test_canonical_order_consistent_bijection():
 
 
 def _cg_angular(types=("W", "P", "W"), bond_order=((0, 1), (1, 2))):
-    cg = molrs.system.CoarseGrain()
+    cg = molrs.core.CoarseGrain()
     beads = [cg.add_bead(t) for t in types]
     for i, j in bond_order:
         cg.add_bond(beads[i], beads[j])

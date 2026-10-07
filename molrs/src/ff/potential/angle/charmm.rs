@@ -12,7 +12,7 @@
 //! sees is `special_bonds`'s answer, as for any angle).
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::ANGLES;
+use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -21,8 +21,8 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{compute_angle, sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// One `angle charmm` type's numbers as the kernel holds them (`theta0` in
 /// radians).
@@ -207,8 +207,8 @@ mod tests {
     use super::*;
     use crate::ff::forcefield::{ForceField, SpecialBonds};
     use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
+    use molrs::core::Block;
     use molrs::op::types::Idx;
-    use molrs::store::Block;
     use ndarray::Array1;
 
     const K: F = 33.43;

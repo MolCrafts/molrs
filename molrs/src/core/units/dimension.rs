@@ -11,7 +11,7 @@ use std::ops::{Div, Mul};
 /// # Examples
 ///
 /// ```
-/// use molrs::units::Dimension;
+/// use molrs::core::Dimension;
 ///
 /// // Energy = M·L²·T⁻²
 /// let derived = Dimension::MASS * Dimension::LENGTH.pow(2) / Dimension::TIME.pow(2);

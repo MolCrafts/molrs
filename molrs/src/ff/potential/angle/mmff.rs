@@ -14,7 +14,7 @@
 //! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::ANGLES;
+use molrs::core::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -23,10 +23,10 @@ use crate::ff::potential::geometry::{
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::norm;
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
-use crate::ff::constants::MDYNE_A_TO_KCAL;
+use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 
 /// Cubic bend constant `cb` (rad⁻¹) — **exactly -0.4**.
 ///
@@ -84,7 +84,7 @@ impl MMFFAngleBend {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let forces = out;
-        let conv = MDYNE_A_TO_KCAL as F;
+        let conv = KCAL_MOL_PER_MDYNE_ANGSTROM as F;
         let cb = CB_RAD as F;
 
         for idx in 0..n_terms {
@@ -230,7 +230,7 @@ pub fn mmff_angle_ctor(
 ///
 /// [`IrError::MissingParam`]: crate::ff::ir::IrError::MissingParam
 fn linear_column<'a>(
-    block: &'a molrs::store::Block,
+    block: &'a molrs::core::Block,
     style: &str,
 ) -> Result<&'a ndarray::ArrayD<molrs::op::types::I>, crate::ff::ir::IrError> {
     block
@@ -269,7 +269,7 @@ impl MMFFStretchBend {
         let _n = validate_coords(coords);
         let mut energy: F = 0.0;
         let forces = out;
-        let conv = MDYNE_A_TO_KCAL as F;
+        let conv = KCAL_MOL_PER_MDYNE_ANGSTROM as F;
 
         for idx in 0..n_terms {
             let (i, j, k) = atoms(idx);

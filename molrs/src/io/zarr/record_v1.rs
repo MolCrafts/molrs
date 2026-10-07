@@ -6,11 +6,11 @@
 //! format's** version history (molrec's "Reading a version-1 record"): which
 //! stored numbers changed meaning between two versions of the file, keyed by
 //! style name as data. It converts a [`ForceFieldSection`] and a [`Frame`]'s
-//! relation columns — `store` types — and needs nothing of `ff`: no
-//! registry, no kernel. So the record reader depends on `store` alone, `ff`
-//! depends on `io`, and nothing depends back; a version-1 record reads
-//! without the `ff` feature. `ff` meets the converted section only through
-//! `ForceField::from_section`, which reads the current version.
+//! relation columns as data and needs no kernel and no registry: only the
+//! force-field IR's style-table vocabulary (`ff::ir::is_parameter_column`),
+//! which the section's own validation reads too. The converted section
+//! becomes a force field only through `ForceFieldSection::to_forcefield`,
+//! which reads the current version.
 //!
 //! Contract: molrec `docs/spec/overview.md` (versions) and
 //! `docs/spec/forcefield.md` ("Reading a version-1 record"). Version 2 changed
@@ -76,12 +76,13 @@ use std::collections::HashSet;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 
-use crate::error::MolRsError;
-use crate::store::Column;
-use crate::store::Frame;
-use crate::store::forcefield_section::{is_parameter_column, unit_preset};
-use crate::store::{Block, DType};
-use crate::store::{ForceFieldSection, style_block_name};
+use crate::core::Column;
+use crate::core::Frame;
+use crate::core::MolRsError;
+use crate::core::{Block, DType};
+use crate::ff::ir::is_parameter_column;
+use crate::io::mrec::forcefield_section::unit_preset;
+use crate::io::mrec::{ForceFieldSection, style_block_name};
 
 fn refuse(message: impl std::fmt::Display) -> MolRsError {
     MolRsError::validation(format!("molrec_version 1 record: {message}"))
@@ -695,7 +696,7 @@ impl V1Upgrade {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::ForceFieldSection;
+    use crate::io::mrec::ForceFieldSection;
     use ndarray::ArrayD;
     use serde_json::json;
     use std::f64::consts::PI;

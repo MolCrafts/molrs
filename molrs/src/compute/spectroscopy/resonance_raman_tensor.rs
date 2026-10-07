@@ -1,7 +1,7 @@
 //! Resonance-Raman iso/aniso ACF raw compute — Raman machinery over a resonant
 //! polarizability series.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::Array2;
 
 use super::raman_tensor::{RamanTensor, RamanTensorResult};

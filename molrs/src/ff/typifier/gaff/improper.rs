@@ -39,8 +39,8 @@
 
 use std::collections::HashMap;
 
-use molrs::system::Atomistic;
-use molrs::system::NodeId;
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
 
 use crate::ff::forcefield::Params;
 use crate::ff::params::{ParmTable, ParmchkTable, ParmchkType};

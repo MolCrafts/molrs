@@ -7,7 +7,7 @@
 //! the force field writes them; which force field named them is not this type's
 //! business.
 
-use molrs::store::type_labels::TypeName;
+use molrs::core::TypeName;
 
 /// One bonded term awaiting parameters: its arity-tagged endpoint atom types.
 ///

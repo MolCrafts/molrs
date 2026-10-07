@@ -16,13 +16,13 @@
 //! step the caller asks for by name, [`CGSmilesIR::to_atomistic`]. Beside it
 //! stands [`CGSmilesIR::templates`], which builds the *pieces* rather than
 //! the whole: one instance-free
-//! ported [`Atomistic`](crate::system::Atomistic) **template** per definition of the
+//! ported [`Atomistic`](crate::core::Atomistic) **template** per definition of the
 //! last fragment table, each open valence made explicit as a capping hydrogen
 //! carrying a port. Expansion is the molecule the string states; a template is
 //! what a builder places, many times, without re-reading the string. The third
 //! conversion, [`CGSmilesIR::to_coarsegrain`], needs no fragment table at all:
 //! it reads the coarsest level, `levels[0]`, as a
-//! [`CoarseGrain`](crate::system::CoarseGrain) bead graph — one
+//! [`CoarseGrain`](crate::core::CoarseGrain) bead graph — one
 //! bead per node, one CG bond per edge, no coordinates.
 //!
 //! # What the block grammar says

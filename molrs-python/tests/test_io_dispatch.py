@@ -8,15 +8,15 @@ import numpy as np
 import pytest
 
 
-def _water() -> molrs.store.Frame:
-    frame = molrs.store.Frame()
-    atoms = molrs.store.Block()
+def _water() -> molrs.core.Frame:
+    frame = molrs.core.Frame()
+    atoms = molrs.core.Block()
     atoms.insert("element", ["O", "H", "H"])
     atoms.insert("x", np.array([0.0, 0.96, -0.24]))
     atoms.insert("y", np.array([0.0, 0.0, 0.93]))
     atoms.insert("z", np.zeros(3))
     frame["atoms"] = atoms
-    frame.box = molrs.spatial.Box.cube(10.0)
+    frame.box = molrs.core.Box.cube(10.0)
     return frame
 
 

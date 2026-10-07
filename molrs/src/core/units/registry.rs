@@ -106,7 +106,7 @@ const LONG_PREFIXES: &[(&str, F)] = &[
 /// End-to-end: build a registry, parse units, convert a quantity.
 ///
 /// ```
-/// use molrs::units::{UnitRegistry, UnitsError};
+/// use molrs::core::{UnitRegistry, UnitsError};
 ///
 /// let reg = UnitRegistry::new();
 ///
@@ -189,7 +189,7 @@ impl UnitRegistry {
     /// # Examples
     ///
     /// ```
-    /// use molrs::units::{Dimension, UnitDef, UnitRegistry, UnitsError};
+    /// use molrs::core::{Dimension, UnitDef, UnitRegistry, UnitsError};
     ///
     /// let mut reg = UnitRegistry::empty();
     /// reg.define(UnitDef {
@@ -312,7 +312,7 @@ impl UnitRegistry {
     /// - charge `sqrt(4 pi eps0 sigma epsilon)` (`eps0` the vacuum
     ///   permittivity), evaluated as
     ///   `e * sqrt(sigma[Å] * epsilon[kcal/mol] / COULOMB_REAL)` with
-    ///   [`COULOMB_REAL`](super::constants::COULOMB_REAL) and stored in
+    ///   [`COULOMB_REAL`](crate::core::constants::COULOMB_REAL) and stored in
     ///   coulomb.
     ///
     /// The definitions retain their physical dimensions, so normal checked
@@ -344,9 +344,9 @@ impl UnitRegistry {
         }
 
         let tau_s = (mass_kg * sigma_m * sigma_m / epsilon_j).sqrt();
-        let temperature_k = epsilon_j / super::constants::BOLTZMANN;
-        let charge_c = super::constants::ELEMENTARY_CHARGE
-            * (sigma_angstrom * epsilon_kcal_mol / super::constants::COULOMB_REAL).sqrt();
+        let temperature_k = epsilon_j / crate::core::constants::BOLTZMANN;
+        let charge_c = crate::core::constants::ELEMENTARY_CHARGE
+            * (sigma_angstrom * epsilon_kcal_mol / crate::core::constants::COULOMB_REAL).sqrt();
         let definitions = [
             sigma_def,
             def(
@@ -504,7 +504,7 @@ fn md_defs() -> Vec<UnitDef> {
             "kilocalorie_per_mole",
             "kcal_per_mol",
             &[],
-            4184.0 / super::constants::AVOGADRO,
+            4184.0 / crate::core::constants::AVOGADRO,
             0.0,
             e,
             false,
@@ -513,7 +513,7 @@ fn md_defs() -> Vec<UnitDef> {
             "kilojoule_per_mole",
             "kJ_per_mol",
             &[],
-            1000.0 / super::constants::AVOGADRO,
+            1000.0 / crate::core::constants::AVOGADRO,
             0.0,
             e,
             false,
@@ -526,7 +526,7 @@ fn md_defs() -> Vec<UnitDef> {
             "boltzmann_constant",
             "k_B",
             &[],
-            super::constants::BOLTZMANN,
+            crate::core::constants::BOLTZMANN,
             0.0,
             Dimension::ENERGY / Dimension::TEMPERATURE,
             false,
@@ -564,7 +564,7 @@ fn md_defs() -> Vec<UnitDef> {
             "gram_per_mole",
             "g_per_mol",
             &[],
-            1e-3 / super::constants::AVOGADRO,
+            1e-3 / crate::core::constants::AVOGADRO,
             0.0,
             Dimension::MASS,
             false,
@@ -880,7 +880,7 @@ mod tests {
     /// Value in `target` of one reduced unit of preset dimension `dim`.
     fn one_lj(dim: &str, target: &str) -> F {
         let r = lj_registry();
-        let lj = crate::units::UnitPreset::lj();
+        let lj = crate::core::UnitPreset::lj();
         let from = r.parse(lj.unit(dim).unwrap()).unwrap();
         from.factor_to(&r.parse(target).unwrap()).unwrap()
     }

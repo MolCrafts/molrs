@@ -14,7 +14,7 @@
 //!   range server) synchronously.
 
 use crate::core::frame::Frame;
-use crate::core::spatial::simbox::Box as JsBox;
+use crate::core::simbox::Box as JsBox;
 use molrs::io::mrec::{MrecReader, read_frame_section_store, section_names_store};
 use molrs::io::reader::TrajectoryReader;
 use std::io::Read;
@@ -240,7 +240,7 @@ impl TrajectoryReader for RecordReader {
         Ok(())
     }
 
-    fn read_step(&mut self, step: usize) -> std::io::Result<Option<molrs::store::Frame>> {
+    fn read_step(&mut self, step: usize) -> std::io::Result<Option<molrs::core::Frame>> {
         self.sequence
             .frame(step as u64)
             .map_err(std::io::Error::other)
@@ -546,7 +546,7 @@ pub fn read_mrec_frame(files: js_sys::Map) -> Result<Option<Frame>, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::precision::{quantize, quantum};
+    use molrs::core::{quantize, quantum};
     use wasm_bindgen_test::*;
 
     /// A record whose `frame/atoms/x` and `trajectory/atoms/x` declare
@@ -563,7 +563,7 @@ mod tests {
         values.iter().map(|&x| quantize(x, q)).collect()
     }
 
-    fn x_of(frame: &molrs::store::Frame) -> Vec<f64> {
+    fn x_of(frame: &molrs::core::Frame) -> Vec<f64> {
         frame
             .get("atoms")
             .and_then(|atoms| atoms.get("x"))

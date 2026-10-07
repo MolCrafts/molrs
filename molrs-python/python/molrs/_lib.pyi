@@ -44,7 +44,9 @@ type ParamValue = float | str | ArrayF
 # A force-field param as given: an array may be any numpy array or nested
 # sequence of numbers, stored as float64.
 type ParamInput = float | str | npt.ArrayLike
-_TGraph = TypeVar("_TGraph", bound=Graph)
+_TGraph = TypeVar("_TGraph", bound=MolGraph)
+
+__version__: str
 
 def _ffi_abi_token() -> tuple[str, str, str, str, str]:
     """FFI ABI handshake: (abi_line, version, frameref_name, forcefield_name,
@@ -268,7 +270,7 @@ class VerletSkin:
 # Block / Frame
 # ---------------------------------------------------------------------------
 
-# A column key: a plain name or a ``molrs.store.keys.Key``.
+# A column key: a plain name or a ``molrs.core.keys.Key``.
 type ColumnKey = str | keys.Key
 
 @final
@@ -277,7 +279,7 @@ class Block:
 
     Columns are dense. A per-row component that only some rows carry is stored
     with a validity mask beside it, read back with :meth:`validity`. Every
-    column-key argument accepts a ``str`` or a ``molrs.store.keys.Key``. A block read
+    column-key argument accepts a ``str`` or a ``molrs.core.keys.Key``. A block read
     from a frame (``frame["atoms"]``) is a handle on the stored block.
     """
 
@@ -1213,7 +1215,7 @@ def scale_lj(
     scale_sigma: bool = False,
 ) -> ForceField: ...
 
-class Graph:
+class MolGraph:
     """Domain-agnostic ECS *world*. Base of the hierarchy.
 
     Entities are stable opaque ``int`` handles (generational slotmap keys);
@@ -1275,7 +1277,7 @@ class Graph:
     def n_relations(self, kind: str) -> int: ...
     def relation_ids(self, kind: str) -> list[int]: ...
     # --- adopt (zero-copy move) ---
-    def adopt(self, other: Graph) -> None: ...
+    def adopt(self, other: MolGraph) -> None: ...
 
     # ---- ports: named attachment points any graph may carry ----
     def add_port(
@@ -1317,14 +1319,14 @@ class Graph:
             a negative handle.
         """
 
-class Atomistic(Graph):
+class Atomistic(MolGraph):
     """All-atom leaf — holds a core ``Atomistic`` from construction.
 
     Registers the ``bonds``/``angles``/``dihedrals``/``impropers`` kinds and
     exposes the atom/bond/angle/dihedral/improper builders. The generic
-    :class:`Graph` API operates on this leaf's own graph. Owns its
+    :class:`MolGraph` API operates on this leaf's own graph. Owns its
     :meth:`to_frame` / :meth:`from_frame` (domain conversions); it is never
-    *converted* from a bare :class:`Graph`. Subclassable.
+    *converted* from a bare :class:`MolGraph`. Subclassable.
 
     ``Atomistic(**props)`` — the keywords are :attr:`props`. Nodes and
     relations are read and edited through live views (:attr:`atoms`,
@@ -1522,7 +1524,7 @@ class ExtractedSubgraph:
     @property
     def node_map(self) -> dict[int, int]: ...
 
-class CoarseGrain(Graph):
+class CoarseGrain(MolGraph):
     """Coarse-grained leaf — holds a core ``CoarseGrain`` from construction.
 
     ``add_bead`` writes ``bead_type``; registers the CG ``bonds`` kind. Owns its
@@ -1699,7 +1701,7 @@ class NodeRef:
     def get(self, key: str, default: Any = None) -> Any: ...
     def update(self, *args: Any, **kwargs: Any) -> None: ...
     @classmethod
-    def _restore(cls, world: Graph, row: int) -> NodeRef: ...
+    def _restore(cls, world: MolGraph, row: int) -> NodeRef: ...
 
 class Atom(NodeRef): ...
 class VirtualSite(Atom): ...
@@ -1731,7 +1733,7 @@ class RelationRef:
     def get(self, key: str, default: Any = None) -> Any: ...
     def update(self, *args: Any, **kwargs: Any) -> None: ...
     @classmethod
-    def _restore(cls, world: Graph, kind: str, row: int) -> RelationRef: ...
+    def _restore(cls, world: MolGraph, kind: str, row: int) -> RelationRef: ...
 
 class Bond(RelationRef):
     @property
@@ -1763,7 +1765,7 @@ class Refs[TRef]:
     def __iter__(self) -> Iterator[_TRef]: ...
     def __contains__(self, item: object) -> bool: ...
     @classmethod
-    def _restore(cls, world: Graph, kind: str | None, rows: list[int]) -> Refs[Any]: ...
+    def _restore(cls, world: MolGraph, kind: str | None, rows: list[int]) -> Refs[Any]: ...
 
 class RelationBuckets:
     """A graph's relations selected by view class (``graph.links``)."""
@@ -2039,12 +2041,12 @@ class Perceive:
     def find_equivalence_classes(self, mol: Atomistic) -> Atomistic: ...
 
 # ---------------------------------------------------------------------------
-# Frame vocabulary (molrs.store.keys / molrs.store.schema, mirrors
-# molrs::store::keys / molrs::store::schema)
+# Frame vocabulary (molrs.core.keys / molrs.core.schema, mirrors
+# molrs::core::keys / molrs::core::schema)
 # ---------------------------------------------------------------------------
 
 class keys:
-    """``molrs.store.keys``: the canonical column and frame-meta names,
+    """``molrs.core.keys``: the canonical column and frame-meta names,
     projected from the Rust key tables; ordered groups are lists."""
 
     class Key:
@@ -2122,9 +2124,50 @@ class keys:
     X: Key
     Y: Key
     Z: Key
+    # Molecular-graph keys.
+    BCC_BOND_TYPE: Key
+    BEAD_ATOMS: Key
+    EQUIV_CLASS: Key
+    FRAG_ID: Key
+    PORTS: Key
+    REACT_ID: Key
+    VSITE: Key
+    # LAMMPS frame-meta keys.
+    LAMMPS_COEFFS_TEXT: Key
+    LAMMPS_UNITS: Key
+
+class constants:
+    """``molrs.core.constants``: every constant of ``molrs::core::constants``."""
+
+    AVOGADRO: float
+    BOLTZMANN: float
+    GAS_CONSTANT: float
+    ELEMENTARY_CHARGE: float
+    COULOMB_REAL: float
+    COULOMB_METAL: float
+    AMBER_COULOMB: float
+    AMBER_CHARGE_FACTOR: float
+    CHARMM_COULOMB: float
+    OPENMM_COULOMB: float
+    GROMACS_COULOMB: float
+    KJ_PER_KCAL: float
+    ANGSTROM_PER_NM: float
+    ANGSTROM_PER_BOHR: float
+    BOLTZMANN_REAL: float
+    ANGSTROM_M: float
+    FEMTOSECOND_S: float
+    SPEED_OF_LIGHT: float
+    SECOND_RADIATION_CONSTANT: float
+    CENTIMETER_PER_METER: float
+    ANGSTROM3_PER_CM3: float
+    KCAL_MOL_PER_MDYNE_ANGSTROM: float
+    VACUUM_DIELECTRIC: float
+    UFF_COULOMB: float
+    AMBER_SCEE: float
+    AMBER_SCNB: float
 
 class schema:
-    """``molrs.store.schema``: the Frame vocabulary's blocks and columns,
+    """``molrs.core.schema``: the Frame vocabulary's blocks and columns,
     projected from the Rust tables."""
 
     class ColumnSpec:
@@ -2768,8 +2811,8 @@ class Assembler:
 
     Parameters
     ----------
-    library : Mapping[str, Graph]
-        Name → template, copied at construction: any graph (``Graph``,
+    library : Mapping[str, MolGraph]
+        Name → template, copied at construction: any graph (``MolGraph``,
         ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
         template without ports can only fill an unbonded site.
     placer : SitePlacer | GrowthPlacer
@@ -2790,12 +2833,12 @@ class Assembler:
 
     def __init__(
         self,
-        library: _AbcMapping[str, Graph],
+        library: _AbcMapping[str, MolGraph],
         placer: SitePlacer | GrowthPlacer,
         orienter: AxisOrienter | None = None,
     ) -> None: ...
     @overload
-    def assemble(self, sites: CoarseGrain, cls: None = None) -> Graph: ...
+    def assemble(self, sites: CoarseGrain, cls: None = None) -> MolGraph: ...
     @overload
     def assemble(self, sites: CoarseGrain, cls: type[_TGraph]) -> _TGraph:
         """Place and join one copy per site; return the world. Releases the
@@ -2809,12 +2852,12 @@ class Assembler:
             are read by the placer and the orienter.
 
         cls : type, optional
-            The graph class to build the world as: ``Graph`` (the default),
+            The graph class to build the world as: ``MolGraph`` (the default),
             ``Atomistic`` or ``CoarseGrain``.
 
         Returns
         -------
-        Graph
+        MolGraph
             The world, an instance of ``cls``; ports without a site bond stay
             on it. Empty when ``sites`` is empty.
 
@@ -2945,9 +2988,6 @@ class ForceField:
         atom style and every pair style's self row) as columns
         ``<prefix><parameter>``, in the force-field IR's units; a parameter a
         row's type lacks is a null cell. Return block → columns written."""
-    def to_section(self) -> ForceFieldSection: ...
-    @staticmethod
-    def from_section(section: ForceFieldSection) -> ForceField: ...
     def _ffi_forcefield_capsule(self) -> Any: ...
     def def_style(
         self,
@@ -3459,7 +3499,7 @@ class Match:
         pairs: Sequence[tuple[str, str, Sequence[str], dict[str, MatchParamValue]]] = (),
     ) -> None: ...
 
-class Typifier[TGraph: Graph]:
+class Typifier[TGraph: MolGraph]:
     """The base of every graph typifier: one ``match`` hook plus the output
     force field its typing accumulates.
 
@@ -3833,6 +3873,9 @@ class mrec:
         @staticmethod
         def block_name(category: str, style: str) -> str: ...
         def validate(self) -> None: ...
+        @staticmethod
+        def from_forcefield(forcefield: ForceField) -> ForceFieldSection: ...
+        def to_forcefield(self) -> ForceField: ...
 
     @staticmethod
     def section_names(path: PathInput) -> frozenset[str]: ...
@@ -3932,12 +3975,11 @@ class mrec:
     @staticmethod
     def pack(path: PathInput) -> str: ...
 
-    class schema:
-        """``molrs.io.mrec.schema``: the record contract's version, its reserved
-        ``meta`` keys and the runtime checks."""
+    MOLREC_VERSION: int
+    RESERVED_META_KEYS: tuple[str, ...]
 
-        MOLREC_VERSION: int
-        RESERVED_META_KEYS: tuple[str, ...]
+    class schema:
+        """``molrs.io.mrec.schema``: the record contract's runtime checks."""
 
         @staticmethod
         def validate_path(path: PathInput) -> None: ...
@@ -4227,7 +4269,7 @@ class GaussianDensity:
     def __init__(self, nx: int, ny: int, nz: int, sigma: float) -> None: ...
     def compute(self, frames: Frame | Sequence[Frame]) -> list[ArrayF]: ...
 
-class BondOrder:
+class BondOrientationalOrder:
     """2-D (θ, φ) histogram of neighbor-bond vectors."""
 
     def __init__(self, n_theta: int, n_phi: int) -> None: ...
@@ -5348,11 +5390,6 @@ def write_forcefield_xml(
 ) -> None:
     """Write a ForceField to OpenMM force-field XML."""
 
-#: AMBER's Coulomb constant (kcal·Å/(mol·e²)), the 1-4 electrostatic divisor
-#: (``coul_14 = 1 / AMBER_SCEE``) and the 1-4 LJ divisor (``lj_14 = 1 / AMBER_SCNB``).
-AMBER_COULOMB: float
-AMBER_SCEE: float
-AMBER_SCNB: float
 
 def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
     """Write a ForceField as an AMBER frcmod file.

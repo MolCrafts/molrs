@@ -6,9 +6,9 @@
 //!
 //! | Builder | Output |
 //! |---------|--------|
-//! | [`GrapheneBuilder`] | flat honeycomb sheet [`Frame`](crate::store::Frame) |
-//! | [`CarbonTubeBuilder`] | rolled SWCNT [`Frame`](crate::store::Frame) (exact graphene quotient) |
-//! | [`SelfAvoidingWalk`] | multi-chain [`Trace`](crate::spatial::Trace)s + [`SimBox`](crate::spatial::SimBox) (no chemistry) |
+//! | [`GrapheneBuilder`] | flat honeycomb sheet [`Frame`](crate::core::Frame) |
+//! | [`CarbonTubeBuilder`] | rolled SWCNT [`Frame`](crate::core::Frame) (exact graphene quotient) |
+//! | [`SelfAvoidingWalk`] | multi-chain [`Trace`](crate::core::Trace)s + [`SimBox`](crate::core::SimBox) (no chemistry) |
 //! | [`SitePlacer`], [`GrowthPlacer`] (each a [`Placer`]) | one pose ([`Rigid`](crate::op::rigid::Rigid)) per site: centre of mass on the site, or grown onto the parent's port |
 //! | [`AxisOrienter`] (an [`Orienter`]) | one rotation per site, about the template's centre of mass: chain units onto the site axis and bond line, branch units by port-direction fit |
 //! | [`Assembler`] | one placed, linked world graph (any graph type, chosen by the caller) from a site graph (`frag_id` per site, `mol_id` per connected component) |

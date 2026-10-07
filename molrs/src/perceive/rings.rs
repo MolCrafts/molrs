@@ -1,39 +1,36 @@
 //! Ring detection for molecular graphs — the **handle-keyed chemistry
 //! decoration** over the core graph primitive.
 //!
-//! There is exactly **one** SSSR implementation in the tree and it lives in
-//! [`crate::system::Topology`]: [`Topology::find_rings`] computes the
-//! **Smallest Set of Smallest Rings** (equivalently the minimum cycle basis)
-//! over contiguous `usize` vertex/edge indices. This module owns no ring
-//! algorithm of its own; it only:
+//! This module is the one owner of ring perception in the tree. Its SSSR
+//! search computes the **Smallest Set of Smallest Rings** (equivalently the
+//! minimum cycle basis) over the contiguous `usize` vertex/edge indices of a
+//! [`Topology`]; [`find_rings`]:
 //!
 //! 1. projects an [`Atomistic`] onto that index space — atom index `i` is the
 //!    `i`-th atom of [`Atomistic::atoms`], edge index `i` the `i`-th bond of
 //!    [`Atomistic::bonds`],
-//! 2. calls [`Topology::find_rings`],
+//! 2. runs the SSSR search,
 //! 3. lifts the resulting `usize` indices back onto the [`NodeId`] / [`RelationId`]
 //!    handles chemistry code (aromaticity, SMARTS, MMFF, AM1-BCC, the conformer
 //!    pipeline) actually holds, as a [`RingInfo`].
 //!
-//! Ring selection, ordering and complexity are therefore whatever the core
-//! primitive says they are — see [`Topology::find_rings`].
+//! [`RingInfo`] keeps RDKit's name (`Chem.RingInfo`) for the same object: the
+//! ring list plus per-atom and per-bond membership.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::system::Atomistic;
+use crate::core::Atomistic;
 
-use crate::system::Topology;
-use crate::system::{NodeId, RelationId};
+use crate::core::Topology;
+use crate::core::{NodeId, RelationId};
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-/// All ring information for an [`Atomistic`], produced by [`find_rings`].
-///
-/// The handle-keyed counterpart of
-/// [`crate::system::TopologyRingInfo`]: the same rings, addressed by
-/// [`NodeId`] / [`RelationId`] instead of by graph index.
+/// All ring information for an [`Atomistic`], produced by [`find_rings`]:
+/// the SSSR rings and per-atom / per-bond ring membership, addressed by
+/// [`NodeId`] / [`RelationId`].
 #[derive(Debug, Clone)]
 pub struct RingInfo {
     /// Each ring is an ordered list of `NodeId`s forming a closed path.
@@ -191,7 +188,7 @@ pub fn max_ring_system_size(mol: &Atomistic) -> usize {
 /// only rings of at most `max_ring_size` atoms.
 ///
 /// Feed the result to
-/// [`Atomistic::extract_subgraph`](crate::system::Atomistic::extract_subgraph)
+/// [`Atomistic::extract_subgraph`](crate::core::Atomistic::extract_subgraph)
 /// as its `whole_groups`.
 ///
 /// # Why a size bound, and why local
@@ -336,10 +333,9 @@ fn bond_on_small_ring(mol: &Atomistic, a: NodeId, b: NodeId, max_ring_size: usiz
 
 /// Compute the ring information (SSSR / minimum cycle basis) for `mol`.
 ///
-/// Delegates the actual cycle search to the core graph primitive
-/// [`Topology::find_rings`] and lifts its `usize` indices back onto
-/// [`NodeId`] / [`RelationId`] handles. Rings come back smallest-first, exactly as
-/// the primitive orders them.
+/// Runs the SSSR search over the molecule's index-space [`Topology`] and
+/// lifts its `usize` indices back onto [`NodeId`] / [`RelationId`] handles.
+/// Rings come back smallest-first.
 pub fn find_rings(mol: &Atomistic) -> RingInfo {
     // ---- 1. Project onto the core index space ------------------------------
     // Atom index `i` == the `i`-th atom of `mol.atoms()`; edge index `i` == the
@@ -366,11 +362,11 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
 
     // ---- 2. The one and only SSSR in the tree -------------------------------
     let topo = Topology::from_edges(atom_vec.len(), &edges);
-    let info = topo.find_rings();
+    let cycles = sssr(&topo);
 
     // ---- 3. Lift node-index cycles → NodeId rings ---------------------------
-    let rings: Vec<Vec<NodeId>> = info
-        .rings()
+    let rings: Vec<Vec<NodeId>> = cycles
+        .rings
         .iter()
         .map(|cycle| cycle.iter().map(|&ni| atom_vec[ni]).collect())
         .collect();
@@ -401,13 +397,538 @@ pub fn find_rings(mol: &Atomistic) -> RingInfo {
 }
 
 // ---------------------------------------------------------------------------
+// SSSR over a Topology
+// ---------------------------------------------------------------------------
+
+/// Compute the Smallest Set of Smallest Rings (SSSR).
+///
+/// Returns the rings as atom-index cycles with per-atom and per-bond
+/// (edge-index) membership tables.
+///
+/// # Known limitation: candidate generation, not the basis reduction
+///
+/// Candidates are the shortest cycle through each *edge* — `E` of them.
+/// Horton's algorithm generates one per *(vertex, edge)* pair, `V · E`, and
+/// `E` of them do not always span the cycle space: on a dense graph the
+/// result can hold fewer than `E - V + C` rings, leaving a genuinely cyclic
+/// bond with `is_bond_in_ring` false.
+///
+/// It does not bite on molecular graphs. Surveyed: cubane, adamantane,
+/// norbornane, bicyclo[2.2.2]octane, dodecahedrane, coronene, the porphyrin
+/// core, the Petersen graph, the triangular prism and a 3×3 grid all return
+/// the full rank (pinned by `sssr_returns_a_full_cycle_basis`).
+/// Under-selection needed random graphs far denser than any chemistry —
+/// K5, and 61 % of random degree-≤4 graphs, which are nothing like a
+/// molecule. Widening to true Horton candidates costs a BFS per
+/// (vertex, edge) pair; do it when a real structure fails, not before.
+/// Per-edge ring membership of `topo`: `true` for every edge index on an
+/// SSSR ring. The index-space query of the same search [`find_rings`] runs.
+pub(crate) fn ring_bond_mask(topo: &Topology) -> Vec<bool> {
+    sssr(topo).bond_ring_mask(topo.n_bonds())
+}
+
+fn sssr(topo: &Topology) -> IndexRings {
+    let edges = topo.bonds();
+    let n_nodes = topo.n_atoms();
+    let n_edges = edges.len();
+    if n_nodes == 0 || n_edges == 0 {
+        return IndexRings::empty();
+    }
+
+    // Expected cycle basis size = E - V + C
+    let n_comp = topo.n_components();
+    let cycle_rank = n_edges as isize - n_nodes as isize + n_comp as isize;
+    if cycle_rank <= 0 {
+        return IndexRings::empty();
+    }
+    let cycle_rank = cycle_rank as usize;
+
+    // Generate candidate cycles (Horton-style)
+    let adjacency: Vec<Vec<usize>> = (0..n_nodes).map(|i| topo.neighbors(i)).collect();
+    let mut candidates: Vec<Vec<usize>> = Vec::new();
+    for edge in &edges {
+        let (u, v) = (edge[0], edge[1]);
+        let skip = if u < v { (u, v) } else { (v, u) };
+        if let Some(path) = bfs_skip_edge(&adjacency, u, v, skip) {
+            candidates.push(path);
+        }
+    }
+    candidates.sort_by_key(|c| c.len());
+
+    // Edge lookup for cycle-vector construction
+    let mut edge_lookup: HashMap<(usize, usize), usize> = HashMap::new();
+    for (ei, edge) in edges.iter().enumerate() {
+        let (a, b) = (edge[0], edge[1]);
+        let key = if a < b { (a, b) } else { (b, a) };
+        edge_lookup.insert(key, ei);
+    }
+
+    // Select linearly independent cycles via GF(2) Gaussian elimination.
+    let mut basis = CycleBasis::over_edges(n_edges);
+    let mut selected: Vec<Vec<usize>> = Vec::new();
+
+    for cycle in &candidates {
+        if selected.len() >= cycle_rank {
+            break;
+        }
+        let mut support: Vec<usize> = Vec::with_capacity(cycle.len());
+        let n = cycle.len();
+        for i in 0..n {
+            let a = cycle[i];
+            let b = cycle[(i + 1) % n];
+            let key = if a < b { (a, b) } else { (b, a) };
+            if let Some(&ei) = edge_lookup.get(&key) {
+                support.push(ei);
+            }
+        }
+        support.sort_unstable();
+        if basis.admit(support) {
+            selected.push(cycle.clone());
+        }
+    }
+
+    selected.sort_by_key(Vec::len);
+
+    // Build the per-edge reverse lookup.
+    let mut bond_rings: HashMap<usize, Vec<usize>> = HashMap::new();
+
+    for (ri, ring) in selected.iter().enumerate() {
+        let n = ring.len();
+        for i in 0..n {
+            let a = ring[i];
+            let b = ring[(i + 1) % n];
+            let key = if a < b { (a, b) } else { (b, a) };
+            if let Some(&ei) = edge_lookup.get(&key) {
+                bond_rings.entry(ei).or_default().push(ri);
+            }
+        }
+    }
+
+    IndexRings {
+        rings: selected,
+        bond_rings,
+    }
+}
+
+/// BFS from `start` to `goal`, skipping one specific edge identified by its
+/// endpoint pair `skip = (min, max)`.
+fn bfs_skip_edge(
+    adjacency: &[Vec<usize>],
+    start: usize,
+    goal: usize,
+    skip: (usize, usize),
+) -> Option<Vec<usize>> {
+    let mut visited = vec![false; adjacency.len()];
+    let mut parent: Vec<i64> = vec![-1; adjacency.len()];
+    let mut queue = VecDeque::new();
+
+    visited[start] = true;
+    queue.push_back(start);
+
+    while let Some(current) = queue.pop_front() {
+        if current == goal {
+            let mut path = vec![goal];
+            let mut node = goal;
+            while node != start {
+                node = parent[node] as usize;
+                path.push(node);
+            }
+            path.reverse();
+            return Some(path);
+        }
+        for &neighbor in &adjacency[current] {
+            let key = if current < neighbor {
+                (current, neighbor)
+            } else {
+                (neighbor, current)
+            };
+            if key == skip {
+                continue;
+            }
+            if !visited[neighbor] {
+                visited[neighbor] = true;
+                parent[neighbor] = current as i64;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Index-space rings
+// ---------------------------------------------------------------------------
+
+/// The SSSR of a [`Topology`] in its own index space: rings as ordered lists
+/// of atom indices forming closed paths, with membership by edge index.
+/// [`find_rings`] lifts it onto handles as a [`RingInfo`].
+#[derive(Debug, Clone)]
+struct IndexRings {
+    rings: Vec<Vec<usize>>,
+    bond_rings: HashMap<usize, Vec<usize>>,
+}
+
+impl IndexRings {
+    fn empty() -> Self {
+        Self {
+            rings: Vec::new(),
+            bond_rings: HashMap::new(),
+        }
+    }
+
+    /// Per-bond boolean mask: true if the bond is in any ring.
+    fn bond_ring_mask(&self, n_bonds: usize) -> Vec<bool> {
+        let mut mask = vec![false; n_bonds];
+        for &idx in self.bond_rings.keys() {
+            if idx < n_bonds {
+                mask[idx] = true;
+            }
+        }
+        mask
+    }
+
+    /// Whether the atom belongs to any ring.
+    #[cfg(test)]
+    fn is_atom_in_ring(&self, idx: usize) -> bool {
+        self.rings.iter().any(|r| r.contains(&idx))
+    }
+
+    /// Whether the bond belongs to any ring.
+    #[cfg(test)]
+    fn is_bond_in_ring(&self, idx: usize) -> bool {
+        self.bond_rings.get(&idx).is_some_and(|v| !v.is_empty())
+    }
+
+    /// Number of rings containing this bond.
+    #[cfg(test)]
+    fn num_bond_rings(&self, idx: usize) -> usize {
+        self.bond_rings.get(&idx).map_or(0, Vec::len)
+    }
+
+    /// Size (atom count) of every ring, smallest first.
+    #[cfg(test)]
+    fn ring_sizes(&self) -> Vec<usize> {
+        self.rings.iter().map(Vec::len).collect()
+    }
+
+    /// Total number of rings detected.
+    #[cfg(test)]
+    fn num_rings(&self) -> usize {
+        self.rings.len()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GF(2) cycle basis
+// ---------------------------------------------------------------------------
+
+/// Row-reduced GF(2) basis of the cycle space, in the edge-indexed coordinates
+/// used by the SSSR search.
+///
+/// A cycle is a **sparse** ascending list of the edge indices it covers; adding
+/// two cycles is the symmetric difference of those lists. Reduction is indexed
+/// by pivot edge — [`Self::admit`] follows a candidate's own leading edge down
+/// through the pivots it actually collides with — so a candidate costs the XORs
+/// it really performs.
+///
+/// The dense predecessor XOR-scanned the whole basis per candidate, which is
+/// `O(R · E/64)` each and `O(R² · E/64)` overall. On ring-rich systems that is
+/// cubic in the atom count and it dominated everything downstream of ring
+/// perception (aromaticity, SMARTS, MMFF/UFF/ATD typing): 4000 disjoint
+/// benzenes took 4.3 s. Disjoint rings now reduce in one step each.
+///
+/// This is a cost change only. The predecessor visited the basis in insertion
+/// order rather than by pivot, which is not a sound reduction in general — a
+/// later vector can re-set a bit an earlier one cleared — but the two selected
+/// identical ring sets on all 16 000 random graphs surveyed (degree bounds 3,
+/// 4, 6 and unbounded), so no behaviour was riding on it.
+struct CycleBasis {
+    /// Reduced basis vectors, each an ascending list of edge indices.
+    vectors: Vec<Vec<usize>>,
+    /// `pivot_of_edge[e]` = index into [`Self::vectors`] of the vector whose
+    /// leading (largest) edge is `e`.
+    pivot_of_edge: Vec<Option<usize>>,
+}
+
+impl CycleBasis {
+    /// An empty basis over an edge space of `n_edges` coordinates.
+    fn over_edges(n_edges: usize) -> Self {
+        Self {
+            vectors: Vec::new(),
+            pivot_of_edge: vec![None; n_edges],
+        }
+    }
+
+    /// Reduce `support` against the basis; extend the basis and return `true`
+    /// iff it was linearly independent.
+    ///
+    /// `support` must be ascending and duplicate-free.
+    fn admit(&mut self, mut support: Vec<usize>) -> bool {
+        while let Some(&lead) = support.last() {
+            match self.pivot_of_edge[lead] {
+                Some(vi) => support = symmetric_difference(&support, &self.vectors[vi]),
+                None => {
+                    self.pivot_of_edge[lead] = Some(self.vectors.len());
+                    self.vectors.push(support);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Symmetric difference of two ascending, duplicate-free index lists — GF(2)
+/// addition of the sparse vectors they represent.
+fn symmetric_difference(a: &[usize], b: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => {
+                out.push(a[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                out.push(b[j]);
+                j += 1;
+            }
+            // Present in both ⇒ cancels over GF(2).
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    out.extend_from_slice(&a[i..]);
+    out.extend_from_slice(&b[j..]);
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::Atom;
+
+    #[test]
+    fn sssr_linear() {
+        let topo = Topology::from_edges(4, &[[0, 1], [1, 2], [2, 3]]);
+        assert_eq!(sssr(&topo).num_rings(), 0);
+    }
+
+    #[test]
+    fn sssr_single_6ring() {
+        // Hexagon: 0-1-2-3-4-5-0
+        let topo = Topology::from_edges(6, &[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0]]);
+        let ri = sssr(&topo);
+        assert_eq!(ri.num_rings(), 1);
+        assert_eq!(ri.ring_sizes(), vec![6]);
+        for i in 0..6 {
+            assert!(ri.is_atom_in_ring(i));
+        }
+        for i in 0..topo.n_bonds() {
+            assert!(ri.is_bond_in_ring(i));
+            assert_eq!(ri.num_bond_rings(i), 1);
+        }
+        assert_eq!(
+            ri.bond_ring_mask(topo.n_bonds()),
+            vec![true; topo.n_bonds()]
+        );
+    }
+
+    #[test]
+    fn sssr_naphthalene() {
+        // Two fused 6-membered rings
+        let topo = Topology::from_edges(
+            10,
+            &[
+                [0, 1],
+                [1, 2],
+                [2, 3],
+                [3, 4],
+                [4, 5],
+                [5, 0], // ring A
+                [2, 6],
+                [6, 7],
+                [7, 8],
+                [8, 9],
+                [9, 3], // ring B
+            ],
+        );
+        let ri = sssr(&topo);
+        assert_eq!(ri.num_rings(), 2);
+        let mut sizes = ri.ring_sizes();
+        sizes.sort();
+        assert_eq!(sizes, vec![6, 6]);
+        assert!(ri.bond_ring_mask(topo.n_bonds()).into_iter().all(|x| x));
+        assert_eq!(ri.num_bond_rings(2), 2);
+    }
+
+    #[test]
+    fn sssr_empty() {
+        let topo = Topology::new();
+        assert_eq!(sssr(&topo).num_rings(), 0);
+    }
+
+    /// Bridgeless polycyclic graphs, each with its own independent cycle count.
+    ///
+    /// Every one is 2-edge-connected, so *every* edge lies on a cycle — which
+    /// makes both invariants below unconditional, with nothing for a subset
+    /// assertion to hide behind. Listing them in one table is what stops the
+    /// suite from silently covering only the easy fused-aromatic case.
+    fn bridgeless_polycycles() -> Vec<(&'static str, usize, Vec<[usize; 2]>)> {
+        vec![
+            (
+                "K4",
+                4,
+                vec![[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]],
+            ),
+            (
+                "triangular prism",
+                6,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [2, 0],
+                    [3, 4],
+                    [4, 5],
+                    [5, 3],
+                    [0, 3],
+                    [1, 4],
+                    [2, 5],
+                ],
+            ),
+            (
+                "cubane",
+                8,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [2, 3],
+                    [3, 0],
+                    [4, 5],
+                    [5, 6],
+                    [6, 7],
+                    [7, 4],
+                    [0, 4],
+                    [1, 5],
+                    [2, 6],
+                    [3, 7],
+                ],
+            ),
+            (
+                "3x3 grid",
+                9,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [3, 4],
+                    [4, 5],
+                    [6, 7],
+                    [7, 8],
+                    [0, 3],
+                    [3, 6],
+                    [1, 4],
+                    [4, 7],
+                    [2, 5],
+                    [5, 8],
+                ],
+            ),
+            (
+                "Petersen",
+                10,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [2, 3],
+                    [3, 4],
+                    [4, 0],
+                    [5, 7],
+                    [7, 9],
+                    [9, 6],
+                    [6, 8],
+                    [8, 5],
+                    [0, 5],
+                    [1, 6],
+                    [2, 7],
+                    [3, 8],
+                    [4, 9],
+                ],
+            ),
+            (
+                "adamantane",
+                10,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [2, 3],
+                    [3, 4],
+                    [4, 5],
+                    [5, 0],
+                    [0, 6],
+                    [2, 7],
+                    [4, 8],
+                    [6, 9],
+                    [7, 9],
+                    [8, 9],
+                ],
+            ),
+            (
+                "two disjoint hexagons",
+                12,
+                vec![
+                    [0, 1],
+                    [1, 2],
+                    [2, 3],
+                    [3, 4],
+                    [4, 5],
+                    [5, 0],
+                    [6, 7],
+                    [7, 8],
+                    [8, 9],
+                    [9, 10],
+                    [10, 11],
+                    [11, 6],
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn sssr_returns_a_full_cycle_basis() {
+        // SSSR must return exactly `E - V + C` rings. Fewer means a linearly
+        // *dependent* candidate was accepted as independent and displaced a
+        // real ring from a basis capped at the cycle rank.
+        for (name, n_atoms, edges) in bridgeless_polycycles() {
+            let topo = Topology::from_edges(n_atoms, &edges);
+            let rank = edges.len() - n_atoms + topo.n_components();
+            assert_eq!(
+                sssr(&topo).num_rings(),
+                rank,
+                "{name}: ring count is not the cycle rank"
+            );
+        }
+    }
+
+    #[test]
+    fn sssr_covers_every_edge_of_a_bridgeless_graph() {
+        // A cycle basis spans the cycle space, so an edge missing from every
+        // basis ring would have to lie on no cycle at all — impossible here.
+        for (name, n_atoms, edges) in bridgeless_polycycles() {
+            let topo = Topology::from_edges(n_atoms, &edges);
+            let mask = sssr(&topo).bond_ring_mask(topo.n_bonds());
+            assert_eq!(
+                mask.iter().filter(|&&covered| !covered).count(),
+                0,
+                "{name}: bridgeless graph has an edge in no ring: {mask:?}"
+            );
+        }
+    }
+
+    use crate::core::Atom;
 
     fn cycle(n: usize) -> Atomistic {
         let mut g = Atomistic::new();

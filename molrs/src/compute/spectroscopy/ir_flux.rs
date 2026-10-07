@@ -1,6 +1,6 @@
 //! IR dipole-flux ACF raw compute — the IR-spectrum raw input.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::Array2;
 
 use super::{central_diff_series, lag_times, sum_column_acf};

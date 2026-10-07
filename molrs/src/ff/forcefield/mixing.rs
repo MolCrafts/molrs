@@ -18,6 +18,11 @@ use molrs::op::types::F;
 /// CHARMM are `arithmetic` (Lorentz-Berthelot), COMPASS / class2 is
 /// `sixthpower`. Reading an OPLS pack with Lorentz-Berthelot silently shifts
 /// every σ — hence the explicit knob.
+/// The combining rules' canonical spellings (LAMMPS's `pair_modify mix`
+/// names), in [`Mixing`] variant order: what a style's `mixing` param, and a
+/// record's `params.mixing`, may name.
+pub const MIXING_RULES: [&str; 3] = ["arithmetic", "geometric", "sixthpower"];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mixing {
     /// `ε = √(εᵢεⱼ)`, `σ = ½(σᵢ + σⱼ)` — Lorentz-Berthelot (AMBER, CHARMM).
@@ -36,24 +41,23 @@ impl Mixing {
 
     /// The canonical spelling, the one [`Mixing::parse`] maps back to `self`.
     pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Arithmetic => "arithmetic",
-            Self::Geometric => "geometric",
-            Self::SixthPower => "sixthpower",
-        }
+        MIXING_RULES[self as usize]
     }
 
     /// Parse the canonical spelling (LAMMPS's `pair_modify mix` names); a
     /// reader translates its own synonyms (foyer's `lorentz`) at its door.
     pub fn parse(name: &str) -> Result<Self, String> {
-        match name {
-            "arithmetic" => Ok(Self::Arithmetic),
-            "geometric" => Ok(Self::Geometric),
-            "sixthpower" => Ok(Self::SixthPower),
-            other => Err(format!(
-                "unknown mixing rule '{other}' (expected arithmetic | geometric | sixthpower)"
-            )),
-        }
+        const RULES: [Mixing; 3] = [Mixing::Arithmetic, Mixing::Geometric, Mixing::SixthPower];
+        MIXING_RULES
+            .iter()
+            .position(|rule| *rule == name)
+            .map(|i| RULES[i])
+            .ok_or_else(|| {
+                format!(
+                    "unknown mixing rule '{name}' (expected {})",
+                    MIXING_RULES.join(" | ")
+                )
+            })
     }
 
     /// Combine one pair's per-type `(ε, σ)` into the pair's `(ε, σ)`.

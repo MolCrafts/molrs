@@ -41,9 +41,9 @@
 
 use std::collections::HashMap;
 
-use molrs::store::keys;
-use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::keys;
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params, StyleDefs};
 use crate::ff::typifier::ParameterInterpolator;
@@ -660,7 +660,7 @@ mod tests {
     /// A C-O bond where only the carbon (atom 0) is typed `opls_135`; the
     /// oxygen (atom 1) is untyped. Returns the graph and the atom types.
     fn half_typed_bond() -> (Atomistic, HashMap<NodeId, String>) {
-        use molrs::system::Atom;
+        use molrs::core::Atom;
         let mut g = Atomistic::new();
         let c = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
         let o = g.add_atom(Atom::xyz("O", 1.4, 0.0, 0.0));

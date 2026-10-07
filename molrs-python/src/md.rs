@@ -12,10 +12,10 @@
 //! `calc_energy_forces`. MD has no unit knowledge. Integrators own the
 //! optional `VerletSkin`.
 
-use crate::core::spatial::neighborlist::PyVerletSkin;
-use crate::core::spatial::simbox::PyBox;
+use crate::core::neighborlist::PyVerletSkin;
+use crate::core::simbox::PyBox;
 use crate::ff::potential::{ErrSlot, Members, PyLJCut, check_nx3, take_err, take_members};
-use molrs::math::Virial;
+use molrs::core::Virial;
 use molrs::md::{
     Direct, ForceProvider, Langevin, MDState, MaxwellBoltzmann, MdError, MicPairs, VelocityVerlet,
 };
@@ -33,7 +33,7 @@ fn md_err(e: MdError) -> PyErr {
 /// ghost régime is not bound yet.
 fn provider(
     members: Members,
-    skin: Option<molrs::spatial::neighbors::VerletSkin>,
+    skin: Option<molrs::core::VerletSkin>,
 ) -> PyResult<Box<dyn ForceProvider>> {
     // `MicPairs` refuses a kernel whose parameters were resolved against a
     // fixed pair list — it would ignore the neighbour table and answer for the

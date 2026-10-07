@@ -28,7 +28,7 @@
 //!
 //! Every model takes `&Atomistic` and returns `Vec<f64>`. The charges are the return
 //! value, and the models' internal atom types (BCC codes like `11` / `91`) stay
-//! internal — a caller keeps their GAFF or OPLS types in [`keys::TYPE`](molrs::store::keys::TYPE)
+//! internal — a caller keeps their GAFF or OPLS types in [`keys::TYPE`](molrs::core::keys::TYPE)
 //! and gets BCC charges back, which is what the standard AM1-BCC workflow needs.
 //!
 //! # Equivalencing is the model's declaration, and the model honours it
@@ -41,7 +41,7 @@
 //! then corrects; [`MullikenModel`] hands the same bits back.
 //!
 //! ```
-//! use molrs::system::Atomistic;
+//! use molrs::core::Atomistic;
 //! use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, MullikenModel};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {

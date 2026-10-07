@@ -11,7 +11,7 @@
 //! 3. [`hbond_lifetimes`] — continuous `S_HB(t)` and intermittent `C_HB(t)`
 //!    lifetime TCFs over the geometric presence series.
 //!
-//! [`NeighborQuery`]: molrs::spatial::neighbors::NeighborQuery
+//! [`NeighborQuery`]: molrs::core::NeighborQuery
 //!
 //! Layer: `compute` → `core` only; WASM-clean; no new dependency; **no petgraph**.
 

@@ -81,21 +81,21 @@ def test_a_cmap_grid_round_trips_through_the_section_and_a_store(
     tmp_path: Path,
 ) -> None:
     ff = _cmap_ff()
-    section = ff.to_section()
+    section = molrs.io.mrec.ForceFieldSection.from_forcefield(ff)
     table = section.table("cmap", "charmm")
     assert list(table["mtom"]) == ["NH2"]
     assert table["grid"].shape == (1, 24, 24)
 
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    back = molrs.io.read_mrec_forcefield(path).to_forcefield()
     (cmap,) = back.get_types("cmap")
     assert cmap["grid"].tobytes() == _grid().tobytes()
 
 
 def test_a_grid_the_section_cannot_hold_is_refused() -> None:
     with pytest.raises(ValueError, match="cmap grid"):
-        _cmap_ff(grid=np.zeros((2, 3))).to_section()
+        molrs.io.mrec.ForceFieldSection.from_forcefield(_cmap_ff(grid=np.zeros((2, 3))))
 
 
 def test_a_cmap_force_field_pickles_with_its_grid() -> None:
@@ -106,8 +106,8 @@ def test_a_cmap_force_field_pickles_with_its_grid() -> None:
     assert [t.name for t in cmap.endpoints] == list(ENDS)
 
 
-def _two_cmaps() -> molrs.store.Frame:
-    return molrs.store.Frame(
+def _two_cmaps() -> molrs.core.Frame:
+    return molrs.core.Frame(
         {
             "atoms": {"x": np.arange(6, dtype=np.float64)},
             "cmaps": {
@@ -120,10 +120,10 @@ def _two_cmaps() -> molrs.store.Frame:
 
 
 def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
-    assert [str(key) for key in molrs.store.keys.ENDPOINTS][-1] == "atomm"
-    assert str(molrs.store.keys.ATOMM) == "atomm"
-    assert molrs.store.schema.CMAPS == "cmaps"
-    assert molrs.store.schema.relation_endpoints("cmaps", [])[-1] == ("atomm", "atoms")
+    assert [str(key) for key in molrs.core.keys.ENDPOINTS][-1] == "atomm"
+    assert str(molrs.core.keys.ATOMM) == "atomm"
+    assert molrs.core.schema.CMAPS == "cmaps"
+    assert molrs.core.schema.relation_endpoints("cmaps", [])[-1] == ("atomm", "atoms")
     frame = _two_cmaps()
     frame.validate()
 
@@ -178,16 +178,16 @@ def _alanine_ff() -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def _backbone() -> molrs.store.Frame:
-    frame = molrs.store.Frame()
-    atoms = molrs.store.Block()
+def _backbone() -> molrs.core.Frame:
+    frame = molrs.core.Frame()
+    atoms = molrs.core.Block()
     for k, key in enumerate("xyz"):
         atoms.insert(key, BACKBONE[:, k].copy())
     atoms.insert("type", list(ALA))
     atoms.insert("mol_id", np.ones(5, dtype=np.uint64))
     atoms.insert("charge", np.zeros(5))
     frame["atoms"] = atoms
-    dihedrals = molrs.store.Block()
+    dihedrals = molrs.core.Block()
     for p, key in enumerate(("atomi", "atomj", "atomk", "atoml")):
         dihedrals.insert(key, np.array([p, p + 1], dtype=np.uint64))
     frame["dihedrals"] = dihedrals

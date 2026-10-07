@@ -7,11 +7,11 @@ use crate::io::smiles::write_smarts;
 use crate::io::smiles::{LocalSmartsOptions, NeighborStyle};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
 use crate::perceive::rings::find_rings;
-use molrs::system::Atomistic;
-use molrs::system::BondType;
-use molrs::system::Element;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
+use molrs::core::Atomistic;
+use molrs::core::BondOrder;
+use molrs::core::Element;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
 
 /// Build a query [`SmilesIR`] for `center` with the given options.
 ///
@@ -169,7 +169,7 @@ fn center_query(
     })
 }
 
-fn is_aromatic_atom(atom: &molrs::system::Atom) -> bool {
+fn is_aromatic_atom(atom: &molrs::core::Atom) -> bool {
     match atom.get("is_aromatic") {
         Some(PropValue::Int(v)) if *v != 0 => true,
         Some(PropValue::F64(v)) if *v != 0.0 => true,
@@ -178,7 +178,7 @@ fn is_aromatic_atom(atom: &molrs::system::Atom) -> bool {
     }
 }
 
-fn formal_charge(atom: &molrs::system::Atom) -> Option<i8> {
+fn formal_charge(atom: &molrs::core::Atom) -> Option<i8> {
     atom.get("formal_charge")
         .and_then(PropValue::as_f64)
         .or_else(|| atom.get_f64("charge"))
@@ -207,9 +207,9 @@ fn bond_query(
     }
     let bid = mol.neighbor_bonds(a).find(|(nb, _)| *nb == b)?.1;
     match mol.bond_type(bid) {
-        BondType::Double => Some(BondQuery::Kind(BondKind::Double)),
-        BondType::Triple => Some(BondQuery::Kind(BondKind::Triple)),
-        BondType::Aromatic => Some(BondQuery::Kind(BondKind::Aromatic)),
+        BondOrder::Double => Some(BondQuery::Kind(BondKind::Double)),
+        BondOrder::Triple => Some(BondQuery::Kind(BondKind::Triple)),
+        BondOrder::Aromatic => Some(BondQuery::Kind(BondKind::Aromatic)),
         _ => None, // default single omitted
     }
 }
@@ -236,7 +236,7 @@ fn ordered_neighbors(
             order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
         nbs.sort_by_key(|id| rank.get(id).copied().unwrap_or(usize::MAX));
     } else {
-        nbs.sort_by_key(|id| molrs::system::node_to_u64(*id));
+        nbs.sort_by_key(|id| molrs::core::node_to_u64(*id));
     }
     nbs
 }

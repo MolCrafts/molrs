@@ -51656,7 +51656,7 @@ pub static MMFF_VDW_STYLE: MmffVdWStyle = MmffVdWStyle {
 /// # Why `coulomb` is data and not a shared constant
 ///
 /// Halgren chose **332.0716**; CODATA gives
-/// [`COULOMB_REAL`](molrs::units::constants::COULOMB_REAL) = 332.06371, which is what
+/// [`COULOMB_REAL`](molrs::core::constants::COULOMB_REAL) = 332.06371, which is what
 /// OPLS and the LAMMPS force fields use. The two differ by 2.4e-5 relative — worth
 /// 0.0036 kcal/mol on caffeine's −150.48 kcal/mol electrostatic term, i.e. **above**
 /// the 1e-3 RDKit parity tolerance. Both are correct: the *force field* decides, which

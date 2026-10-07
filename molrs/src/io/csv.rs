@@ -1,7 +1,7 @@
 //! Hand-written CSV (de)serialization for [`Block`] — no external crate.
 //!
 //! See the module list in [`crate::io`] for why these live beside the format
-//! readers rather than under them. This one lived in `core/store/block` until
+//! readers rather than under them. This one lived in the core's `Block` module until
 //! it moved here: a format parser has no business inside the container it
 //! parses into.
 //!
@@ -13,9 +13,9 @@
 
 use ndarray::Array1;
 
+use crate::core::Block;
+use crate::core::Column;
 use crate::op::types::{F, I};
-use crate::store::Block;
-use crate::store::Column;
 
 /// Parse CSV `text` into a [`Block`].
 ///
@@ -72,7 +72,7 @@ fn insert_inferred(block: &mut Block, name: String, raw: Vec<String>) -> Result<
     // numbers, and the column would then reject the first fractional
     // coordinate written to it — the dtype-fixed-on-first-write trap, arrived
     // at from a CSV instead of from a bad writer.
-    if let Some(spec) = crate::store::schema::column(&name) {
+    if let Some(spec) = crate::core::schema::column(&name) {
         return insert_as(block, name, raw, spec.dtype);
     }
 
@@ -146,9 +146,9 @@ fn insert_as(
     block: &mut Block,
     name: String,
     raw: Vec<String>,
-    dtype: crate::store::DType,
+    dtype: crate::core::DType,
 ) -> Result<(), String> {
-    use crate::store::DType;
+    use crate::core::DType;
     let parse_err = |e: std::num::ParseIntError| format!("column '{name}': {e}");
     match dtype {
         DType::Float => {

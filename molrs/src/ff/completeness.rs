@@ -660,7 +660,7 @@ const MATRIX: &[Row] = &[
                 EQUIV,
             ]),
             Exact(&[
-                "ff/forcefield/section.rs::a_populated_cmap_round_trips_and_prices_the_same",
+                "io/mrec/forcefield_mapping.rs::a_populated_cmap_round_trips_and_prices_the_same",
                 RECORD_SRC,
             ]),
         ],
@@ -758,7 +758,7 @@ const MATRIX: &[Row] = &[
                 ],
             ),
             Exact(&[
-                "core/units/constants.rs::amber_coulomb_is_its_charge_factor_squared",
+                "core/constants.rs::amber_coulomb_is_its_charge_factor_squared",
                 PRMTOP,
             ]),
             Exact(&[RECORD, RECORD_SRC]),
@@ -885,7 +885,7 @@ const MATRIX: &[Row] = &[
             ),
             Exact(&["io/forcefield/readers/prmtop.rs::special_bonds_are_reciprocal_divisors"]),
             Exact(&[
-                "ff/forcefield/section.rs::a_lammps_read_force_field_round_trips",
+                "io/mrec/forcefield_mapping.rs::a_lammps_read_force_field_round_trips",
                 RECORD_SRC,
             ]),
         ],
@@ -937,7 +937,7 @@ const MATRIX: &[Row] = &[
             Exact(&[GMX_RT, EQUIV]),
             Exact(&[PRMTOP, EQUIV]),
             Exact(&[
-                "ff/forcefield/section.rs::lj_charmm_one_four_round_trips_and_an_unknown_value_is_refused",
+                "io/mrec/forcefield_mapping.rs::lj_charmm_one_four_round_trips_and_an_unknown_value_is_refused",
             ]),
         ],
     },
@@ -1042,7 +1042,7 @@ const MATRIX: &[Row] = &[
                 "io/forcefield/readers/prmtop.rs::decode_lj_types_keeps_nbfix_cross_terms_as_cross_rows",
             ]),
             Exact(&[
-                "ff/forcefield/section.rs::explicit_cross_rows_round_trip_and_still_override_mixing",
+                "io/mrec/forcefield_mapping.rs::explicit_cross_rows_round_trip_and_still_override_mixing",
             ]),
         ],
     },
@@ -1097,7 +1097,7 @@ const MATRIX: &[Row] = &[
             Na("OpenMM fixes ONE_4PI_EPS0: priced at OpenMM's"),
             Exact(&[GMX]),
             Na("GROMACS fixes ONE_4PI_EPS0: priced at GROMACS's"),
-            Exact(&["core/units/constants.rs::amber_coulomb_is_its_charge_factor_squared"]),
+            Exact(&["core/constants.rs::amber_coulomb_is_its_charge_factor_squared"]),
             Exact(&[RECORD_SRC]),
         ],
     },
@@ -1138,7 +1138,7 @@ const MATRIX: &[Row] = &[
             ),
             Na("a prmtop reads as real"),
             Exact(&[
-                "ff/forcefield/section.rs::a_section_stating_radians_beside_a_preset_is_refused",
+                "io/mrec/forcefield_mapping.rs::a_section_stating_radians_beside_a_preset_is_refused",
             ]),
         ],
     },
@@ -1389,11 +1389,11 @@ fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
     }
 }
 
-fn probe_frame(category: &str, arity: usize) -> molrs::store::Frame {
+fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
+    use molrs::core::Block;
     use molrs::op::types::Idx;
-    use molrs::store::Block;
     use ndarray::Array1;
-    let mut frame = molrs::store::Frame::new();
+    let mut frame = molrs::core::Frame::new();
     let mut atoms = Block::new();
     atoms
         .insert(
@@ -1459,11 +1459,11 @@ fn every_registered_style_persists_through_a_record() {
             .unwrap()
             .def_type("t", &ends, params)
             .unwrap();
-        let back = ForceField::from_section(
-            &ff.to_section()
-                .unwrap_or_else(|e| panic!("{category} {style}: {e}")),
-        )
-        .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
+        use crate::io::mrec::ForceFieldSection;
+        let back = ForceFieldSection::from_forcefield(&ff)
+            .unwrap_or_else(|e| panic!("{category} {style}: {e}"))
+            .to_forcefield()
+            .unwrap_or_else(|e| panic!("{category} {style}: {e}"));
         let s = back.get_style(category, style).expect(style);
         assert_eq!(s.params().get("cutoff"), Some(9.0), "{category} {style}");
         let (_, mut got_ends, got) = s.type_rows().into_iter().next().expect("a type");

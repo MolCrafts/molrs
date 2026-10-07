@@ -25,8 +25,8 @@
 //! optional bulk-normalized `g_SDF = ρ / ρ_bulk` is the SDF analogue of RDF's
 //! `g(r)` and tends to 1 far from the reference for an unstructured target.
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::{Array2, Array3, Array4};
 
 use crate::compute::Compute;
@@ -37,7 +37,7 @@ use crate::op::rigid::{Rigid, apply};
 use crate::op::superpose::{DEFAULT_GAP_TOL, Freedom, centroid, superpose};
 use crate::op::types::{Vec3, to_vec3};
 use crate::op::vec3::{normalize, sub};
-use molrs::spatial::{Mic, SimBox};
+use molrs::core::{Mic, SimBox};
 
 /// A regular axis-aligned voxel grid centred on the reference COM.
 ///
@@ -411,8 +411,8 @@ impl ComputeResult for SpatialDistributionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]]) -> Frame {

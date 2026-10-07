@@ -25,7 +25,7 @@
 //! polarizer (LAMMPS `pair_style thole`).
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -35,10 +35,10 @@ use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 /// Thole-screened Coulomb pair potential with pre-resolved flat arrays.
 ///

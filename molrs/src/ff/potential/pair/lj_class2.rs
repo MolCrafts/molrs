@@ -4,7 +4,7 @@
 //! The COMPASS/class2 non-bonded form. Parameters per pair type: `epsilon`
 //! (energy), `sigma` (length).
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -17,10 +17,10 @@ use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
 use crate::ff::potential::pair::type_pair;
 use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 /// Where a pair's class2 `(ε, σ)` comes from.
 enum Source {
@@ -518,8 +518,8 @@ mod tests {
         use crate::ff::forcefield::mixing::Mixing;
         use crate::ff::forcefield::{ForceField, Params};
         use crate::ff::potential::PotentialCompiler;
+        use molrs::core::Block;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
         use ndarray::Array1;
 
         let mut ff = ForceField::new("t");

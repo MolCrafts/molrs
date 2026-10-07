@@ -3,7 +3,7 @@
 //! [`crate::ff::potential`] and reach the integrators through a
 //! [`ForceProvider`](crate::md::ForceProvider).
 //!
-//! Neighbour lists: [`crate::spatial::neighbors`] (`NeighborList`,
+//! Neighbour lists: [`crate::core::NeighborList`] (`NeighborList`,
 //! `VerletSkin`). Science here:
 //!
 //! * [`crate::ff::potential::Potential`] produces energy and forces from flat

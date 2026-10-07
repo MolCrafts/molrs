@@ -18,11 +18,11 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
+use molrs::core::Block;
+use molrs::core::Element;
+use molrs::core::Frame;
+use molrs::core::SimBox;
 use molrs::op::types::{F, I, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::system::Element;
 
 // ---------------------------------------------------------------------------
 // Error helpers

@@ -19,8 +19,8 @@ import pytest
 from molrs.builder import Assembler, AxisOrienter, GrowthPlacer, SitePlacer
 
 
-def _monomer() -> molrs.system.Atomistic:
-    fragment = molrs.system.Atomistic()
+def _monomer() -> molrs.core.Atomistic:
+    fragment = molrs.core.Atomistic()
     c0 = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0, mass=12.011)
     c1 = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0, mass=12.011)
     h0 = fragment.def_atom(element="H", x=-0.5, y=0.9, z=0.0, mass=1.008)
@@ -33,13 +33,13 @@ def _monomer() -> molrs.system.Atomistic:
     return fragment
 
 
-def _lithium() -> molrs.system.Atomistic:
-    mol = molrs.system.Atomistic()
+def _lithium() -> molrs.core.Atomistic:
+    mol = molrs.core.Atomistic()
     mol.def_atom(element="Li", x=0.0, y=0.0, z=0.0, mass=6.94)
     return mol
 
 
-def _sites(names: list[str], *, axes: bool = True) -> molrs.system.CoarseGrain:
+def _sites(names: list[str], *, axes: bool = True) -> molrs.core.CoarseGrain:
     """Sites along +x, 4 Å apart; the first two bonded; axes +z unless off."""
     n = len(names)
     atoms = {
@@ -50,10 +50,10 @@ def _sites(names: list[str], *, axes: bool = True) -> molrs.system.CoarseGrain:
     }
     if axes:
         atoms |= {"axis_x": np.zeros(n), "axis_y": np.zeros(n), "axis_z": np.ones(n)}
-    frame = molrs.store.Frame(
+    frame = molrs.core.Frame(
         {"atoms": atoms, "bonds": {"atomi": np.array([0]), "atomj": np.array([1])}}
     )
-    return molrs.system.CoarseGrain.from_frame(frame)
+    return molrs.core.CoarseGrain.from_frame(frame)
 
 
 def _assembler(library: dict) -> Assembler:
@@ -62,10 +62,10 @@ def _assembler(library: dict) -> Assembler:
 
 def test_assemble_links_bonded_sites_and_places_atomistic_singles() -> None:
     world = _assembler({"M": _monomer(), "Li": _lithium()}).assemble(
-        _sites(["M", "M", "Li"]), molrs.system.Atomistic
+        _sites(["M", "M", "Li"]), molrs.core.Atomistic
     )
 
-    assert type(world) is molrs.system.Atomistic
+    assert type(world) is molrs.core.Atomistic
     assert world.n_atoms == 7
     assert world.n_ports == 2
     atoms = world.to_frame()["atoms"]
@@ -107,7 +107,7 @@ def test_placers_and_orienter_take_no_arguments() -> None:
 def test_growth_placer_builds_a_topology_without_positions() -> None:
     sites = molrs.io.smiles.CGSmilesIR("{[#M]|3}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(
-        sites, molrs.system.Atomistic
+        sites, molrs.core.Atomistic
     )
 
     # Three copies of 4 atoms, two links remove 4 hydrogens.
@@ -125,7 +125,7 @@ def test_the_world_is_a_bare_graph_unless_a_class_is_named() -> None:
     sites = molrs.io.smiles.CGSmilesIR("{[#M]|2}").to_coarsegrain()
     world = Assembler({"M": _monomer()}, GrowthPlacer()).assemble(sites)
 
-    assert type(world) is molrs.system.Graph
+    assert type(world) is molrs.core.MolGraph
     assert world.n_nodes == 6
 
 

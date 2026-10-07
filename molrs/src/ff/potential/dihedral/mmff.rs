@@ -1,7 +1,7 @@
 //! MMFF94 torsional rotation: E = 0.5*(V1*(1+cos phi) + V2*(1-cos 2phi) + V3*(1+cos 3phi))
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -9,8 +9,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 pub struct MMFFTorsion {
     atom_i: Vec<usize>,

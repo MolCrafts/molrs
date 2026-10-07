@@ -7,7 +7,7 @@
 //! `smiles` feature). Nodes are caller-defined (typically one per molecule); each
 //! H-bond contributes a donor-node ↔ acceptor-node edge.
 
-use crate::system::Topology;
+use crate::core::Topology;
 
 /// Connected-component summary of one frame's hydrogen-bond graph.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -20,7 +20,7 @@
 /// inside the source file. `byte_len` is the number of bytes that make up
 /// the frame; the slice `source[byte_offset..byte_offset + byte_len as u64]`
 /// must be a self-contained input that the matching `parse_frame_bytes`
-/// function can decode into a single [`Frame`](molrs::store::Frame).
+/// function can decode into a single [`Frame`](molrs::core::Frame).
 ///
 /// `byte_len` is intentionally `u32`. Per-frame size is bounded — even very
 /// large MD trajectories use frames in the kilobyte-to-megabyte range, and a

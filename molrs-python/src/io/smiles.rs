@@ -3,7 +3,7 @@
 //! pattern written from a molecule. Matching a pattern is
 //! `molrs.perceive`'s.
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 use crate::error::smiles_error_to_pyerr;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -112,7 +112,7 @@ impl PySmilesIR {
         })
     }
 
-    /// Build the ported :class:`~molrs.system.Atomistic` template of this body.
+    /// Build the ported :class:`~molrs.core.Atomistic` template of this body.
     ///
     /// The one-unit form of :meth:`CGSmilesIR.templates`: the heavy atoms of
     /// the body, plus one capping hydrogen *handle* and one port per bonding
@@ -231,7 +231,7 @@ impl PySmilesIR {
         molrs::io::smiles::write_smarts(&self.inner).map_err(smiles_error_to_pyerr)
     }
 
-    /// Build a concrete IR from an :class:`~molrs.system.Atomistic` graph.
+    /// Build a concrete IR from an :class:`~molrs.core.Atomistic` graph.
     ///
     /// All science/representation choices are **keyword-only flags** forwarded
     /// to ``molrs::io::smiles::SmilesEmitOptions``. This is an *io* alternate
@@ -308,8 +308,8 @@ fn build_smiles_emit_options(
     multi_component: &str,
     organic_subset: bool,
 ) -> PyResult<molrs::io::smiles::SmilesEmitOptions> {
+    use molrs::core::node_from_u64;
     use molrs::io::smiles::{AromaticEmit, HydrogenEmit, MultiComponentEmit, SmilesEmitOptions};
-    use molrs::system::node_from_u64;
 
     let aromatic = match aromatic {
         "as_marked" => AromaticEmit::AsMarked,
@@ -393,8 +393,8 @@ pub fn write_smarts(
     neighbor_style: &str,
     canonical_neighbor_order: bool,
 ) -> PyResult<String> {
+    use molrs::core::node_from_u64;
     use molrs::io::smiles::{LocalSmartsOptions, NeighborStyle};
-    use molrs::system::node_from_u64;
 
     let neighbor_style = match neighbor_style {
         "chain" => NeighborStyle::Chain,

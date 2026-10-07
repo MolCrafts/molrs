@@ -7,7 +7,7 @@
 //! Unlike the readers in [`reader`](super::reader), these produce a
 //! [`Mesh`] rather than a `Frame`: an STL carries triangles, not atoms.
 
-use crate::core::spatial::mesh::Mesh;
+use crate::core::mesh::Mesh;
 use molrs::io::mesh::parse_stl;
 use wasm_bindgen::prelude::*;
 

@@ -109,7 +109,7 @@ class TestDispatch:
 
 class TestMaxwellBoltzmann:
     def test_kbt_constructor(self) -> None:
-        mb = MaxwellBoltzmann(molrs.units.UnitPreset("real").boltzmann() * 300.0, seed=1)
+        mb = MaxwellBoltzmann(molrs.core.UnitPreset("real").boltzmann() * 300.0, seed=1)
         pos = np.zeros((4, 3))
         vel = mb.velocities(pos, np.ones(4))
         assert vel.shape == (4, 3)

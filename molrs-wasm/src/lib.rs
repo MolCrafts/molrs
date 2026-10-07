@@ -25,7 +25,7 @@
 //!
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
-//! | `core`      | `store`, `system`, `spatial` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
+//! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
 //! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
 //! | `perceive`  | `perceive` | Chemical perception builder (`Perceive.findRings`, `findHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |

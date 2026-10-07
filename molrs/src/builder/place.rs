@@ -11,12 +11,12 @@
 
 use std::fmt;
 
+use crate::core::MolGraph;
+use crate::core::RelationId;
+use crate::op::geometry::CenterError;
 use crate::op::rigid::{Rigid, alignment, apply, axis_angle, compose};
 use crate::op::types::Vec3;
 use crate::op::vec3::sub;
-use crate::spatial::CenterError;
-use crate::system::MolGraph;
-use crate::system::RelationId;
 
 /// The bond from a site to its already-placed parent.
 #[derive(Debug, Clone, Copy)]
@@ -59,7 +59,7 @@ pub trait Placer: Send + Sync {
 
 /// Puts each copy's centre of mass on its site.
 ///
-/// With the template's centre of mass `R_c` ([`center`](crate::spatial::center), Å), the
+/// With the template's centre of mass `R_c` ([`center`](crate::op::geometry::center), Å), the
 /// orienter's turn `T` (which fixes `R_c`) and the site position `p` (Å),
 /// the pose is `x ↦ T x + (p − R_c)`: turned, then moved so its centre of
 /// mass lands on `p`. This is the translation step of geometric backmapping
@@ -71,8 +71,8 @@ pub trait Placer: Send + Sync {
 /// ```
 /// use molrs::builder::{PlaceSite, Placer, SitePlacer};
 /// use molrs::op::rigid::Rigid;
-/// use molrs::store::keys;
-/// use molrs::system::Atomistic;
+/// use molrs::core::keys;
+/// use molrs::core::Atomistic;
 ///
 /// // Two carbons 1.5 Å apart: the centre of mass is (0.75, 0, 0).
 /// let mut template = Atomistic::new();
@@ -108,8 +108,9 @@ impl Placer for SitePlacer {
         if !p.iter().all(|c| c.is_finite()) {
             return Err(PlaceError::NonFinitePoint);
         }
-        let center = crate::spatial::center(template, &template.node_ids().collect::<Vec<_>>())
-            .map_err(PlaceError::Template)?;
+        let center =
+            crate::op::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
+                .map_err(PlaceError::Template)?;
         let shift = Rigid {
             rotation: Rigid::IDENTITY.rotation,
             translation: sub(p, center),
@@ -135,10 +136,10 @@ impl Placer for SitePlacer {
 /// ```
 /// use molrs::builder::{GrowthPlacer, ParentJoin, PlaceSite, Placer};
 /// use molrs::op::rigid::{Rigid, apply};
-/// use molrs::store::keys;
-/// use molrs::system::BondNumber;
-/// use molrs::system::Atomistic;
-/// use molrs::system::PortKind;
+/// use molrs::core::keys;
+/// use molrs::core::BondNumber;
+/// use molrs::core::Atomistic;
+/// use molrs::core::PortKind;
 ///
 /// // C with its `<` hydrogen at +x.
 /// let mut unit = Atomistic::new();
@@ -264,13 +265,13 @@ impl std::error::Error for PlaceError {
 #[cfg(test)]
 mod tests {
     use super::{GrowthPlacer, ParentJoin, PlaceError, PlaceSite, Placer, SitePlacer};
+    use crate::core::Atomistic;
+    use crate::core::BondNumber;
+    use crate::core::PortKind;
+    use crate::core::RelationId;
+    use crate::core::keys;
+    use crate::op::geometry::CenterError;
     use crate::op::rigid::{Rigid, about, apply};
-    use crate::spatial::CenterError;
-    use crate::store::keys;
-    use crate::system::Atomistic;
-    use crate::system::BondNumber;
-    use crate::system::PortKind;
-    use crate::system::RelationId;
 
     const TOL: f64 = 1e-12;
 

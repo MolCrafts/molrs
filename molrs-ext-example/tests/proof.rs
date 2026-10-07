@@ -28,6 +28,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
+use molrs::core::{Block, Frame};
+use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use molrs::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, EndpointOrder, Engine, FormCodec, IrError, Kernel,
@@ -38,14 +42,10 @@ use molrs::ff::potential::{CompileError, Member, PotentialCompiler, intramolecul
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::forcefield::writers::ForceFieldWriter;
 use molrs::io::forcefield::writers::gromacs::GromacsTopFfWriter;
-use molrs::io::mrec::{read_forcefield_file, write_forcefield_file};
+use molrs::io::mrec::{ForceFieldSection, read_forcefield_file, write_forcefield_file};
 use molrs::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
-use molrs::spatial::SimBox;
-use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-use molrs::store::type_labels::TypeLabels;
-use molrs::store::{Block, Frame};
 use molrs_ext_example as ext;
 use ndarray::Array1;
 
@@ -519,7 +519,7 @@ fn pair_style_matches_lammps() {
 
     // The neighbour-driven door, over a table of every pair, each weighted
     // as MD weights it, prices what the pair-list door prices.
-    let topo = molrs::system::Topology::from_frame(&case.frame).unwrap();
+    let topo = molrs::core::Topology::from_frame(&case.frame).unwrap();
     let mut worst: f64 = 0.0;
     for x in &case.configs {
         let (e, f) = price(&case.ff, &reg, &case.frame, x);
@@ -670,7 +670,7 @@ fn mrec_round_trip() {
     let dir = std::env::temp_dir().join(format!("molrs-ext-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("everything.mrec");
-    let section = ff.to_section_in(&reg).unwrap();
+    let section = ForceFieldSection::from_forcefield_in(&ff, &reg).unwrap();
     write_forcefield_file(&path, &section, None).unwrap();
     let read = read_forcefield_file(&path).unwrap().unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
@@ -697,7 +697,7 @@ fn mrec_round_trip() {
     assert_eq!(expression("pair", "lj/smooth/linear"), None);
 
     // Read back into this crate's registry: the same bits.
-    let back = ForceField::from_section(&read).unwrap();
+    let back = read.to_forcefield().unwrap();
     let after = price(&back, &reg, &whole, &x);
     assert_eq!(before.0.to_bits(), after.0.to_bits(), "energy");
     assert!(
@@ -1179,7 +1179,7 @@ fn bond_angle_cross_term() {
     // The hand value: the middle atom at the origin, the arms 1.6 and 1.4
     // Å at 100°, (n1, n2, r1, r2, θ0) = (10, 8, 1.5, 1.45, 105°):
     // E = (10·0.1 − 8·0.05)·(−5°) = −π/60.
-    let theta = 100.0 * ext::D;
+    let theta = 100.0_f64.to_radians();
     let hand = [
         1.6,
         0.0,

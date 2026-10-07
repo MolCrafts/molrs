@@ -22,11 +22,11 @@
 //! assert!((e - 3.0).abs() < 1e-12);
 //! ```
 
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::keys::ENDPOINTS;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::keys::ENDPOINTS;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{DefError, ForceField, Params};

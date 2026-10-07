@@ -5,7 +5,7 @@ End to end (Ar-like LJ dimer)::
     import numpy as np
     from molrs import md
     from molrs.ff.potential import LJCut
-    from molrs.spatial import Box, NeighborList, VerletSkin
+    from molrs.core import Box, NeighborList, VerletSkin
 
     pos = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0]])
     rc, skin = 7.5, 1.0
@@ -23,9 +23,9 @@ feeds fresh pairs to the nonbond potential; Python never does pair
 bookkeeping.
 
 Units contract — the engine is **unit-agnostic**. Take constants from
-:class:`molrs.units.UnitPreset`::
+:class:`molrs.core.UnitPreset`::
 
-    kb = molrs.units.UnitPreset("real").boltzmann()
+    kb = molrs.core.UnitPreset("real").boltzmann()
     md.MaxwellBoltzmann(kb * 300.0, seed=0)
     md.MD().run(frame, n, dt=dt, kb=kb, thermo=100)
 
@@ -41,7 +41,7 @@ subclass :class:`molrs.ff.potential.Potential`::
 ForceField + Frame runs go through the :class:`MD` driver::
 
     md.MD().set_forcefield(ff).set_neighbors(cutoff=rc, skin=2.0).run(
-        frame, 1000, dt=1.0, kb=molrs.units.UnitPreset("real").boltzmann()
+        frame, 1000, dt=1.0, kb=molrs.core.UnitPreset("real").boltzmann()
     )
 
 Precision: ``MD(dtype=np.float64)`` is the only entry. ``np.float32`` / mixed

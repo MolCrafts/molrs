@@ -41,7 +41,7 @@
 //!   the Lennard-Jones style between the atom types `i` and `j` (σ, ε as for
 //!   `[ atomtypes ]`), which the kernels use in place of the comb-rule. The row
 //!   is stored with its two types in byte order and named
-//!   [`TypeName::pair`](molrs::store::type_labels::TypeName::pair) of them, so
+//!   [`TypeName::pair`](molrs::core::TypeName::pair) of them, so
 //!   `j i` restating `i j` is the same row and a different one is an error.
 //! - **`[ pairtypes ]`** `i j func V W`, func 1: the Lennard-Jones parameters
 //!   of the 1-4 pairs of atom types `i`, `j` (see [1-4 pairs](#1-4-pairs)).
@@ -212,14 +212,14 @@ use std::path::{Path, PathBuf};
 use ndarray::ArrayD;
 
 use super::ForceFieldReader;
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{ANGSTROM_PER_NM, GROMACS_COULOMB, KJ_PER_KCAL};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::potential::cmap::charmm::GRID;
-use crate::units::constants::{ANGSTROM_PER_NM, GROMACS_COULOMB, KJ_PER_KCAL};
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeName;
+use molrs::core::Frame;
+use molrs::core::TypeName;
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -1571,9 +1571,9 @@ fn define_bonded(ff: &mut ForceField, scan: &Scan) -> Result<HashMap<Table, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::constants::VACUUM_DIELECTRIC;
+    use crate::core::constants::VACUUM_DIELECTRIC;
     use crate::ff::forcefield::{AtomType, ForceField, PairType, Params, Style, StyleDefs};
-    use molrs::units::constants::COULOMB_REAL;
+    use molrs::core::constants::COULOMB_REAL;
 
     /// `nbfunc 1`, comb-rule 3 (OPLS-AA: geometric σ and ε), `gen-pairs yes`.
     const DEFAULTS: &str = "[ defaults ]\n1  3  yes  0.5  0.5\n";

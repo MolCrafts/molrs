@@ -14,17 +14,17 @@ use molrs::builder::{
     SitePlacer,
 };
 use molrs::builder::{CarbonTubeBuilder, CoarsenError, Coarsener, GrapheneBuilder};
-use molrs::system::LinkManyError;
-use molrs::system::{MolGraph, NodeId, node_from_u64};
+use molrs::core::LinkManyError;
+use molrs::core::{MolGraph, NodeId, node_from_u64};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyMapping;
 
-use crate::core::spatial::simbox::PyBox;
-use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::{
+use crate::core::frame::PyFrame;
+use crate::core::molgraph::{
     AnyGraph, GraphClass, PyAtomistic, PyCoarseGrain, center_error_message, link_error_message,
 };
+use crate::core::simbox::PyBox;
 
 /// Exact single-wall carbon nanotube builder.
 #[pyclass(module = "molrs.builder", name = "CarbonTubeBuilder", subclass)]
@@ -300,8 +300,8 @@ impl PyAxisOrienter {
 ///
 /// Parameters
 /// ----------
-/// library : Mapping[str, Graph]
-///     Name → template, copied at construction: any graph (``Graph``,
+/// library : Mapping[str, MolGraph]
+///     Name → template, copied at construction: any graph (``MolGraph``,
 ///     ``Atomistic``, ``CoarseGrain``), with ports where a site bonds. A
 ///     template without ports can only fill an unbonded site.
 /// placer : SitePlacer | GrowthPlacer
@@ -326,7 +326,7 @@ impl PyAxisOrienter {
 /// ...     {"PMA": pma, "Li": li},
 /// ...     molrs.builder.SitePlacer(),
 /// ...     molrs.builder.AxisOrienter(),
-/// ... ).assemble(sites, molrs.system.Atomistic)
+/// ... ).assemble(sites, molrs.core.Atomistic)
 #[pyclass(module = "molrs.builder", name = "Assembler", frozen)]
 pub struct PyAssembler {
     inner: Assembler,
@@ -360,7 +360,7 @@ impl PyAssembler {
             let template = AnyGraph::of(&value)
                 .map_err(|_| {
                     PyTypeError::new_err(format!(
-                        "library['{name}'] must be a graph (Graph, Atomistic, CoarseGrain)"
+                        "library['{name}'] must be a graph (MolGraph, Atomistic, CoarseGrain)"
                     ))
                 })?
                 .to_molgraph()?;
@@ -382,12 +382,12 @@ impl PyAssembler {
     ///     each bond joins two copies; its optional position (Å) and axis
     ///     are read by the placer and the orienter.
     /// cls : type, optional
-    ///     The graph class to build the world as — ``Graph`` (the default),
+    ///     The graph class to build the world as — ``MolGraph`` (the default),
     ///     ``Atomistic`` or ``CoarseGrain``.
     ///
     /// Returns
     /// -------
-    /// Graph
+    /// MolGraph
     ///     The world, an instance of ``cls``; ports without a site bond stay
     ///     on it. Empty when ``sites`` is empty.
     ///
@@ -499,8 +499,8 @@ enum CoarsenSource {
 /// Raises
 /// ------
 /// TypeError
-///     If ``source`` is neither a :class:`~molrs.system.CoarseGrain` nor an
-///     :class:`~molrs.system.Atomistic`.
+///     If ``source`` is neither a :class:`~molrs.core.CoarseGrain` nor an
+///     :class:`~molrs.core.Atomistic`.
 ///
 /// Examples
 /// --------
@@ -528,7 +528,7 @@ impl PyCoarsener {
         Ok(Self { source })
     }
 
-    /// A new :class:`~molrs.system.CoarseGrain` with one site per group.
+    /// A new :class:`~molrs.core.CoarseGrain` with one site per group.
     ///
     /// The GIL is released while mapping.
     ///

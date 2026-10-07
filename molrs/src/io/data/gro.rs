@@ -54,14 +54,14 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
 use molrs::op::types::{F, I, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
 
+use crate::core::constants::ANGSTROM_PER_NM;
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};
-use crate::units::constants::ANGSTROM_PER_NM;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -105,17 +105,17 @@ fn element_from_atom_name(name: &str, monatomic_residue: bool) -> Option<String>
 
     if monatomic_residue {
         let whole = title(&letters);
-        if molrs::system::Element::by_symbol(&whole).is_some() {
+        if molrs::core::Element::by_symbol(&whole).is_some() {
             return Some(whole);
         }
     }
     let one = title(&letters[..1]);
-    if molrs::system::Element::by_symbol(&one).is_some() {
+    if molrs::core::Element::by_symbol(&one).is_some() {
         return Some(one);
     }
     if letters.len() >= 2 {
         let two = title(&letters[..2]);
-        if molrs::system::Element::by_symbol(&two).is_some() {
+        if molrs::core::Element::by_symbol(&two).is_some() {
             return Some(two);
         }
     }
@@ -765,7 +765,7 @@ mod tests {
         // The mirror of the read-side inference: a frame that came from a
         // format without atom names still knows its elements, and "X" would
         // throw away the identity the next reader is expected to recover.
-        use molrs::store::Block;
+        use molrs::core::Block;
         use ndarray::Array1;
 
         let mut atoms = Block::new();

@@ -1,31 +1,31 @@
-//! Local environment (`molrs::compute::environment`): `BondOrder`.
+//! Local environment (`molrs::compute::environment`): `BondOrientationalOrder`.
 
 #![allow(clippy::type_complexity)]
 
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
-use molrs::compute::{BondOrder, Compute};
-use molrs::store::Frame as CoreFrame;
+use molrs::compute::{BondOrientationalOrder, Compute};
+use molrs::core::Frame as CoreFrame;
 use ndarray::Array1;
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 
 // ---------------------------------------------------------------------------
-// BondOrder
+// BondOrientationalOrder
 // ---------------------------------------------------------------------------
 
-#[pyclass(module = "molrs.compute", name = "BondOrder")]
-pub struct PyBondOrder {
-    inner: BondOrder,
+#[pyclass(module = "molrs.compute", name = "BondOrientationalOrder")]
+pub struct PyBondOrientationalOrder {
+    inner: BondOrientationalOrder,
 }
 
 #[pymethods]
-impl PyBondOrder {
+impl PyBondOrientationalOrder {
     #[new]
     fn new(n_theta: usize, n_phi: usize) -> PyResult<Self> {
         Ok(Self {
-            inner: BondOrder::new(n_theta, n_phi).map_err(py_value_err)?,
+            inner: BondOrientationalOrder::new(n_theta, n_phi).map_err(py_value_err)?,
         })
     }
 
@@ -66,6 +66,6 @@ impl PyBondOrder {
 
 /// Register this domain's classes and functions.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyBondOrder>()?;
+    m.add_class::<PyBondOrientationalOrder>()?;
     Ok(())
 }

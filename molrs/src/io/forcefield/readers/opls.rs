@@ -94,13 +94,13 @@ use ndarray::ArrayD;
 use roxmltree::Node;
 
 use super::ForceFieldReader;
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL, OPENMM_COULOMB};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::one_four::{ONE_FOUR, ONE_FOUR_EPSILON14, has_own_one_four};
 use crate::ff::forcefield::torsion::rb_polynomial;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
-use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL, OPENMM_COULOMB};
-use molrs::store::type_labels::TypeName;
+use molrs::core::TypeName;
 
 /// The energy expressions of a `<CustomTorsionForce>` read as `improper
 /// harmonic`, whitespace removed: OpenMM's CHARMM ports, and molrs's writer

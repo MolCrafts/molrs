@@ -13,6 +13,8 @@ imported for an annotation cannot leak into it as a second public spelling.
 from __future__ import annotations
 
 import inspect
+import re
+from pathlib import Path
 from types import ModuleType
 
 import molrs
@@ -22,6 +24,7 @@ SUBSYSTEMS = {
     "builder",
     "compute",
     "conformer",
+    "core",
     "ff",
     "io",
     "md",
@@ -29,11 +32,7 @@ SUBSYSTEMS = {
     "optimize",
     "perceive",
     "signal",
-    "spatial",
-    "store",
     "stream",
-    "system",
-    "units",
 }
 
 
@@ -124,6 +123,13 @@ def test_a_constant_is_a_value_not_a_second_door():
         "molrs.compute.density",
         "molrs.ff.potential.protocol",
         "molrs.io._trajectory",
+        # 0.16: one core; its vocabularies are core.keys / schema / constants.
+        "molrs.store",
+        "molrs.store.keys",
+        "molrs.store.schema",
+        "molrs.spatial",
+        "molrs.system",
+        "molrs.units",
     ],
 )
 def test_retired_modules_do_not_import(gone):
@@ -218,9 +224,26 @@ def test_retired_modules_do_not_import(gone):
         "molrs.io.LammpsLoopTime",
         "molrs.io.LammpsMemoryUsage",
         "molrs.io.LammpsNeighborStatistics",
+        # One core: no top-level store / spatial / system / units.
+        "molrs.store",
+        "molrs.spatial",
+        "molrs.system",
+        "molrs.units",
+        # The graph is MolGraph, as in Rust.
+        "molrs.core.Graph",
+        # Constants are core.constants'; ff.params holds tables only.
+        "molrs.core.AMBER_COULOMB",
+        "molrs.ff.params.AMBER_SCEE",
+        "molrs.ff.params.AMBER_SCNB",
+        # The record's version is io.mrec's, not its schema checker's.
+        "molrs.io.mrec.schema.MOLREC_VERSION",
+        "molrs.io.mrec.schema.RESERVED_META_KEYS",
+        # The force-field <-> section mapping is the section's.
+        "molrs.ff.forcefield.ForceField.to_section",
+        "molrs.ff.forcefield.ForceField.from_section",
         # Second doors on a class.
-        "molrs.store.Trajectory.from_frames",
-        "molrs.store.Trajectory.count_frames",
+        "molrs.core.Trajectory.from_frames",
+        "molrs.core.Trajectory.count_frames",
         "molrs.perceive.SmartsMatch.as_list",
         "molrs.perceive.SmartsMatch.as_dict",
     ],
@@ -297,6 +320,8 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
     assert not [n for n in molrs.ff.forcefield.__all__ if _factory_name(n)]
     assert set(molrs.stream.__all__) <= {"ControlCommand", "Publisher"}
     assert set(molrs.io.mrec.__all__) == {
+        "MOLREC_VERSION",
+        "RESERVED_META_KEYS",
         "ForceFieldSection",
         "MrecReader",
         "MrecWriter",
@@ -325,6 +350,23 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.smiles.CGSmilesIR",
         "molrs.io.log.LammpsLog",
         "molrs.io.lammps_bond_react.BondReactTemplate",
+        "molrs.io.mrec.MOLREC_VERSION",
+        "molrs.io.mrec.ForceFieldSection",
+        "molrs.core.Frame",
+        "molrs.core.Block",
+        "molrs.core.Box",
+        "molrs.core.MolGraph",
+        "molrs.core.Atomistic",
+        "molrs.core.Element",
+        "molrs.core.NeighborList",
+        "molrs.core.Quantity",
+        "molrs.core.keys.PORTS",
+        "molrs.core.keys.FRAG_ID",
+        "molrs.core.keys.LAMMPS_UNITS",
+        "molrs.core.schema.ColumnSpec",
+        "molrs.core.constants.AMBER_COULOMB",
+        "molrs.core.constants.AMBER_SCEE",
+        "molrs.core.constants.ANGSTROM3_PER_CM3",
     ],
 )
 def test_the_one_path_exists(path):
@@ -334,3 +376,17 @@ def test_the_one_path_exists(path):
 def test_find_matches_has_no_mapped_shortcut():
     """``SmartsMatch.mapping`` is the one door onto the atom-map projection."""
     assert "mapped" not in molrs.perceive.SmartsPattern.find_matches.__text_signature__
+
+
+def test_core_constants_mirror_rust_in_full():
+    """``molrs.core.constants`` is ``molrs::core::constants``, name for name."""
+    rust = Path(__file__).parents[2] / "molrs" / "src" / "core" / "constants.rs"
+    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.M))
+    assert names
+    assert set(molrs.core.constants.__all__) == names
+
+
+def test_the_version_is_the_package_version():
+    from importlib.metadata import version
+
+    assert molrs.__version__ == version("molcrafts-molrs")

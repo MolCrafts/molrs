@@ -17,7 +17,7 @@
 //! is therefore native-only, gated exactly like `molrs::stream::publisher`. A Pyodide
 //! build has the command type and no server.
 //!
-//! [`Frame`]: molrs::store::Frame
+//! [`Frame`]: molrs::core::Frame
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -206,7 +206,7 @@ mod server {
 
     use super::PyControlCommand;
     use super::message_format;
-    use crate::core::store::frame::PyFrame;
+    use crate::core::frame::PyFrame;
     use crate::error::{io_error_to_pyerr, py_value_err};
 
     /// WebSocket server that broadcasts frames to every connected viewer.

@@ -149,7 +149,7 @@ pub unsafe extern "C" fn molrs_init() {
 pub unsafe extern "C" fn molrs_version() -> *const c_char {
     static VERSION: std::sync::OnceLock<CString> = std::sync::OnceLock::new();
     VERSION
-        .get_or_init(|| CString::new(molrs::VERSION).expect("version has no NUL"))
+        .get_or_init(|| CString::new(env!("CARGO_PKG_VERSION")).expect("version has no NUL"))
         .as_ptr()
 }
 

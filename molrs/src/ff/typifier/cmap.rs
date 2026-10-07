@@ -5,11 +5,11 @@ use std::collections::{BTreeSet, HashMap};
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, StyleDefs};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
+use molrs::core::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
 use molrs::op::types::Idx;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
-use molrs::store::schema::block_names::{ATOMS, CMAPS, DIHEDRALS};
 
 /// Build `frame`'s `cmaps` block from its dihedrals and `ff`'s `cmap` rows,
 /// and return the number of crossterms.

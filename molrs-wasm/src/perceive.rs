@@ -16,9 +16,9 @@
 
 use wasm_bindgen::prelude::*;
 
+use molrs::core::Atomistic;
 use molrs::perceive::Perceive as RsPerceive;
 use molrs::perceive::hydrogens::remove_hydrogens;
-use molrs::system::Atomistic;
 
 use crate::core::frame::Frame;
 
@@ -188,8 +188,8 @@ fn frame_to_atomistic(frame: &Frame) -> Result<Atomistic, JsValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::core::{Block, keys};
     use molrs::op::types::Idx;
-    use molrs::store::{Block, keys};
     use ndarray::{Array1, ArrayD};
     use wasm_bindgen_test::*;
 
@@ -211,7 +211,7 @@ mod tests {
                 Array1::<Idx>::from_vec(vec![1, 2, 0, 3]).into_dyn(),
             )
             .unwrap();
-        let mut rs_frame = molrs::store::Frame::new();
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", atoms);
         rs_frame.insert("bonds", bonds);
         Frame::from_rs(rs_frame).unwrap()

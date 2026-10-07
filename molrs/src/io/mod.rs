@@ -7,11 +7,11 @@
 //!   OpenMM XML, molrs XML): read into and written from a
 //!   [`ForceField`](crate::ff::forcefield::ForceField) (feature `ff`)
 //! - [`mesh`] — surface meshes (STL); reads into a
-//!   [`TriMesh`](crate::spatial::TriMesh), not a [`Frame`](crate::store::Frame)
+//!   [`TriMesh`](crate::core::TriMesh), not a [`Frame`](crate::core::Frame)
 //! - [`mrec`] / [`csv`] — serialization of the store types themselves, as
 //!   opposed to [`data`] and [`trajectory`], which read molecular file
-//!   formats. [`mrec`] writes and reads a [`crate::store::Frame`] or
-//!   [`crate::store::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
+//!   formats. [`mrec`] writes and reads a [`crate::core::Frame`] or
+//!   [`crate::core::Trajectory`] as a `*.mrec` directory or packed `*.mrec.zip`
 //!   (Zarr V3 on disk; Cargo feature `zarr`, adapter crate-private)
 //! - [`read_frame`] / [`write_frame`] ([`FrameFormat`]), the one door that picks a
 //!   structure format from a file name (or format name) and hands off to it

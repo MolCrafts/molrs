@@ -3,31 +3,30 @@
 //!
 //! The section is what a `*.mrec` stores — the force-field document and one
 //! `Block` per style table — kept whole, units unconverted, unknown keys and
-//! tables included. `ForceField.to_section` / `ForceField.from_section` map it
-//! onto a compilable force field (`molrs::ff::forcefield::section`).
+//! tables included. `ForceFieldSection.from_forcefield` /
+//! `ForceFieldSection.to_forcefield` map it onto a compilable force field
+//! (`molrs::io::mrec::ForceFieldSection`).
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyMapping};
 
-use molrs::ff::forcefield::ForceField;
-use molrs::store::ForceFieldSection;
-use molrs::store::style_block_name;
+use molrs::io::mrec::ForceFieldSection;
+use molrs::io::mrec::style_block_name;
 
-use crate::core::store::block::PyBlock;
-use crate::core::store::frame::{json_map_to_plain_dict, meta_document_arg};
+use crate::core::block::PyBlock;
+use crate::core::frame::{json_map_to_plain_dict, meta_document_arg};
 use crate::error::{molrs_error_to_pyerr, py_value_err};
 use crate::ff::forcefield::PyForceField;
 
 /// The ``forcefield`` section of a ``*.mrec`` record: the force-field
-/// document and one :class:`~molrs.store.Block` per style table (molrec
+/// document and one :class:`~molrs.core.Block` per style table (molrec
 /// ``docs/spec/forcefield.md``).
 ///
 /// It holds what a store holds, whole: the document keeps every key, the
 /// tables every block, and no number is converted to another unit.
-/// :meth:`molrs.ff.forcefield.ForceField.to_section` builds one from a force field;
-/// :meth:`molrs.ff.forcefield.ForceField.from_section` turns one into a force field
-/// molrs can compile. Nothing is checked on construction; :meth:`validate`
+/// :meth:`from_forcefield` builds one from a force field;
+/// :meth:`to_forcefield` turns one into a force field molrs can compile. Nothing is checked on construction; :meth:`validate`
 /// checks the chapter's rules, and every writer runs it.
 ///
 /// Parameters
@@ -36,7 +35,7 @@ use crate::ff::forcefield::PyForceField;
 ///     The document (``name``, ``units``, ``styles``, …) — a
 ///     ``dict`` or any mapping of JSON values.
 /// tables
-///     Block name → :class:`~molrs.store.Block` (the style tables, at
+///     Block name → :class:`~molrs.core.Block` (the style tables, at
 ///     :meth:`block_name` of their style, and any other block).
 #[pyclass(
     module = "molrs.io.mrec",
@@ -51,13 +50,13 @@ pub struct PyForceFieldSection {
 impl PyForceFieldSection {
     /// The section a ``forcefield=`` argument names: a
     /// :class:`ForceFieldSection` as given, or a ``ForceField``'s
-    /// :meth:`~molrs.ff.forcefield.ForceField.to_section`.
+    /// :meth:`ForceFieldSection.from_forcefield`.
     pub(crate) fn from_arg(value: &Bound<'_, PyAny>) -> PyResult<ForceFieldSection> {
         if let Ok(section) = value.cast::<PyForceFieldSection>() {
             return Ok(section.borrow().inner.clone());
         }
         if let Ok(ff) = value.cast::<PyForceField>() {
-            return ff.borrow().inner.to_section().map_err(py_value_err);
+            return ForceFieldSection::from_forcefield(&ff.borrow().inner).map_err(py_value_err);
         }
         Err(PyTypeError::new_err(format!(
             "forcefield must be a ForceField or a ForceFieldSection, got {}",
@@ -90,7 +89,7 @@ impl PyForceFieldSection {
         json_map_to_plain_dict(py, &self.inner.document)
     }
 
-    /// Block name → :class:`~molrs.store.Block`, in stored order. Each block is a
+    /// Block name → :class:`~molrs.core.Block`, in stored order. Each block is a
     /// copy: editing it does not change the section.
     #[getter]
     fn tables<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
@@ -136,18 +135,7 @@ impl PyForceFieldSection {
         self.inner.validate().map_err(molrs_error_to_pyerr)
     }
 
-    fn __repr__(&self) -> String {
-        format!(
-            "ForceFieldSection(name={:?}, tables={})",
-            self.inner.name().unwrap_or(""),
-            self.inner.tables.len()
-        )
-    }
-}
-
-#[pymethods]
-impl PyForceField {
-    /// This force field as a record's ``forcefield`` section.
+    /// A force field as a record's ``forcefield`` section.
     ///
     /// The units are the declared (or default ``real``) preset, stated
     /// beside its quantities; each style's types become its table's rows.
@@ -158,13 +146,14 @@ impl PyForceField {
     ///     When the force field has no section form (units that
     ///     are no preset, a param that is a number in one type and a
     ///     string in another, …).
-    fn to_section(&self) -> PyResult<PyForceFieldSection> {
-        let inner = self.inner.to_section().map_err(py_value_err)?;
-        Ok(PyForceFieldSection { inner })
+    #[staticmethod]
+    fn from_forcefield(forcefield: PyRef<'_, PyForceField>) -> PyResult<Self> {
+        let inner = ForceFieldSection::from_forcefield(&forcefield.inner).map_err(py_value_err)?;
+        Ok(Self { inner })
     }
 
-    /// The force field a ``forcefield`` section describes. Its units become
-    /// the force field's declared units; nothing is converted.
+    /// The force field this section describes. Its units become the force
+    /// field's declared units; nothing is converted.
     ///
     /// Raises
     /// ------
@@ -172,9 +161,16 @@ impl PyForceField {
     ///     When the section is invalid, or molrs cannot hold it:
     ///     a category outside atom/bond/angle/dihedral/improper/pair/cmap,
     ///     units that are no preset, a smirks-keyed style.
-    #[staticmethod]
-    fn from_section(section: PyRef<'_, PyForceFieldSection>) -> PyResult<PyForceField> {
-        let inner = ForceField::from_section(&section.inner).map_err(py_value_err)?;
+    fn to_forcefield(&self) -> PyResult<PyForceField> {
+        let inner = self.inner.to_forcefield().map_err(py_value_err)?;
         Ok(PyForceField { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ForceFieldSection(name={:?}, tables={})",
+            self.inner.name().unwrap_or(""),
+            self.inner.tables.len()
+        )
     }
 }

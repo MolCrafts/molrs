@@ -14,7 +14,7 @@
 //! SMARTS *matching* ([`crate::perceive::smarts`]) compiles its queries from
 //! this AST: there is one SMARTS parser, the one in this module.
 
-use molrs::system::{BondNumber, BondType};
+use molrs::core::{BondNumber, BondOrder};
 
 // ---------------------------------------------------------------------------
 // Span
@@ -42,7 +42,7 @@ impl Span {
 ///
 /// This is a pure syntax tree — it captures the notation faithfully without
 /// committing to atomistic or coarse-grained semantics. Convert to
-/// [`Atomistic`](crate::system::Atomistic) for domain use; a
+/// [`Atomistic`](crate::core::Atomistic) for domain use; a
 /// coarse-grained bead graph comes from `CGsmiles` instead, via
 /// [`CGSmilesIR::to_coarsegrain`](crate::io::smiles::CGSmilesIR::to_coarsegrain).
 ///
@@ -239,7 +239,7 @@ pub enum BondKind {
 
 impl BondKind {
     /// The bond's **chemical class**, as
-    /// [`Atomistic::set_bond_class`](crate::system::Atomistic::set_bond_class)
+    /// [`Atomistic::set_bond_class`](crate::core::Atomistic::set_bond_class)
     /// records it.
     ///
     /// `Aromatic` is a class of its own rather than a number: the notation
@@ -251,24 +251,24 @@ impl BondKind {
     ///
     /// # Approximation
     ///
-    /// [`BondKind::Quadruple`] maps to [`BondType::Double`], because
-    /// [`BondType`](crate::system::BondType) has no quadruple variant
-    /// (`core/system/bond.rs`). The number is exact —
+    /// [`BondKind::Quadruple`] maps to [`BondOrder::Double`], because
+    /// [`BondOrder`](crate::core::BondOrder) has no quadruple variant
+    /// (`core/bond_order.rs`). The number is exact —
     /// [`BondKind::bond_number`] answers [`BondNumber::Quadruple`] — so no
-    /// count is lost, only the class is coarsened. Widening `BondType` is a
+    /// count is lost, only the class is coarsened. Widening `BondOrder` is a
     /// change to the core bond vocabulary and is not made here.
     ///
     /// Reference: Daylight Theory Manual, *SMILES*, § 3 (bond symbols).
-    pub(crate) fn bond_type(self) -> BondType {
+    pub(crate) fn bond_type(self) -> BondOrder {
         match self {
-            BondKind::Single | BondKind::Up | BondKind::Down => BondType::Single,
-            BondKind::Double => BondType::Double,
-            BondKind::Triple => BondType::Triple,
+            BondKind::Single | BondKind::Up | BondKind::Down => BondOrder::Single,
+            BondKind::Double => BondOrder::Double,
+            BondKind::Triple => BondOrder::Triple,
             // A quadruple bond has no aromatic character; it is a plain class whose
             // number the notation states outright.
-            BondKind::Quadruple => BondType::Double,
-            BondKind::Aromatic => BondType::Aromatic,
-            BondKind::Any | BondKind::Ring => BondType::Single,
+            BondKind::Quadruple => BondOrder::Double,
+            BondKind::Aromatic => BondOrder::Aromatic,
+            BondKind::Any | BondKind::Ring => BondOrder::Single,
         }
     }
 
@@ -390,7 +390,7 @@ impl DescriptorKind {
     /// The notation glyph this operator is written as: `$`, `<`, `>` or `!`.
     ///
     /// This is the same string
-    /// [`core::PortKind::as_str`](crate::system::PortKind::as_str)
+    /// [`core::PortKind::as_str`](crate::core::PortKind::as_str)
     /// returns for the port role the descriptor is stored as, so a user reads
     /// and writes one spelling per role whether the value came from the
     /// notation side or from the stored side. The two enums stay distinct by
@@ -494,7 +494,7 @@ mod tests {
     // Every expectation below is hand-written from the notation itself: the
     // Daylight Theory Manual § SMILES (lowercase symbols are the *written*
     // aromatic declaration; a SMARTS primitive is a query, not a declaration)
-    // and the `BondKind` → `(BondType, BondNumber)` table already in use at
+    // and the `BondKind` → `(BondOrder, BondNumber)` table already in use at
     // `io/smiles/smiles/to_atomistic.rs`. No external program produced any
     // value here.
 
@@ -599,15 +599,15 @@ mod tests {
     /// class rather than a number.
     #[test]
     fn test_bond_type_maps_every_kind_to_its_class() {
-        assert_eq!(BondKind::Single.bond_type(), BondType::Single);
-        assert_eq!(BondKind::Double.bond_type(), BondType::Double);
-        assert_eq!(BondKind::Triple.bond_type(), BondType::Triple);
-        assert_eq!(BondKind::Quadruple.bond_type(), BondType::Double);
-        assert_eq!(BondKind::Aromatic.bond_type(), BondType::Aromatic);
-        assert_eq!(BondKind::Up.bond_type(), BondType::Single);
-        assert_eq!(BondKind::Down.bond_type(), BondType::Single);
-        assert_eq!(BondKind::Any.bond_type(), BondType::Single);
-        assert_eq!(BondKind::Ring.bond_type(), BondType::Single);
+        assert_eq!(BondKind::Single.bond_type(), BondOrder::Single);
+        assert_eq!(BondKind::Double.bond_type(), BondOrder::Double);
+        assert_eq!(BondKind::Triple.bond_type(), BondOrder::Triple);
+        assert_eq!(BondKind::Quadruple.bond_type(), BondOrder::Double);
+        assert_eq!(BondKind::Aromatic.bond_type(), BondOrder::Aromatic);
+        assert_eq!(BondKind::Up.bond_type(), BondOrder::Single);
+        assert_eq!(BondKind::Down.bond_type(), BondOrder::Single);
+        assert_eq!(BondKind::Any.bond_type(), BondOrder::Single);
+        assert_eq!(BondKind::Ring.bond_type(), BondOrder::Single);
     }
 
     /// The whole number table, every variant pinned.
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(BondKind::Ring.bond_number(), BondNumber::Single);
     }
 
-    /// `BondType` has no quadruple variant, so the class is the documented
+    /// `BondOrder` has no quadruple variant, so the class is the documented
     /// approximation `Double` while the number states the quadruple outright.
     /// Pinned as a pair so the approximation cannot be widened silently.
     #[test]
@@ -634,7 +634,7 @@ mod tests {
                 BondKind::Quadruple.bond_type(),
                 BondKind::Quadruple.bond_number()
             ),
-            (BondType::Double, BondNumber::Quadruple)
+            (BondOrder::Double, BondNumber::Quadruple)
         );
     }
 
@@ -647,7 +647,7 @@ mod tests {
                 BondKind::Aromatic.bond_type(),
                 BondKind::Aromatic.bond_number()
             ),
-            (BondType::Aromatic, BondNumber::Unknown)
+            (BondOrder::Aromatic, BondNumber::Unknown)
         );
     }
 }

@@ -17,14 +17,14 @@ import numpy as np
 import pytest
 
 
-def _acetanilide() -> molrs.system.Atomistic:
+def _acetanilide() -> molrs.core.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
     heavy = molrs.io.smiles.SmilesIR("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 
 
-def _typed(parameter_set: str, mol: molrs.system.Atomistic | None = None):
+def _typed(parameter_set: str, mol: molrs.core.Atomistic | None = None):
     """``(typifier, typed Atomistic)``: ATD types, then the GAFF table."""
     mol = _acetanilide() if mol is None else mol
     labelled = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set).typify(mol)
@@ -32,8 +32,8 @@ def _typed(parameter_set: str, mol: molrs.system.Atomistic | None = None):
     return gaff, gaff.typify(labelled)
 
 
-def _ethylene() -> molrs.system.Atomistic:
-    mol = molrs.system.Atomistic()
+def _ethylene() -> molrs.core.Atomistic:
+    mol = molrs.core.Atomistic()
     c1 = mol.def_atom(element="C", type="c2")
     c2 = mol.def_atom(element="C", type="c2")
     mol.def_bond(c1, c2)
@@ -119,7 +119,7 @@ def test_a_native_gaff_subclass_cannot_override_match() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _column(frame: molrs.store.Frame, block: str, key: str) -> np.ndarray:
+def _column(frame: molrs.core.Frame, block: str, key: str) -> np.ndarray:
     return np.asarray(frame[block][key])
 
 
@@ -158,11 +158,11 @@ def test_a_parameter_a_rows_type_lacks_is_a_null_cell() -> None:
     ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
     ff.def_style("bond", "morse").def_type("A-A", a, a, d0=80.0, alpha=2.0, r0=1.5)
 
-    frame = molrs.store.Frame()
-    block = molrs.store.Block()
+    frame = molrs.core.Frame()
+    block = molrs.core.Block()
     block.insert("type", ["A", "A", "B"])
     frame["atoms"] = block
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", np.array([0, 1], dtype=np.uint64))
     bonds.insert("atomj", np.array([1, 2], dtype=np.uint64))
     bonds.insert("type", ["A-A", "A-B"])
@@ -187,11 +187,11 @@ def test_per_atom_lennard_jones_is_the_self_row() -> None:
     ff.def_style("pair", "coul/cut", {"coulomb": 332.0})
     ff.def_style("bond", "harmonic").def_type("A-B", a, b, k=300.0, r0=1.1)
 
-    frame = molrs.store.Frame()
-    block = molrs.store.Block()
+    frame = molrs.core.Frame()
+    block = molrs.core.Block()
     block.insert("type", ["A", "B"])
     frame["atoms"] = block
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", np.array([0], dtype=np.uint64))
     bonds.insert("atomj", np.array([1], dtype=np.uint64))
     bonds.insert("type", ["A-B"])
@@ -218,10 +218,10 @@ def test_a_frame_of_another_field_is_refused() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.system.Atomistic:
+def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.core.Atomistic:
     """A molecule as a mol2 file lists it: atoms by element, bonds in file
     order, single unless ``orders`` says otherwise."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     atoms = [mol.def_atom(element=e) for e in elements]
     for k, (i, j) in enumerate(bonds):
         order = 1 if orders is None else orders[k]
@@ -237,7 +237,7 @@ _AZULENE_BONDS = [
 ] + [(c, 10 + h) for h, c in enumerate([0, 1, 2, 4, 5, 6, 8, 9])]
 
 
-def _types(mol: molrs.system.Atomistic, parameter_set: str, **kw) -> list[str]:
+def _types(mol: molrs.core.Atomistic, parameter_set: str, **kw) -> list[str]:
     typed = molrs.ff.typifier.AtdTypifier(parameter_set=parameter_set, **kw).typify(mol)
     return [str(t) for t in typed.to_frame()["atoms"]["type"]]
 

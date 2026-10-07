@@ -1,7 +1,7 @@
 //! Raman polarizability iso/aniso ACF raw compute — the Raman-spectrum raw
 //! input.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;

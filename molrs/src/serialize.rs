@@ -17,11 +17,9 @@
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
 //!   little-endian bytes for numeric dtypes, or a string list for `string`.
 //! - `SimBox` -> `{ vectors: [[f64;3];3], origin, boundary, cell_defined }`
-//! - `ForceFieldSection` -> `{ document: { … }, tables: { <name>: Block } }` —
-//!   molrec's `forcefield` section as one value: the document verbatim, in
-//!   its key order, and every table. This is the force field's one
-//!   serialization (`ForceField::to_section` / `from_section` map it); the
-//!   C API's `molrs_ff_to_json` / `molrs_ff_from_json` are its JSON form.
+//!
+//! The record's force-field section (`io::mrec::ForceFieldSection`) carries
+//! its own impls beside its type.
 //!
 //! The small private `*Repr` structs and visitors below are serde
 //! deserialization scaffolding (derive needs owned fields); they are not part
@@ -34,10 +32,10 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::spatial::SimBox;
-use crate::store::Frame;
-use crate::store::{Block, Column, DType, ForceFieldSection};
-use crate::store::{MetaMap, MetaValue};
+use crate::core::Frame;
+use crate::core::SimBox;
+use crate::core::{Block, Column, DType};
+use crate::core::{MetaMap, MetaValue};
 
 // ===== MetaValue ===========================================================
 
@@ -531,41 +529,12 @@ impl<'de> Deserialize<'de> for Frame {
     }
 }
 
-// ===== ForceFieldSection ====================================================
-
-impl Serialize for ForceFieldSection {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut st = s.serialize_struct("ForceFieldSection", 2)?;
-        st.serialize_field("document", &self.document)?;
-        st.serialize_field("tables", &self.tables)?;
-        st.end()
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ForceFieldSectionRepr {
-    document: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    tables: IndexMap<String, Block>,
-}
-
-impl<'de> Deserialize<'de> for ForceFieldSection {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<ForceFieldSection, D::Error> {
-        let r = ForceFieldSectionRepr::deserialize(d)?;
-        Ok(ForceFieldSection {
-            document: r.document,
-            tables: r.tables,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::spatial::SimBox;
-    use crate::store::Block;
-    use crate::store::Frame;
-    use crate::store::MetaValue;
+    use crate::core::Block;
+    use crate::core::Frame;
+    use crate::core::MetaValue;
+    use crate::core::SimBox;
     use ndarray::{Array1, array};
 
     fn atoms() -> Block {
@@ -656,7 +625,7 @@ mod tests {
     #[test]
     fn a_column_with_a_bad_dtype_tag_is_refused() {
         let json = r#"{"dtype":"quaternion","shape":[1],"data":[0]}"#;
-        assert!(serde_json::from_str::<crate::store::Column>(json).is_err());
+        assert!(serde_json::from_str::<crate::core::Column>(json).is_err());
     }
 
     /// Column order is the file's order; a round trip must not sort it.
@@ -699,29 +668,6 @@ mod tests {
         assert_eq!(
             back.meta.keys().map(String::as_str).collect::<Vec<_>>(),
             vec!["z", "a", "m"]
-        );
-    }
-
-    #[test]
-    fn a_forcefield_section_keeps_its_document_order_and_tables() {
-        let mut section = crate::store::ForceFieldSection::default();
-        section.document.insert("name".into(), "ff".into());
-        section
-            .document
-            .insert("units".into(), serde_json::json!({"preset": "real"}));
-        section.tables.insert("pair_lj_cut".into(), atoms());
-
-        let json = serde_json::to_string(&section).unwrap();
-        let back: crate::store::ForceFieldSection = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.document, section.document);
-        assert_eq!(
-            back.document.keys().collect::<Vec<_>>(),
-            vec!["name", "units"]
-        );
-        assert_eq!(back.tables["pair_lj_cut"].nrows(), Some(3));
-        assert!(
-            serde_json::from_str::<crate::store::ForceFieldSection>(r#"{"document": {}, "x": 1}"#)
-                .is_err()
         );
     }
 }

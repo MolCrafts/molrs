@@ -11,9 +11,9 @@
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
 //! through molrs's own GROMACS reader, while the OPLS-AA SMARTS typing rules in
 //! [`OPLSAA_TYPING`] are molrs-owned and hand-maintained — GROMACS has none,
-//! and the generator never touches them. [`amber`] is a
-//! hand-maintained sibling (like [`mmff`] / the CL&Pol tables / [`uff`]):
-//! the AMBER 1-4 divisors, which are not `gaff.dat` rows. The committed `.rs` is the
+//! and the generator never touches them. The AMBER 1-4 divisors, which are
+//! not `gaff.dat` rows, are engine constants (`core::constants::AMBER_SCEE`,
+//! `AMBER_SCNB`). The committed `.rs` is the
 //! single in-repo source of truth; a malformed table is therefore a **compile**
 //! error, not a runtime one, and the tables can be grepped, diffed and stepped
 //! through like any other code.
@@ -48,7 +48,6 @@
 //! [`ForceField`](crate::ff::forcefield::ForceField) from it still converts
 //! (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::GaffTypifier`].
 
-pub mod amber;
 pub mod atomtype_abcg2;
 pub mod atomtype_amber;
 pub mod atomtype_bcc;

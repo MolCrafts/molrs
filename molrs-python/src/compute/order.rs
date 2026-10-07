@@ -9,8 +9,8 @@ use molrs::compute::{
     AtomGroups, Compute, Hexatic, LegendreReorientation, LegendreReorientationResult, Nematic,
     SolidLiquid, Steinhardt,
 };
+use molrs::core::Frame as CoreFrame;
 use molrs::op::types::F;
-use molrs::store::Frame as CoreFrame;
 use ndarray::{Array1, Array2};
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;

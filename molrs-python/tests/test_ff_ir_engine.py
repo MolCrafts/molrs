@@ -32,16 +32,16 @@ def registered() -> Iterator[list[tuple[str, str]]]:
             pass
 
 
-def chain(style: str) -> tuple[molrs.ff.forcefield.ForceField, molrs.store.Frame]:
-    atoms = molrs.store.Block()
+def chain(style: str) -> tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame]:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, CHAIN[:, d].copy())
     atoms.insert("type", ["B"] * len(CHAIN))
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", np.array([0, 1], dtype=np.uint32))
     bonds.insert("atomj", np.array([1, 2], dtype=np.uint32))
     bonds.insert("type", ["B-B", "B-B"])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     ff = molrs.ff.forcefield.ForceField("beads", units="real")
@@ -52,7 +52,7 @@ def chain(style: str) -> tuple[molrs.ff.forcefield.ForceField, molrs.store.Frame
     return ff, frame
 
 
-def energy(ff: molrs.ff.forcefield.ForceField, frame: molrs.store.Frame) -> float:
+def energy(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame) -> float:
     return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)
 
 

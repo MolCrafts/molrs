@@ -12,11 +12,11 @@ use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, rea
 use crate::ff::potential::need::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
 
 /// Below this squared separation a pair is skipped: its direction is
 /// undefined.

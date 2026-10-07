@@ -18,8 +18,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use molrs::error::MolRsError;
-use molrs::store::Frame;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
 
 use crate::io::data::cube::read_cube_from_reader;
 

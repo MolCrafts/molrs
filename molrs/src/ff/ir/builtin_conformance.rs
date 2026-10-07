@@ -38,12 +38,12 @@ use crate::io::forcefield::writers::ForceFieldWriter;
 use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
+use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeLabels;
 
 /// Configurations × parameter sets per style.
 const CONFIGS: usize = 64;

@@ -83,7 +83,7 @@ impl IRFlux {
         let dt = self.dt;
         let resolution = self.resolution;
         let dipoles = array2(dipoles, n_frames, 3, "IRFlux dipoles")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::IRFlux;
         let r = calc
             .compute(&frames, (&dipoles, dt, resolution))
@@ -124,7 +124,7 @@ impl RamanTensor {
             6,
             "RamanTensor polarizabilities",
         )?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::RamanTensor;
         let r = calc
             .compute(&frames, (&p, dt, resolution))
@@ -160,7 +160,7 @@ impl VcdCrossFlux {
         let resolution = self.resolution;
         let e = array2(electric, n_frames, 3, "VcdCrossFlux electric")?;
         let m = array2(magnetic, n_frames, 3, "VcdCrossFlux magnetic")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::VcdCrossFlux;
         let r = calc
             .compute(&frames, (&e, &m, dt, resolution))
@@ -202,7 +202,7 @@ impl RoaCrossTensor {
         }
         let a = array2(electric_pol, n_frames, 6, "RoaCrossTensor electricPol")?;
         let g = array2(g_tensor, n_frames, 6, "RoaCrossTensor gTensor")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::RoaCrossTensor;
         let r = calc
             .compute(&frames, (&a, &g, dt, resolution))

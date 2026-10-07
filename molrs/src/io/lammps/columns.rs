@@ -6,9 +6,9 @@
 //! <https://docs.lammps.org/compute_property_atom.html>.
 
 use crate::io::invalid_data;
+use molrs::core::Block;
+use molrs::core::keys;
 use molrs::op::types::{F, I, Idx};
-use molrs::store::Block;
-use molrs::store::keys;
 use ndarray::{Array1, ArrayD, IxDyn};
 
 pub(crate) fn arr1_f(v: Vec<F>, n: usize) -> std::io::Result<ArrayD<F>> {

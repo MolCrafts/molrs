@@ -1,11 +1,11 @@
 use crate::io::reader::{FrameIndex, FrameReader, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::FrameAccess;
+use molrs::core::MetaValue;
+use molrs::core::SimBox;
 use molrs::op::types::{F, I, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::FrameAccess;
-use molrs::store::MetaValue;
 use ndarray::{Array1, Array2, ArrayD};
 use std::collections::HashMap;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -301,7 +301,7 @@ const EXTXYZ_SPECIES: &str = "species";
 
 /// The extxyz property a frame column is written as.
 fn extxyz_property_name(column: &str) -> &str {
-    if column == molrs::store::keys::RES_NAME {
+    if column == molrs::core::keys::RES_NAME {
         EXTXYZ_RESNAME
     } else {
         column
@@ -328,7 +328,7 @@ struct XyzColumn {
 /// - any other `name:T:m` with `m > 1` is **one** `(N, m)` column `name` — the
 ///   shape the writer writes back as `name:T:m`.
 fn property_columns(props: &[PropertySpec]) -> Vec<XyzColumn> {
-    use molrs::store::schema::consts;
+    use molrs::core::schema::consts;
     let declares_element = props.iter().any(|p| p.name == consts::ELEMENT);
     let mut cols = Vec::new();
     for p in props {
@@ -482,8 +482,8 @@ fn build_block_from_props(
                 // canonical key's dtype is fixed by the vocabulary — `id` is
                 // unsigned there, and an Int column under that name would be
                 // invisible to every consumer reading it as unsigned.
-                if molrs::store::schema::column(&name).map(|c| c.dtype)
-                    == Some(molrs::store::DType::UInt)
+                if molrs::core::schema::column(&name).map(|c| c.dtype)
+                    == Some(molrs::core::DType::UInt)
                 {
                     let unsigned: Vec<molrs::op::types::Idx> = v
                         .iter()
@@ -1588,7 +1588,7 @@ mod tests {
     /// A frame shaped like what the GRO reader produces: no `element`, an `id`
     /// column, and extra string/int columns that sort *before* `id`.
     fn gro_shaped_frame() -> Frame {
-        use molrs::store::Block;
+        use molrs::core::Block;
         use ndarray::Array1;
 
         let floats = |v: [f64; 3]| Array1::from_vec(v.to_vec()).into_dyn();
@@ -1922,10 +1922,10 @@ pub fn write_xyz_traj<W: Write, FA: FrameAccess>(
 /// Write a single frame to the writer in Extended XYZ format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](molrs::store::FrameView). Existing callers passing `&Frame`
+/// [`FrameView`](molrs::core::FrameView). Existing callers passing `&Frame`
 /// continue to work without changes.
 pub fn write_xyz_frame<W: Write>(writer: &mut W, frame: &impl FrameAccess) -> std::io::Result<()> {
-    use molrs::store::DType;
+    use molrs::core::DType;
 
     // 1. Build per-atom data from the atoms block via visit_block.
     //    We collect everything we need into owned data structures inside the closure,

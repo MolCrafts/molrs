@@ -42,9 +42,9 @@ use crate::compute::ComputeResult;
 use std::collections::HashMap;
 
 use crate::op::superpose::{DEFAULT_GAP_TOL, SuperposeError, superpose};
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -120,10 +120,7 @@ fn build_all_bond_vectors(n: usize, nlist: &Neighbors) -> Result<Vec<Vec<[F; 3]>
     let i_idx = nlist.query_point_indices();
     let j_idx = nlist.point_indices();
     let disp = require_disp(nlist)?;
-    let symmetric = matches!(
-        nlist.mode(),
-        molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-    );
+    let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
     for k in 0..nlist.n_pairs() {
         let i = i_idx[k] as usize;
         let v = [disp[[k, 0]], disp[[k, 1]], disp[[k, 2]]];
@@ -401,9 +398,9 @@ impl ComputeResult for MatchEnvResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

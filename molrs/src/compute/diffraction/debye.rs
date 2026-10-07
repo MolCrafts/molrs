@@ -27,8 +27,8 @@
 //!   (the formula assumes an open system).
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -228,9 +228,9 @@ impl ComputeResult for StaticStructureFactorDebyeResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]]) -> Frame {

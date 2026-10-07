@@ -25,8 +25,8 @@
 //! - Brehm & Kirchner, *J. Chem. Inf. Model.* **2011**, 51, 2007–2023 (reference implementation).
 //! - Brehm et al., *J. Chem. Phys.* **2020**, 152, 164105.
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -35,7 +35,7 @@ use crate::compute::ComputeResult;
 
 use super::observable::{AtomGroups, Observable};
 use super::{AngleObservable, DihedralObservable, DistanceObservable, DistributionResult};
-use crate::units::constants::BOLTZMANN_REAL;
+use crate::core::constants::BOLTZMANN_REAL;
 
 /// One axis of a [`CombinedDistribution`]: bin count + range + optional
 /// solid-angle weighting (mirrors link-01's sin θ ADF correction).

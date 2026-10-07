@@ -12,7 +12,7 @@
 //! tetrangle is intentionally omitted (it is not part of the reference
 //! matrix this port is validated against).
 
-use molrs::error::MolRsError;
+use molrs::core::MolRsError;
 
 use super::matrix::BoundsMatrix;
 

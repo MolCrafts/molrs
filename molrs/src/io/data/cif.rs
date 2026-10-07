@@ -30,11 +30,11 @@ use std::path::Path;
 
 use ndarray::{Array1, Array2, IxDyn, array};
 
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::MetaMap;
+use molrs::core::SimBox;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::MetaMap;
 
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::writer::{FrameWriter, Writer};

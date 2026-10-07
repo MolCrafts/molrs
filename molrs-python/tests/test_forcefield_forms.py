@@ -41,16 +41,16 @@ def _periodic(phase: float) -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def _frame() -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _frame() -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["CT"] * 4)
-    dihedrals = molrs.store.Block()
+    dihedrals = molrs.core.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2), ("atoml", 3)):
         dihedrals.insert(key, np.array([atom], dtype=np.uint32))
     dihedrals.insert("type", ["CT-CT-CT-CT"])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["dihedrals"] = dihedrals
     return frame

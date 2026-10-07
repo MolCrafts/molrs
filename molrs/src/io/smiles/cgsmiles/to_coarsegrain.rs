@@ -12,8 +12,8 @@
 use crate::io::smiles::CGSmilesIR;
 use crate::io::smiles::SmilesError;
 use crate::io::smiles::cgsmiles::templates::cg_build;
-use molrs::system::CoarseGrain;
-use molrs::system::NodeId;
+use molrs::core::CoarseGrain;
+use molrs::core::NodeId;
 
 impl CGSmilesIR {
     /// Read the coarsest level, `levels[0]`, as a [`CoarseGrain`].
@@ -31,7 +31,7 @@ impl CGSmilesIR {
     ///
     /// **No geometry.** A line notation states topology, so no bead carries
     /// `x` / `y` / `z`, `mass` or `charge`, and the result has no bead
-    /// membership. [`CoarseGrain::center`] therefore refuses it; a pattern
+    /// membership. [`center`](crate::op::geometry::center) therefore refuses it; a pattern
     /// graph exists to be matched, not centred.
     ///
     /// # What is dropped
@@ -121,9 +121,9 @@ impl CGSmilesIR {
 #[cfg(test)]
 mod tests {
     use crate::io::smiles::{CGSmilesIR, SmilesErrorKind, parse_cgsmiles};
-    use molrs::store::keys;
-    use molrs::system::CoarseGrain;
-    use molrs::system::NodeId;
+    use molrs::core::CoarseGrain;
+    use molrs::core::NodeId;
+    use molrs::core::keys;
 
     // Every expected value below is hand-derived from the notation of the
     // input string (spec `backmap-primitives-06-cgsmiles`, § Testing

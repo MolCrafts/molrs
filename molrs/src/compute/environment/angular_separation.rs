@@ -26,9 +26,9 @@
 //!   neighbor pair, driven by a `Neighbors`.
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use crate::compute::Compute;
@@ -242,7 +242,7 @@ impl ComputeResult for AngularSeparationNeighborResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
 
     const TOL: F = 1e-10;
 

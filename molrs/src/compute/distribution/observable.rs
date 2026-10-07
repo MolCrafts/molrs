@@ -6,10 +6,10 @@
 //! selection is the frozen [`AtomGroups`] index container and the extractor is
 //! any [`Observable`] (distance / angle / dihedral).
 
+use molrs::core::FrameAccess;
+use molrs::core::Mic;
+use molrs::core::keys;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::Mic;
-use molrs::store::FrameAccess;
-use molrs::store::keys;
 
 use crate::compute::ComputeError;
 use crate::compute::positions::{Positions, get_positions_ref};
@@ -222,7 +222,7 @@ pub(crate) fn positions<FA: FrameAccess>(frame: &FA) -> Result<PosCols<'_>, Comp
 }
 
 /// Minimum-image displacement `b - a` using a per-frame [`Mic`] hoisted by
-/// the caller (built once with [`SimBox::mic`](molrs::spatial::SimBox::mic) rather than resolved per
+/// the caller (built once with [`SimBox::mic`](molrs::core::SimBox::mic) rather than resolved per
 /// pair). Free boundaries fall back to the raw separation. This is the one
 /// minimum-image implementation across `compute`, so distance DFs agree with
 /// [`compute::rdf`](crate::compute::rdf) on the same pair (ac-003).
@@ -255,8 +255,8 @@ mod tests {
 
     #[test]
     fn from_frame_reads_topology_block() {
-        use molrs::store::Block;
-        use molrs::store::Frame;
+        use molrs::core::Block;
+        use molrs::core::Frame;
         use ndarray::Array1;
 
         let mut frame = Frame::new();

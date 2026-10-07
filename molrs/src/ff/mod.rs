@@ -24,7 +24,6 @@
 pub mod charge;
 #[cfg(test)]
 mod completeness;
-pub(crate) mod constants;
 #[cfg(test)]
 mod engine_codec_check;
 #[cfg(test)]

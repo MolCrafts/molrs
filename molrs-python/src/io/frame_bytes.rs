@@ -7,7 +7,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
 use crate::stream::message_format;
 

@@ -8,7 +8,7 @@
 //! and coefficients, mirroring the MMFF torsion kernel.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -18,8 +18,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// OPLS 4-cosine proper dihedral with pre-resolved flat arrays.
 pub struct DihedralOPLS {

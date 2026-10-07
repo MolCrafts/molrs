@@ -51,7 +51,7 @@ use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::signal as sig;
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 
 /// Autocorrelation curve, one entry per lag.
 #[derive(Debug, Clone)]

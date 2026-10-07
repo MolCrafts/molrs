@@ -38,7 +38,7 @@ use region::*;
 
 /// CXX capability bit: canonical block/meta/simbox Frame schema v2.
 const CXX_CAP_FRAME_BLOCK_V2: u64 = 1 << 0;
-/// CXX capability bit: canonical `molrs::system::Element` is exported at bridge root.
+/// CXX capability bit: canonical `molrs::core::Element` is exported at bridge root.
 const CXX_CAP_ELEMENT: u64 = 1 << 1;
 /// CXX capability bit: AM1 base-charge to BCC assignment is available.
 const CXX_CAP_AM1_BCC: u64 = 1 << 2;

@@ -18,13 +18,13 @@ import pytest
 @pytest.fixture
 def cubic_box():
     """A 10x10x10 cubic box."""
-    return molrs.spatial.Box.cube(10.0)
+    return molrs.core.Box.cube(10.0)
 
 
 @pytest.fixture
 def ortho_box():
     """A 5x10x15 orthorhombic box."""
-    return molrs.spatial.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
+    return molrs.core.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
 
 
 @pytest.fixture
@@ -42,14 +42,14 @@ def sample_points():
     )
 
 
-def _water_frame(*, for_lammps: bool = False) -> molrs.store.Frame:
+def _water_frame(*, for_lammps: bool = False) -> molrs.core.Frame:
     """Minimal 3-atom frame with box.
 
     Keep columns minimal so writers (esp. extended XYZ) do not emit fields the
     matching reader cannot parse. LAMMPS data needs ``type`` (+ optional charge).
     """
-    f = molrs.store.Frame()
-    b = molrs.store.Block()
+    f = molrs.core.Frame()
+    b = molrs.core.Block()
     b.insert("symbol", ["O", "H", "H"])
     b.insert("x", np.array([0.0, 0.96, -0.24], dtype=np.float64))
     b.insert("y", np.array([0.0, 0.0, 0.93], dtype=np.float64))
@@ -63,12 +63,12 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.store.Frame:
         b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
         b.insert("mol_id", np.array([1, 1, 1], dtype=np.uint32))
     f["atoms"] = b
-    f.box = molrs.spatial.Box.cube(10.0)
+    f.box = molrs.core.Box.cube(10.0)
     return f
 
 
 @pytest.fixture
-def water_frame() -> molrs.store.Frame:
+def water_frame() -> molrs.core.Frame:
     """Fresh water-like frame (callers may mutate)."""
     return _water_frame()
 
@@ -139,13 +139,13 @@ def make_frame(pts, box_len=10.0):
     Shared by test_compute.py and test_neighborlist.py — one Frame-construction
     contract, one home. Plain function (not a fixture) so helpers can call it.
     """
-    frame = molrs.store.Frame()
-    block = molrs.store.Block()
+    frame = molrs.core.Frame()
+    block = molrs.core.Block()
     block.insert("x", np.ascontiguousarray(pts[:, 0], dtype=np.float64))
     block.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
     block.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
     frame["atoms"] = block
-    frame.box = molrs.spatial.Box.cube(box_len)
+    frame.box = molrs.core.Box.cube(box_len)
     return frame
 
 

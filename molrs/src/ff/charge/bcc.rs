@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::params::{BccAlias, BccCorrectionRow};
 use crate::ff::typifier::atd::antechamber_bond_type;
@@ -100,7 +100,7 @@ impl BccParameterSet {
 /// # Examples
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::charge::{BccModel, BccParameterSet};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -403,7 +403,7 @@ fn bcc_increments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::keys;
+    use molrs::core::keys;
 
     /// Methane, untyped — the molecule a user has.
     fn methane() -> Atomistic {

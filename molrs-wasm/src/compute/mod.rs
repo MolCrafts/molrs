@@ -3,9 +3,9 @@
 //! One file per analysis family, mirroring the Rust owner (`rdf`, `msd`,
 //! `cluster`, `shape`, `transport`, `spectroscopy`, …), plus [`catalog`], the
 //! table a downstream UI reads to present and dispatch them. Neighbor search is
-//! not analysis: [`NeighborList`](crate::core::spatial::NeighborList) and the
-//! [`Neighbors`](crate::core::spatial::Neighbors) table it produces live in
-//! `core::spatial`, as in Rust.
+//! not analysis: [`NeighborList`](crate::core::NeighborList) and the
+//! [`Neighbors`](crate::core::Neighbors) table it produces live in
+//! `core`, as in Rust.
 //!
 //! The classes here are freud-style: configure once, then call `compute` on
 //! [`Frame`](crate::core::Frame)s.
@@ -164,14 +164,14 @@ struct Grid3Out<T: Serialize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::NeighborList;
     use crate::core::frame::Frame;
-    use crate::core::spatial::NeighborList;
     use wasm_bindgen_test::*;
 
     /// Helper: create a Frame with N particles at given positions + cubic simbox.
     fn make_frame(positions: &[[F; 3]], box_len: F) -> Frame {
-        use molrs::spatial::SimBox;
-        use molrs::store::Block;
+        use molrs::core::Block;
+        use molrs::core::SimBox;
         use ndarray::{Array1, array};
 
         let x = Array1::from_iter(positions.iter().map(|p| p[0]));
@@ -183,7 +183,7 @@ mod tests {
         block.insert("y", y.into_dyn()).unwrap();
         block.insert("z", z.into_dyn()).unwrap();
 
-        let mut rs_frame = molrs::store::Frame::new();
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", block);
         rs_frame.simbox =
             Some(SimBox::cube(box_len, array![0.0 as F, 0.0, 0.0], [false, false, false]).unwrap());
@@ -192,7 +192,7 @@ mod tests {
     }
 
     /// Half-shell pairs within `cutoff`, both columns kept.
-    fn neighbors(frame: &Frame, cutoff: F) -> crate::core::spatial::Neighbors {
+    fn neighbors(frame: &Frame, cutoff: F) -> crate::core::Neighbors {
         let mut nl = NeighborList::new(cutoff).unwrap();
         nl.build(frame).unwrap();
         nl.neighbors(None).unwrap()

@@ -21,7 +21,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::store::Frame;
+use crate::core::Frame;
 use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
 
 use super::message::ControlCommand;
@@ -658,8 +658,8 @@ async fn pump<S>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::Block;
     use crate::op::types::{F, I};
-    use crate::store::Block;
     use crate::stream::bytes_to_frame;
     use futures_util::{SinkExt, StreamExt};
     use ndarray::Array1;

@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use molrs::ff::potential::PotentialCompiler;
 use molrs::optimize::{LBFGS, OptReport};
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::ff::ir;
 use crate::ff::potential::{PotBacking, PyPotentials, potentials_moved_err};
 

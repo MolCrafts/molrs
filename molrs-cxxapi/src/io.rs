@@ -9,13 +9,13 @@
 use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
 
+use molrs::core::Element;
+use molrs::core::SimBox;
+use molrs::core::{Block, Frame, Trajectory};
 use molrs::io::data::xyz::write_xyz_frame;
 use molrs::io::mrec::{
     MrecWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
 };
-use molrs::spatial::SimBox;
-use molrs::store::{Block, Frame, Trajectory};
-use molrs::system::Element;
 use ndarray::{Array1, Array2, ArrayD};
 
 use crate::bridge;

@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 
-use molrs::store::schema::block_names::{
+use molrs::core::schema::block_names::{
     ANGLES, ATOMS, BONDS, CMAPS, CONSTRAINTS, DIHEDRALS, DRUDES, IMPROPERS, VIRTUAL_SITES,
 };
 
@@ -192,22 +192,37 @@ pub fn builtin_categories() -> Vec<CategorySpec> {
     ]
 }
 
+/// How many endpoints a row of the built-in `category` names; `None` for a
+/// category molrs does not register (its arity is its endpoint prefix).
+pub fn category_arity(category: &str) -> Option<usize> {
+    builtin_categories()
+        .into_iter()
+        .find(|c| c.name == category)
+        .map(|c| c.arity.endpoints())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::forcefield_section::category_arity;
 
-    /// The category table and molrec's arity table are one table.
+    /// molrec's arity table (`docs/spec/forcefield.md`, Categories).
     #[test]
     fn builtin_arity_is_the_chapters() {
-        for c in builtin_categories() {
-            assert_eq!(
-                category_arity(&c.name),
-                Some(c.arity.endpoints()),
-                "{}",
-                c.name
-            );
+        for (category, arity) in [
+            ("atom", 0),
+            ("virtual_site", 0),
+            ("bond", 2),
+            ("pair", 2),
+            ("constraint", 2),
+            ("drude", 2),
+            ("angle", 3),
+            ("dihedral", 4),
+            ("improper", 4),
+            ("cmap", 5),
+        ] {
+            assert_eq!(category_arity(category), Some(arity), "{category}");
         }
+        assert_eq!(category_arity("pair14"), None);
     }
 
     #[test]

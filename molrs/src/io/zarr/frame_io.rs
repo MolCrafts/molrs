@@ -32,14 +32,14 @@ use ndarray::ArrayD;
 use ndarray::ArrayViewD;
 use std::sync::Arc;
 
-use molrs::error::MolRsError;
-use molrs::op::types::F;
-use molrs::spatial::SimBox;
 #[cfg(feature = "zarr")]
-use molrs::store::DType;
-use molrs::store::Frame;
-use molrs::store::{Block, Column};
-use molrs::store::{MetaMap, MetaValue};
+use molrs::core::DType;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
+use molrs::core::SimBox;
+use molrs::core::{Block, Column};
+use molrs::core::{MetaMap, MetaValue};
+use molrs::op::types::F;
 
 /// The attribute of a frame-shaped group that maps every key of its `meta`
 /// document to its tag ([`MetaValue::dtype`]). One leading underscore, as
@@ -55,7 +55,7 @@ use super::chunking::{ChunkPlan, plan};
 /// Floating-point columns are stored raw: 52 random mantissa bits gzip to
 /// about 95 % of their size at a real CPU cost. No lossy codec is admitted;
 /// what makes a float column compress is a [declared
-/// precision](molrs::store::precision), which rounds the values onto a binary
+/// precision](molrs::core::check_precision), which rounds the values onto a binary
 /// grid *before* they reach the pipeline (see [`frame_codecs`]). Every array
 /// carries `crc32c` so a torn chunk is a checksum error rather than garbage
 /// rows.
@@ -138,7 +138,7 @@ pub(in crate::io::zarr) fn frame_codecs(
 
 /// Write one column as the array at `path`.
 ///
-/// `precision` is the column's [declared precision](molrs::store::precision):
+/// `precision` is the column's [declared precision](molrs::core::check_precision):
 /// when set, the column must be `f64`, a rounded copy of its values is what
 /// lands (`stored(x)`, exactly), the pipeline opens with the byte shuffle and
 /// a compressor ([`frame_codecs`]), and the array carries the declaration as
@@ -216,14 +216,14 @@ pub(crate) fn write_column(
 ///
 /// # Errors
 ///
-/// [`molrs::store::precision::quantum`]'s, for an inadmissible `p`.
+/// [`molrs::core::quantum`]'s, for an inadmissible `p`.
 pub(in crate::io::zarr) fn quantized(
     values: &ArrayD<f64>,
     p: f64,
 ) -> Result<ArrayD<f64>, MolRsError> {
-    let q = molrs::store::precision::quantum(p)?;
+    let q = molrs::core::quantum(p)?;
     let mut rounded = values.as_standard_layout().into_owned();
-    rounded.mapv_inplace(|x| molrs::store::precision::quantize(x, q));
+    rounded.mapv_inplace(|x| molrs::core::quantize(x, q));
     Ok(rounded)
 }
 
@@ -474,9 +474,9 @@ pub(crate) fn insert_column_into_block(
 /// broke the contract, and converting it on read would hide that.
 pub(crate) fn check_canonical_dtype(
     name: &str,
-    stored: molrs::store::DType,
+    stored: molrs::core::DType,
 ) -> Result<(), MolRsError> {
-    match molrs::store::schema::column(name) {
+    match molrs::core::schema::column(name) {
         Some(spec) if spec.dtype != stored => Err(MolRsError::zarr(format!(
             "column {name:?} is stored as {}; the canonical key {name:?} is {}, and a store is \
              not converted on read",
@@ -490,7 +490,7 @@ pub(crate) fn check_canonical_dtype(
 /// The dtype a column under `name` is stored at: the canonical key's
 /// declared dtype, or the column's own for any other key.
 pub(crate) fn stored_dtype(name: &str, dtype: DType) -> DType {
-    molrs::store::schema::column(name).map_or(dtype, |spec| spec.dtype)
+    molrs::core::schema::column(name).map_or(dtype, |spec| spec.dtype)
 }
 
 /// `col` at the dtype a canonical key `name` is stored at, or `None` when it
@@ -506,7 +506,7 @@ pub(crate) fn stored_dtype(name: &str, dtype: DType) -> DType {
 /// A [`MolRsError::Zarr`] naming the key when a value does not fit the
 /// declared dtype, or the column's family is not the declared one.
 pub(crate) fn canonical_width(name: &str, col: &Column) -> Result<Option<Column>, MolRsError> {
-    let Some(spec) = molrs::store::schema::column(name) else {
+    let Some(spec) = molrs::core::schema::column(name) else {
         return Ok(None);
     };
     if spec.dtype == col.dtype() {
@@ -782,7 +782,7 @@ pub(crate) const VALIDITY_GROUP: &str = "_validity";
 /// # A nullable column carries its mask beside its values
 ///
 /// A block column may carry a [validity
-/// mask](crate::store::Block::validity), and the mask is data: without
+/// mask](crate::core::Block::validity), and the mask is data: without
 /// it a row that holds *nothing* reads back as the default filled under it.
 /// Each masked column of a block therefore writes one `bool` array, one flag
 /// per row, at `<block>/`[`_validity`](VALIDITY_GROUP)`/<column>` — a
@@ -1318,7 +1318,7 @@ pub(crate) fn join_path(prefix: &str, child: &str) -> String {
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
     use super::*;
-    use molrs::store::DType;
+    use molrs::core::DType;
     use ndarray::array;
     use num_complex::Complex;
     use std::ffi::OsStr;
@@ -2355,12 +2355,12 @@ mod tests {
     #[test]
     fn a_precision_column_lands_rounded_shuffled_and_zstd_compressed() {
         let p = 1e-3;
-        let q = molrs::store::precision::quantum(p).unwrap();
+        let q = molrs::core::quantum(p).unwrap();
         let values = [0.123_456_7, -12.345_678, 39.999_9, 1.0e-7];
         let (back, codecs) = round_trip_precise(&values, p);
         let expected: Vec<f64> = values
             .iter()
-            .map(|&x| molrs::store::precision::quantize(x, q))
+            .map(|&x| molrs::core::quantize(x, q))
             .collect();
         assert_eq!(values_of(&back), expected);
         assert_eq!(back.precision(COLUMN), Some(p));
@@ -2373,7 +2373,7 @@ mod tests {
     #[test]
     fn precision_edge_values_land_as_the_spec_says() {
         let p = 1e-3;
-        let q = molrs::store::precision::quantum(p).unwrap();
+        let q = molrs::core::quantum(p).unwrap();
         let huge = 2f64.powi(52) * q * 1.5;
         let values = [
             f64::NAN,
@@ -2824,7 +2824,7 @@ mod tests {
             frame.insert(name, pair);
         }
         assert!(
-            molrs::store::schema::Validator::canonical()
+            molrs::core::schema::Validator::canonical()
                 .check(&frame)
                 .is_empty()
         );
@@ -2862,7 +2862,7 @@ mod tests {
             .unwrap();
         frame.insert("cmaps", cmaps);
         assert!(
-            molrs::store::schema::Validator::canonical()
+            molrs::core::schema::Validator::canonical()
                 .check(&frame)
                 .is_empty()
         );

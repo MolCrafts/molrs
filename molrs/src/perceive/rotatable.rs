@@ -10,14 +10,14 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::BondType;
-use crate::system::NodeId;
-use crate::system::Topology;
+use crate::core::Atomistic;
+use crate::core::BondOrder;
+use crate::core::NodeId;
+use crate::core::Topology;
+use crate::core::keys;
 
 /// How rotatable-bond detection reads a bond whose class is
-/// [`BondType::Unknown`] — no `bond_type` written, as from a connectivity-only
+/// [`BondOrder::Unknown`] — no `bond_type` written, as from a connectivity-only
 /// reader (LAMMPS data, a PDB without `CONECT` orders) before perception ran.
 ///
 /// Detection never guesses on its own: the caller who knows where the graph
@@ -38,11 +38,11 @@ impl UnknownBondPolicy {
     ///
     /// An aromatic bond never does, whatever its Kekulé number: it is read as a
     /// class, not as the localized number.
-    fn is_single(self, bond_type: BondType) -> bool {
+    fn is_single(self, bond_type: BondOrder) -> bool {
         match bond_type {
-            BondType::Single => true,
-            BondType::Unknown => self == UnknownBondPolicy::AsSingle,
-            BondType::Double | BondType::Triple | BondType::Aromatic => false,
+            BondOrder::Single => true,
+            BondOrder::Unknown => self == UnknownBondPolicy::AsSingle,
+            BondOrder::Double | BondOrder::Triple | BondOrder::Aromatic => false,
         }
     }
 }
@@ -87,8 +87,8 @@ fn build_topology(graph: &Atomistic, id_to_idx: &HashMap<NodeId, usize>) -> Topo
 /// rotatable bond together with the `Topology` they were derived from (reused by
 /// the caller for downstream BFS) and the reverse `idx -> NodeId` table.
 ///
-/// A bond is rotatable when its class is [`BondType::Single`] (an
-/// [`Unknown`](BondType::Unknown) class decided by `unknown`), both endpoints
+/// A bond is rotatable when its class is [`BondOrder::Single`] (an
+/// [`Unknown`](BondOrder::Unknown) class decided by `unknown`), both endpoints
 /// are non-terminal (degree > 1), and it is acyclic (not part of any ring per
 /// [`Topology::find_rings`]).
 fn scan_rotatable(
@@ -107,7 +107,7 @@ fn scan_rotatable(
         .map(|(_, b)| [id_to_idx[&b.nodes[0]], id_to_idx[&b.nodes[1]]])
         .collect();
     let topo = Topology::from_edges(ids.len(), &edges);
-    let ring_mask = topo.find_rings().bond_ring_mask(topo.n_bonds());
+    let ring_mask = crate::perceive::rings::ring_bond_mask(&topo);
 
     let rotatable = bonds
         .iter()
@@ -116,7 +116,7 @@ fn scan_rotatable(
             // A *single* bond, as a class. An aromatic bond whose Kekulé phase
             // happens to be single does not rotate, so this must not read the
             // localized number.
-            if !unknown.is_single(BondType::from_prop(bond.props.get(keys::BOND_TYPE))) {
+            if !unknown.is_single(BondOrder::from_prop(bond.props.get(keys::BOND_TYPE))) {
                 return None;
             }
 
@@ -215,8 +215,8 @@ pub fn detect_rotatable_bonds_with_downstream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::Atom;
-    use crate::system::BondNumber;
+    use crate::core::Atom;
+    use crate::core::BondNumber;
 
     /// Build a chain graph (topology only, coords irrelevant for detection).
     fn chain(n: usize) -> Atomistic {
@@ -306,7 +306,7 @@ mod tests {
         let mut g = chain(4);
         let bonds: Vec<_> = g.bonds().map(|(id, _)| id).collect();
         for id in bonds {
-            g.set_bond_class(id, BondType::Unknown, BondNumber::Unknown)
+            g.set_bond_class(id, BondOrder::Unknown, BondNumber::Unknown)
                 .expect("clear bond class");
         }
         g
@@ -339,7 +339,7 @@ mod tests {
             .map(|(id, _)| id)
             .nth(1)
             .expect("chain(4) has 3 bonds");
-        g.set_bond_type(middle, BondType::Double)
+        g.set_bond_type(middle, BondOrder::Double)
             .expect("set bond class");
         assert!(detect_rotatable_bonds(&g, UnknownBondPolicy::AsSingle).is_empty());
     }

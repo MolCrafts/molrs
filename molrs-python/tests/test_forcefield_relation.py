@@ -33,16 +33,16 @@ TYPES = [("t", 20.0, 2.45), ("u", 11.0, 2.2)]
 molrs.ff.ir.register_category("urey_bradley", 3)
 
 
-def _frame(block: str) -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _frame(block: str) -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["A"] * 4)
-    rows = molrs.store.Block()
+    rows = molrs.core.Block()
     for key, col in (("atomi", [0, 1]), ("atomj", [1, 2]), ("atomk", [2, 3])):
         rows.insert(key, np.array(col, dtype=np.uint32))
     rows.insert("type", [name for name, _, _ in TYPES])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame[block] = rows
     return frame
@@ -130,11 +130,11 @@ def test_a_relation_style_round_trips_through_a_section_a_store_and_a_pickle(
     tmp_path: Path,
 ) -> None:
     ff = _ub_ff()
-    table = ff.to_section().table("urey_bradley", "spring")
+    table = molrs.io.mrec.ForceFieldSection.from_forcefield(ff).table("urey_bradley", "spring")
     assert list(table["k_ub"]) == [20.0, 11.0]
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    back = molrs.io.read_mrec_forcefield(path).to_forcefield()
     style = back.get_style("urey_bradley", "spring")
     assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.params == {"expression": UB_EXPRESSION}
@@ -145,7 +145,7 @@ def test_a_relation_style_round_trips_through_a_section_a_store_and_a_pickle(
 def _unregistered_section(expression: str | None) -> molrs.io.mrec.ForceFieldSection:
     """A section whose ``bespoke`` category nothing registers: the
     ``urey_bradley`` force field with its category renamed."""
-    section = _ub_ff().to_section()
+    section = molrs.io.mrec.ForceFieldSection.from_forcefield(_ub_ff())
     document = section.document
     tables = section.tables
     (entry,) = [s for s in document["styles"] if s["category"] == "urey_bradley"]
@@ -158,13 +158,13 @@ def _unregistered_section(expression: str | None) -> molrs.io.mrec.ForceFieldSec
 
 
 def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_expression() -> None:
-    back = molrs.ff.forcefield.ForceField.from_section(_unregistered_section(None))
+    back = _unregistered_section(None).to_forcefield()
     style = back.get_style("bespoke", "spring")
     assert isinstance(style, molrs.ff.forcefield.RelationStyle)
     assert style.arity == 3
     assert [s.category for s in back.styles] == ["atom", "bespoke"]
     assert len(back.get_types("bespoke")) == 2
-    assert back.to_section().table("bespoke", "spring") is not None
+    assert molrs.io.mrec.ForceFieldSection.from_forcefield(back).table("bespoke", "spring") is not None
     pickled = pickle.loads(pickle.dumps(back))
     assert pickled.get_style("bespoke", "spring").arity == 3
     compiler = molrs.ff.potential.PotentialCompiler(back)
@@ -175,7 +175,7 @@ def test_an_unregistered_category_is_kept_and_refused_by_name_without_an_express
 
 
 def test_an_unregistered_category_with_an_expression_is_priced_by_it() -> None:
-    back = molrs.ff.forcefield.ForceField.from_section(_unregistered_section(UB_EXPRESSION))
+    back = _unregistered_section(UB_EXPRESSION).to_forcefield()
     e_ref, _ = _reference()
     frame = _frame("bespokes")
     e = molrs.ff.potential.PotentialCompiler(back).compile(frame).calc_energy(frame)

@@ -1,6 +1,6 @@
 //! Lightweight chemical perception for distance-geometry typing.
 //!
-//! `molrs::system::MolGraph` stores only connectivity and a numeric bond
+//! `molrs::core::MolGraph` stores only connectivity and a numeric bond
 //! `"order"`; it carries neither hybridization nor aromaticity. RDKit's
 //! bounds-matrix builder, however, keys almost every decision off
 //! `Atom::getHybridization()` / `getIsAromatic()` and `Bond::getIsConjugated`.
@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 
+use molrs::core::Atomistic;
+use molrs::core::Element;
+use molrs::core::NodeId;
 use molrs::perceive::rings::{RingInfo, find_rings};
 use molrs::perceive::{Hybridization, conjugated_atoms, hybridizations};
-use molrs::system::Atomistic;
-use molrs::system::Element;
-use molrs::system::NodeId;
 
 /// Per-atom perceived properties consumed by the bounds builder.
 #[derive(Clone, Debug)]

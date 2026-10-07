@@ -40,13 +40,13 @@ use crate::io::smiles::fragment_to_atomistic;
 use crate::io::smiles::{BondingDescriptor, DescriptorKind, SmilesIR, Span};
 use crate::io::smiles::{CGSmilesIR, FragmentBody};
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use molrs::error::MolRsError;
-use molrs::store::keys;
-use molrs::system::Atomistic;
-use molrs::system::BondNumber;
-use molrs::system::Element;
-use molrs::system::NodeId;
-use molrs::system::PortKind;
+use molrs::core::Atomistic;
+use molrs::core::BondNumber;
+use molrs::core::Element;
+use molrs::core::MolRsError;
+use molrs::core::NodeId;
+use molrs::core::PortKind;
+use molrs::core::keys;
 
 impl CGSmilesIR {
     /// Build one ported [`Atomistic`] template per definition of the last
@@ -119,8 +119,8 @@ impl CGSmilesIR {
     /// [`PairEnd::Body::port`](crate::io::smiles::PairEnd::Body::port) uses
     /// against the same body. The *n*-th descriptor of a definition is
     /// therefore the *n*-th port added for it.
-    /// [`ports`](molrs::system::MolGraph::ports) promises no iteration order, so read a port back by
-    /// its [`Port`](molrs::system::Port) rather than by position.
+    /// [`ports`](molrs::core::MolGraph::ports) promises no iteration order, so read a port back by
+    /// its [`Port`](molrs::core::Port) rather than by position.
     ///
     /// # Errors
     ///
@@ -152,7 +152,7 @@ impl CGSmilesIR {
     /// ```
     /// use molrs::io::smiles::parse_cgsmiles;
     /// use molrs::perceive::Perceive;
-    /// use molrs::system::Atomistic;
+    /// use molrs::core::Atomistic;
     ///
     /// let ir = parse_cgsmiles("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")?;
     /// let mut templates = ir.templates()?;
@@ -417,12 +417,12 @@ mod tests {
         BondKind, BondingDescriptor, CGFragmentDef, CGGraph, CGNode, CGSmilesIR, DescriptorKind,
         FragmentBody, Notation, SmilesErrorKind, Span, parse_cgsmiles, parse_fragment_smiles,
     };
-    use molrs::store::keys;
-    use molrs::system::Atomistic;
-    use molrs::system::NodeId;
-    use molrs::system::PropValue;
-    use molrs::system::{BondNumber, BondType};
-    use molrs::system::{Port, PortKind};
+    use molrs::core::Atomistic;
+    use molrs::core::NodeId;
+    use molrs::core::PropValue;
+    use molrs::core::keys;
+    use molrs::core::{BondNumber, BondOrder};
+    use molrs::core::{Port, PortKind};
 
     // Every count below is hand-derived from the fixtures of § Domain basis /
     // § Testing strategy of `.claude/specs/cgsmiles-02b-to-fragment.md`: heavy
@@ -506,9 +506,9 @@ mod tests {
             .collect()
     }
 
-    /// The `(BondType, BondNumber)` of the bond joining a port's anchor to its
+    /// The `(BondOrder, BondNumber)` of the bond joining a port's anchor to its
     /// handle.
-    fn handle_bond_class(frag: &Atomistic, port: &Port) -> (BondType, BondNumber) {
+    fn handle_bond_class(frag: &Atomistic, port: &Port) -> (BondOrder, BondNumber) {
         let bonds = frag
             .kind_id("bonds")
             .expect("'bonds' is registered on every Atomistic");
@@ -526,7 +526,7 @@ mod tests {
             .get_relation(bonds, rid)
             .unwrap_or_else(|e| panic!("bond {rid:?} does not read back: {e}"));
         (
-            BondType::from_prop(bond.props.get(keys::BOND_TYPE)),
+            BondOrder::from_prop(bond.props.get(keys::BOND_TYPE)),
             BondNumber::from_prop(bond.props.get(keys::BOND_NUMBER)),
         )
     }
@@ -845,7 +845,7 @@ mod tests {
     fn writes_only_element_and_mass_on_a_handle() {
         let peo = template(F2, "PEO");
         let h_mass = f64::from(
-            molrs::system::Element::by_symbol("H")
+            molrs::core::Element::by_symbol("H")
                 .expect("H is in the Element table")
                 .atomic_mass(),
         );
@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn writes_the_hydrogen_mass_on_every_handle() {
         let h_mass = f64::from(
-            molrs::system::Element::by_symbol("H")
+            molrs::core::Element::by_symbol("H")
                 .expect("H is in the Element table")
                 .atomic_mass(),
         );
@@ -976,7 +976,7 @@ mod tests {
         for port in ports_of(&peo) {
             assert_eq!(
                 handle_bond_class(&peo, &port),
-                (BondType::Single, BondNumber::Single),
+                (BondOrder::Single, BondNumber::Single),
                 "handle bond of port {port:?}"
             );
         }

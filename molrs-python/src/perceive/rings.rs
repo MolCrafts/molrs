@@ -1,10 +1,10 @@
 //! Ring facts (`molrs::perceive::rings`): [`PyRingInfo`] reports the SSSR
 //! rings of a molecule and the systems they fuse into, without touching it.
 
-use molrs::system::{node_from_u64, node_to_u64};
+use molrs::core::{node_from_u64, node_to_u64};
 use pyo3::prelude::*;
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 
 /// The ring facts of a molecule: SSSR rings and the systems they fuse into.
 ///

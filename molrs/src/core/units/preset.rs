@@ -1,6 +1,6 @@
 //! Engine-neutral unit-system presets.
 //!
-//! A [`UnitPreset`] is a named view of the constants in [`super::constants`]
+//! A [`UnitPreset`] is a named view of the constants in [`crate::core::constants`]
 //! plus the ten base-unit names of a LAMMPS-style unit system. Preset **names**
 //! keep the familiar `"real"` / `"metal"` / `"lj"` tokens; the type and module
 //! names do not mention LAMMPS. Callers compose conversions themselves —
@@ -15,7 +15,10 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::op::types::F;
 
-use super::constants::{BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE, GAS_CONSTANT};
+use crate::core::constants::{
+    ANGSTROM_PER_NM, BOLTZMANN, BOLTZMANN_REAL, COULOMB_REAL, ELEMENTARY_CHARGE, GAS_CONSTANT,
+    KJ_PER_KCAL,
+};
 
 /// One of the ten named dimensions every [`UnitPreset`] reports.
 ///
@@ -350,13 +353,13 @@ impl UnitPreset {
                 ("density", "gram / centimeter ** 3"),
             ],
             GAS_CONSTANT / 1000.0,
-            COULOMB_REAL * 4.184 / 10.0,
+            COULOMB_REAL * KJ_PER_KCAL / ANGSTROM_PER_NM,
         )
     }
 
     /// The built-in preset `name` — a LAMMPS `units` style, or `openmm` —
     /// as its constructor builds it; `None` for any other name. Unlike
-    /// [`lookup_preset`], never a preset registered or replaced at run time.
+    /// [`lookup_unit_preset`], never a preset registered or replaced at run time.
     pub fn builtin(name: &str) -> Option<Self> {
         Some(match name {
             "real" => Self::real(),
@@ -499,13 +502,13 @@ fn global() -> &'static Mutex<UnitPresetRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(UnitPresetRegistry::new()))
 }
 
-/// Process-wide preset lookup (built-ins plus anything [`register_preset`] added).
-pub fn lookup_preset(name: &str) -> Option<UnitPreset> {
+/// Process-wide preset lookup (built-ins plus anything [`register_unit_preset`] added).
+pub fn lookup_unit_preset(name: &str) -> Option<UnitPreset> {
     global().lock().ok()?.get(name).cloned()
 }
 
 /// Register an extra preset on the process-wide registry.
-pub fn register_preset(name: impl Into<String>, data: UnitPreset) -> Result<(), String> {
+pub fn register_unit_preset(name: impl Into<String>, data: UnitPreset) -> Result<(), String> {
     global()
         .lock()
         .map_err(|e| e.to_string())?
@@ -514,7 +517,7 @@ pub fn register_preset(name: impl Into<String>, data: UnitPreset) -> Result<(), 
 
 /// Put `data` under `name` on the process-wide registry, replacing any
 /// preset there (a built-in included); returns the replaced one.
-pub fn replace_preset(
+pub fn replace_unit_preset(
     name: impl Into<String>,
     data: UnitPreset,
 ) -> Result<Option<UnitPreset>, String> {
@@ -525,7 +528,7 @@ pub fn replace_preset(
 }
 
 /// Every preset name on the process-wide registry, sorted.
-pub fn preset_names() -> Vec<String> {
+pub fn unit_preset_names() -> Vec<String> {
     let mut names: Vec<String> = global()
         .lock()
         .map(|reg| reg.iter().map(|(name, _)| name.to_owned()).collect())
@@ -537,7 +540,7 @@ pub fn preset_names() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::units::constants::BOLTZMANN_REAL;
+    use crate::core::constants::BOLTZMANN_REAL;
 
     #[test]
     fn real_boltzmann_is_bit_identical_to_the_constant() {
@@ -591,7 +594,7 @@ mod tests {
 
     #[test]
     fn openmm_constants_are_reals_in_kilojoules_and_nanometres() {
-        use crate::units::UnitRegistry;
+        use crate::core::UnitRegistry;
         let p = UnitPreset::openmm();
         assert_eq!(p.length(), "nanometer");
         let units = UnitRegistry::new();
@@ -604,8 +607,8 @@ mod tests {
             .unwrap();
         assert!((p.boltzmann() - kj.value()).abs() < 1e-15);
         assert!((p.coulomb() - 138.935_456).abs() < 1e-4, "{}", p.coulomb());
-        assert!(lookup_preset("openmm").is_some());
-        assert!(preset_names().contains(&"openmm".to_string()));
+        assert!(lookup_unit_preset("openmm").is_some());
+        assert!(unit_preset_names().contains(&"openmm".to_string()));
     }
 
     #[test]
@@ -639,7 +642,7 @@ mod tests {
 
     #[test]
     fn every_dimension_of_every_builtin_preset_parses_after_define_lj_units() {
-        use crate::units::UnitRegistry;
+        use crate::core::UnitRegistry;
         let mut units = UnitRegistry::new();
         let mass = units.quantity(100.0, "gram_per_mole").unwrap();
         let sigma = units.quantity(4.2, "angstrom").unwrap();
@@ -673,7 +676,7 @@ mod tests {
     #[test]
     fn lookup_by_name_returns_the_real_preset() {
         assert_eq!(
-            lookup_preset("real").unwrap().boltzmann(),
+            lookup_unit_preset("real").unwrap().boltzmann(),
             UnitPreset::real().boltzmann()
         );
     }

@@ -29,7 +29,7 @@
 //! is `CGBondOrder` read through
 //! [`CGBondOrder::multiplicity`](molrs::io::smiles::CGBondOrder::multiplicity),
 //! a dimensionless `1..=4`. Every other enum crosses as a *name*, never as
-//! the small integer `core` stores such a value as (`BondType::code`: 0
+//! the small integer `core` stores such a value as (`BondOrder::code`: 0
 //! unknown, 1 single, 2 double, 3 triple, 4 aromatic). The storage codes are
 //! a column encoding, not a boundary encoding, and they are not injective
 //! over the enums crossing here: `BondKind::{Up, Down, Any, Ring}` all store
@@ -39,7 +39,7 @@
 //! Which name depends on whether the notation itself already spells the
 //! variant. A descriptor kind does: `$`, `<`, `>`, `!` is what a user types
 //! and what a stored port's `port_kind` prop holds
-//! ([`PortKind::as_str`](molrs::system::PortKind::as_str)), so
+//! ([`PortKind::as_str`](molrs::core::PortKind::as_str)), so
 //! [`PyBondingDescriptor::kind`] crosses as that same glyph — one spelling
 //! for the notation, the column and the boundary, with no third vocabulary to
 //! translate between them. The enums the notation does *not* spell out cross
@@ -63,7 +63,7 @@ use molrs::io::smiles::{
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
-use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain};
+use crate::core::molgraph::{PyAtomistic, PyCoarseGrain};
 use crate::error::smiles_error_to_pyerr;
 use crate::io::smiles::PySmilesIR;
 
@@ -72,7 +72,7 @@ use crate::io::smiles::PySmilesIR;
 /// Total by construction — every variant is listed, so this never panics and
 /// never invents a spelling. The whole enum crosses by name because the
 /// numeric alternative loses information: `Up`, `Down`, `Any` and `Ring` are
-/// all stored as `BondType::Single` and `Quadruple` as `BondType::Double`, so
+/// all stored as `BondOrder::Single` and `Quadruple` as `BondOrder::Double`, so
 /// no single code round-trips what the notation wrote.
 fn bond_kind_name(kind: BondKind) -> &'static str {
     match kind {
@@ -92,7 +92,7 @@ fn bond_kind_name(kind: BondKind) -> &'static str {
 ///
 /// The glyph is the only spelling a user ever writes (`[$]COC[$]`) and the
 /// one a stored port carries in its `port_kind` prop
-/// ([`PortKind::as_str`](molrs::system::PortKind::as_str)), so the
+/// ([`PortKind::as_str`](molrs::core::PortKind::as_str)), so the
 /// boundary adds no third vocabulary: a kind read off a descriptor here can
 /// be handed straight to a graph's ``add_port`` or compared against a port
 /// column without a lookup table on the Python side.
@@ -862,7 +862,7 @@ impl PyCGSmilesIR {
         PyAtomistic::from_core(py, mol)
     }
 
-    /// Read the last fragment table as named, ported :class:`~molrs.system.Atomistic` templates.
+    /// Read the last fragment table as named, ported :class:`~molrs.core.Atomistic` templates.
     ///
     /// One entry per fragment the table defines, keyed by the name written
     /// after ``#``. Each body keeps its own atoms and bonds and carries one

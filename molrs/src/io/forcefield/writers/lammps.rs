@@ -104,7 +104,7 @@
 //! # Per-pair 1-4 overrides
 //!
 //! LAMMPS has no per-pair exception. A frame whose `pairs` block carries an
-//! override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::store::schema::PAIR_OVERRIDE_COLUMNS))
+//! override column ([`PAIR_OVERRIDE_COLUMNS`](molrs::core::schema::PAIR_OVERRIDE_COLUMNS))
 //! is refused by name — by the data-file writer, and by
 //! [`refuse_pair_overrides`] for a caller writing a force field for it.
 
@@ -124,7 +124,7 @@ use crate::io::forcefield::lammps_units::{LammpsFfUnits, parse_style};
 use crate::io::forcefield::readers::lammps::{
     CROSS_TERM_SECTIONS, LAMMPS_CMAP_DIM, LAMMPS_CMAP_MAX,
 };
-use molrs::store::type_labels::{TypeLabels, TypeName};
+use molrs::core::{TypeLabels, TypeName};
 use ndarray::ArrayD;
 
 /// Formatting options for [`LammpsFfWriter`].
@@ -1245,11 +1245,11 @@ fn push_data_section(lines: &mut Vec<String>, heading: &str, rows: Vec<String>) 
 /// LAMMPS has no per-pair exception (see the conventions guide, "1-4
 /// interactions"). The data-file writer refuses them too; a caller writing a
 /// force field for a frame checks the frame here.
-pub fn refuse_pair_overrides(frame: &molrs::store::Frame) -> Result<(), String> {
+pub fn refuse_pair_overrides(frame: &molrs::core::Frame) -> Result<(), String> {
     let Some(pairs) = frame.get("pairs") else {
         return Ok(());
     };
-    let present: Vec<&str> = molrs::store::schema::PAIR_OVERRIDE_COLUMNS
+    let present: Vec<&str> = molrs::core::schema::PAIR_OVERRIDE_COLUMNS
         .iter()
         .copied()
         .filter(|k| pairs.get(k).is_some())
@@ -1719,10 +1719,10 @@ pair_coeff c3 c3 0.107800 3.397710
     // plus TypeLabels from a hand-written Frame, one stage per test.
     // ------------------------------------------------------------------
 
-    use crate::core::store::keys;
-    use crate::store::Block;
-    use crate::store::Frame;
-    use crate::store::type_labels::TypeLabels;
+    use crate::core::Block;
+    use crate::core::Frame;
+    use crate::core::TypeLabels;
+    use crate::core::keys;
     use ndarray::{ArrayD, IxDyn};
 
     /// A block whose only column is the string `type` label per row.

@@ -11,14 +11,14 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::core::MolGraph;
+use crate::core::PortKind;
+use crate::core::RelationId;
+use crate::op::geometry::CenterError;
 use crate::op::rigid::{Rigid, about, frame};
 use crate::op::superpose::{DEFAULT_GAP_TOL, superpose};
 use crate::op::types::{F, Mat3, Vec3};
 use crate::op::vec3::{add, normalize, scale, sub};
-use crate::spatial::CenterError;
-use crate::system::MolGraph;
-use crate::system::PortKind;
-use crate::system::RelationId;
 
 /// One bond of a site: the template port the copy joins through and the
 /// position of the partner site (Å).
@@ -92,10 +92,10 @@ pub trait Orienter: Send + Sync {
 /// ```
 /// use molrs::builder::{AxisOrienter, Orienter, SiteLink, SiteView};
 /// use molrs::op::rigid::apply;
-/// use molrs::store::keys;
-/// use molrs::system::BondNumber;
-/// use molrs::system::Atomistic;
-/// use molrs::system::PortKind;
+/// use molrs::core::keys;
+/// use molrs::core::BondNumber;
+/// use molrs::core::Atomistic;
+/// use molrs::core::PortKind;
 ///
 /// // Anchors C0 (−1,0,0) `<` and C1 (1,0,0) `>`, a heavy side atom at
 /// // (0,2,0): backbone-to-centre points +y, the joining atoms lie along +x.
@@ -143,8 +143,9 @@ impl TemplateGeometry {
                 .position()
                 .ok_or_else(|| OrientError::Template("a port atom has no x/y/z".to_owned()))
         };
-        let center = crate::spatial::center(template, &template.node_ids().collect::<Vec<_>>())
-            .map_err(OrientError::Center)?;
+        let center =
+            crate::op::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
+                .map_err(OrientError::Center)?;
         let mut ports = HashMap::new();
         let (mut left, mut right) = (Vec::new(), Vec::new());
         for id in template.ports() {
@@ -327,14 +328,14 @@ impl std::error::Error for OrientError {
 #[cfg(test)]
 mod tests {
     use super::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView, direction_fit};
+    use crate::core::Atomistic;
+    use crate::core::BondNumber;
+    use crate::core::PortKind;
+    use crate::core::RelationId;
+    use crate::core::keys;
     use crate::op::rigid::{Rigid, apply};
     use crate::op::types::Vec3;
     use crate::op::vec3::sub;
-    use crate::store::keys;
-    use crate::system::Atomistic;
-    use crate::system::BondNumber;
-    use crate::system::PortKind;
-    use crate::system::RelationId;
 
     const TOL: f64 = 1e-9;
 

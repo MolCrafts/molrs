@@ -7,8 +7,8 @@ import itertools
 import molrs
 
 
-def _chain(n: int) -> tuple[molrs.system.Atomistic, list[int]]:
-    mol = molrs.system.Atomistic()
+def _chain(n: int) -> tuple[molrs.core.Atomistic, list[int]]:
+    mol = molrs.core.Atomistic()
     ids: list[int] = []
     for i in range(n):
         ids.append(mol.add_atom("C", float(i), 0.0, 0.0))
@@ -45,8 +45,8 @@ def test_extract_subgraph_maps_consistent():
     mol, ids = _chain(10)
     center = ids[5]
     result = mol.extract_subgraph([center], 2)
-    assert isinstance(result, molrs.system.ExtractedSubgraph)
-    assert isinstance(result.graph, molrs.system.Atomistic)
+    assert isinstance(result, molrs.core.ExtractedSubgraph)
+    assert isinstance(result.graph, molrs.core.Atomistic)
     assert set(result.node_map.keys()) == set(result.hops.keys())
     assert result.graph.n_atoms == len(result.node_map)
     for b in result.boundary:

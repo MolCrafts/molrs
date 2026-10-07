@@ -28,8 +28,8 @@
 use crate::compute::ComputeResult;
 use crate::op::linalg::eigh_sym_3x3;
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -130,7 +130,7 @@ impl ComputeResult for NematicResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
 
     const TOL: F = 1e-10;
 

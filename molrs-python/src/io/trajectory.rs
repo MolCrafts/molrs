@@ -6,7 +6,7 @@
 //! through `molrs.io.read_*_trajectory`, which wraps one or several of them
 //! in `molrs.io.trajectory.TrajectoryReader`.
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::path::path_str;
 use molrs::io::data::xyz::XYZReader;

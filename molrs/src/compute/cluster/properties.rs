@@ -7,7 +7,7 @@
 //! Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
 //! reports its size, geometric center, mass-weighted center, the (mass-
 //! weighted) gyration tensor, and the scalar radius of gyration. All
-//! quantities are PBC-aware via [`Mic`](molrs::spatial::Mic): the first atom assigned to
+//! quantities are PBC-aware via [`Mic`](molrs::core::Mic): the first atom assigned to
 //! each cluster is used as the local reference and subsequent atom positions
 //! are accumulated through minimum-image displacements, so a cluster that
 //! wraps across the box boundary is handled correctly.
@@ -23,8 +23,8 @@
 //!
 //! Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 
 use super::ClusterResult;
 use crate::compute::Compute;
@@ -32,7 +32,7 @@ use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
-use molrs::spatial::{Mic, SimBox};
+use molrs::core::{Mic, SimBox};
 
 /// Per-frame bundle of cluster scalars and tensors.
 #[derive(Debug, Clone, Default)]
@@ -235,9 +235,9 @@ impl Compute for ClusterProperties {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

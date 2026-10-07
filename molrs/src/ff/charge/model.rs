@@ -15,8 +15,8 @@
 
 use std::collections::HashMap;
 
-use molrs::store::keys;
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::keys;
+use molrs::core::{Atomistic, NodeId};
 
 use molrs::perceive::equivalence::{EquivalenceOptions, find_equivalence_classes};
 
@@ -162,7 +162,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
 /// [`keys::TYPE`], so a molecule arriving with an incompatible column there (LAMMPS
 /// integer atom-type ids, say) would refuse the write. The **bond** column is
 /// stripped as defence in depth only: perception now keeps its perceived bond types
-/// in their own [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) prop and
+/// in their own [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) prop and
 /// neither reads nor writes a bond's `type`, so nothing downstream can be steered by
 /// a caller's bond labels even when they are left in place.
 ///
@@ -178,7 +178,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
 /// [`ChargeError::Malformed`] when a column cannot be cleared.
 pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeError> {
     let mut work = mol.clone();
-    let malformed = |e: molrs::error::MolRsError| ChargeError::Malformed {
+    let malformed = |e: molrs::core::MolRsError| ChargeError::Malformed {
         detail: e.to_string(),
     };
 

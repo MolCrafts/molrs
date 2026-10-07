@@ -10,9 +10,9 @@
 
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use molrs::error::MolRsError;
-use molrs::store::Frame;
-use molrs::store::MOLREC_VERSION;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
+use molrs::io::mrec::MOLREC_VERSION;
 
 /// Refuse the retired scientific path brand `.zarr` / `.zarr.zip`.
 ///

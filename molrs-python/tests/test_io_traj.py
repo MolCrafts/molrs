@@ -78,18 +78,18 @@ class TestTrajectoryReaderSurface:
 
 class TestDumpLocalWrite:
     def test_write_bonds_roundtrip(self, tmp_path):
-        atoms = molrs.store.Block()
+        atoms = molrs.core.Block()
         atoms["id"] = np.array([1, 2, 3], dtype=np.uint64)
         atoms["x"] = np.array([0.0, 1.0, 2.0])
         atoms["y"] = np.zeros(3)
         atoms["z"] = np.zeros(3)
-        bonds = molrs.store.Block()
+        bonds = molrs.core.Block()
         bonds["atomi"] = np.array([0, 1], dtype=np.uint64)
         bonds["atomj"] = np.array([1, 2], dtype=np.uint64)
-        frame = molrs.store.Frame()
+        frame = molrs.core.Frame()
         frame["atoms"] = atoms
         frame["bonds"] = bonds
-        frame.box = molrs.spatial.Box.cube(10.0)
+        frame.box = molrs.core.Box.cube(10.0)
         path = tmp_path / "bonds.dump.local"
         molrs.io.write_lammps_dump_local(path, [frame])
         text = path.read_text()
@@ -102,7 +102,7 @@ class TestDumpLocalWrite:
 class TestDumpColumnChoice:
     @staticmethod
     def _frame():
-        atoms = molrs.store.Block()
+        atoms = molrs.core.Block()
         atoms["id"] = np.array([1, 2], dtype=np.uint64)
         atoms["mol_id"] = np.array([1, 1], dtype=np.uint64)
         atoms["mass"] = np.array([16.0, 1.008])
@@ -110,9 +110,9 @@ class TestDumpColumnChoice:
         atoms["x"] = np.array([0.0, 1.0])
         atoms["y"] = np.array([0.0, 2.0])
         atoms["z"] = np.array([0.0, 3.0])
-        frame = molrs.store.Frame()
+        frame = molrs.core.Frame()
         frame["atoms"] = atoms
-        frame.box = molrs.spatial.Box.cube(10.0)
+        frame.box = molrs.core.Box.cube(10.0)
         return frame
 
     def test_writes_only_the_named_columns_in_order(self, tmp_path):
@@ -148,8 +148,8 @@ class TestDumpTypeField:
 
     def test_string_type_labels_round_trip(self, tmp_path):
         path = tmp_path / "labels.lammpstrj"
-        frame = molrs.store.Frame(
-            {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.spatial.Box.cube(10.0)
+        frame = molrs.core.Frame(
+            {"atoms": self._atoms(type=["OW", "HW", "HW"])}, box=molrs.core.Box.cube(10.0)
         )
         molrs.io.write_lammps_trajectory(path, [frame])
         text = path.read_text()
@@ -160,9 +160,9 @@ class TestDumpTypeField:
 
     def test_type_id_wins_the_type_field(self, tmp_path):
         path = tmp_path / "both.lammpstrj"
-        frame = molrs.store.Frame(
+        frame = molrs.core.Frame(
             {"atoms": self._atoms(type=["OW", "HW", "HW"], type_id=[1, 2, 2])},
-            box=molrs.spatial.Box.cube(10.0),
+            box=molrs.core.Box.cube(10.0),
         )
         molrs.io.write_lammps_trajectory(path, [frame])
         text = path.read_text()

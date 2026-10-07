@@ -28,8 +28,8 @@ mod result;
 pub use accumulator::MSDAccumulator;
 pub use result::{MSDResult, MSDTimeSeries};
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
@@ -282,8 +282,8 @@ impl MSD {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[F], y: &[F], z: &[F]) -> Frame {

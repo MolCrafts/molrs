@@ -57,7 +57,6 @@ use crate::ff::params::mmff::{
 // MMFF's degree → radian conversion, from the crate-level `constants` module so
 // the `potential` kernels share one definition. (The MMFF tables store reference
 // angles in degrees; molrs is radians internally.)
-use crate::ff::constants::DEG2RAD;
 
 #[inline]
 fn is_zero(x: f64) -> bool {
@@ -526,7 +525,7 @@ fn angle_empirical(
     let r0ij = b1.r0;
     let r0jk = b2.r0;
     let d = (r0ij - r0jk) * (r0ij - r0jk) / ((r0ij + r0jk) * (r0ij + r0jk));
-    let theta0_rad = DEG2RAD * theta0;
+    let theta0_rad = theta0.to_radians();
     if ring == 4 {
         beta *= 0.85;
     } else if ring == 3 {

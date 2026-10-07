@@ -1,15 +1,15 @@
 //! UFF bond stretch: E = ½ · kb · (r − r0)² (RDKit `BondStretchContrib`).
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::BONDS;
+use molrs::core::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Harmonic UFF bond stretch with per-instance `kb` / `r0`.
 pub struct UffBond {

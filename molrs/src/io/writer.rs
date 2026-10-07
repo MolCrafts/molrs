@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::io::Write;
 
-use crate::store::Frame;
+use crate::core::Frame;
 
 /// Generic writer for data destinations.
 pub trait Writer {
@@ -49,13 +49,13 @@ impl ToFrame for Frame {
     }
 }
 
-impl ToFrame for crate::system::Atomistic {
+impl ToFrame for crate::core::Atomistic {
     fn to_frame(&self) -> Result<Frame> {
         // Disambiguate from the inherent `Atomistic::to_frame`, which this
         // wraps; calling `self.to_frame()` here would recurse. The inherent
         // method reports a schema conflict as a `MolRsError`; this trait
         // speaks `io::Error`, as `FromFrame` does on the read side.
-        crate::system::Atomistic::to_frame(self)
+        crate::core::Atomistic::to_frame(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 }
@@ -63,8 +63,8 @@ impl ToFrame for crate::system::Atomistic {
 /// Check a frame against the Frame schema before writing it.
 ///
 /// Every [`FrameWriter::write`] calls this first.
-pub fn check_before_write<F: crate::store::FrameAccess>(frame: &F) -> Result<()> {
-    crate::store::schema::Validator::canonical()
+pub fn check_before_write<F: crate::core::FrameAccess>(frame: &F) -> Result<()> {
+    crate::core::schema::Validator::canonical()
         .validate(frame)
         .map_err(|report| {
             std::io::Error::new(

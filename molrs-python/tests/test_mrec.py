@@ -22,17 +22,17 @@ _ATOM_Y = (0.25, 0.0, 2.0)
 _ATOM_Z = (0.0, 4.0, 0.125)
 
 
-def _coords_frame() -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _coords_frame() -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     atoms["x"] = np.array(_ATOM_X, dtype=np.float64)
     atoms["y"] = np.array(_ATOM_Y, dtype=np.float64)
     atoms["z"] = np.array(_ATOM_Z, dtype=np.float64)
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     return frame
 
 
-def _assert_coords(frame: molrs.store.Frame) -> None:
+def _assert_coords(frame: molrs.core.Frame) -> None:
     atoms = frame["atoms"]
     assert atoms.nrows == _N_ATOMS
     np.testing.assert_array_equal(
@@ -49,7 +49,7 @@ def _assert_coords(frame: molrs.store.Frame) -> None:
 class TestMrecReader:
     def test_frame(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
-        trajectory = molrs.store.Trajectory([_coords_frame()])
+        trajectory = molrs.core.Trajectory([_coords_frame()])
         molrs.io.write_mrec_trajectory(path, trajectory)
 
         reader = molrs.io.mrec.MrecReader(path)
@@ -67,7 +67,7 @@ class TestFrameDoors:
         molrs.io.mrec.schema.validate_meta(meta)
         # Every record is stamped on write, so a producer that handed in
         # nothing still gets the version.
-        assert meta == {"molrec_version": molrs.io.mrec.schema.MOLREC_VERSION}
+        assert meta == {"molrec_version": molrs.io.mrec.MOLREC_VERSION}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
@@ -88,7 +88,7 @@ class TestSystemDoors:
 class TestTrajectoryDoors:
     def test_write_and_read_trajectory(self, tmp_path: Path) -> None:
         path = tmp_path / "traj.mrec"
-        molrs.io.write_mrec_trajectory(path, molrs.store.Trajectory([_coords_frame()]))
+        molrs.io.write_mrec_trajectory(path, molrs.core.Trajectory([_coords_frame()]))
         loaded = molrs.io.read_mrec_trajectory(path)
         assert len(loaded) == 1
         _assert_coords(loaded[0])
@@ -96,9 +96,9 @@ class TestTrajectoryDoors:
 
 class TestSchema:
     def test_version_constant_comes_from_molrs(self) -> None:
-        assert molrs.io.mrec.schema.MOLREC_VERSION == 2
-        assert molrs.io.mrec.schema.MOLREC_VERSION == molrs._lib.mrec.schema.MOLREC_VERSION
-        assert molrs.io.mrec.schema.RESERVED_META_KEYS == ["molrec_version"]
+        assert molrs.io.mrec.MOLREC_VERSION == 2
+        assert molrs.io.mrec.MOLREC_VERSION == molrs._lib.mrec.MOLREC_VERSION
+        assert molrs.io.mrec.RESERVED_META_KEYS == ["molrec_version"]
 
     def test_a_missing_molrec_version_is_accepted(self) -> None:
         # Absent is a store from before version 1 -- a foreign store, or one
@@ -134,7 +134,7 @@ class TestSchema:
             molrs.io.mrec.schema.validate_path("water.zarr")
 
     def test_empty_frame_passes(self) -> None:
-        molrs.io.mrec.schema.validate_frame(molrs.store.Frame())
+        molrs.io.mrec.schema.validate_frame(molrs.core.Frame())
 
 
 class TestMrecSurface:
@@ -194,7 +194,7 @@ class TestCanonicalWidths:
     def test_a_narrow_insert_is_widened_and_round_trips_as_u64(
         self, tmp_path: Path
     ) -> None:
-        bonds = molrs.store.Block()
+        bonds = molrs.core.Block()
         bonds["atomi"] = np.array([0, 1], dtype=np.uint32)
         bonds["atomj"] = np.array([1, 2], dtype=np.uint32)
         frame = _coords_frame()
@@ -229,7 +229,7 @@ class TestMetaArgument:
     """``meta=`` takes back every form ``frame.meta`` hands out."""
 
     @staticmethod
-    def _frame_with_meta() -> molrs.store.Frame:
+    def _frame_with_meta() -> molrs.core.Frame:
         frame = _coords_frame()
         frame.meta["run"] = {"engine": "md", "seeds": [1, 2]}
         frame.meta["cell"] = [1.0, 2.0, 3.0]
@@ -238,7 +238,7 @@ class TestMetaArgument:
     def test_write_accepts_a_document_and_tuples(self, tmp_path: Path) -> None:
         frame = self._frame_with_meta()
         run = frame.meta["run"]
-        assert isinstance(run, molrs.store.MetaDocument)
+        assert isinstance(run, molrs.core.MetaDocument)
         assert isinstance(frame.meta["cell"], tuple)
 
         path = tmp_path / "doc.mrec"
@@ -265,11 +265,11 @@ class TestMetaArgument:
         frame = self._frame_with_meta()
         path = tmp_path / "traj.mrec"
         molrs.io.write_mrec_trajectory(
-            path, molrs.store.Trajectory([frame]), meta=frame.meta["run"]
+            path, molrs.core.Trajectory([frame]), meta=frame.meta["run"]
         )
         meta = molrs.io.read_mrec_meta(path)
         assert meta["engine"] == "md"
-        assert meta["molrec_version"] == molrs.io.mrec.schema.MOLREC_VERSION
+        assert meta["molrec_version"] == molrs.io.mrec.MOLREC_VERSION
         assert len(molrs.io.read_mrec_trajectory(path)) == 1
 
     def test_frame_sequence_writer_accepts_a_document(self, tmp_path: Path) -> None:
@@ -298,15 +298,15 @@ class TestDeclaredPrecision:
     def _stored(self) -> np.ndarray:
         return np.round(self._VALUES / self._Q) * self._Q
 
-    def _frame(self, precision: float | None = 1e-3) -> molrs.store.Frame:
-        atoms = molrs.store.Block({"x": self._VALUES.copy()})
+    def _frame(self, precision: float | None = 1e-3) -> molrs.core.Frame:
+        atoms = molrs.core.Block({"x": self._VALUES.copy()})
         atoms.set_precision("x", precision)
-        frame = molrs.store.Frame()
+        frame = molrs.core.Frame()
         frame["atoms"] = atoms
         return frame
 
     def test_block_declares_and_withdraws(self) -> None:
-        block = molrs.store.Block({"x": self._VALUES.copy(), "n": np.array([1, 2, 3, 4])})
+        block = molrs.core.Block({"x": self._VALUES.copy(), "n": np.array([1, 2, 3, 4])})
         assert block.precision("x") is None
         block.set_precision("x", 1e-3)
         assert block.precision("x") == 1e-3
@@ -335,7 +335,7 @@ class TestDeclaredPrecision:
 
     def test_trajectory_pins_the_precision(self, tmp_path: Path) -> None:
         path = tmp_path / "t.mrec"
-        molrs.io.write_mrec_trajectory(path, molrs.store.Trajectory([self._frame()]))
+        molrs.io.write_mrec_trajectory(path, molrs.core.Trajectory([self._frame()]))
         reader = molrs.io.mrec.MrecReader(path)
         atoms = reader.read_frame(0)["atoms"]
         np.testing.assert_array_equal(np.asarray(atoms["x"]), self._stored())
@@ -367,12 +367,12 @@ class TestTypedFrameMeta:
     def test_every_value_keeps_its_tag(self, tmp_path: Path) -> None:
         path = tmp_path / "m.mrec"
         frame = _coords_frame()
-        frame.meta["n32"] = molrs.store.MetaValue("i32", 7)
+        frame.meta["n32"] = molrs.core.MetaValue("i32", 7)
         frame.meta["big"] = 2**64 - 1
         frame.meta["one"] = 1.0
         frame.meta["nan"] = float("nan")
         frame.meta["inf"] = float("-inf")
-        frame.meta["vec"] = molrs.store.MetaValue("f64x3", (1.0, float("inf"), 2.0))
+        frame.meta["vec"] = molrs.core.MetaValue("f64x3", (1.0, float("inf"), 2.0))
         frame.meta["doc"] = {"a": [1, 2]}
         molrs.io.write_mrec(path, frame)
         meta = molrs.io.read_mrec(path).meta
@@ -386,7 +386,7 @@ class TestTypedFrameMeta:
         assert "_meta_types" not in meta
 
     def test_a_non_finite_number_inside_a_document_is_refused(self) -> None:
-        frame = molrs.store.Frame()
+        frame = molrs.core.Frame()
         with pytest.raises(ValueError):
             frame.meta["doc"] = {"t": float("nan")}
 
@@ -403,9 +403,9 @@ class TestTypedFrameMeta:
 class TestRowReferences:
     """molrec F4: declared targets persist and are held to their rows."""
 
-    def _frame(self, ibead: list[int]) -> molrs.store.Frame:
+    def _frame(self, ibead: list[int]) -> molrs.core.Frame:
         frame = _coords_frame()
-        members = molrs.store.Block(
+        members = molrs.core.Block(
             {
                 "ibead": np.array(ibead, dtype=np.uint64),
                 "atom": np.array([1] * len(ibead), dtype=np.uint64),
@@ -442,11 +442,11 @@ class TestRowReferences:
 class TestAlignedBlocks:
     """molrec F5: an aligned block keeps its target's row count."""
 
-    def _frame(self, n: int, types: list[str] | None) -> molrs.store.Frame:
-        frame = molrs.store.Frame()
-        frame["atoms"] = molrs.store.Block({"x": np.arange(n, dtype=np.float64)})
+    def _frame(self, n: int, types: list[str] | None) -> molrs.core.Frame:
+        frame = molrs.core.Frame()
+        frame["atoms"] = molrs.core.Block({"x": np.arange(n, dtype=np.float64)})
         if types is not None:
-            frame["atom_types"] = molrs.store.Block({"type": np.array(types)})
+            frame["atom_types"] = molrs.core.Block({"type": np.array(types)})
         return frame
 
     def _schema(self) -> molrs.io.mrec.SequenceSchema:
@@ -499,7 +499,7 @@ class TestForceFieldSection:
         self, tmp_path: Path
     ) -> None:
         ff = self._forcefield()
-        section = ff.to_section()
+        section = molrs.io.mrec.ForceFieldSection.from_forcefield(ff)
         assert isinstance(section, molrs.io.mrec.ForceFieldSection)
         assert section.name == "water"
         assert section.document["units"]["preset"] == "real"
@@ -517,12 +517,12 @@ class TestForceFieldSection:
         bonds = back.table("bond", "harmonic")
         assert list(bonds["name"]) == ["OW-HW"]
         assert bonds["k"][0] == 1059.162
-        again = molrs.ff.forcefield.ForceField.from_section(back)
+        again = back.to_forcefield()
         assert again.name == "water"
         assert again.get_style("pair", "lj/cut") is not None
 
     def test_a_section_is_kept_whole_units_unconverted(self, tmp_path: Path) -> None:
-        bonds = molrs.store.Block(
+        bonds = molrs.core.Block(
             {
                 "name": np.array(["CT-HC"]),
                 "itom": np.array(["CT"]),
@@ -531,7 +531,7 @@ class TestForceFieldSection:
                 "k": np.array([284512.0]),
             }
         )
-        notes = molrs.store.Block({"text": np.array(["kept"])})
+        notes = molrs.core.Block({"text": np.array(["kept"])})
         document = {
             "name": "nm",
             "units": {"length": "nm", "energy": "kJ/mol", "angle": "radian"},
@@ -550,7 +550,7 @@ class TestForceFieldSection:
         assert back.table("bond", "harmonic")["k"][0] == 284512.0
         # nm / kJ/mol is no molrs preset: refused, not converted.
         with pytest.raises(ValueError, match="units"):
-            molrs.ff.forcefield.ForceField.from_section(back)
+            back.to_forcefield()
 
     def test_no_forcefield_reads_none_and_a_bad_one_is_refused(
         self, tmp_path: Path
@@ -571,7 +571,7 @@ class TestForceFieldSection:
         the parameters agree (name and annotations aside), a refusal when not."""
 
         def section(epsilon: list[float], desc: list[str]) -> molrs.io.mrec.ForceFieldSection:
-            rows = molrs.store.Block(
+            rows = molrs.core.Block(
                 {
                     "name": np.array(["A", "B", "A-B", "B-A"]),
                     "itom": np.array(["A", "B", "A", "B"]),
@@ -593,7 +593,7 @@ class TestForceFieldSection:
         with pytest.raises(ValueError, match=r'"A-B" and "B-A".*epsilon'):
             conflict.validate()
         with pytest.raises(ValueError, match="epsilon"):
-            molrs.ff.forcefield.ForceField.from_section(conflict)
+            conflict.to_forcefield()
 
     def test_block_name_percent_encodes_the_style(self) -> None:
         name = molrs.io.mrec.ForceFieldSection.block_name("pair", "lj/cut/coul/long")
@@ -628,7 +628,7 @@ class TestMolrecVersion1:
         path = _v1_record(tmp_path, name)
         section = molrs.io.read_mrec_forcefield(path)
         assert section.document["units"]["angle"] == "degree"
-        ff = molrs.ff.forcefield.ForceField.from_section(section)
+        ff = section.to_forcefield()
         system = molrs.io.read_mrec_system(path)
         energy, forces = molrs.ff.potential.PotentialCompiler(ff).compile(system).calc_energy_forces(system)
         assert energy == pytest.approx(want["energy"], rel=1e-10, abs=1e-10)

@@ -31,8 +31,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::smarts::{MatchOptions, SmartsPattern};
-use molrs::system::{Atomistic, NodeId};
 
 use super::deps::OplsDependencyAnalyzer;
 use super::meta::OplsTypingMeta;
@@ -311,7 +311,7 @@ impl LayeredTypingEngine {
 
 /// Compile a single SMARTS `def`, reading a bare element symbol (`Li`, which
 /// SMARTS only admits in brackets) as its bracket atom (`[Li]`) for XML inputs.
-fn compile_def(def: &str) -> Result<SmartsPattern, molrs::error::MolRsError> {
+fn compile_def(def: &str) -> Result<SmartsPattern, molrs::core::MolRsError> {
     match SmartsPattern::parse(def) {
         Ok(p) => Ok(p),
         Err(e) => {
@@ -338,7 +338,7 @@ fn is_bare_element_symbol(def: &str) -> bool {
 mod tests {
     use super::*;
     use crate::ff::typifier::OplsTypeRow;
-    use molrs::system::Atom;
+    use molrs::core::Atom;
 
     fn row(class: &str, def: Option<&str>, overrides: &[&str]) -> OplsTypeRow {
         OplsTypeRow {

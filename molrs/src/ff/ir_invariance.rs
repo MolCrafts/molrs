@@ -37,9 +37,9 @@ use crate::io::forcefield::readers::ForceFieldReader;
 use crate::io::forcefield::readers::gromacs::GromacsTopFfReader;
 use crate::io::forcefield::readers::lammps::LammpsFfReader;
 use crate::io::forcefield::readers::opls::OplsXmlReader;
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
 
 /// Per `(category/style)`, the energy of that style alone on `frame`.
 fn per_style(ff: &ForceField, frame: &Frame) -> BTreeMap<String, f64> {
@@ -416,7 +416,7 @@ fn file_read_fields_price_as_in_0_15() {
     // (its ONE_4PI_EPS0, CODATA 2018); 0.15.1 stated LAMMPS real's. The
     // energy is 0.15.1's times their ratio, exactly.
     let coul = gmx_energies.remove("pair/coul/cut").unwrap();
-    let ratio = crate::units::constants::GROMACS_COULOMB / 332.06371;
+    let ratio = crate::core::constants::GROMACS_COULOMB / 332.06371;
     let want = -10.706661989420029 * ratio;
     assert!(
         (coul - want).abs() <= 1e-12 * want.abs(),
@@ -443,7 +443,7 @@ fn file_read_fields_price_as_in_0_15() {
     // (ONE_4PI_EPS0 = 332.06371329919216 kcal·Å/(mol·e²)); 0.15.1 used LAMMPS
     // real's 332.06371. The energy is 0.15.1's times their ratio, exactly.
     let coul = omm_energies.remove("pair/coul/cut").unwrap();
-    let ratio = crate::units::constants::OPENMM_COULOMB / 332.06371;
+    let ratio = crate::core::constants::OPENMM_COULOMB / 332.06371;
     let want = -10.706661989738114 * ratio;
     assert!(
         (coul - want).abs() <= 1e-12 * want.abs(),
@@ -542,7 +542,7 @@ const ACETANILIDE_XYZ: [[f64; 3]; 19] = [
     [-0.398769417904483, -1.7017370182791989, -0.9868445483647516],
 ];
 
-fn acetanilide() -> molrs::system::Atomistic {
+fn acetanilide() -> molrs::core::Atomistic {
     use crate::io::smiles::{parse_smiles, to_atomistic};
     use crate::perceive::hydrogens::add_hydrogens;
     let mut mol =
@@ -559,7 +559,7 @@ fn acetanilide() -> molrs::system::Atomistic {
 
 /// The frame of a typed molecule with its intramolecular pair list, and, when
 /// the typifier assigns none, the fixed test charges `0.1·(i mod 5 − 2)`.
-fn typed_frame(typed: &molrs::system::Atomistic, ff: &ForceField) -> Frame {
+fn typed_frame(typed: &molrs::core::Atomistic, ff: &ForceField) -> Frame {
     let mut frame = typed.to_frame().unwrap();
     let mut atoms = frame.get("atoms").unwrap().clone();
     if atoms.get("charge").is_none() {

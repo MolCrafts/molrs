@@ -151,8 +151,8 @@ mod tests {
     use super::*;
     use crate::compute::Compute;
     use crate::compute::MsdMode;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
     use ndarray::Array1 as A1;
 
     fn make_frame(x: &[f64], y: &[f64], z: &[f64]) -> Frame {

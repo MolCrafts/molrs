@@ -22,7 +22,7 @@
 //! reader and writer map between the two.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::IMPROPERS;
+use molrs::core::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -32,8 +32,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Periodic improper with pre-resolved flat arrays.
 pub struct ImproperPeriodic {

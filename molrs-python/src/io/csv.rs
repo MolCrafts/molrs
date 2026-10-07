@@ -1,6 +1,6 @@
 //! Block CSV (`molrs::io::csv`): a `Block` to and from CSV text.
 
-use crate::core::store::block::PyBlock;
+use crate::core::block::PyBlock;
 use pyo3::prelude::*;
 
 // These read and write a store container rather than a molecular file

@@ -37,18 +37,17 @@ use std::fmt::Write as _;
 use std::io::{Error, ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::TypeLabels;
+use molrs::core::keys;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::keys;
-use molrs::store::type_labels::TypeLabels;
 use ndarray::Array1;
 
 use crate::io::data::lammps_data::write_lammps_data_with_masses;
 use crate::io::data::lammps_molecule::write_lammps_molecule;
 
-/// The atom column pairing pre- and post-reaction template atoms.
-pub const REACT_ID: &str = "react_id";
+use crate::core::keys::REACT_ID;
 
 /// The typed blocks a template and the system share a numbering for.
 const TYPED_BLOCKS: [&str; 5] = ["atoms", "bonds", "angles", "dihedrals", "impropers"];
@@ -271,7 +270,7 @@ fn label_masses(frames: &[&Frame]) -> HashMap<String, F> {
             }
             let m = mass.map(|m| m[[i]]).or_else(|| {
                 element
-                    .and_then(|e| molrs::system::Element::by_symbol(&e[[i]]))
+                    .and_then(|e| molrs::core::Element::by_symbol(&e[[i]]))
                     .map(|e| F::from(e.atomic_mass()))
             });
             if let Some(m) = m {

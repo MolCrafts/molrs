@@ -25,12 +25,12 @@ use crate::io::forcefield::writers::ForceFieldWriter;
 use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeLabels;
 
 const TYPES: [&str; 8] = ["C", "NH1", "CT1", "C", "NH1", "CT1", "C", "NH1"];
 

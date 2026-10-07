@@ -31,7 +31,7 @@ use wasm_bindgen::prelude::*;
 /// - Einstein, A. (1905). *Annalen der Physik*, 322(8), 549-560.
 #[wasm_bindgen(js_name = MSD)]
 pub struct MSD {
-    frames: Vec<molrs::store::Frame>,
+    frames: Vec<molrs::core::Frame>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -94,7 +94,7 @@ impl MSD {
         if self.frames.is_empty() {
             return Ok(Vec::new());
         }
-        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
         let series = RsMSD::new()
             .compute(&refs, ())
             .map_err(|e| JsValue::from_str(&format!("MSD results: {e}")))?;

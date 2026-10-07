@@ -34,7 +34,7 @@
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
-use molrs::spatial::SimBox;
+use molrs::core::SimBox;
 
 use super::forces::ForceProvider;
 use crate::op::random::standard_normal;
@@ -513,8 +513,8 @@ pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result
 mod tests {
     use ndarray::{Array2, ArrayView2, array};
 
+    use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::ff::potential::{Member, Potential, Potentials};
-    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
 
     use super::super::forces::{Direct, MicPairs};
     use super::*;
@@ -861,10 +861,10 @@ mod tests {
 mod ghost_path_tests {
     use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
+    use molrs::core::SimBox;
+    use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::ff::potential::Member;
     use molrs::ff::potential::pair::LJCut;
-    use molrs::spatial::SimBox;
-    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
     use ndarray::array;
 
     use super::super::pairs::Comm;

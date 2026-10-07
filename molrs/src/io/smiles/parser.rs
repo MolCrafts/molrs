@@ -42,7 +42,7 @@ use crate::io::smiles::chem::scanner::Scanner;
 use crate::io::smiles::chem::validation::{validate_descriptor, validate_ring_closures};
 use crate::io::smiles::smiles::is_element_symbol;
 use crate::io::smiles::{SmilesError, SmilesErrorKind};
-use molrs::system::Element;
+use molrs::core::Element;
 
 /// Maximum recursion depth for SMARTS `$(...)` expressions.
 const MAX_RECURSION_DEPTH: usize = 16;

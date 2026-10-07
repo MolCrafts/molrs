@@ -28,18 +28,18 @@
 
 use std::collections::HashSet;
 
+use crate::core::Atom;
+use crate::core::Atomistic;
+use crate::core::BondOrder;
+use crate::core::NodeId;
 use crate::op::vec3::{cross, norm};
-use crate::system::Atom;
-use crate::system::Atomistic;
-use crate::system::BondType;
-use crate::system::NodeId;
-use molrs::error::MolRsError;
-use molrs::system::Element;
+use molrs::core::Element;
+use molrs::core::MolRsError;
 
 /// Name of the relation kind whose members mark a fragment attachment point.
 ///
-/// The kind [`MolGraph::add_port`](crate::system::MolGraph::add_port)
-/// registers ([`crate::system::port::PORTS`]); it is matched by name because
+/// The kind [`MolGraph::add_port`](crate::core::MolGraph::add_port)
+/// registers ([`crate::core::keys::PORTS`]); it is matched by name because
 /// any graph may carry ports.
 const PORTS_KIND: &str = "ports";
 
@@ -263,7 +263,7 @@ fn cap_directions(existing: &[[f64; 3]], k: usize) -> Vec<[f64; 3]> {
 ///
 /// # Why the degree is counted over `bonds` only
 ///
-/// [`MolGraph::neighbors`](crate::system::MolGraph::neighbors) is
+/// [`MolGraph::neighbors`](crate::core::MolGraph::neighbors) is
 /// kind-blind: it walks every arity-2 relation on the graph, so a hydrogen
 /// that a caller also recorded in some other 2-ary kind reads as degree two
 /// and is spared for a reason that has nothing to do with its bonding. The
@@ -447,7 +447,7 @@ pub fn implicit_h_count(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
 fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
     // The two facts are read from their own places: how many bonds this is
     // (the localized number) and whether it is delocalized (the class).
-    let bonds: Vec<(BondType, f64)> = mol
+    let bonds: Vec<(BondOrder, f64)> = mol
         .incident_bond_ids(atom_id)
         .map(|(bid, _)| {
             let number = mol.bond_number(bid).count().max(1) as f64;
@@ -477,7 +477,7 @@ fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::BondNumber;
+    use crate::core::BondNumber;
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -490,10 +490,10 @@ mod tests {
         // The old float encoding, expressed in the two facts it conflated:
         // 1.5 meant "aromatic", every integer meant a localized count.
         if (order - 1.5).abs() < 1e-6 {
-            mol.set_bond_class(bid, BondType::Aromatic, BondNumber::Unknown)
+            mol.set_bond_class(bid, BondOrder::Aromatic, BondNumber::Unknown)
                 .expect("fixture bond class");
         } else {
-            mol.set_bond_type(bid, BondType::from_code(order.round() as u32))
+            mol.set_bond_type(bid, BondOrder::from_code(order.round() as u32))
                 .expect("fixture bond type");
         }
     }

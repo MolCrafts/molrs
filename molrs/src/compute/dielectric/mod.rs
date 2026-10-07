@@ -46,10 +46,10 @@ use crate::compute::ComputeError;
 // MD-real and SI values are defined once in `molrs-core::units::constants`;
 // the names below are the local spellings the kernels use.
 
-use molrs::units::constants::COULOMB_REAL as KAPPA;
+use molrs::core::constants::COULOMB_REAL as KAPPA;
 
 // Boltzmann constant in kcal/(mol·K) — MD "real" units.
-use molrs::units::constants::BOLTZMANN_REAL as K_B;
+use molrs::core::constants::BOLTZMANN_REAL as K_B;
 
 const FOUR_PI_OVER_3: f64 = 4.1887902047863905; // 4π/3
 

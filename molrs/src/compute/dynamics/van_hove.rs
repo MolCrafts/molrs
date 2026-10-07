@@ -41,9 +41,9 @@
 //!   Distinct distances use the minimum image (matching `rdf`).
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::NeighborQuery;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::NeighborQuery;
-use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use crate::compute::Compute;

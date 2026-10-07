@@ -8,8 +8,8 @@ use molrs::compute::{
     COMResult, CenterOfMass, ClusterCenters, ClusterCentersResult, ClusterResult, Compute,
     GyrationTensor, InertiaTensor, RadiusOfGyration, RgResult,
 };
+use molrs::core::Frame as CoreFrame;
 use molrs::op::types::F;
-use molrs::store::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayDyn, PyReadonlyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

@@ -12,7 +12,7 @@ use crate::ff::ir::IrError;
 /// matches on it instead of reading a message.
 ///
 /// ```
-/// use molrs::store::Frame;
+/// use molrs::core::Frame;
 /// use molrs::ff::forcefield::{ForceField, Params};
 /// use molrs::ff::ir::{IrError, Registry};
 /// use molrs::ff::potential::{CompileError, PotentialCompiler};

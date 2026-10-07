@@ -8,9 +8,9 @@
 //! was given — an [`Atomistic`] in, an `Atomistic` out, with its ports and
 //! `frag_id` properties intact.
 
-use molrs::error::MolRsError;
-use molrs::system::Atomistic;
-use molrs::system::MolGraph;
+use molrs::core::Atomistic;
+use molrs::core::MolGraph;
+use molrs::core::MolRsError;
 
 /// A typed wrapper over a [`MolGraph`] whose every node carries an `element`.
 ///
@@ -34,7 +34,7 @@ use molrs::system::MolGraph;
 /// # Implementors
 ///
 /// [`Atomistic`], and no one else.
-/// [`CoarseGrain`](crate::system::CoarseGrain) owns the same pair
+/// [`CoarseGrain`](crate::core::CoarseGrain) owns the same pair
 /// of inherent methods and deliberately does **not** implement this trait: its
 /// nodes carry bead types, not elements, so every `element` lookup the
 /// embedding performs would be a lookup for a property that a coarse-grained
@@ -75,12 +75,12 @@ impl ElementGraph for Atomistic {
 #[cfg(test)]
 mod tests {
     use super::ElementGraph;
-    use molrs::error::MolRsError;
-    use molrs::system::Atomistic;
-    use molrs::system::BondNumber;
-    use molrs::system::NodeId;
-    use molrs::system::PortKind;
-    use molrs::system::{Atom, MolGraph};
+    use molrs::core::Atomistic;
+    use molrs::core::BondNumber;
+    use molrs::core::MolRsError;
+    use molrs::core::NodeId;
+    use molrs::core::PortKind;
+    use molrs::core::{Atom, MolGraph};
 
     /// `H–C–C–H` with a `$` port on each C–H valence and a `frag_id` on every
     /// atom: four atoms, three bonds, two ports, two distinct fragment labels

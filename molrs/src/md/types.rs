@@ -17,14 +17,14 @@ use ndarray::Array2;
 
 use ndarray::Array1;
 
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::keys;
+use molrs::core::schema::block_names::ATOMS;
 use molrs::op::types::{F, FNx3, I};
-use molrs::spatial::SimBox;
-use molrs::store::Frame;
-use molrs::store::keys;
-use molrs::store::schema::block_names::ATOMS;
 
 use super::error::MdError;
-use molrs::math::Virial;
+use molrs::core::Virial;
 
 /// Energy + forces from one integrator force evaluation.
 ///
@@ -55,7 +55,7 @@ pub struct ForceOutput {
 /// `pos` is **wrapped** — it stays in the primary cell — and `images` records
 /// how many cells each atom has crossed to get there. The continuous
 /// trajectory is a derived view, `r^u = pos + H·images`
-/// ([`SimBox::unwrap`](molrs::spatial::SimBox::unwrap)), never a second
+/// ([`SimBox::unwrap`](molrs::core::SimBox::unwrap)), never a second
 /// float array integrated alongside the first: two independently-advanced
 /// copies of the same quantity drift apart, and the one that drifts is
 /// whichever the reader did not check.
@@ -178,7 +178,7 @@ impl MDState {
 #[cfg(test)]
 mod persistence_tests {
     use super::*;
-    use molrs::store::Block;
+    use molrs::core::Block;
     use ndarray::{Array2, array};
 
     fn frame_with(n: usize) -> Frame {

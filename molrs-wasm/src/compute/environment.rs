@@ -3,25 +3,25 @@
 
 use super::{Grid2Out, js_value, quats};
 use crate::core::frame::Frame;
-use crate::core::spatial::neighbors::Neighbors;
+use crate::core::neighbors::Neighbors;
 use crate::core::types::JsFloatArray;
 use molrs::compute::Compute;
 use molrs::op::types::F;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen(js_name = BondOrder)]
-pub struct BondOrder {
-    inner: molrs::compute::BondOrder,
+#[wasm_bindgen(js_name = BondOrientationalOrder)]
+pub struct BondOrientationalOrder {
+    inner: molrs::compute::BondOrientationalOrder,
 }
 
-#[wasm_bindgen(js_class = BondOrder)]
-impl BondOrder {
+#[wasm_bindgen(js_class = BondOrientationalOrder)]
+impl BondOrientationalOrder {
     #[wasm_bindgen(constructor)]
     pub fn new(n_theta: usize, n_phi: usize) -> Result<Self, JsValue> {
         Ok(Self {
-            inner: molrs::compute::BondOrder::new(n_theta, n_phi)
-                .map_err(|e| JsValue::from_str(&format!("BondOrder: {e}")))?,
+            inner: molrs::compute::BondOrientationalOrder::new(n_theta, n_phi)
+                .map_err(|e| JsValue::from_str(&format!("BondOrientationalOrder: {e}")))?,
         })
     }
 
@@ -40,10 +40,10 @@ impl BondOrder {
             let mut out = self
                 .inner
                 .compute(&[rs_frame], nlists)
-                .map_err(|e| JsValue::from_str(&format!("BondOrder compute: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("BondOrientationalOrder compute: {e}")))?;
             let r = out
                 .pop()
-                .ok_or_else(|| JsValue::from_str("BondOrder: empty result"))?;
+                .ok_or_else(|| JsValue::from_str("BondOrientationalOrder: empty result"))?;
             let shape = [r.bond_order.nrows(), r.bond_order.ncols()];
             js_value(&Out {
                 bond_order: Grid2Out {
@@ -117,7 +117,7 @@ impl AngularSeparation {
     pub fn compute_global(&self, query: &[F], global: &[F]) -> Result<JsValue, JsValue> {
         let query = quats(query, "AngularSeparation query")?;
         let global = quats(global, "AngularSeparation global")?;
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         let calc = molrs::compute::AngularSeparationGlobal::new()
             .with_equivalent_orientations(self.equivalent_orientations);
         let args = molrs::compute::AngularSeparationGlobalArgs {

@@ -2,8 +2,8 @@
 //!
 //! The odd module out in [`crate::io`]: [`data`](crate::io::data) and
 //! [`trajectory`](crate::io::trajectory) read atoms and hand back a
-//! [`Frame`](crate::store::Frame), while these files carry no atoms at
-//! all. They read into a [`TriMesh`](crate::spatial::TriMesh) — the container a
+//! [`Frame`](crate::core::Frame), while these files carry no atoms at
+//! all. They read into a [`TriMesh`](crate::core::TriMesh) — the container a
 //! packing run is confined to, the geometry a viewer paints around it.
 //!
 //! Currently:

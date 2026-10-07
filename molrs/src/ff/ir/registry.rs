@@ -29,8 +29,8 @@ use crate::ff::potential::Member;
 use crate::ff::potential::generic::{
     CompoundForm, CompoundTerms, ScalarBonded, ScalarForm, ScalarPair,
 };
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 // ---------------------------------------------------------------------------
 // Registration vocabulary

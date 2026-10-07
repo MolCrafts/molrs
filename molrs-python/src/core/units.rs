@@ -1,16 +1,18 @@
-//! Python bindings for `molrs::units` (`molrs.units`): the native unit
+//! Python bindings for `molrs::core` (`molrs.core`): the native unit
 //! engine (`Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`), its
 //! `UnitsError`, and the physical constants other subsystems need by name
 //! (`AMBER_COULOMB`).
 
 use crate::error::units_error;
-use molrs::units::{Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_preset};
+use molrs::core::{
+    Dimension, Quantity, Unit, UnitDef, UnitPreset, UnitRegistry, lookup_unit_preset,
+};
 use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
 #[pyclass(
-    module = "molrs.units",
+    module = "molrs.core",
     name = "Unit",
     frozen,
     skip_from_py_object,
@@ -97,7 +99,7 @@ impl PyUnit {
 }
 
 #[pyclass(
-    module = "molrs.units",
+    module = "molrs.core",
     name = "Quantity",
     frozen,
     skip_from_py_object,
@@ -245,7 +247,7 @@ impl PyQuantity {
 /// [`UnitDef`]: `(name, aliases, symbol, factor, offset, dimension, prefixable)`.
 type UnitDefTuple = (String, Vec<String>, String, f64, f64, [i32; 7], bool);
 
-#[pyclass(module = "molrs.units", name = "UnitRegistry", subclass, dict)]
+#[pyclass(module = "molrs.core", name = "UnitRegistry", subclass, dict)]
 pub struct PyUnitRegistry {
     pub(crate) inner: UnitRegistry,
 }
@@ -361,7 +363,7 @@ impl PyUnitRegistry {
     }
 
     fn __repr__(&self) -> &'static str {
-        "<molrs.units.UnitRegistry>"
+        "<molrs.core.UnitRegistry>"
     }
 
     fn __reduce__<'py>(
@@ -392,9 +394,9 @@ impl PyUnitRegistry {
 }
 
 /// Named unit-system view (`"real"`, `"metal"`, …). Constants live in core;
-/// this is the Python spelling of `molrs::units::UnitPreset`.
+/// this is the Python spelling of `molrs::core::UnitPreset`.
 #[pyclass(
-    module = "molrs.units",
+    module = "molrs.core",
     name = "UnitPreset",
     frozen,
     from_py_object,
@@ -409,7 +411,7 @@ pub struct PyUnitPreset {
 impl PyUnitPreset {
     #[new]
     fn new(name: &str) -> PyResult<Self> {
-        lookup_preset(name)
+        lookup_unit_preset(name)
             .map(|inner| Self { inner })
             .ok_or_else(|| PyValueError::new_err(format!("unknown unit preset {name:?}")))
     }
@@ -426,7 +428,7 @@ impl PyUnitPreset {
     /// ``openmm``, and any :meth:`register` added.
     #[staticmethod]
     fn names() -> Vec<String> {
-        molrs::units::preset_names()
+        molrs::core::unit_preset_names()
     }
 
     /// Register a preset of your own under ``name`` (process-wide) and return
@@ -462,9 +464,11 @@ impl PyUnitPreset {
         let preset =
             UnitPreset::new(name, units, boltzmann, coulomb).map_err(PyValueError::new_err)?;
         if overwrite {
-            molrs::units::replace_preset(name, preset.clone()).map_err(PyValueError::new_err)?;
+            molrs::core::replace_unit_preset(name, preset.clone())
+                .map_err(PyValueError::new_err)?;
         } else {
-            molrs::units::register_preset(name, preset.clone()).map_err(PyValueError::new_err)?;
+            molrs::core::register_unit_preset(name, preset.clone())
+                .map_err(PyValueError::new_err)?;
         }
         Ok(Self { inner: preset })
     }
@@ -528,13 +532,52 @@ impl PyUnitPreset {
     }
 }
 
-/// Register `molrs.units`.
+/// Register `molrs.core.constants`: every constant of
+/// `molrs::core::constants`, by its Rust name.
+pub fn register_constants(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    use molrs::core::constants as c;
+    for (name, value) in [
+        ("AVOGADRO", c::AVOGADRO),
+        ("BOLTZMANN", c::BOLTZMANN),
+        ("GAS_CONSTANT", c::GAS_CONSTANT),
+        ("ELEMENTARY_CHARGE", c::ELEMENTARY_CHARGE),
+        ("COULOMB_REAL", c::COULOMB_REAL),
+        ("COULOMB_METAL", c::COULOMB_METAL),
+        ("AMBER_COULOMB", c::AMBER_COULOMB),
+        ("AMBER_CHARGE_FACTOR", c::AMBER_CHARGE_FACTOR),
+        ("CHARMM_COULOMB", c::CHARMM_COULOMB),
+        ("OPENMM_COULOMB", c::OPENMM_COULOMB),
+        ("GROMACS_COULOMB", c::GROMACS_COULOMB),
+        ("KJ_PER_KCAL", c::KJ_PER_KCAL),
+        ("ANGSTROM_PER_NM", c::ANGSTROM_PER_NM),
+        ("ANGSTROM_PER_BOHR", c::ANGSTROM_PER_BOHR),
+        ("BOLTZMANN_REAL", c::BOLTZMANN_REAL),
+        ("ANGSTROM_M", c::ANGSTROM_M),
+        ("FEMTOSECOND_S", c::FEMTOSECOND_S),
+        ("SPEED_OF_LIGHT", c::SPEED_OF_LIGHT),
+        ("SECOND_RADIATION_CONSTANT", c::SECOND_RADIATION_CONSTANT),
+        ("CENTIMETER_PER_METER", c::CENTIMETER_PER_METER),
+        ("ANGSTROM3_PER_CM3", c::ANGSTROM3_PER_CM3),
+        (
+            "KCAL_MOL_PER_MDYNE_ANGSTROM",
+            c::KCAL_MOL_PER_MDYNE_ANGSTROM,
+        ),
+        ("VACUUM_DIELECTRIC", c::VACUUM_DIELECTRIC),
+        ("UFF_COULOMB", c::UFF_COULOMB),
+        ("AMBER_SCEE", c::AMBER_SCEE),
+        ("AMBER_SCNB", c::AMBER_SCNB),
+    ] {
+        m.add(name, value)?;
+    }
+    Ok(())
+}
+
+/// Register the unit engine on `molrs.core`.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("UnitsError", m.py().get_type::<crate::error::UnitsError>())?;
     m.add_class::<PyUnit>()?;
     m.add_class::<PyQuantity>()?;
     m.add_class::<PyUnitRegistry>()?;
     m.add_class::<PyUnitPreset>()?;
-    m.add("AMBER_COULOMB", molrs::units::constants::AMBER_COULOMB)?;
     Ok(())
 }

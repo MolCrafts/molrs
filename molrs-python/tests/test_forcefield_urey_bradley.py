@@ -32,16 +32,16 @@ def _ub_ff() -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def _frame() -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _frame() -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["HA", "CT", "CT"])
-    angles = molrs.store.Block()
+    angles = molrs.core.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2)):
         angles.insert(key, np.array([atom], dtype=np.uint32))
     angles.insert("type", ["HA-CT-CT"])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["angles"] = angles
     return frame
@@ -71,11 +71,11 @@ def test_it_compiles_to_the_lammps_energy() -> None:
 
 def test_it_round_trips_through_the_section_and_a_store(tmp_path: Path) -> None:
     ff = _ub_ff()
-    table = ff.to_section().table("angle", "charmm")
+    table = molrs.io.mrec.ForceFieldSection.from_forcefield(ff).table("angle", "charmm")
     assert list(table["r_ub"]) == [R_UB]
     path = tmp_path / "ff.mrec"
     molrs.io.write_mrec_forcefield(path, ff)
-    back = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    back = molrs.io.read_mrec_forcefield(path).to_forcefield()
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
     frame = _frame()

@@ -398,15 +398,15 @@ def _bond_ff() -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def _bonded_pair(label: str = "CT-CT") -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _bonded_pair(label: str = "CT-CT") -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for key, values in (("x", [0.0, 1.6]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])):
         atoms.insert(key, np.array(values))
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", np.array([0], dtype=np.uint32))
     bonds.insert("atomj", np.array([1], dtype=np.uint32))
     bonds.insert("type", [label])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     return frame
@@ -466,14 +466,14 @@ def _lj_ab(cross: bool) -> molrs.ff.forcefield.ForceField:
 
 
 def _lj_pair_energy(ff: molrs.ff.forcefield.ForceField, r: float) -> float:
-    atoms = molrs.store.Block()
+    atoms = molrs.core.Block()
     for key, values in (("x", [0.0, r]), ("y", [0.0, 0.0]), ("z", [0.0, 0.0])):
         atoms.insert(key, np.array(values))
     atoms.insert("type", ["A", "B"])
-    pairs = molrs.store.Block()
+    pairs = molrs.core.Block()
     pairs.insert("atomi", np.array([0], dtype=np.uint64))
     pairs.insert("atomj", np.array([1], dtype=np.uint64))
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["pairs"] = pairs
     return molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy(frame)

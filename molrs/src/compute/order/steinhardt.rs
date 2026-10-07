@@ -20,14 +20,14 @@
 //!   vector `r_j − r_i`. The Steinhardt accumulator visits each pair once and
 //!   updates both particles, exploiting `Y_ℓm(−r̂) = (−1)^ℓ Y_ℓm(r̂)`.
 //! - `Y_ℓm` follows the Condon-Shortley + physics-normalization convention
-//!   (see [`molrs::math::spherical_harmonics`]).
+//!   (see [`molrs::core::ylm_all`]).
 //!
 //! # Required neighbor columns
 //!
 //! `q_ℓm` is built from bond *directions*, so the table must carry the
 //! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). Distances
+//! [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
+//! or [`FULL`](molrs::core::NeighborsStorage::FULL). Distances
 //! alone are not enough: a `DIST_SQ` or `INDICES_ONLY` table stores no
 //! directions, and reads back `None` rather than zeros, so every entry point
 //! here answers [`ComputeError::BadShape`] naming the missing column instead of
@@ -42,12 +42,12 @@
 use crate::compute::ComputeResult;
 use std::cmp::Ordering;
 
-use molrs::math::complex::Complex;
-use molrs::math::spherical_harmonics::ylm_all;
-use molrs::math::wigner3j::wigner_3j;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::core::wigner_3j;
+use molrs::core::ylm_all;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -128,8 +128,8 @@ impl Steinhardt {
 ///
 /// `nlist` must carry the minimum-image displacement column `disp` (Å) — build
 /// it with
-/// [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-/// or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL) — because the
+/// [`NeighborsStorage::DISP`](molrs::core::NeighborsStorage::DISP)
+/// or [`FULL`](molrs::core::NeighborsStorage::FULL) — because the
 /// bond directions `r̂_ij` are the entire computation.
 ///
 /// Returns a row-major buffer of length `n_particles · (2ℓ+1)` with element
@@ -138,7 +138,7 @@ impl Steinhardt {
 /// directions.
 ///
 /// `nlist` must also be a half-shell
-/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): each row is
+/// [`SelfQuery`](molrs::core::QueryMode::SelfQuery): each row is
 /// visited once and credited to *both* of its particles, which double-counts on
 /// a cross-query table.
 ///
@@ -146,7 +146,7 @@ impl Steinhardt {
 ///
 /// [`ComputeError::BadShape`] if `nlist` has no `disp` column — a `DIST_SQ` or
 /// `INDICES_ONLY` table is refused rather than read as zeros — or if `nlist` is
-/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table.
+/// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table.
 /// Positions are read from the `atoms.x/y/z` columns, so a frame without
 /// them errors there instead.
 pub fn compute_qlm<FA: FrameAccess>(
@@ -424,9 +424,9 @@ impl ComputeResult for SteinhardtResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -712,7 +712,7 @@ mod tests {
     /// so it must refuse that table loudly instead of reading zeros.
     #[test]
     fn nlist_without_displacement_vectors_is_error() {
-        use molrs::spatial::neighbors::NeighborsStorage;
+        use molrs::core::NeighborsStorage;
         let frame = octahedron(20.0);
         let nl_full = nlist_from_frame(&frame, 1.2);
         assert!(nl_full.n_pairs() > 0);
@@ -746,7 +746,7 @@ mod tests {
     /// so `SelfQuery { num_points: 7 }` is a legal label for them.
     #[test]
     fn steinhardt_indices_only_neighbors_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         let frame = octahedron(20.0);
         let bonds: [[F; 3]; 6] = [
@@ -983,7 +983,7 @@ mod tests {
     /// `Steinhardt::one_frame` would leave those two entry points open.
     #[test]
     fn steinhardt_cross_query_table_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         let frame = octahedron(20.0);
         // Same six bonds as `steinhardt_indices_only_neighbors_is_bad_shape`:

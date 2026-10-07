@@ -195,10 +195,6 @@ pub fn fene() -> StyleSpec {
 // bond_angle: class2's bond-angle cross term, by expression and natively
 // ---------------------------------------------------------------------------
 
-/// `π/180`, as the force-field IR spells it: an angle-valued parameter is
-/// stored in degrees and an expression converts it.
-pub const D: f64 = 0.017453292519943295;
-
 /// LAMMPS `angle_style class2`'s bond-angle term
 /// `E = [n1 (r₁₂ − r1) + n2 (r₂₃ − r2)] (θ − θ0)`, `θ` the angle at the
 /// middle atom, `θ0` in degrees.
@@ -237,7 +233,7 @@ impl CompoundForm for BondAngle {
             let c = (dot(u, v) / (a * b)).clamp(-1.0, 1.0);
             let theta = c.acos();
             let stretch = n1[t] * (a - r1[t]) + n2[t] * (b - r2[t]);
-            let bend = theta - theta0[t] * D;
+            let bend = theta - theta0[t].to_radians();
             e[t] = stretch * bend;
             // ∂θ/∂x₁ = −(v/(ab) − c u/a²)/sin θ, likewise for x₃.
             let s = (1.0 - c * c).sqrt();

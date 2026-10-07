@@ -246,30 +246,30 @@ ENDPOINTS = ("atomi", "atomj", "atomk", "atoml")
 
 
 def frame(xyz: np.ndarray, types: list[str], block: str | None = None,
-          rows: list[tuple[int, ...]] = (), row_types: list[str] = ()) -> molrs.store.Frame:
+          rows: list[tuple[int, ...]] = (), row_types: list[str] = ()) -> molrs.core.Frame:
     """Atoms of ``types`` at ``xyz`` (masses, no charge, in a box past every
     atom) and the terms ``rows`` in ``block``."""
     n = len(xyz)
-    atoms = molrs.store.Block()
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, np.ascontiguousarray(xyz[:, d]))
     atoms.insert("type", list(types))
     atoms.insert("mass", np.array([MASSES[t] for t in types]))
     atoms.insert("charge", np.zeros(n))
     atoms.insert("mol_id", np.ones(n, dtype=np.uint32))
-    out = molrs.store.Frame()
+    out = molrs.core.Frame()
     out["atoms"] = atoms
     if block is not None:
-        terms = molrs.store.Block()
+        terms = molrs.core.Block()
         for i, key in enumerate(ENDPOINTS[: len(rows[0])]):
             terms.insert(key, np.array([r[i] for r in rows], dtype=np.uint32))
         terms.insert("type", list(row_types))
         out[block] = terms
-    out.box = molrs.spatial.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.zeros(3, dtype=bool))
+    out.box = molrs.core.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.zeros(3, dtype=bool))
     return out
 
 
-def bead_frame(xyz: np.ndarray = BEADS) -> molrs.store.Frame:
+def bead_frame(xyz: np.ndarray = BEADS) -> molrs.core.Frame:
     rows = [(i, i + 1) for i in range(len(xyz) - 1)]
     return frame(xyz, ["B"] * len(xyz), "bonds", rows, ["B-B"] * len(rows))
 
@@ -296,7 +296,7 @@ def smooth_ff(style: str) -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def smooth_frame(xyz: np.ndarray) -> molrs.store.Frame:
+def smooth_frame(xyz: np.ndarray) -> molrs.core.Frame:
     """The six atoms at ``xyz`` and their ``pairs`` list: every pair, none
     bonded."""
     f = frame(xyz, SMOOTH_TYPES)
@@ -312,12 +312,12 @@ def ub_ff() -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.store.Frame:
+def ub_frame(xyz: np.ndarray, block: str = "urey_bradleys") -> molrs.core.Frame:
     return frame(xyz, ["A", "B", "B", "A"], block, [r[0] for r in UB_ROWS],
                  [r[1] for r in UB_ROWS])
 
 
-def price(ff: molrs.ff.forcefield.ForceField, f: molrs.store.Frame) -> tuple[float, np.ndarray]:
+def price(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame) -> tuple[float, np.ndarray]:
     e, forces = molrs.ff.potential.PotentialCompiler(ff).compile(f).calc_energy_forces(f)
     return float(e), np.asarray(forces)
 
@@ -349,8 +349,8 @@ def fene_analytic(xyz: np.ndarray) -> tuple[float, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
-def lammps_cases() -> dict[str, list[tuple[molrs.ff.forcefield.ForceField, molrs.store.Frame,
-                                           molrs.ff.forcefield.ForceField, molrs.store.Frame, str]]]:
+def lammps_cases() -> dict[str, list[tuple[molrs.ff.forcefield.ForceField, molrs.core.Frame,
+                                           molrs.ff.forcefield.ForceField, molrs.core.Frame, str]]]:
     """Per case and configuration: what molrs prices (style, frame), and the
     deck LAMMPS prices (its force field, frame, units)."""
     out = {"fene": [], "smooth": [], "urey_bradley": []}
@@ -474,14 +474,14 @@ def test_fene_is_lammps_bond_style_fene() -> None:
     assert against_lammps("fene", numpy_twin) <= 1e-10
 
 
-def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.store.Frame,
+def typed_energy_forces(ff: molrs.ff.forcefield.ForceField, f: molrs.core.Frame,
                         xyz: np.ndarray) -> tuple[float, np.ndarray]:
     """The neighbour-driven door: ``compile_typed`` moved into an integrator
     over a neighbour list past every pair, and its first force call."""
     from molrs.md import VelocityVerlet
 
-    box = molrs.spatial.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
-    skin = molrs.spatial.VerletSkin(molrs.spatial.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
+    box = molrs.core.Box.cube(100.0, origin=np.full(3, -50.0), pbc=np.ones(3, dtype=bool))
+    skin = molrs.core.VerletSkin(molrs.core.NeighborList(30.0), 29.0, xyz, box, skin=1.0)
     vv = VelocityVerlet(1.0, potential=molrs.ff.potential.PotentialCompiler(ff).compile_typed(f),
                         neighbors=skin, mass=np.ones(len(xyz)))
     state = vv.initial(xyz, np.zeros_like(xyz))
@@ -533,17 +533,17 @@ FRESH = textwrap.dedent(
 
     path, frames = sys.argv[1], json.loads(sys.argv[2])
     registered = [(s.category, s.name) for s in molrs.ff.ir.styles() if not s.builtin]
-    ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+    ff = molrs.io.read_mrec_forcefield(path).to_forcefield()
     out = {"registered": registered, "styles": [[s.category, s.name] for s in ff.styles]}
     for name, spec in frames.items():
-        f = molrs.store.Frame()
-        atoms = molrs.store.Block()
+        f = molrs.core.Frame()
+        atoms = molrs.core.Block()
         xyz = np.array(spec["xyz"])
         for d, key in enumerate("xyz"):
             atoms.insert(key, np.ascontiguousarray(xyz[:, d]))
         atoms.insert("type", spec["types"])
         f["atoms"] = atoms
-        terms = molrs.store.Block()
+        terms = molrs.core.Block()
         for i, key in enumerate(("atomi", "atomj", "atomk", "atoml")[: len(spec["rows"][0])]):
             terms.insert(key, np.array([r[i] for r in spec["rows"]], dtype=np.uint32))
         terms.insert("type", spec["row_types"])
@@ -584,7 +584,7 @@ def everything() -> tuple[molrs.ff.forcefield.ForceField, dict[str, dict]]:
     return ff, frames
 
 
-def spec_frame(spec: dict) -> molrs.store.Frame:
+def spec_frame(spec: dict) -> molrs.core.Frame:
     return frame(np.array(spec["xyz"]), spec["types"], spec["block"],
                  [tuple(r) for r in spec["rows"]], spec["row_types"])
 
@@ -595,7 +595,7 @@ def fresh(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict, dict]:
     process that registered nothing makes of the record."""
     ff, frames = everything()
     path = tmp_path_factory.mktemp("proof") / "everything.mrec"
-    molrs.io.write_mrec_forcefield(path, ff.to_section())
+    molrs.io.write_mrec_forcefield(path, molrs.io.mrec.ForceFieldSection.from_forcefield(ff))
     here = {}
     for name, spec in frames.items():
         e, f = price(ff, spec_frame(spec))
@@ -744,7 +744,7 @@ def test_an_array_param_style_is_hand_linear_interpolation_and_round_trips(tmp_p
     column = section.table("dihedral", "table/linear")["table"]
     assert column.dtype == np.float64 and column.shape == (1, len(TABLE))
     assert column.tobytes() == TABLE.tobytes()
-    back = molrs.ff.forcefield.ForceField.from_section(section)
+    back = section.to_forcefield()
     f0 = spec_frame(frames["table"])
     assert price(back, f0)[0].hex() == price(ff, f0)[0].hex()
 

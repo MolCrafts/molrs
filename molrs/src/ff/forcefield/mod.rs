@@ -11,13 +11,12 @@ pub(crate) mod lammps_codecs;
 pub mod mixing;
 pub mod one_four;
 pub mod param_columns;
-pub mod section;
 pub mod torsion;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use molrs::system::BondDistanceWeights;
+use molrs::core::BondDistanceWeights;
 use ndarray::ArrayD;
 use smallvec::SmallVec;
 
@@ -138,7 +137,7 @@ impl Params {
     /// a difference. The annotation keys (`desc`, `doi`, `smarts`, …) take no
     /// part. Exact, like `==`.
     pub fn same_parameters(&self, other: &Params) -> bool {
-        use molrs::store::forcefield_section::is_parameter_column;
+        use crate::ff::ir::is_parameter_column;
         use std::collections::BTreeMap;
         fn parameters<V>(map: &HashMap<String, V>) -> BTreeMap<&str, &V> {
             map.iter()
@@ -359,12 +358,10 @@ impl StyleDefs {
 /// [`StyleDefs::kernel_type_params`]: [`TypeName::pair`] of the two in byte
 /// order, so `(a, b)` and `(b, a)` share it (a self pair is `a` itself).
 ///
-/// [`TypeName::pair`]: molrs::store::type_labels::TypeName::pair
+/// [`TypeName::pair`]: molrs::core::TypeName::pair
 pub fn pair_key(a: &str, b: &str) -> Result<String, String> {
     let (i, j) = if a <= b { (a, b) } else { (b, a) };
-    Ok(molrs::store::type_labels::TypeName::pair(i, j)?
-        .as_str()
-        .to_owned())
+    Ok(molrs::core::TypeName::pair(i, j)?.as_str().to_owned())
 }
 
 impl StyleDefs {
@@ -483,7 +480,7 @@ impl Style {
     /// Define a type named `name` on the given `endpoints` (atom-type names).
     ///
     /// The name is an opaque identifier, stored verbatim: it may be built from
-    /// the endpoint labels ([`TypeName::join`](molrs::store::type_labels::TypeName::join)
+    /// the endpoint labels ([`TypeName::join`](molrs::core::TypeName::join)
     /// is the convention) but it is never read back into endpoints — a `-` in
     /// a name is just a character. The endpoint count follows the category:
     /// an atom style takes none; a pair style one (a self pair) or two; bond
@@ -518,7 +515,7 @@ impl Style {
         } else {
             endpoints
         };
-        molrs::store::type_labels::TypeName::join(labels).map_err(DefError::Name)?;
+        molrs::core::TypeName::join(labels).map_err(DefError::Name)?;
         self.insert_type(name.to_owned(), endpoints, params)?;
         Ok(self)
     }
@@ -793,7 +790,7 @@ pub enum DefError {
     },
     /// A type name could not be built from its endpoint labels (a label
     /// containing `@`, or a malformed qualifier; see
-    /// [`TypeName`](molrs::store::type_labels::TypeName)).
+    /// [`TypeName`](molrs::core::TypeName)).
     Name(String),
 }
 
@@ -1139,7 +1136,7 @@ impl Style {
 /// Per-nonbonded-kind 1-2 / 1-3 / 1-4 interaction scale weights — LAMMPS
 /// `special_bonds` semantics, owned by the [`ForceField`].
 ///
-/// The always-on geometric table is [`crate::system::BondDistanceWeights`]: one
+/// The always-on geometric table is [`crate::core::BondDistanceWeights`]: one
 /// arbitrary-length vector with an explicit 1-N tail. A LAMMPS triple is not
 /// a transcription (`charmm 0 0 0` is `[0, 0, 0, 1]` there). There is no
 /// `From` / `Into` between the two types.
@@ -1711,7 +1708,7 @@ impl ForceField {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use molrs::store::type_labels::TypeName;
+    use molrs::core::TypeName;
 
     #[test]
     fn test_params() {
@@ -2165,7 +2162,7 @@ pub(crate) mod tests {
 
     /// An endpoint count off the category's arity is `Err(Arity)` (never a
     /// panic), whatever the name looks like; nothing is stored.
-    /// `@` starts a [`TypeName`](molrs::store::type_labels::TypeName)
+    /// `@` starts a [`TypeName`](molrs::core::TypeName)
     /// qualifier, so no endpoint label may carry it — nor an atom type's name,
     /// which is the endpoint every other type is defined on. A qualified
     /// *type name* (`C_3-C_R@1.5`) is fine: names are never joined.

@@ -15,7 +15,7 @@ pub struct HBonds {
     dist_cutoff: F,
     dist_kind: String,
     angle_cutoff: F,
-    frames: Vec<molrs::store::Frame>,
+    frames: Vec<molrs::core::Frame>,
 }
 
 #[wasm_bindgen(js_class = HBonds)]
@@ -76,7 +76,7 @@ impl HBonds {
             molrs::compute::HBondCriterion::new(self.dist_cutoff, dist_kind, self.angle_cutoff);
         let calc =
             molrs::compute::HBonds::new(self.donors.clone(), self.acceptors.clone(), criterion);
-        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
         let r = calc
             .compute(&refs, ())
             .map_err(|e| JsValue::from_str(&format!("HBonds: {e}")))?;

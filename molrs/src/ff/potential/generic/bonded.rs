@@ -13,8 +13,8 @@ use crate::ff::potential::geometry::{
     term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// The rows of a bonded category's block, each priced by one form of one
 /// coordinate.

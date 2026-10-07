@@ -1,6 +1,6 @@
 //! Unified [`Compute`] trait — the single public entry point for any analysis.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 
 use crate::compute::ComputeError;
 use crate::compute::ComputeResult;

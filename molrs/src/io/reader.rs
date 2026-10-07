@@ -1,4 +1,4 @@
-use crate::store::Frame;
+use crate::core::Frame;
 use flate2::read::GzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Result, Seek};
@@ -40,7 +40,7 @@ pub trait FrameReader: Reader {
     /// `read_as::<Atomistic>()` hands it over instead of going
     /// `Atomistic -> Frame -> Atomistic`.
     ///
-    /// [`Atomistic`]: crate::system::Atomistic
+    /// [`Atomistic`]: crate::core::Atomistic
     fn read_as<T: FromFrame>(&mut self) -> Result<Option<T>> {
         match self.read()? {
             Some(frame) => Ok(Some(T::from_frame(&frame)?)),
@@ -69,8 +69,8 @@ pub trait FromFrame: Sized {
     /// one of the twelve file readers, all of which natively produce frames,
     /// to serve the one reader that does not.
     ///
-    /// [`Atomistic`]: crate::system::Atomistic
-    fn from_atomistic(mol: crate::system::Atomistic) -> Result<Self> {
+    /// [`Atomistic`]: crate::core::Atomistic
+    fn from_atomistic(mol: crate::core::Atomistic) -> Result<Self> {
         let frame = mol
             .to_frame()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
@@ -84,13 +84,13 @@ impl FromFrame for Frame {
     }
 }
 
-impl FromFrame for crate::system::Atomistic {
+impl FromFrame for crate::core::Atomistic {
     fn from_frame(frame: &Frame) -> Result<Self> {
-        crate::system::Atomistic::from_frame(frame)
+        crate::core::Atomistic::from_frame(frame)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    fn from_atomistic(mol: crate::system::Atomistic) -> Result<Self> {
+    fn from_atomistic(mol: crate::core::Atomistic) -> Result<Self> {
         Ok(mol)
     }
 }
@@ -354,9 +354,9 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
 /// Every [`FrameReader::read`] returns through this. The report names
 /// every offending column at once, so a malformed file takes one round trip to
 /// diagnose rather than one per bad column.
-pub fn validated<F: crate::store::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
+pub fn validated<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
     if let Some(ref f) = frame {
-        crate::store::schema::Validator::canonical()
+        crate::core::schema::Validator::canonical()
             .validate(f)
             .map_err(|report| {
                 std::io::Error::new(

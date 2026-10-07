@@ -4,20 +4,21 @@
 
 use std::path::PathBuf;
 
+use molrs::core::Frame;
+use molrs::core::keys::REACT_ID;
 use molrs::io::data::lammps_bond_react::{
-    BondReactTemplate, REACT_ID, write_bond_react_map as write_map_rs,
+    BondReactTemplate, write_bond_react_map as write_map_rs,
     write_lammps_bond_react_system as write_system_rs,
 };
 use molrs::io::forcefield::writers::{
     ForceFieldWriter,
     lammps::{LammpsFfWriter, LammpsWriteOptions},
 };
-use molrs::store::Frame;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::io_error_to_pyerr;
 use crate::ff::forcefield::PyForceField;
 use crate::path::path_str;
@@ -25,8 +26,8 @@ use crate::path::path_str;
 /// One ``fix bond/react`` reaction: the pre-reaction template, the same
 /// atoms after the reaction, and the atoms its map file names.
 ///
-/// ``pre`` and ``post`` are :class:`~molrs.system.Atomistic` graphs (or
-/// :class:`~molrs.store.Frame` s) whose atoms carry an integer ``react_id`` pairing
+/// ``pre`` and ``post`` are :class:`~molrs.core.Atomistic` graphs (or
+/// :class:`~molrs.core.Frame` s) whose atoms carry an integer ``react_id`` pairing
 /// them. ``initiator_atoms`` (exactly two), ``edge_atoms`` and
 /// ``deleted_atoms`` are atoms of ``pre`` — or their ``react_id`` values.
 /// The objects are kept as given (nothing is copied or renumbered); the

@@ -17,11 +17,11 @@
 //! localized (Kekulé) numbers; a bond whose class is aromatic is also
 //! conjugated, as in RDKit.
 
-use molrs::system::Atomistic;
-use molrs::system::BondNumber;
-use molrs::system::Element;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
+use molrs::core::Atomistic;
+use molrs::core::BondNumber;
+use molrs::core::Element;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
 
 /// An atom's hybridization — RDKit's `Atom::HybridizationType`, less its
 /// `UNSPECIFIED` / `SP2D` (which `setHybridization` never assigns).
@@ -268,7 +268,7 @@ fn default_valence(atno: u8) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::system::BondType;
+    use molrs::core::BondOrder;
 
     fn by_element(mol: &Atomistic, sym: &str) -> Vec<Hybridization> {
         let hyb = hybridizations(mol);
@@ -283,9 +283,9 @@ mod tests {
     #[test]
     fn carbon_follows_its_bond_orders() {
         for (order, want) in [
-            (BondType::Single, Hybridization::Sp3),
-            (BondType::Double, Hybridization::Sp2),
-            (BondType::Triple, Hybridization::Sp),
+            (BondOrder::Single, Hybridization::Sp3),
+            (BondOrder::Double, Hybridization::Sp2),
+            (BondOrder::Triple, Hybridization::Sp),
         ] {
             let mut mol = Atomistic::new();
             let c1 = mol.add_atom_bare("C");
@@ -306,7 +306,7 @@ mod tests {
         let n = mol.add_atom_bare("N");
         let me = mol.add_atom_bare("C");
         let co = mol.add_bond(c, o).unwrap();
-        mol.set_bond_type(co, BondType::Double).unwrap();
+        mol.set_bond_type(co, BondOrder::Double).unwrap();
         mol.add_bond(c, n).unwrap();
         mol.add_bond(n, me).unwrap();
         let hyb = hybridizations(&mol);
@@ -548,12 +548,12 @@ mod tests {
                 _ => BondNumber::Triple,
             };
             let class = if aromatic {
-                BondType::Aromatic
+                BondOrder::Aromatic
             } else {
                 match order {
-                    1 => BondType::Single,
-                    2 => BondType::Double,
-                    _ => BondType::Triple,
+                    1 => BondOrder::Single,
+                    2 => BondOrder::Double,
+                    _ => BondOrder::Triple,
                 }
             };
             mol.set_bond_class(bid, class, number).unwrap();

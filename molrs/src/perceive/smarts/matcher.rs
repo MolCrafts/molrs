@@ -13,9 +13,9 @@
 //! query atom, so candidates are generated from the neighbourhood of the
 //! anchor's image.
 
-use crate::system::Atomistic;
+use crate::core::Atomistic;
 
-use crate::system::NodeId;
+use crate::core::NodeId;
 
 use super::ast::{BondFacts, MolContext, RecursiveEval};
 use super::compile::QueryGraph;
@@ -252,8 +252,8 @@ pub fn has_match(query: &QueryGraph, mol: &Atomistic, mut options: MatchOptions<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::BondOrder;
     use crate::perceive::smarts::MatchOptions;
-    use crate::system::BondType;
 
     /// Ethanol without hydrogens: C0–C1–O2, single bonds.
     fn ethanol() -> Atomistic {
@@ -285,8 +285,8 @@ mod tests {
     /// two-connected with one hydrogen, and the H still one-connected.
     #[test]
     fn a_port_is_not_counted_as_a_bond() {
-        use crate::system::BondNumber;
-        use crate::system::PortKind;
+        use crate::core::BondNumber;
+        use crate::core::PortKind;
         let mut mol = ethanol();
         let o = mol.atoms().map(|(id, _)| id).nth(2).expect("O");
         let h = mol.add_atom_bare("H");
@@ -323,7 +323,7 @@ mod tests {
     fn bond_primitives_are_checked_against_the_molecule() {
         let mut mol = ethanol();
         let bonds: Vec<_> = mol.bonds().map(|(id, _)| id).collect();
-        mol.set_bond_type(bonds[1], BondType::Double).unwrap();
+        mol.set_bond_type(bonds[1], BondOrder::Double).unwrap();
         assert_eq!(matches("C=O", &mol).len(), 1);
         assert!(matches("C-O", &mol).is_empty());
         assert_eq!(matches("C~O", &mol).len(), 1, "`~` is any bond");

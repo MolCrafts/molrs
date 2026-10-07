@@ -1,7 +1,7 @@
 //! Triangle-mesh formats (`molrs::io::mesh`): STL into a
-//! `molrs.spatial.TriMesh`.
+//! `molrs.core.TriMesh`.
 
-use crate::core::spatial::mesh::PyTriMesh;
+use crate::core::mesh::PyTriMesh;
 use crate::error::io_error_to_pyerr;
 use crate::path::path_str;
 use pyo3::prelude::*;

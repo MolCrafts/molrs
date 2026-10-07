@@ -1,9 +1,9 @@
-"""``molrs.store.Trajectory``: the in-memory frame sequence."""
+"""``molrs.core.Trajectory``: the in-memory frame sequence."""
 
 import molrs
 import numpy as np
 import pytest
-from molrs.store import Frame, Trajectory
+from molrs.core import Frame, Trajectory
 
 
 def _frames(n: int) -> list[Frame]:
@@ -85,4 +85,4 @@ def test_labels_must_match_the_frames():
 
 
 def test_is_the_store_class():
-    assert molrs.store.Trajectory is Trajectory
+    assert molrs.core.Trajectory is Trajectory

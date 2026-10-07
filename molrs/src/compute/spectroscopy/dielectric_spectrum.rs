@@ -55,8 +55,8 @@ const DIELECTRIC_PAD_FACTOR: usize = 4;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────────
 
-use molrs::units::constants::BOLTZMANN_REAL as K_B;
-use molrs::units::constants::COULOMB_REAL as KAPPA;
+use molrs::core::constants::BOLTZMANN_REAL as K_B;
+use molrs::core::constants::COULOMB_REAL as KAPPA;
 
 /// 4π/3 — the isotropic dielectric fluctuation prefactor numerator.
 const FOUR_PI_OVER_3: f64 = 4.1887902047863905;
@@ -925,7 +925,7 @@ mod tests {
     use super::*;
     use crate::compute::Compute;
     use crate::compute::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rustfft::FftPlanner;
 

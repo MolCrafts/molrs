@@ -38,15 +38,15 @@ use std::collections::{HashMap, HashSet};
 use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::ff::forcefield::SpecialBonds;
-use molrs::math::Virial;
+use molrs::core::Block;
+use molrs::core::BondDistanceWeights;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
 use molrs::op::types::{F, Idx};
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
-use molrs::system::BondDistanceWeights;
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
 /// enumerating.
@@ -633,9 +633,9 @@ impl PairWeights {
 
     /// The weights on `topo`'s close pairs: per atom, its partners whose
     /// weight is not 1 — the lists
-    /// [`Topology::special_weights`](molrs::system::Topology::special_weights) gives,
+    /// [`Topology::special_weights`](molrs::core::Topology::special_weights) gives,
     /// with the replaced pairs set to 0.
-    pub fn special_weights(&self, topo: &molrs::system::Topology) -> SpecialWeights {
+    pub fn special_weights(&self, topo: &molrs::core::Topology) -> SpecialWeights {
         let mut lists = topo.special_weights(&self.by_distance);
         for &(i, j) in &self.replaced {
             for (a, b) in [(i, j), (j, i)] {
@@ -663,7 +663,7 @@ impl PairWeights {
 ///
 /// So the weights have to be applied at evaluation time, and this holds them.
 /// Build it from [`PairWeights::special_weights`], or from
-/// [`Topology::special_weights`](molrs::system::Topology::special_weights), which
+/// [`Topology::special_weights`](molrs::core::Topology::special_weights), which
 /// walks the bond graph.
 ///
 /// # Why it splits the table rather than scaling in the kernel
@@ -1094,8 +1094,8 @@ mod tests {
     }
 
     use crate::ff::forcefield::{ForceField, Params};
+    use molrs::core::Block;
     use molrs::op::types::Idx;
-    use molrs::store::Block;
     use ndarray::Array1;
 
     struct DummyPotential {
@@ -1379,21 +1379,21 @@ mod tests {
     fn one_pair_table_is_shared_with_every_member() {
         let pairs = Neighbors::from_pairs(
             [
-                molrs::spatial::neighbors::NeighborPair {
+                molrs::core::NeighborPair {
                     i: 0,
                     j: 1,
                     dist_sq: 1.0,
                     disp: [1.0, 0.0, 0.0],
                 },
-                molrs::spatial::neighbors::NeighborPair {
+                molrs::core::NeighborPair {
                     i: 0,
                     j: 2,
                     dist_sq: 4.0,
                     disp: [2.0, 0.0, 0.0],
                 },
             ],
-            molrs::spatial::neighbors::NeighborsStorage::FULL,
-            molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 3 },
+            molrs::core::NeighborsStorage::FULL,
+            molrs::core::QueryMode::SelfQuery { num_points: 3 },
         );
         let mut pots = Potentials::new();
         pots.push(Member::plain(PairCounting));
@@ -1714,7 +1714,7 @@ mod tests {
     /// nothing about what to do instead. The refusal names the alternative.
     #[test]
     fn a_frame_too_large_for_a_full_pair_list_is_refused() {
-        use molrs::store::Block;
+        use molrs::core::Block;
         use ndarray::Array1;
 
         let n = MAX_ATOMS_FOR_A_FULL_PAIR_LIST + 1;

@@ -20,7 +20,7 @@
 //! # Why `k` is a style param and not a shared constant
 //!
 //! MMFF uses Halgren's **332.0716**; OPLS/LAMMPS use CODATA's
-//! [`COULOMB_REAL`](molrs::units::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
+//! [`COULOMB_REAL`](molrs::core::constants::COULOMB_REAL) = **332.06371**. The 2.4e-5
 //! relative difference is worth 0.0036 kcal/mol on caffeine's −150.48 kcal/mol
 //! electrostatic term — **above** the 1e-3 RDKit parity tolerance. Both values are
 //! correct; the force field decides. A kernel holding either one would be choosing a
@@ -36,11 +36,11 @@ use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::need;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
 
 /// Below this squared separation a pair's force has no direction, so only the
 /// (buffered) energy is accumulated. Unchanged from the unbuffered kernel.
@@ -477,7 +477,7 @@ mod tests {
     }
 
     use super::*;
-    use molrs::units::constants::COULOMB_REAL;
+    use molrs::core::constants::COULOMB_REAL;
 
     /// MMFF's parameterization: Halgren's constant, unit dielectric, 0.05 Å buffer.
     const MMFF: (F, F, F) = (332.0716, 1.0, 0.05);

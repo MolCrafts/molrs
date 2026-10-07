@@ -14,6 +14,7 @@
 //! | [`superpose`] | **superposition**: the rigid motion that best lays one set of matched points onto another (least squares), and the weighted centroid |
 //! | [`so3`] | uniform sampling of directions on S² |
 //! | [`random`] | random variates (the standard normal) over a caller-seeded RNG |
+pub mod geometry;
 pub mod linalg;
 pub mod random;
 pub mod rigid;

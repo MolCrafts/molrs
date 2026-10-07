@@ -133,16 +133,16 @@ use crate::ff::ir::Engine;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{ForceFieldWriter, WriteError};
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::torsion::nharmonic_coefficients;
 use crate::ff::forcefield::{AtomType, ForceField, Params, Style};
 use crate::ff::potential::cmap::charmm::GRID;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::{MAX_ATOMS_FOR_A_FULL_PAIR_LIST, intramolecular_pairs};
-use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
-use molrs::store::Frame;
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::core::Frame;
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 
 /// Two Lennard-Jones parameter pairs closer than this (relative) are one.
 const SAME_LJ: f64 = 1e-12;
@@ -1320,11 +1320,11 @@ impl GromacsTopFfWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::constants::VACUUM_DIELECTRIC;
+    use crate::core::constants::GROMACS_COULOMB;
+    use crate::core::constants::VACUUM_DIELECTRIC;
     use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
     use crate::io::forcefield::readers::{ForceFieldReader, gromacs::GromacsTopFfReader};
     use crate::io::forcefield::writers::ForceFieldWriter;
-    use crate::units::constants::GROMACS_COULOMB;
 
     // -- fixtures (molrs units: Å, kcal/mol, degrees) --------------------------------
 
@@ -2364,7 +2364,7 @@ BUT  1
 SOL  2
 ";
 
-    fn read_system(text: &str) -> (ForceField, molrs::store::Frame) {
+    fn read_system(text: &str) -> (ForceField, molrs::core::Frame) {
         GromacsTopFfReader::new()
             .read_system_str(text)
             .unwrap_or_else(|e| panic!("{e}\n{text}"))
@@ -2377,7 +2377,7 @@ SOL  2
             .collect()
     }
 
-    fn energy(ff: &ForceField, frame: &molrs::store::Frame, x: &[f64]) -> f64 {
+    fn energy(ff: &ForceField, frame: &molrs::core::Frame, x: &[f64]) -> f64 {
         let mut ff = ff.clone();
         for name in ["lj/cut", "coul/cut"] {
             if let Some(s) = ff.get_style_mut("pair", name) {
@@ -2391,7 +2391,7 @@ SOL  2
     }
 
     /// The (i, j, is_14, override cells) of a frame's pairs.
-    fn pairs_of(frame: &molrs::store::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
+    fn pairs_of(frame: &molrs::core::Frame) -> Vec<(u64, u64, bool, Vec<Option<f64>>)> {
         let p = frame.get("pairs").unwrap();
         let (i, j) = (
             p.get("atomi").unwrap().as_uint().unwrap(),
@@ -2400,7 +2400,7 @@ SOL  2
         let f = p.get("is_14").unwrap().as_bool().unwrap();
         (0..i.len())
             .map(|r| {
-                let cells = molrs::store::schema::PAIR_OVERRIDE_COLUMNS
+                let cells = molrs::core::schema::PAIR_OVERRIDE_COLUMNS
                     .iter()
                     .map(|k| {
                         let col = p.get(k)?.as_float()?;
@@ -2441,7 +2441,7 @@ SOL  2
                 }
             }
         }
-        let c = |f: &molrs::store::Frame| f.get("constraints").unwrap().nrows();
+        let c = |f: &molrs::core::Frame| f.get("constraints").unwrap().nrows();
         assert_eq!(c(&frame), c(&back_frame));
         let n = frame.get("atoms").unwrap().nrows().unwrap();
         let x = coords(n);
@@ -2509,7 +2509,7 @@ SOL  1
     fn the_frame_s_pairs_are_what_gromacs_prices_or_refused() {
         let (ff, frame) = read_system(SYSTEM);
         let writer = GromacsTopFfWriter::new().with_precision(17);
-        let with_pairs = |edit: &dyn Fn(&mut molrs::store::Block)| {
+        let with_pairs = |edit: &dyn Fn(&mut molrs::core::Block)| {
             let mut f = frame.clone();
             edit(f.get_mut("pairs").unwrap());
             writer.write_system_str(&ff, &f)

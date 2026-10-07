@@ -51,7 +51,7 @@ impl Quantity {
     /// # Examples
     ///
     /// ```
-    /// use molrs::units::{UnitRegistry, UnitsError};
+    /// use molrs::core::{UnitRegistry, UnitsError};
     ///
     /// let reg = UnitRegistry::new();
     /// let t = reg.quantity(25.0, "degC")?;

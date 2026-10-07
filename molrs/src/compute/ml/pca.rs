@@ -19,8 +19,8 @@
 
 use std::marker::PhantomData;
 
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -277,7 +277,7 @@ fn vec_norm(v: &[F]) -> F {
 mod tests {
     use super::*;
     use crate::op::random::standard_normal;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 

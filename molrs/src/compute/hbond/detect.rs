@@ -5,12 +5,12 @@
 //! neighbour search, then gated by the distance and angle criterion (see
 //! [`HBondCriterion`]). molrs gathers candidates with the existing
 //! [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
-//! image via [`Mic`](molrs::spatial::Mic) — the same MIC the rest of
+//! image via [`Mic`](molrs::core::Mic) — the same MIC the rest of
 //! `compute` uses.
 
+use molrs::core::FrameAccess;
+use molrs::core::NeighborQuery;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::NeighborQuery;
-use molrs::store::FrameAccess;
 
 use super::criterion::{DistKind, HBondCriterion};
 use crate::compute::Compute;
@@ -18,7 +18,7 @@ use crate::compute::ComputeError;
 use crate::compute::ComputeResult;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::{dot, norm, sub};
-use molrs::spatial::{Mic, SimBox};
+use molrs::core::{Mic, SimBox};
 
 /// A single detected D–H···A hydrogen bond (atom indices into the frame).
 #[derive(Debug, Clone, Copy, PartialEq)]

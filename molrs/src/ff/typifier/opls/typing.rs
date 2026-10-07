@@ -58,9 +58,9 @@
 
 use std::collections::HashMap;
 
+use molrs::core::PropValue;
+use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::Perceive;
-use molrs::system::PropValue;
-use molrs::system::{Atomistic, NodeId};
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::typifier::Annotation;
@@ -140,8 +140,8 @@ mod tests {
     use super::*;
     use crate::ff::typifier::Match;
     use crate::ff::typifier::OplsTypeRow;
-    use molrs::system::Atom;
-    use molrs::system::BondType;
+    use molrs::core::Atom;
+    use molrs::core::BondOrder;
 
     /// `mol` with the node annotations of [`typify_atoms`] written onto it
     /// through the typing base's one execution path.
@@ -344,18 +344,18 @@ mod tests {
     /// Kekulé benzene, hand-built: ring carbons 0..=5 bonded `C0=C1-C2=C3-C4=C5-C0`
     /// (bond types `Double` / `Single`, no `is_aromatic` flag), one hydrogen on
     /// each carbon (atoms 6..=11). Returns the graph and its six ring bonds.
-    fn kekule_benzene() -> (Atomistic, Vec<molrs::system::RelationId>) {
+    fn kekule_benzene() -> (Atomistic, Vec<molrs::core::RelationId>) {
         let mut g = Atomistic::new();
         let c: Vec<NodeId> = (0..6)
             .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
             .collect();
-        let ring: Vec<molrs::system::RelationId> = (0..6)
+        let ring: Vec<molrs::core::RelationId> = (0..6)
             .map(|k| {
                 let bond = g.add_bond(c[k], c[(k + 1) % 6]).unwrap();
                 let order = if k % 2 == 0 {
-                    BondType::Double
+                    BondOrder::Double
                 } else {
-                    BondType::Single
+                    BondOrder::Single
                 };
                 g.set_bond_type(bond, order).unwrap();
                 bond
@@ -396,9 +396,9 @@ mod tests {
 
         for (k, &bond) in ring.iter().enumerate() {
             let want = if k % 2 == 0 {
-                BondType::Double
+                BondOrder::Double
             } else {
-                BondType::Single
+                BondOrder::Single
             };
             assert_eq!(typed.bond_type(bond), want, "ring bond {k} type");
             assert_eq!(

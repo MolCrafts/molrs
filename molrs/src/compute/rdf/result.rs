@@ -9,8 +9,8 @@
 //! [`RdfMode`] is the one input to it that depends on *how* the pairs were
 //! searched rather than on where the particles are.
 
+use molrs::core::QueryMode;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::QueryMode;
 use ndarray::Array1;
 
 use crate::compute::{ComputeResult, DescriptorRow};

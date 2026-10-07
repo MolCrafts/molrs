@@ -17,8 +17,8 @@ from molrs.stream import ControlCommand
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
-def _frame(n: int = 3, offset: float = 0.0) -> molrs.store.Frame:
-    return molrs.store.Frame(
+def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
+    return molrs.core.Frame(
         blocks={
             "atoms": {
                 "x": np.arange(n, dtype=np.float64) + offset,
@@ -42,11 +42,11 @@ class TestFrameWireCodec:
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
         back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(_frame()))
-        assert isinstance(back, molrs.store.Frame)
+        assert isinstance(back, molrs.core.Frame)
 
     def test_round_trip_preserves_the_box(self):
         frame = _frame()
-        frame.box = molrs.spatial.Box(np.eye(3) * 10.0)
+        frame.box = molrs.core.Box(np.eye(3) * 10.0)
         back = molrs.io.read_frame_bytes(molrs.io.write_frame_bytes(frame))
         assert back.box is not None
         np.testing.assert_allclose(back.box.h, frame.box.h)

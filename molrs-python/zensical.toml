@@ -72,7 +72,7 @@ members_order = "source"
 show_root_heading = true
 show_root_full_path = false
 show_source = false
-# Every PyO3 class declares its public module (``module = "molrs.store"``, …)
+# Every PyO3 class declares its public module (``module = "molrs.core"``, …)
 # and lives in the private ``molrs._lib``; force runtime inspection so griffe
 # resolves the extension types through the package's re-exports.
 force_inspection = true

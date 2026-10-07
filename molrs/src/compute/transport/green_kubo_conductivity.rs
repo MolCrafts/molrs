@@ -1,6 +1,6 @@
 //! Green–Kubo conductivity raw compute — the current-ACF route to σ.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 
 use super::correlation::{lag_times, unbiased_cartesian_acf};
@@ -74,7 +74,7 @@ impl Compute for GreenKuboConductivity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
@@ -132,7 +132,7 @@ mod tests {
         // (replaces the removed bundled Green–Kubo conductivity).
         use crate::compute::CumulativeTrapezoid;
         use crate::compute::Fit;
-        use molrs::units::constants::{
+        use molrs::core::constants::{
             ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
         };
 

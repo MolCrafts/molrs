@@ -39,13 +39,13 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::core::Atomistic;
+use crate::core::PropValue;
+use crate::core::keys;
+use crate::core::{BondNumber, BondOrder};
+use crate::core::{NodeId, RelationId};
 use crate::perceive::rings::find_rings;
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::PropValue;
-use crate::system::{BondNumber, BondType};
-use crate::system::{NodeId, RelationId};
-use molrs::system::Element;
+use molrs::core::Element;
 
 /// Maximum number of fused rings combined when checking the Hückel rule
 /// (RDKit `maxFused = 6`).
@@ -771,7 +771,7 @@ pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
     let all_bond_ids: Vec<RelationId> = mol.bonds().map(|(id, _)| id).collect();
     for bid in all_bond_ids {
         if aromatic_bonds.contains(&bid) {
-            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, BondType::Aromatic);
+            let _ = mol.set_bond_prop(bid, keys::BOND_TYPE, BondOrder::Aromatic);
         } else if mol.bond_type(bid).is_aromatic() {
             // A bond that was aromatic and is no longer falls back to the class
             // its own localized number states — never to a stale aromatic flag.
@@ -786,7 +786,7 @@ pub(crate) fn perceive_aromaticity(mol: &mut Atomistic) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::Atom;
+    use crate::core::Atom;
 
     /// Build a Kekulé benzene ring of 6 carbons (alternating single/double).
     fn benzene() -> Atomistic {
@@ -797,7 +797,7 @@ mod tests {
         for i in 0..6 {
             let bid = g.add_bond(c[i], c[(i + 1) % 6]).unwrap();
             let order = if i % 2 == 0 { 2.0 } else { 1.0 };
-            g.set_bond_type(bid, BondType::from_code(order as u32))
+            g.set_bond_type(bid, BondOrder::from_code(order as u32))
                 .unwrap();
         }
         // one explicit H per carbon
@@ -843,7 +843,7 @@ mod tests {
 
     /// Every bond's `(bond_type, bond_number)` in iteration order.
     #[cfg(feature = "smiles")]
-    fn bond_classes(mol: &Atomistic) -> Vec<(BondType, BondNumber)> {
+    fn bond_classes(mol: &Atomistic) -> Vec<(BondOrder, BondNumber)> {
         mol.bonds()
             .map(|(id, _)| (mol.bond_type(id), mol.bond_number(id)))
             .collect()

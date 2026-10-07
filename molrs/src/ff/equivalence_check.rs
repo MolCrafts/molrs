@@ -60,6 +60,7 @@ use std::path::Path;
 use ndarray::Array1;
 use serde_json::{Value, json};
 
+use crate::core::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
@@ -70,21 +71,21 @@ use crate::io::forcefield::readers::prmtop::AmberPrmtopFfReader;
 use crate::io::forcefield::writers::ForceFieldWriter;
 use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
 use crate::io::forcefield::writers::xml::XmlForceFieldWriter;
+use crate::io::mrec::ForceFieldSection;
 use crate::io::{
     forcefield::readers::lammps::LammpsFfReader, forcefield::writers::lammps::LammpsFfWriter,
     forcefield::writers::lammps::LammpsWriteOptions,
 };
-use crate::units::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
+use molrs::core::constants::COULOMB_REAL;
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
 use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::store::type_labels::TypeLabels;
-use molrs::units::constants::COULOMB_REAL;
 
 /// The terms compared, in print order.
 pub(crate) const TERMS: [&str; 8] = [
@@ -1353,7 +1354,9 @@ fn every_source_persists_through_a_record() {
         let x = configuration(source.name, &sys.coords, 0);
         for engine in ENGINES {
             let (ff, frame) = engine_form(&sys, engine);
-            let back = ForceField::from_section(&ff.to_section().unwrap())
+            let back = ForceFieldSection::from_forcefield(&ff)
+                .unwrap()
+                .to_forcefield()
                 .unwrap_or_else(|e| panic!("{} {engine}: {e}", source.name));
             same_terms(source.name, "record", (&ff, &frame), (&back, &frame), &x);
         }

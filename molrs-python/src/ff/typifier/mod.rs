@@ -32,9 +32,9 @@ use molrs::ff::typifier::{Annotation, Match, Typifier, Typing};
 use molrs::io::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 use molrs::io::forcefield::xml::read_opls_typing_xml_str;
 
-use crate::core::store::frame::PyFrame;
-use crate::core::system::molgraph::{PyAtomistic, py_to_prop};
-use crate::core::system::views::RelationClass;
+use crate::core::frame::PyFrame;
+use crate::core::graph_views::RelationClass;
+use crate::core::molgraph::{PyAtomistic, py_to_prop};
 use crate::ff::forcefield::{PyForceField, params_from_dict};
 
 /// Where a [`PyTypifier`]'s typing state lives.

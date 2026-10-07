@@ -3,7 +3,7 @@
 
 use super::{js_value, quats};
 use crate::core::frame::Frame;
-use crate::core::spatial::neighbors::Neighbors;
+use crate::core::neighbors::Neighbors;
 use molrs::compute::Compute;
 use molrs::op::types::F;
 use serde::Serialize;
@@ -131,7 +131,7 @@ impl Nematic {
 
     pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
         let directors = vectors3(directors, "Nematic directors")?;
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         let calc = molrs::compute::Nematic::new();
         let mut out = calc
             .compute(&[&dummy], &directors)
@@ -186,7 +186,7 @@ impl Cubatic {
 
     pub fn compute(&self, directors: &[F]) -> Result<JsValue, JsValue> {
         let directors = vectors3(directors, "Cubatic directors")?;
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         let calc = molrs::compute::Cubatic::new()
             .with_seed(self.seed)
             .with_initial_temp(self.initial_temp)
@@ -287,7 +287,7 @@ impl RotationalAutocorrelation {
         }
         let reference = quats(reference, "RotationalAutocorrelation reference")?;
         let orientations = quats(orientations, "RotationalAutocorrelation orientations")?;
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         let calc = molrs::compute::RotationalAutocorrelation::new(self.l);
         let args = molrs::compute::RotationalAutocorrelationArgs {
             ref_orientations: &reference,

@@ -4,8 +4,8 @@
 use super::{collect_frames, collect_neighbors, was_batched};
 use crate::error::py_value_err;
 use molrs::compute::{Cluster, ClusterProperties, ClusterResult, Compute};
+use molrs::core::Frame as CoreFrame;
 use molrs::op::types::F;
-use molrs::store::Frame as CoreFrame;
 use ndarray::{Array1, Array2, Array3};
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyValueError;

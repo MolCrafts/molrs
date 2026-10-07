@@ -7,7 +7,7 @@
 //! Decoding parameter *values* into a force field is the force-field reader's
 //! job; nothing here builds parameter rows of its own.
 
-use molrs::store::type_labels::TypeName;
+use molrs::core::TypeName;
 
 use std::collections::HashMap;
 

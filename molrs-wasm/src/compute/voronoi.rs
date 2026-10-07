@@ -9,7 +9,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// Per-atom covalent radii from the frame's `element` column.
-fn covalent_radii_from_frame(frame: &molrs::store::Frame) -> Result<Vec<F>, JsValue> {
+fn covalent_radii_from_frame(frame: &molrs::core::Frame) -> Result<Vec<F>, JsValue> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| JsValue::from_str("Frame has no 'atoms' block"))?;
@@ -25,7 +25,7 @@ fn covalent_radii_from_frame(frame: &molrs::store::Frame) -> Result<Vec<F>, JsVa
     column
         .iter()
         .map(|symbol| {
-            molrs::system::Element::by_symbol(symbol)
+            molrs::core::Element::by_symbol(symbol)
                 .map(|el| F::from(el.covalent_radius()))
                 .ok_or_else(|| JsValue::from_str(&format!("unknown element symbol {symbol}")))
         })
@@ -37,7 +37,7 @@ fn covalent_radii_from_frame(frame: &molrs::store::Frame) -> Result<Vec<F>, JsVa
 /// With `use_atom_radii` the cells are Laguerre-weighted by covalent radius;
 /// without it every generator has radius zero, which is a plain Voronoi diagram.
 fn voronoi_cells(
-    frame: &molrs::store::Frame,
+    frame: &molrs::core::Frame,
     use_atom_radii: bool,
 ) -> Result<(molrs::compute::VoronoiCells, F), JsValue> {
     let positions = positions_from_frame(frame)?;

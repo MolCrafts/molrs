@@ -10,13 +10,13 @@ only assert the PyO3 surface and Daylight atom-map semantics.
 import molrs
 
 
-def _methanol() -> "molrs.system.Atomistic":
+def _methanol() -> "molrs.core.Atomistic":
     """Methanol (CH3-OH) with explicit hydrogens.
 
     Connectivity: C-O, O-H(hydroxyl), plus three C-H. The C-O-H path is the
     single ``[C][O][H]`` embedding.
     """
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     ho = mol.add_atom("H", 2.0, 0.0, 0.0)
@@ -28,9 +28,9 @@ def _methanol() -> "molrs.system.Atomistic":
     return mol, c, o, ho
 
 
-def _ethane() -> "molrs.system.Atomistic":
+def _ethane() -> "molrs.core.Atomistic":
     """Ethane (C2H6) with explicit hydrogens (no O — for non-match tests)."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     for c, (x, y, z) in [
@@ -47,9 +47,9 @@ def _ethane() -> "molrs.system.Atomistic":
     return mol, c1, c2
 
 
-def _methylamine() -> "molrs.system.Atomistic":
+def _methylamine() -> "molrs.core.Atomistic":
     """Methylamine (CH3-NH2) with explicit hydrogens; N carries 2 explicit H."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     n = mol.add_atom("N", 1.47, 0.0, 0.0)
     mol.add_bond(c, n)

@@ -39,7 +39,7 @@ use molrs::ff::charge::{
     BccModel, BccParameterSet, ChargeError, ChargeModel, GasteigerModel, MullikenModel,
 };
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 
 /// The `-c` flag of every correction family, paired with the table it reads.
 ///

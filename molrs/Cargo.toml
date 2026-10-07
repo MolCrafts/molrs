@@ -102,7 +102,11 @@ rayon      = ["dep:rayon"]
 # (`io/zarr/zstd_decode.rs`). It is registered only without `zarr-codecs`,
 # whose C-backed codec owns the name and also encodes. `numcodecs.shuffle`
 # needs nothing: zarrs builds it on every target.
-zarr       = ["dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
+#
+# A record's `forcefield` section validates its style tables against the
+# force-field IR's vocabulary (`ff::ir` categories and table columns, the
+# mixing and 1-4 rules), so the record codec (`io::mrec`) needs `ff`.
+zarr       = ["ff", "dep:zarrs", "zarrs/gzip", "zarrs/crc32c", "zarrs/sharding", "zarrs/transpose", "dep:ruzstd", "dep:inventory"]
 zarr-codecs = ["zarr", "zarrs/zstd", "zarrs/blosc"]
 filesystem = ["zarr", "zarr-codecs", "zarrs/filesystem", "dep:zip", "dep:zarrs_zip"]
 

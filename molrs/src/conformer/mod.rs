@@ -8,14 +8,14 @@
 //!
 //! [`Conformer::generate`] is generic over [`ElementGraph`], so it returns the
 //! same type it was handed: an [`Atomistic`] in, an `Atomistic` out, with its
-//! ports ([`molrs::system::Port`]) and `frag_id` labels intact. The hydrogens
+//! ports ([`molrs::core::Port`]) and `frag_id` labels intact. The hydrogens
 //! the pipeline adds belong to no input unit, so relabelling them is the
 //! caller's own step.
 //!
 //! ```no_run
 //! use molrs::conformer::{Conformer, ConformerOptions};
-//! use molrs::system::Atomistic;
-//! # fn run(mol: &Atomistic, unit: &Atomistic) -> Result<(), molrs::error::MolRsError> {
+//! use molrs::core::Atomistic;
+//! # fn run(mol: &Atomistic, unit: &Atomistic) -> Result<(), molrs::core::MolRsError> {
 //! let conformer = Conformer::new(ConformerOptions::default());
 //!
 //! // An `Atomistic` in, an `Atomistic` out.
@@ -44,8 +44,8 @@ pub use element_graph::ElementGraph;
 pub use options::{ConformerOptions, ConformerSpeed, ForceFieldKind};
 pub use report::{ConformerReport, ConformerStageReport, StageKind};
 
-use molrs::error::MolRsError;
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
 
 /// 3D conformer generator for all-atom molecular graphs.
 ///

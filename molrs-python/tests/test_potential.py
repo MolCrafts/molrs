@@ -248,8 +248,8 @@ class TestPotentialsAssembly:
         ff.def_style("angle", "harmonic").def_type("CCC", c, c, c, k=50.0, theta0=109.5)
         torsion = dict(k1=1.3, periodicity1=1.0, phase1=0.0, k2=0.4, periodicity2=2.0, phase2=180.0)
         ff.def_style("dihedral", "periodic").def_type("CCCC", c, c, c, c, **torsion)
-        frame = molrs.store.Frame()
-        block = molrs.store.Block()
+        frame = molrs.core.Frame()
+        block = molrs.core.Block()
         for d, key in enumerate("xyz"):
             block.insert(key, XYZ[:, d].copy())
         block.insert("type", ["C"] * 4)
@@ -260,7 +260,7 @@ class TestPotentialsAssembly:
             ("angles", angles, "CCC"),
             ("dihedrals", dihedrals, "CCCC"),
         ):
-            topo = molrs.store.Block()
+            topo = molrs.core.Block()
             for column, atom in zip(("atomi", "atomj", "atomk", "atoml"), zip(*rows)):
                 topo.insert(column, np.array(atom, dtype=np.uint32))
             topo.insert("type", [label] * len(rows))

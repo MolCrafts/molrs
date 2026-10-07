@@ -90,7 +90,7 @@
 //!
 //! Per-atom charge and mass live in the LAMMPS **data** file, not this include,
 //! so they are not read here: the `coul/cut` style draws charges from the
-//! [`Frame`](molrs::store::Frame) at evaluation time, with LAMMPS's own
+//! [`Frame`](molrs::core::Frame) at evaluation time, with LAMMPS's own
 //! Coulomb constant (`qqr2e`) for the file's units.
 //!
 //! # CMAP crossterms (`fix cmap`)
@@ -111,15 +111,15 @@
 //! always produced.
 
 use super::ForceFieldReader;
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::forcefield::mixing::Mixing;
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{LammpsCodec, Registry, RegistryRef, StyleSpec, with_global};
-use crate::ff::params::amber::{AMBER_SCEE, AMBER_SCNB};
 use crate::io::forcefield::lammps_units::parse_style;
-use molrs::store::FrameAccess;
-use molrs::store::type_labels::{TypeLabels, TypeName};
-use molrs::units::constants::{COULOMB_METAL, COULOMB_REAL};
+use molrs::core::FrameAccess;
+use molrs::core::constants::{COULOMB_METAL, COULOMB_REAL};
+use molrs::core::{TypeLabels, TypeName};
 use ndarray::ArrayD;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -198,12 +198,12 @@ impl LammpsFfReader {
     /// ([`read_lammps_data`](crate::io::data::lammps_data::read_lammps_data)).
     ///
     /// The sections are the frame's
-    /// [`COEFFS_TEXT_META`](crate::io::data::lammps_data::COEFFS_TEXT_META)
+    /// [`LAMMPS_COEFFS_TEXT`](crate::core::keys::LAMMPS_COEFFS_TEXT)
     /// meta; a row's numeric type id is named by the label the file's
     /// `* Type Labels` section gave it (the frame's type-label inventories,
     /// ids as written), else by the id itself. `units` is the unit style the
     /// coefficients are in: the one the file's title line stated
-    /// ([`UNITS_META`](crate::io::data::lammps_data::UNITS_META)) when `None`,
+    /// ([`LAMMPS_UNITS`](crate::core::keys::LAMMPS_UNITS)) when `None`,
     /// else [`default_units`](Self::default_units). A `PairIJ Coeffs` row
     /// `i j ε σ` is the `pair_coeff i j ε σ` line: with `i ≠ j` an explicit
     /// cross pair that replaces the mixing rule for that type pair.
@@ -234,23 +234,23 @@ impl LammpsFfReader {
         frame: &impl FrameAccess,
         units: Option<&str>,
     ) -> Result<ForceField, String> {
-        use crate::io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META};
+        use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS};
         let meta = frame.meta_ref();
         let text = meta
-            .get(COEFFS_TEXT_META)
+            .get(LAMMPS_COEFFS_TEXT)
             .ok_or_else(|| {
                 format!(
-                    "the frame has no `* Coeffs` sections (meta {COEFFS_TEXT_META:?}): \
+                    "the frame has no `* Coeffs` sections (meta {LAMMPS_COEFFS_TEXT:?}): \
                      read it with the LAMMPS data reader from a file that has them"
                 )
             })?
             .as_str()
-            .ok_or_else(|| format!("meta {COEFFS_TEXT_META:?} must be a string"))?;
-        let stated = match meta.get(UNITS_META) {
+            .ok_or_else(|| format!("meta {LAMMPS_COEFFS_TEXT:?} must be a string"))?;
+        let stated = match meta.get(LAMMPS_UNITS) {
             None => None,
             Some(value) => {
                 Some(parse_style(value.as_str().ok_or_else(|| {
-                    format!("meta {UNITS_META:?} must be a string")
+                    format!("meta {LAMMPS_UNITS:?} must be a string")
                 })?)?)
             }
         };
@@ -1786,9 +1786,9 @@ dihedral_coeff c3-c3-oh-ho 1 0.060000 3 0.000000
     #[test]
     fn a_lammps_improper_evaluates_at_the_lammps_energy() {
         use crate::ff::potential::PotentialCompiler;
+        use molrs::core::Block;
+        use molrs::core::Frame;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
-        use molrs::store::Frame;
         use ndarray::Array1;
 
         let text = "special_bonds amber\n\
@@ -2165,7 +2165,7 @@ Angles
 1 1 2 1 3
 ";
 
-    fn data_frame(text: &str) -> crate::store::Frame {
+    fn data_frame(text: &str) -> crate::core::Frame {
         crate::io::data::lammps_data::parse_frame_bytes(text.as_bytes()).unwrap()
     }
 
@@ -2214,7 +2214,7 @@ Angles
         let again = LammpsFfReader::new()
             .read_data_coeffs(&again_frame, Some("real"))
             .unwrap();
-        let include = |ff: &ForceField, frame: &crate::store::Frame| {
+        let include = |ff: &ForceField, frame: &crate::core::Frame| {
             LammpsFfWriter::new(&TypeLabels::from_frame(frame).unwrap())
                 .write_str(ff)
                 .unwrap()
@@ -2233,7 +2233,7 @@ Angles
             .unwrap_err();
         assert!(err.contains("metal") && err.contains("real"), "{err}");
         let err = LammpsFfReader::new()
-            .read_data_coeffs(&crate::store::Frame::new(), None)
+            .read_data_coeffs(&crate::core::Frame::new(), None)
             .unwrap_err();
         assert!(err.contains("lammps_coeffs_text"), "{err}");
     }

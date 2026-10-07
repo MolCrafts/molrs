@@ -21,13 +21,13 @@
 
 use ndarray::{Array2, ArrayView2};
 
+use molrs::core::Neighbors;
+use molrs::core::SimBox;
+use molrs::core::{GhostError, GhostSet};
 use molrs::ff::potential::Member;
 use molrs::op::types::{F, FNx3, FNx3View, I};
-use molrs::spatial::SimBox;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::spatial::{GhostError, GhostSet};
 
-use molrs::math::Virial;
+use molrs::core::Virial;
 
 use super::error::MdError;
 
@@ -38,7 +38,7 @@ use super::error::MdError;
 /// snapshot has gone stale, rebuilds it, moves it every step, and hands out the
 /// pair table and the re-resolved topology that follow. It is the ghost
 /// régime's counterpart to
-/// [`VerletSkin`](molrs::spatial::neighbors::VerletSkin) and answers the same
+/// [`VerletSkin`](molrs::core::VerletSkin) and answers the same
 /// question: has anything moved far enough that what was frozen at the last
 /// rebuild is no longer complete?
 ///
@@ -596,10 +596,10 @@ impl BondedLists {
 mod remap_tests {
     use super::*;
 
+    use molrs::core::SimBox;
     use molrs::ff::potential::angle::AngleHarmonic;
     use molrs::ff::potential::bond::BondHarmonic;
     use molrs::ff::potential::{IndexedTerms, Potential};
-    use molrs::spatial::SimBox;
     use ndarray::array;
 
     /// Resolve one kernel's indices against a halo and hand back the table.
@@ -736,12 +736,12 @@ mod remap_tests {
 #[cfg(test)]
 mod owned_potential_tests {
     use super::*;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use molrs::ff::forcefield::{ForceField, Params};
     use molrs::ff::potential::PotentialCompiler;
     use molrs::op::types::Idx;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
     use ndarray::{Array1, array};
 
     /// Two atoms bonded across a face, drifting until the halo rebuilds.
@@ -948,11 +948,11 @@ mod owned_potential_tests {
 }
 #[cfg(test)]
 mod bonded_tests {
+    use molrs::core::GhostSet;
+    use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::bond::BondHarmonic;
     use molrs::op::types::F;
-    use molrs::spatial::GhostSet;
-    use molrs::spatial::SimBox;
     use ndarray::Array2;
     use ndarray::array;
 
@@ -1078,12 +1078,12 @@ mod bonded_tests {
 
 #[cfg(test)]
 mod force_path_tests {
-    use crate::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
+    use crate::core::{NeighborList, NeighborPolicy, VerletSkin};
+    use molrs::core::GhostSet;
+    use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::LJCut;
     use molrs::op::types::F;
-    use molrs::spatial::GhostSet;
-    use molrs::spatial::SimBox;
     use ndarray::Array2;
     use ndarray::array;
 
@@ -1180,10 +1180,10 @@ mod force_path_tests {
 #[cfg(test)]
 mod virial_tests {
     use super::*;
+    use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
     use molrs::ff::potential::pair::LJCut;
     use molrs::op::types::F;
-    use molrs::spatial::SimBox;
     use ndarray::{Array2, array};
 
     fn lj(cutoff: F) -> LJCut {

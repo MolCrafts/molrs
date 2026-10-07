@@ -37,11 +37,11 @@ use crate::io::lammps::box_bounds::{BoxBounds, pbc_from_boundary_tokens, simbox_
 use crate::io::lammps::columns::{canonical_dump_column, insert_f, insert_str, native_dump_column};
 use crate::io::reader::{FrameIndex, FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::writer::{FrameWriter, Writer};
+use molrs::core::Frame;
+use molrs::core::FrameAccess;
+use molrs::core::keys;
+use molrs::core::{Block, BlockAccess, BlockDtype, ColumnView, DType};
 use molrs::op::types::{F, I, Idx};
-use molrs::store::Frame;
-use molrs::store::FrameAccess;
-use molrs::store::keys;
-use molrs::store::{Block, BlockAccess, BlockDtype, ColumnView, DType};
 use ndarray::{ArrayD, IxDyn};
 use std::fs::File;
 use std::io::{BufRead, Seek, SeekFrom, Write};
@@ -115,7 +115,7 @@ fn local_label_of(count_header: &str) -> Option<&'static str> {
 /// user-defined `c_X[N]`, `f_reax[1]`, `batom1` — starts at Integer and widens
 /// on the first token that does not fit.
 fn seed_column_type(canonical: &str) -> ColumnType {
-    match molrs::store::schema::column(canonical).map(|spec| spec.dtype) {
+    match molrs::core::schema::column(canonical).map(|spec| spec.dtype) {
         Some(DType::Float) => ColumnType::Float,
         Some(DType::String) => ColumnType::String,
         _ => ColumnType::Integer,
@@ -134,7 +134,7 @@ fn insert_integer_column(
     raw: Vec<i64>,
     nrows: usize,
 ) -> std::io::Result<()> {
-    match molrs::store::schema::column(key).map(|spec| spec.dtype) {
+    match molrs::core::schema::column(key).map(|spec| spec.dtype) {
         Some(DType::UInt) => {
             let values = raw
                 .into_iter()
@@ -891,7 +891,7 @@ impl<R: BufRead + Seek> TrajectoryReader for LAMMPSTrajReader<R> {
 ///
 /// ```no_run
 /// use molrs::io::trajectory::lammps_dump::write_lammps_dump;
-/// use molrs::store::Frame;
+/// use molrs::core::Frame;
 ///
 /// # fn main() -> std::io::Result<()> {
 /// let frames: Vec<Frame> = vec![];
@@ -930,7 +930,7 @@ impl<W: Write> FrameWriter for LAMMPSDumpWriter<W> {
 /// Write a single frame in LAMMPS dump format.
 ///
 /// Accepts any type implementing [`FrameAccess`], including both [`Frame`] and
-/// [`FrameView`](molrs::store::FrameView).
+/// [`FrameView`](molrs::core::FrameView).
 ///
 /// `columns` is the caller's `dump custom` line: `Some` writes exactly those
 /// columns in that order, `None` writes every column the block holds. See
@@ -2023,7 +2023,7 @@ ITEM: ATOMS id type q
     #[test]
     fn lammps_native_columns_are_canonicalized_on_read() {
         // `q` and `mol` are LAMMPS-native spellings; a frame must expose only
-        // the canonical `charge` / `mol_id`, per `store::keys`.
+        // the canonical `charge` / `mol_id`, per `core::keys`.
         let dump = "ITEM: TIMESTEP
 0
 ITEM: NUMBER OF ATOMS
@@ -2275,7 +2275,7 @@ ITEM: ATOMS id type x y z
 
     #[test]
     fn write_dump_local_from_bonds_roundtrip() {
-        use molrs::spatial::SimBox;
+        use molrs::core::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();
@@ -2330,7 +2330,7 @@ ITEM: ATOMS id type x y z
 
     /// A frame carrying more than a viewer needs, for the column-choice tests.
     fn wide_frame() -> Frame {
-        use molrs::spatial::SimBox;
+        use molrs::core::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();
@@ -2392,7 +2392,7 @@ ITEM: ATOMS id type x y z
 
     /// Three waters' worth of atoms in a 10 Å cube, with `extra` columns.
     fn typed_frame(extra: impl FnOnce(&mut Block)) -> Frame {
-        use molrs::spatial::SimBox;
+        use molrs::core::SimBox;
         use ndarray::{Array1, array};
 
         let mut atoms = Block::new();

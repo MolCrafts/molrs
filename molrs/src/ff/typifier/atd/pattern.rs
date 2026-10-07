@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use molrs::system::NodeId;
+use molrs::core::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{

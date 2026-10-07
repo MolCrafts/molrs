@@ -25,10 +25,10 @@
 //! — no qℓm recomputation, no duplicate spherical-harmonic evaluations.
 
 use crate::compute::ComputeResult;
-use molrs::math::complex::Complex;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 
 use super::steinhardt::compute_qlm;
 use crate::compute::Compute;
@@ -192,9 +192,9 @@ impl ComputeResult for SolidLiquidResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -305,7 +305,7 @@ mod tests {
     /// rather than to the mere presence of the centre-centre bond.
     #[test]
     fn identical_environments_score_one() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         let frame = paired_octahedra(20.0);
 

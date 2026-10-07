@@ -8,7 +8,7 @@
 //! Every source prices a pair only at `r < cutoff`, as LAMMPS does.
 //! Arithmetic uses `inv_r2 = 1/r2`. Degenerate pairs `r2 < 1e-24` are skipped.
 
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::mixing::Mixing;
@@ -20,10 +20,10 @@ use crate::ff::potential::pair::PairPotential;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{CompileError, Member, PairDriven, Potential, need};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Virial;
+use molrs::core::{Neighbors, VerletSkin};
 use molrs::op::types::F;
-use molrs::spatial::neighbors::{Neighbors, VerletSkin};
-use molrs::store::Frame;
 use ndarray::{Array2, ArrayView2};
 
 const MIN_R2: F = 1e-24;
@@ -994,8 +994,8 @@ mod tests {
     #[cfg(feature = "rayon")]
     #[test]
     fn the_fold_does_not_depend_on_the_thread_count() {
-        use molrs::spatial::SimBox;
-        use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
+        use molrs::core::SimBox;
+        use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
 
         // 10³ atoms at 3 Å with a 6 Å cutoff clears 8192 pairs comfortably.
         let side = 10_usize;
@@ -1102,14 +1102,14 @@ mod tests {
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 2.0, 0.0, 0.0];
         let (e0, _) = pot.calc_energy_forces(&coords);
         let extra = Neighbors::from_pairs(
-            [molrs::spatial::neighbors::NeighborPair {
+            [molrs::core::NeighborPair {
                 i: 0,
                 j: 1,
                 dist_sq: 1.0,
                 disp: [1.0, 0.0, 0.0],
             }],
-            molrs::spatial::neighbors::NeighborsStorage::FULL,
-            molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 2 },
+            molrs::core::NeighborsStorage::FULL,
+            molrs::core::QueryMode::SelfQuery { num_points: 2 },
         );
         let (e1, _) = pot.calc_energy_forces_with_pairs(&coords, &extra);
         assert_eq!(e0, e1);
@@ -1119,7 +1119,7 @@ mod tests {
     /// and the spec's expression do (it priced 12-6 whatever `n`, `m` said).
     #[test]
     fn the_compiled_door_takes_the_style_exponents() {
-        use molrs::store::Block;
+        use molrs::core::Block;
         use ndarray::Array1;
         let rows = [(
             "A".to_string(),
@@ -1147,14 +1147,14 @@ mod tests {
             let e_c = compiled.as_potential().calc_energy(&coords);
             assert!((e_c - want).abs() < 1e-12, "{n}-{m}: {e_c} vs {want}");
             let pair = Neighbors::from_pairs(
-                vec![molrs::spatial::neighbors::NeighborPair {
+                vec![molrs::core::NeighborPair {
                     i: 0,
                     j: 1,
                     dist_sq: 3.7 * 3.7,
                     disp: [3.7, 0.0, 0.0],
                 }],
-                molrs::spatial::neighbors::NeighborsStorage::FULL,
-                molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 2 },
+                molrs::core::NeighborsStorage::FULL,
+                molrs::core::QueryMode::SelfQuery { num_points: 2 },
             );
             let Member::Pair(typed) = typed else {
                 panic!("a pair member")
@@ -1176,7 +1176,7 @@ mod tests {
     /// Free boundary on purpose: this is about the lookup, not periodicity.
     #[test]
     fn a_typed_kernel_scores_a_pair_exactly_as_a_compiled_one() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         // Two types, deliberately unlike each other, so a table indexed the
         // wrong way round would give a different answer.
@@ -1317,8 +1317,8 @@ mod tests {
 
     /// Two atoms, types `A` and `B`, joined by one pair row.
     fn ab_frame() -> Frame {
+        use molrs::core::Block;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
         use ndarray::Array1;
         let mut atoms = Block::new();
         atoms
@@ -1388,7 +1388,7 @@ mod tests {
     }
 
     fn typed_energy(rows: &[(String, Params)]) -> F {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
         let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
         style.set_str("mixing", "geometric");
         let style = gathered(style);

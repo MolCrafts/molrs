@@ -23,7 +23,7 @@ def _amine_plus_ester():
     Ester  : carbonyl C0 =O1, single -O2- to methyl C3
              (matches ``[C:2](=O)OC``; leaving group = O2 + C3).
     """
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     # amine
     n0 = mol.add_atom("N", 0.0, 0.0, 0.0)
     h1 = mol.add_atom("H", 0.6, 0.8, 0.0)
@@ -145,7 +145,7 @@ def test_apply_reuses_core_and_leaves_binding_atoms_alive():
 def test_apply_adds_unmapped_product_atom():
     # substitution: C-Br -> C-O ; Br leaves, O is a brand-new atom.
     rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
     br = mol.add_atom("Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
@@ -172,7 +172,7 @@ def test_apply_adds_unmapped_product_atom():
 
 
 def test_smarts_matcher_still_works():
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c = mol.add_atom("C", 0.0, 0.0, 0.0)
     o = mol.add_atom("O", 1.4, 0.0, 0.0)
     mol.add_bond(c, o)
@@ -208,7 +208,7 @@ def test_apply_touched_includes_added_atom():
     """ac-002: a reaction adding an RHS atom includes the new atom's handle;
     the surviving carbon is touched, the deleted Br handle is not."""
     rxn = molrs.perceive.Reaction("[C:1]Br >> [C:1]O")
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c0 = mol.add_atom("C", 0.0, 0.0, 0.0)
     br = mol.add_atom("Br", 1.9, 0.0, 0.0)
     mol.add_bond(c0, br)
@@ -226,7 +226,7 @@ def test_apply_touched_thiol_ene_two_carbons_and_sulfur():
     """ac-002: thiol-ene touched = the two carbons (order change) + the sulfur
     (formed bond); the sulfur's spectator H is not touched."""
     rxn = molrs.perceive.Reaction("[C:1]=[C:2].[S;H1:3] >> [C:1][C:2][S:3]")
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.3, 0.0, 0.0)
     s3 = mol.add_atom("S", 3.0, 0.0, 0.0)
@@ -266,7 +266,7 @@ def test_apply_many_compiles_all_leaving_groups_before_mutation():
 
 def test_apply_many_detailed_preserves_rhs_creation_order():
     reaction = molrs.perceive.Reaction("[N:1].[C:2]>>[N:1][C:2]([O])[S]")
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     n = mol.add_atom("N")
     c = mol.add_atom("C")
 

@@ -42,9 +42,9 @@ use pyo3::prelude::*;
 
 use molrs::perceive::{Perceive, SubgraphMatcher};
 
-use molrs::system::node_to_u64;
+use molrs::core::node_to_u64;
 
-use crate::core::system::molgraph::{PyAtomistic, PyCoarseGrain};
+use crate::core::molgraph::{PyAtomistic, PyCoarseGrain};
 
 use crate::error::molrs_error_to_pyerr;
 
@@ -339,7 +339,7 @@ impl PyPerceive {
 /// `molrs.perceive.SubgraphMatcher`.
 ///
 /// Snapshots a bead pattern once; :meth:`find` lists every induced occurrence
-/// of it in a target :class:`~molrs.system.CoarseGrain`. Beads match on equal
+/// of it in a target :class:`~molrs.core.CoarseGrain`. Beads match on equal
 /// ``bead_type``; bonds match on adjacency.
 ///
 /// ``find`` does **not** partition: overlapping groups are all returned, and a
@@ -354,7 +354,7 @@ impl PyPerceive {
 /// Raises
 /// ------
 /// TypeError
-///     If ``pattern`` is not a :class:`~molrs.system.CoarseGrain`.
+///     If ``pattern`` is not a :class:`~molrs.core.CoarseGrain`.
 ///
 /// Examples
 /// --------
@@ -399,7 +399,7 @@ impl PySubgraphMatcher {
     /// Raises
     /// ------
     /// TypeError
-    ///     If ``target`` is not a :class:`~molrs.system.CoarseGrain`.
+    ///     If ``target`` is not a :class:`~molrs.core.CoarseGrain`.
     fn find(&self, py: Python<'_>, target: PyRef<'_, PyCoarseGrain>) -> Vec<Vec<u64>> {
         let (matcher, target) = (&self.inner, target.core());
         py.detach(|| matcher.find(target))

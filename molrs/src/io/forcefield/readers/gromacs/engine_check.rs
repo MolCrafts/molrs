@@ -20,7 +20,7 @@
 //! Settings: a plain cut-off at 2.5 nm (no shift, no reaction field) in a
 //! 6 nm box — every intramolecular pair inside it, no image — so nonbonded
 //! energies are the plain sums. The reader states GROMACS's own Coulomb
-//! constant ([`crate::units::constants::GROMACS_COULOMB`], CODATA 2018), LAMMPS `real`'s
+//! constant ([`crate::core::constants::GROMACS_COULOMB`], CODATA 2018), LAMMPS `real`'s
 //! 332.06371 × (1 + 9.9·10⁻⁹); LAMMPS prices at its own, so molrs's Coulomb
 //! terms are held to LAMMPS's times the constants' ratio (exact: the energy is
 //! linear in it).
@@ -49,12 +49,12 @@ use crate::io::forcefield::writers::ForceFieldWriter;
 use crate::io::{
     forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
 };
+use molrs::core::Frame;
+use molrs::core::TypeLabels;
+use molrs::core::constants::COULOMB_REAL;
 use molrs::io::data::gro::read_gro_frame;
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::op::types::F;
-use molrs::store::Frame;
-use molrs::store::type_labels::TypeLabels;
-use molrs::units::constants::COULOMB_REAL;
 
 /// The terms compared, in print order.
 const TERMS: [&str; 10] = [
@@ -310,7 +310,7 @@ fn terms(ff: &ForceField, frame: &Frame, coords: &[F]) -> [Option<F>; 10] {
         .unwrap()
         .clone();
     let overridden = |r: usize| {
-        molrs::store::schema::PAIR_OVERRIDE_COLUMNS
+        molrs::core::schema::PAIR_OVERRIDE_COLUMNS
             .iter()
             .any(|k| pairs.get(k).is_some() && pairs.validity(k).is_none_or(|m| m[r]))
     };
@@ -456,7 +456,7 @@ fn gromacs_read_systems_price_as_gromacs_and_lammps() {
                 && let (Some(got), Some(want)) = (lammps_form_terms[k], lammps[k])
             {
                 // LAMMPS prices at its own Coulomb constant.
-                let ratio = COULOMB_REAL / crate::units::constants::GROMACS_COULOMB;
+                let ratio = COULOMB_REAL / crate::core::constants::GROMACS_COULOMB;
                 let coul = |t: &[Option<F>; 10]| t[6].unwrap_or(0.0) + t[8].unwrap_or(0.0);
                 let got = match *term {
                     "coul14" | "coulsr" => got * ratio,

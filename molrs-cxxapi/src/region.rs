@@ -1,5 +1,5 @@
 //! Geometric regions for the C++ engine — the CXX face of
-//! `molrs::spatial::region` (through `molrs_ffi::RegionRef`).
+//! `molrs::core::Region` (through `molrs_ffi::RegionRef`).
 
 /// Bridge handle over a shared region.
 ///
@@ -10,7 +10,7 @@
 pub struct RegionRef(pub molrs_ffi::RegionRef);
 
 impl RegionRef {
-    fn wrap(region: std::sync::Arc<dyn molrs::spatial::region::Region + Send + Sync>) -> Box<Self> {
+    fn wrap(region: std::sync::Arc<dyn molrs::core::Region + Send + Sync>) -> Box<Self> {
         Box::new(RegionRef(molrs_ffi::RegionRef::new(region)))
     }
 }
@@ -27,7 +27,7 @@ pub(crate) fn region_sphere(center: &[f64], radius: f64) -> Box<RegionRef> {
     } else {
         [0.0; 3]
     };
-    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Sphere::new(
+    RegionRef::wrap(std::sync::Arc::new(molrs::core::Sphere::new(
         molrs::op::types::F3::from_vec(c.to_vec()),
         radius,
     )))
@@ -45,7 +45,7 @@ pub(crate) fn region_cuboid(origin: &[f64], lengths: &[f64]) -> Box<RegionRef> {
     } else {
         [0.0; 3]
     };
-    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::Cuboid::new(
+    RegionRef::wrap(std::sync::Arc::new(molrs::core::Cuboid::new(
         molrs::op::types::F3::from_vec(o.to_vec()),
         molrs::op::types::F3::from_vec(l.to_vec()),
     )))
@@ -57,7 +57,7 @@ pub(crate) fn region_half_space(normal: &[f64], point: &[f64]) -> Result<Box<Reg
     if normal.len() != 3 || point.len() != 3 {
         return Err("region_half_space: normal and point must each have 3 elements".into());
     }
-    molrs::spatial::region::HalfSpace::new(triple(normal), triple(point))
+    molrs::core::HalfSpace::new(triple(normal), triple(point))
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
@@ -72,7 +72,7 @@ pub(crate) fn region_cylinder(
     if base.len() != 3 || axis.len() != 3 {
         return Err("region_cylinder: base and axis must each have 3 elements".into());
     }
-    molrs::spatial::region::Cylinder::new(triple(base), triple(axis), radius, length)
+    molrs::core::Cylinder::new(triple(base), triple(axis), radius, length)
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
@@ -85,14 +85,14 @@ pub(crate) fn region_ellipsoid(
     if center.len() != 3 || semi_axes.len() != 3 {
         return Err("region_ellipsoid: centre and semi-axes must each have 3 elements".into());
     }
-    molrs::spatial::region::Ellipsoid::new(triple(center), triple(semi_axes))
+    molrs::core::Ellipsoid::new(triple(center), triple(semi_axes))
         .map(|r| RegionRef::wrap(std::sync::Arc::new(r)))
         .map_err(|e| e.to_string())
 }
 
 /// Intersection of `a` and `b`. Both stay usable.
 pub(crate) fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
-    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::AndRegion::new(
+    RegionRef::wrap(std::sync::Arc::new(molrs::core::AndRegion::new(
         a.0.region(),
         b.0.region(),
     )))
@@ -100,7 +100,7 @@ pub(crate) fn region_and(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
 
 /// Union of `a` and `b`.
 pub(crate) fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
-    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::OrRegion::new(
+    RegionRef::wrap(std::sync::Arc::new(molrs::core::OrRegion::new(
         a.0.region(),
         b.0.region(),
     )))
@@ -108,7 +108,7 @@ pub(crate) fn region_or(a: &RegionRef, b: &RegionRef) -> Box<RegionRef> {
 
 /// Everything `a` is not. A shell is `and(outer, not(inner))`.
 pub(crate) fn region_not(a: &RegionRef) -> Box<RegionRef> {
-    RegionRef::wrap(std::sync::Arc::new(molrs::spatial::region::NotRegion::new(
+    RegionRef::wrap(std::sync::Arc::new(molrs::core::NotRegion::new(
         a.0.region(),
     )))
 }

@@ -6,7 +6,7 @@
 //! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::{Params, pair_key};
@@ -17,10 +17,10 @@ use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
 use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 /// Where a pair's Buckingham `(A, ρ, C)` comes from.
 enum Source {
@@ -444,9 +444,9 @@ mod tests {
     #[test]
     fn a_1_4_pair_is_scaled_in_both_buckingham_terms() {
         use crate::ff::forcefield::Params;
+        use molrs::core::Block;
+        use molrs::core::Frame;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
-        use molrs::store::Frame;
         use ndarray::Array1;
 
         let build = |scale: f64| {

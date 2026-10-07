@@ -1,7 +1,7 @@
 //! Distance-based cluster analysis — WASM face of `molrs::compute::Cluster`.
 
 use crate::core::frame::Frame;
-use crate::core::spatial::neighbors::Neighbors;
+use crate::core::neighbors::Neighbors;
 use molrs::compute::Compute;
 use molrs::compute::{Cluster as RsCluster, ClusterResult as RsClusterResult};
 use wasm_bindgen::prelude::*;

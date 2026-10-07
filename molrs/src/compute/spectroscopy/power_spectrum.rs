@@ -55,8 +55,8 @@ mod tests {
     use super::*;
     use crate::compute::Compute;
     use crate::compute::VACF;
+    use molrs::core::Frame;
     use molrs::signal as sig;
-    use molrs::store::Frame;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.

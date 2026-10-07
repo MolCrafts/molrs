@@ -7,8 +7,8 @@
 //! [`assign_atom_types`](super::atomtype::assign_atom_types) →
 //! [`compute_partial_charges`](super::charges::compute_partial_charges).
 
-use molrs::error::MolRsError;
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
 
 use super::topo::Topo;
 use super::{aromaticity, atomtype, charges};

@@ -16,7 +16,7 @@
 //! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
@@ -26,10 +26,10 @@ use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame;
 
 /// Tang-Toennies damped Coulomb pair potential. `b`/`n`/`c` are style-level;
 /// `qq[idx]` is the charge product `q_i q_j` of each pair.

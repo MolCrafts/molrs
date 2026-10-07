@@ -40,11 +40,11 @@ def test_written_xml_reads_back_with_the_same_types(case: str, tmp_path: Path) -
         assert sorted(t.name for t in back.get_types(category)) == names, category
 
 
-def _chain() -> molrs.store.Frame:
+def _chain() -> molrs.core.Frame:
     """ACE's CH3-C-N-CA (CT3 C NH1 CT1), bonded in a row: (0, 3) is the one
     1-4 pair, typed with the CHARMM fixture's rows."""
-    frame = molrs.store.Frame()
-    atoms = molrs.store.Block()
+    frame = molrs.core.Frame()
+    atoms = molrs.core.Block()
     x = np.array([[0.0, 0.0, 0.0], [1.5, 0.2, 0.0], [2.2, 1.5, 0.3], [3.6, 1.9, 0.1]])
     for k, key in enumerate("xyz"):
         atoms.insert(key, x[:, k].copy())
@@ -56,7 +56,7 @@ def _chain() -> molrs.store.Frame:
         ("angles", [[0, 1, 2], [1, 2, 3]], ["NH1-C-CT3", "CT1-NH1-C"]),
         ("dihedrals", [[0, 1, 2, 3]], ["CT3-C-NH1-CT1"]),
     ):
-        block = molrs.store.Block()
+        block = molrs.core.Block()
         for k, key in enumerate(("atomi", "atomj", "atomk", "atoml")[: len(rows[0])]):
             block.insert(key, np.array([r[k] for r in rows], dtype=np.uint64))
         block.insert("type", labels)

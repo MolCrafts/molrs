@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
-use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::store::type_labels::TypeName;
-use molrs::system::PropValue;
-use molrs::system::{Atomistic, Element, NodeId};
+use molrs::core::PropValue;
+use molrs::core::TypeName;
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
+use molrs::core::{Atomistic, Element, NodeId};
 
+use crate::core::constants::UFF_COULOMB;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
-use crate::ff::params::uff::{AtomicParams, G, LAMBDA, params_for_label};
+use crate::ff::params::uff::{AtomicParams, LAMBDA, params_for_label};
 use crate::ff::typifier::{Annotation, Match, Typifier};
 use crate::perceive::rings::find_rings;
 use crate::perceive::{Hybridization, conjugated_atoms, hybridizations};
@@ -667,7 +668,7 @@ fn bond_rest_and_k(p1: &AtomicParams, p2: &AtomicParams, bond_order: f64) -> (f6
     let dx = xi.sqrt() - xj.sqrt();
     let r_en = ri * rj * dx * dx / (xi * ri + xj * rj);
     let r0 = ri + rj + r_bo - r_en;
-    let kb = 2.0 * G * p1.z1 * p2.z1 / (r0 * r0 * r0);
+    let kb = 2.0 * UFF_COULOMB * p1.z1 * p2.z1 / (r0 * r0 * r0);
     (r0, kb)
 }
 
@@ -683,7 +684,7 @@ fn angle_force_constant(
     let r12 = bond_rest_and_k(p1, p2, bo12).0;
     let r23 = bond_rest_and_k(p2, p3, bo23).0;
     let r13 = (r12 * r12 + r23 * r23 - 2.0 * r12 * r23 * cos0).sqrt();
-    let beta = 2.0 * G / (r12 * r23);
+    let beta = 2.0 * UFF_COULOMB / (r12 * r23);
     let pref = beta * p1.z1 * p3.z1 / r13.powi(5);
     let r_term = r12 * r23;
     let inner = 3.0 * r_term * (1.0 - cos0 * cos0) - r13 * r13 * cos0;
@@ -755,8 +756,8 @@ fn torsion_params(
 mod tests {
     use super::*;
     use indexmap::IndexMap;
-    use molrs::store::type_labels::TypeName;
-    use molrs::system::Atomistic;
+    use molrs::core::Atomistic;
+    use molrs::core::TypeName;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn ethanol() -> Atomistic {
@@ -798,8 +799,7 @@ mod tests {
         let c_nme = m.add_atom_bare("C");
         m.add_bond(c_me, c_co).unwrap();
         let co = m.add_bond(c_co, o).unwrap();
-        m.set_bond_type(co, molrs::system::BondType::Double)
-            .unwrap();
+        m.set_bond_type(co, molrs::core::BondOrder::Double).unwrap();
         m.add_bond(c_co, n).unwrap();
         m.add_bond(n, c_nme).unwrap();
         for (heavy, n_h) in [(c_me, 3), (n, 1), (c_nme, 3)] {
@@ -824,7 +824,7 @@ mod tests {
             let ring: Vec<NodeId> = (0..6).map(|_| m.add_atom_bare("C")).collect();
             for k in 0..6 {
                 let b = m.add_bond(ring[k], ring[(k + 1) % 6]).unwrap();
-                m.set_bond_type(b, molrs::system::BondType::Aromatic)
+                m.set_bond_type(b, molrs::core::BondOrder::Aromatic)
                     .unwrap();
             }
             for &c in &ring[1..] {
@@ -1149,7 +1149,7 @@ mod tests {
         let (r, k) = bond_rest_and_k(c, c, 1.0);
         let r_single = 2.0 * c.r1;
         assert!((r - r_single).abs() < 1e-12);
-        assert!((k - 2.0 * G * c.z1 * c.z1 / r_single.powi(3)).abs() < 1e-9);
+        assert!((k - 2.0 * UFF_COULOMB * c.z1 * c.z1 / r_single.powi(3)).abs() < 1e-9);
         // A double bond is shorter by λ(rᵢ+rⱼ)·ln 2 and nothing else moves.
         let (r_double, _) = bond_rest_and_k(c, c, 2.0);
         assert!((r_double - (r_single - LAMBDA * r_single * 2f64.ln())).abs() < 1e-12);
@@ -1159,7 +1159,7 @@ mod tests {
         let r_en = c.r1 * o.r1 * d * d / (c.xi * c.r1 + o.xi * o.r1);
         assert!((r_co - (c.r1 + o.r1 - r_en)).abs() < 1e-12);
         assert!(r_co < c.r1 + o.r1);
-        assert!((k_co - 2.0 * G * c.z1 * o.z1 / r_co.powi(3)).abs() < 1e-9);
+        assert!((k_co - 2.0 * UFF_COULOMB * c.z1 * o.z1 / r_co.powi(3)).abs() < 1e-9);
     }
 
     /// `getAtomLabel`: the hybridization suffix, `R` for a resonant sp² C / N /

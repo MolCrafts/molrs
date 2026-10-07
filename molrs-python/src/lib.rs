@@ -6,10 +6,7 @@
 //!
 //! | binding                 | Rust owner          | Python module        |
 //! |-------------------------|---------------------|----------------------|
-//! | [`core::store`]         | `molrs::store`      | `molrs.store`        |
-//! | [`core::spatial`]       | `molrs::spatial`    | `molrs.spatial`      |
-//! | [`core::system`]        | `molrs::system`     | `molrs.system`       |
-//! | [`core::units`]         | `molrs::units`      | `molrs.units`        |
+//! | [`core`]                | `molrs::core`       | `molrs.core`         |
 //! | [`op`]                  | `molrs::op`         | `molrs.op`           |
 //! | [`perceive`]            | `molrs::perceive`   | `molrs.perceive`     |
 //! | [`io`]                  | `molrs::io`         | `molrs.io`           |
@@ -25,7 +22,7 @@
 //! Every subsystem binding registers its own classes and functions through
 //! its `register`. Most land flat on `_lib`; a namespace with vocabulary of
 //! its own is a `_lib` submodule ([`add_submodule`]: `op`, `md`, `ff.ir` as
-//! `ir`, `io.mrec` as `mrec`, and the store's `keys` / `schema`).
+//! `ir`, `io.mrec` as `mrec`, and core's `keys` / `schema` / `constants`).
 //!
 //! Every class and function names its public path as its `__module__`, so
 //! `repr`, pickle and the docs name it the way users import it: a class by
@@ -75,7 +72,7 @@ mod stream;
 fn _ffi_abi_token() -> (&'static str, &'static str, String, String, String) {
     (
         molrs_ffi::abi::abi_line(),
-        ::molrs::VERSION,
+        env!("CARGO_PKG_VERSION"),
         molrs_ffi::abi::frameref_capsule_name()
             .to_string_lossy()
             .into_owned(),
@@ -118,6 +115,7 @@ pub(crate) fn add_submodule(
 #[pymodule]
 #[pyo3(name = "_lib")]
 fn molrs_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(_ffi_abi_token, m)?)?;
     m.add_function(wrap_pyfunction!(pickle::_restore_pickled_state, m)?)?;
 

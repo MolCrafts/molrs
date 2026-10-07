@@ -74,22 +74,16 @@ use rustfft::num_complex::Complex64;
 use crate::compute::ComputeError;
 use crate::compute::fitting::forward_fft_onesided;
 use crate::compute::lag_times as transport_lag_times;
+use molrs::core::constants::{
+    CENTIMETER_PER_METER, FEMTOSECOND_S, SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT,
+};
 use molrs::signal as sig;
-
-// ── Spectral constants ────────────────────────────────────────────────────────
-
-/// Speed of light in m/s (exact).
-const C_MS: f64 = 299_792_458.0;
-/// Femtoseconds to seconds.
-const FS_TO_S: f64 = 1e-15;
-/// Metres to centimetres.
-const M_TO_CM: f64 = 100.0;
 
 /// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹).
 ///
-/// ν̃ = ω · (2π · c · 10⁻¹⁵ · 100)⁻¹ = ω / (2π · c · FS_TO_S · M_TO_CM)
+/// ν̃ = ω · (2π · c · 10⁻¹⁵ s/fs · 100 cm/m)⁻¹
 pub(crate) const ANGULAR_FREQ_TO_CM1: f64 =
-    1.0 / (2.0 * std::f64::consts::PI * C_MS * FS_TO_S * M_TO_CM);
+    1.0 / (2.0 * std::f64::consts::PI * SPEED_OF_LIGHT * FEMTOSECOND_S * CENTIMETER_PER_METER);
 
 /// Largest exponent such that `exp(x)` does not overflow f64.
 const MAX_EXP_ARG: f64 = 700.0;
@@ -189,8 +183,7 @@ pub(crate) fn bose_factor(nu: f64, temperature_k: f64) -> f64 {
     if nu <= 0.0 || temperature_k <= 0.0 {
         return 1.0;
     }
-    // HC_KB = h·c / k_B ≈ 1.438777 cm·K
-    let exponent = -1.438777 * nu / temperature_k;
+    let exponent = -SECOND_RADIATION_CONSTANT * nu / temperature_k;
     if exponent > -MAX_EXP_ARG {
         1.0 / (1.0 - exponent.exp())
     } else {

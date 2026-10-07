@@ -1,6 +1,6 @@
 //! Green–Kubo diffusion raw compute — the velocity-ACF route to D.
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 
 use super::vacf::{VacfArgs, VacfResult, velocity_acf};
 use crate::compute::Compute;
@@ -33,7 +33,7 @@ impl Compute for GreenKuboDiffusion {
 mod tests {
     use super::super::vacf::VACF;
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

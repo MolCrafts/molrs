@@ -53,7 +53,7 @@ use ndarray::{ArrayD, IxDyn};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
-use molrs::store::{Block as RsBlock, BlockDtype, Column, DType};
+use molrs::core::{Block as RsBlock, BlockDtype, Column, DType};
 use molrs_ffi::BlockRef;
 
 use super::js_err;
@@ -1168,7 +1168,7 @@ mod tests {
         rs_atoms
             .insert_nullable("frag_id", frag, vec![true, false, true])
             .unwrap();
-        let mut rs_frame = molrs::store::Frame::new();
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", rs_atoms);
         let frame = Frame::from_rs(rs_frame).unwrap();
         let block = frame.get("atoms").unwrap();

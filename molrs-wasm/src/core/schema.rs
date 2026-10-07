@@ -10,7 +10,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use molrs::store::schema;
+use molrs::core::schema;
 
 use crate::core::block::{JsDType, dtype_name};
 
@@ -95,6 +95,6 @@ pub fn schema_block_names() -> Vec<String> {
 /// ```
 #[wasm_bindgen(js_name = keysDocument)]
 pub fn keys_document() -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(&molrs::store::keys::keys_document())
+    serde_wasm_bindgen::to_value(&molrs::core::keys::keys_document())
         .map_err(|e| JsValue::from_str(&format!("keys: {e}")))
 }

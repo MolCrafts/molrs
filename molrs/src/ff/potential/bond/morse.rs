@@ -5,7 +5,7 @@
 //! (steepness, 1/length), `r0` (equilibrium length).
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::BONDS;
+use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -14,8 +14,8 @@ use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::term_table;
 use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Morse bond potential with pre-resolved flat arrays.
 pub struct BondMorse {

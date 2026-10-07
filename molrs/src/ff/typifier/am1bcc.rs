@@ -8,9 +8,9 @@
 //! bond charge corrections — the half of AM1-BCC that turns types into
 //! charges — are a charge model's, and live in [`ff::charge`](crate::ff::charge)
 //! (`BccModel`), which perceives its BCC types for itself and never writes them
-//! into the caller's [`keys::TYPE`](molrs::store::keys::TYPE) column.
+//! into the caller's [`keys::TYPE`](molrs::core::keys::TYPE) column.
 
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
 use std::sync::OnceLock;
 
 use super::atd::AtdTypifier;
@@ -26,7 +26,7 @@ use crate::ff::forcefield::ForceField;
 /// atom-type table and the correction family chosen together, and
 /// [`BccParameterSet`] is the type that keeps that pair honest.
 ///
-/// It **writes** its labels into the graph's [`keys::TYPE`](molrs::store::keys::TYPE) column, so it is for
+/// It **writes** its labels into the graph's [`keys::TYPE`](molrs::core::keys::TYPE) column, so it is for
 /// callers who want a BCC-typed molecule and nothing else. Charges do **not** go
 /// through it: `BccModel` keeps its BCC types to itself precisely so that a molecule
 /// can carry GAFF types and BCC charges at the same time, which is what the standard
@@ -85,13 +85,13 @@ impl Typifier for BCCAtomChargeTypifier {
     /// never read off the input: the atom-type rules count `sb`/`db`/`ab`/`DL`
     /// bonds, so they need the delocalized (9) and aromatic (7/8) types that a bond
     /// *order* cannot express — and a supplied
-    /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) may be the
+    /// [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) may be the
     /// unresolved aromatic precursor (10), which must be resolved, not trusted.
     ///
     /// The match is the [`AtdTypifier`]'s over the set's table: `graph`'s
     /// bonds carry perceived antechamber bond types in
-    /// [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) — the bond's own
-    /// [`keys::TYPE`](molrs::store::keys::TYPE), the caller's force-field label, is left untouched — and
+    /// [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) — the bond's own
+    /// [`keys::TYPE`](molrs::core::keys::TYPE), the caller's force-field label, is left untouched — and
     /// every atom's BCC code is a `type` value. It defines nothing.
     ///
     /// # Errors
@@ -113,7 +113,7 @@ impl Typifier for BCCAtomChargeTypifier {
 mod tests {
     use super::*;
     use crate::ff::typifier::Typing;
-    use molrs::store::keys;
+    use molrs::core::keys;
 
     /// Methane, hand-built: C is atom 0, the four hydrogens follow.
     fn methane() -> Atomistic {

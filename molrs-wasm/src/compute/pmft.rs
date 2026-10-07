@@ -3,22 +3,22 @@
 
 use super::js_value;
 use crate::core::frame::Frame;
-use crate::core::spatial::neighbors::Neighbors;
+use crate::core::neighbors::Neighbors;
 use molrs::compute::Compute;
+use molrs::core::keys;
 use molrs::op::types::F;
-use molrs::store::keys;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 /// Borrow an `F`-typed column of a block as a contiguous slice.
-fn f_col<'a>(atoms: &'a molrs::store::Block, col: &str) -> Option<&'a [F]> {
-    use molrs::store::BlockDtype;
+fn f_col<'a>(atoms: &'a molrs::core::Block, col: &str) -> Option<&'a [F]> {
+    use molrs::core::BlockDtype;
     <F as BlockDtype>::from_column(atoms.get(col)?)?.as_slice()
 }
 
 /// Per-atom unit quaternions `(w, i, j, k)`, normalized. `None` when the atoms
 /// block does not carry the canonical [`keys::QUAT`] columns.
-fn quaternions_from_frame(frame: &molrs::store::Frame) -> Option<Vec<[F; 4]>> {
+fn quaternions_from_frame(frame: &molrs::core::Frame) -> Option<Vec<[F; 4]>> {
     let atoms = frame.get("atoms")?;
     let [w, i, j, k] = keys::QUAT.map(|col| f_col(atoms, col));
     let (w, i, j, k) = (w?, i?, j?, k?);
@@ -42,13 +42,13 @@ fn quaternions_from_frame(frame: &molrs::store::Frame) -> Option<Vec<[F; 4]>> {
 ///
 /// There is deliberately no separate angle column — the quaternion already
 /// encodes the orientation, and a second column would be a second truth.
-fn angles_from_frame(frame: &molrs::store::Frame) -> Option<Vec<F>> {
+fn angles_from_frame(frame: &molrs::core::Frame) -> Option<Vec<F>> {
     quaternions_from_frame(frame)
         .map(|quats| quats.iter().map(|q| 2.0 * q[3].atan2(q[0])).collect())
 }
 
 /// `angles_from_frame` for the analyses whose orientations are mandatory.
-fn require_angles(frame: &molrs::store::Frame, what: &str) -> Result<Vec<F>, JsValue> {
+fn require_angles(frame: &molrs::core::Frame, what: &str) -> Result<Vec<F>, JsValue> {
     angles_from_frame(frame).ok_or_else(|| {
         JsValue::from_str(&format!(
             "{what} needs per-atom orientations: add the {} columns to the atoms block",

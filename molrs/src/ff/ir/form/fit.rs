@@ -6,10 +6,10 @@
 //! each sample point `q` — so it is generic over every tier: native,
 //! expression, Python.
 
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::schema::block_names::ATOMS;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::schema::block_names::ATOMS;
 use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params};

@@ -37,9 +37,9 @@ use crate::ff::potential::need;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::pair::exceptions::dihedral_weights;
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
+use molrs::core::Frame;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::types::F;
-use molrs::store::Frame;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
 
 /// The `lj/charmm` style param naming the 1-4 semantics.
 pub const ONE_FOUR: &str = "one_four";
@@ -47,6 +47,8 @@ pub const ONE_FOUR: &str = "one_four";
 pub const ONE_FOUR_REGULAR: &str = "regular";
 /// `special_bonds` 1-4 pairs at `epsilon14` / `sigma14`.
 pub const ONE_FOUR_EPSILON14: &str = "epsilon14";
+/// Every value [`ONE_FOUR`] may take.
+pub const ONE_FOUR_VALUES: [&str; 2] = [ONE_FOUR_REGULAR, ONE_FOUR_EPSILON14];
 
 /// The 1-4 semantics of a `lj/charmm` style.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,8 +331,8 @@ pub(crate) fn check_materialized(
 mod tests {
     use super::*;
     use crate::ff::forcefield::SpecialBonds;
+    use molrs::core::Block;
     use molrs::op::types::Idx;
-    use molrs::store::Block;
 
     fn lj_charmm(one_four: Option<&str>) -> ForceField {
         let mut ff = ForceField::new("x");

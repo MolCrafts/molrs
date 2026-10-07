@@ -14,20 +14,21 @@ import sys
 from pathlib import Path
 
 import molci as mci
-import molrec
+from molrec.report import CaseResult, Report
+from molrec.suite import ConformanceSuite
 from molcrafts_ci.producers import detect_profile, github_source
 
 _DETAIL_LIMIT = 500
 
 
-def _detail(result: molrec.CaseResult) -> str:
+def _detail(result: CaseResult) -> str:
     text = result.message or "; ".join(str(v) for v in result.violations)
     if len(text) <= _DETAIL_LIMIT:
         return text
     return text[: _DETAIL_LIMIT - 1] + "…"
 
 
-def _payload(report: molrec.Report) -> dict:
+def _payload(report: Report) -> dict:
     passed = failed = skipped = 0
     failures: list[dict[str, str]] = []
     for result in report.results:
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
 
     implementation = molrs_adapter.Molrs()
     modules = sorted(implementation.adapters())
-    report = molrec.ConformanceSuite(implementation, modules=modules).run()
+    report = ConformanceSuite(implementation, modules=modules).run()
     print(report.table())
 
     try:

@@ -125,8 +125,8 @@ mod tests {
     use super::super::raman_tensor::RamanTensor;
     use super::*;
     use crate::compute::Compute;
+    use molrs::core::Frame;
     use molrs::signal as sig;
-    use molrs::store::Frame;
     use ndarray::Array2;
 
     /// Empty frame slice for the series-based raw computes.

@@ -36,9 +36,9 @@ use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{
     CompileError, Member, PairWeights, Potentials, TypedKernel, TypedMember,
 };
-use molrs::store::Frame;
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
+use molrs::core::Frame;
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 
 /// Compiles one [`ForceField`] against typed [`Frame`]s.
 ///
@@ -49,7 +49,7 @@ use molrs::store::schema::block_names::{ATOMS, PAIRS};
 /// ```
 /// use molrs::ff::forcefield::{ForceField, Params};
 /// use molrs::ff::potential::PotentialCompiler;
-/// use molrs::store::Frame;
+/// use molrs::core::Frame;
 ///
 /// let mut ff = ForceField::new("example");
 /// ff.def_style("bond", "harmonic", Params::new())
@@ -605,8 +605,8 @@ fn regular_pairs<'f>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::core::Block;
     use molrs::op::types::{F, Idx};
-    use molrs::store::Block;
     use ndarray::Array1;
 
     fn two_atoms() -> Frame {

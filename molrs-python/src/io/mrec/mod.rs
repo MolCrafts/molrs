@@ -13,12 +13,12 @@ pub mod section;
 
 use std::path::PathBuf;
 
-use crate::core::spatial::simbox::PyBox;
-use crate::core::store::frame::{
+use crate::core::frame::{
     PyFrame, PyMetaValue, infer_meta_value, json_map_to_plain_dict, meta_document_arg,
     meta_value_from_dtype,
 };
-use crate::core::store::trajectory::PyTrajectory;
+use crate::core::simbox::PyBox;
+use crate::core::trajectory::PyTrajectory;
 use crate::error::molrs_error_to_pyerr;
 use crate::path::path_str;
 use molrs::io::mrec::{
@@ -36,20 +36,20 @@ use section::PyForceFieldSection;
 /// path
 ///     Destination filesystem path.
 /// frame
-///     In-memory :class:`~molrs.store.Frame` to persist.
+///     In-memory :class:`~molrs.core.Frame` to persist.
 /// system
-///     Optional system-definition :class:`~molrs.store.Frame` written
+///     Optional system-definition :class:`~molrs.core.Frame` written
 ///     beside the snapshot as the ``system/`` section.
 /// meta
 ///     The record's identity document, written to ``meta/`` with
 ///     ``molrec_version`` stamped in: a ``dict``, a
-///     :class:`~molrs.store.MetaDocument`, or any mapping (``frame.meta``
+///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
 ///     included). Nested tuples and documents are JSON arrays and objects.
 /// forcefield
 ///     Optional force field written beside them as the
 ///     ``forcefield/`` section: a :class:`~molrs.io.mrec.ForceFieldSection`
 ///     as given, or a :class:`~molrs.ff.forcefield.ForceField` through its
-///     :meth:`~molrs.ff.forcefield.ForceField.to_section`.
+///     :meth:`~molrs.io.mrec.ForceFieldSection.from_forcefield`.
 ///
 /// Raises
 /// ------
@@ -83,11 +83,11 @@ pub fn write_mrec(
 /// path
 ///     Destination filesystem path.
 /// system
-///     In-memory :class:`~molrs.store.Frame` to persist as ``system/``.
+///     In-memory :class:`~molrs.core.Frame` to persist as ``system/``.
 /// meta
 ///     The record's identity document, written to ``meta/`` with
 ///     ``molrec_version`` stamped in: a ``dict``, a
-///     :class:`~molrs.store.MetaDocument`, or any mapping (``frame.meta``
+///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
 ///     included). Nested tuples and documents are JSON arrays and objects.
 /// forcefield
 ///     Optional force field the system's types link into,
@@ -128,7 +128,7 @@ pub fn write_mrec_system(
 /// forcefield
 ///     A :class:`~molrs.io.mrec.ForceFieldSection`, written as
 ///     given, or a :class:`~molrs.ff.forcefield.ForceField`, written through its
-///     :meth:`~molrs.ff.forcefield.ForceField.to_section`.
+///     :meth:`~molrs.io.mrec.ForceFieldSection.from_forcefield`.
 /// meta
 ///     The record's identity document (see :func:`~molrs.io.write_mrec`).
 ///
@@ -156,8 +156,8 @@ pub fn write_mrec_forcefield(
 fn record_arg(
     meta: Option<&Bound<'_, PyAny>>,
     forcefield: Option<&Bound<'_, PyAny>>,
-) -> PyResult<molrs::store::MolRec> {
-    let mut record = molrs::store::MolRec::new();
+) -> PyResult<molrs::io::mrec::MolRec> {
+    let mut record = molrs::io::mrec::MolRec::new();
     if let Some(meta) = meta {
         record.meta = meta_document_arg(meta)?;
     }
@@ -165,7 +165,7 @@ fn record_arg(
     Ok(record)
 }
 
-fn write_record(path: &std::path::Path, record: &molrs::store::MolRec) -> PyResult<()> {
+fn write_record(path: &std::path::Path, record: &molrs::io::mrec::MolRec) -> PyResult<()> {
     molrs::io::mrec::write_record_file(path_str(path)?, record).map_err(molrs_error_to_pyerr)
 }
 
@@ -176,11 +176,11 @@ fn write_record(path: &std::path::Path, record: &molrs::store::MolRec) -> PyResu
 /// path
 ///     Destination filesystem path.
 /// traj
-///     In-memory :class:`~molrs.store.Trajectory` to persist.
+///     In-memory :class:`~molrs.core.Trajectory` to persist.
 /// meta
 ///     The record's identity document, written to ``meta/`` with
 ///     ``molrec_version`` stamped in: a ``dict``, a
-///     :class:`~molrs.store.MetaDocument`, or any mapping (``frame.meta``
+///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
 ///     included). Nested tuples and documents are JSON arrays and objects.
 ///
 /// Raises
@@ -216,8 +216,8 @@ pub fn write_mrec_trajectory(
 ///
 /// Returns
 /// -------
-/// molrs.store.Frame
-///     The in-memory :class:`~molrs.store.Frame`.
+/// molrs.core.Frame
+///     The in-memory :class:`~molrs.core.Frame`.
 ///
 /// Raises
 /// ------
@@ -243,8 +243,8 @@ pub fn read_mrec(path: PathBuf) -> PyResult<PyFrame> {
 ///
 /// Returns
 /// -------
-/// molrs.store.Frame
-///     The in-memory :class:`~molrs.store.Frame`.
+/// molrs.core.Frame
+///     The in-memory :class:`~molrs.core.Frame`.
 ///
 /// Raises
 /// ------
@@ -271,8 +271,8 @@ pub fn read_mrec_system(path: PathBuf) -> PyResult<PyFrame> {
 ///
 /// Returns
 /// -------
-/// molrs.store.Trajectory
-///     The in-memory :class:`~molrs.store.Trajectory`.
+/// molrs.core.Trajectory
+///     The in-memory :class:`~molrs.core.Trajectory`.
 ///
 /// Raises
 /// ------
@@ -317,7 +317,7 @@ pub fn read_mrec_meta(py: Python<'_>, path: PathBuf) -> PyResult<Py<PyDict>> {
 ///
 /// Only ``meta`` (for its version) and the ``forcefield`` section are
 /// decoded. The section comes back whole — every document key, every table,
-/// units as stored; :meth:`molrs.ff.forcefield.ForceField.from_section` turns it into a
+/// units as stored; :meth:`molrs.io.mrec.ForceFieldSection.to_forcefield` turns it into a
 /// force field molrs can compile.
 ///
 /// Parameters
@@ -412,7 +412,7 @@ impl PyMrecReader {
     ///
     /// Returns
     /// -------
-    /// molrs.store.Frame
+    /// molrs.core.Frame
     ///     The frame at ``index``.
     ///
     /// Raises
@@ -805,7 +805,7 @@ fn parse_compression(spec: Option<&str>) -> PyResult<Compression> {
 /// meta
 ///     The record's identity document, written to ``meta/`` with
 ///     ``molrec_version`` stamped in: a ``dict``, a
-///     :class:`~molrs.store.MetaDocument`, or any mapping (``frame.meta``
+///     :class:`~molrs.core.MetaDocument`, or any mapping (``frame.meta``
 ///     included). Nested tuples and documents are JSON arrays and objects.
 #[pyclass(module = "molrs.io.mrec", name = "MrecWriter", unsendable)]
 pub struct PyMrecWriter {
@@ -1005,7 +1005,7 @@ pub fn validate_meta(meta: &Bound<'_, PyAny>) -> PyResult<()> {
 /// Parameters
 /// ----------
 /// frame
-///     In-memory :class:`~molrs.store.Frame`.
+///     In-memory :class:`~molrs.core.Frame`.
 ///
 /// Raises
 /// ------
@@ -1042,16 +1042,15 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySequenceSchema>()?;
     m.add_class::<PyMrecWriter>()?;
     m.add_class::<section::PyForceFieldSection>()?;
+    m.add("MOLREC_VERSION", molrs::io::mrec::MOLREC_VERSION)?;
+    m.add("RESERVED_META_KEYS", molrs::io::mrec::RESERVED_META_KEYS)?;
     crate::add_submodule(m, "schema", "molrs.io.mrec.schema", register_schema)
 }
 
-/// Register `molrs.io.mrec.schema`: the record contract's version, its
-/// reserved `meta` keys and the runtime checks.
+/// Register `molrs.io.mrec.schema`: the record contract's runtime checks.
 fn register_schema(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_path, m)?)?;
     m.add_function(wrap_pyfunction!(validate_meta, m)?)?;
     m.add_function(wrap_pyfunction!(validate_frame, m)?)?;
-    m.add("MOLREC_VERSION", molrs::store::MOLREC_VERSION)?;
-    m.add("RESERVED_META_KEYS", molrs::store::RESERVED_META_KEYS)?;
     Ok(())
 }

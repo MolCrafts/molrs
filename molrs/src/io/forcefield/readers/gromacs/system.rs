@@ -6,13 +6,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use ndarray::{Array1, ArrayD};
 
 use super::{Directives, Kind, Row, Table, convert};
+use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use crate::ff::potential::MAX_ATOMS_FOR_A_FULL_PAIR_LIST;
-use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
+use molrs::core::Frame;
+use molrs::core::TypeName;
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::core::{Block, BlockDtype};
 use molrs::op::types::{F, Idx};
-use molrs::store::Frame;
-use molrs::store::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::store::type_labels::TypeName;
-use molrs::store::{Block, BlockDtype};
 
 /// A molecule type's priced pairs `(i, j, is_14, cells)` and its excluded
 /// pairs.
@@ -775,7 +775,7 @@ fn assemble(moltypes: &[MolType], molecules: &[(usize, usize)]) -> Result<Frame,
 #[cfg(test)]
 mod tests {
     use super::super::GromacsTopFfReader;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
 
     /// Butane-ish C1-C2-C3-C4 with one H on C1, then a water; OPLS-style
     /// `[ atomtypes ]` with bond types.

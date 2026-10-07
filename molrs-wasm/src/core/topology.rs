@@ -1,10 +1,10 @@
-//! Bond-graph topology — the WASM face of `molrs::system::Topology`.
+//! Bond-graph topology — the WASM face of `molrs::core::Topology`.
 //!
 //! The graph a frame's `bonds` block spells out, with the angles, dihedrals,
 //! impropers and connected components derived from it. Ring perception is not
 //! here: it is chemistry, and belongs to `Perceive.findRings`.
 
-use molrs::system::Topology as RsTopology;
+use molrs::core::Topology as RsTopology;
 use wasm_bindgen::prelude::*;
 
 use crate::core::frame::Frame;
@@ -185,8 +185,8 @@ impl Topology {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use molrs::core::{Block, keys};
     use molrs::op::types::Idx;
-    use molrs::store::{Block, keys};
     use ndarray::Array1;
     use wasm_bindgen_test::*;
 
@@ -203,7 +203,7 @@ mod tests {
         bonds
             .insert(keys::ATOMJ, Array1::<Idx>::from_vec(vec![1, 2]).into_dyn())
             .unwrap();
-        let mut rs_frame = molrs::store::Frame::new();
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame.insert("atoms", atoms);
         rs_frame.insert("bonds", bonds);
         let frame = Frame::from_rs(rs_frame).unwrap();

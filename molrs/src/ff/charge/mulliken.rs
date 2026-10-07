@@ -10,7 +10,7 @@
 //! would be a trait that had quietly assumed "QM base charges plus a correction", and
 //! the correction stage would have leaked into the seam.
 
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
 
 use super::error::ChargeError;
 use super::model::{ChargeModel, check_count};
@@ -20,7 +20,7 @@ use super::model::{ChargeModel, check_count};
 /// # Examples
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::charge::{ChargeModel, MullikenModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {

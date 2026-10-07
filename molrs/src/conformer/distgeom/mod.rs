@@ -40,8 +40,8 @@ mod smooth;
 mod torsion_prefs;
 mod torsion_tables;
 
-use molrs::error::MolRsError;
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
 
 pub use chirality::{ChiralConstraint, ChiralSign, ImproperConstraint};
 pub use knowledge::KnowledgeTorsion;

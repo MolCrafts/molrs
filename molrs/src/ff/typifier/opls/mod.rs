@@ -49,7 +49,7 @@
 
 use std::collections::HashSet;
 
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
 
@@ -133,7 +133,7 @@ impl OPLSAATypifier {
     /// ```
     /// use molrs::ff::typifier::Typing;
     /// use molrs::ff::typifier::OPLSAATypifier;
-    /// use molrs::system::{Atom, Atomistic};
+    /// use molrs::core::{Atom, Atomistic};
     ///
     /// let mut ethanol = Atomistic::new();
     /// let c1 = ethanol.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -276,9 +276,9 @@ mod tests {
     use crate::ff::forcefield::Params;
     use crate::ff::typifier::Typing;
     use indexmap::IndexMap;
-    use molrs::system::Atom;
-    use molrs::system::BondType;
-    use molrs::system::PropValue;
+    use molrs::core::Atom;
+    use molrs::core::BondOrder;
+    use molrs::core::PropValue;
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
@@ -798,7 +798,7 @@ mod tests {
         }
         let c = ids.map(|id| id.expect("every chain atom added"));
         let double = g.add_bond(c[0], c[1]).unwrap();
-        g.set_bond_type(double, BondType::Double).unwrap();
+        g.set_bond_type(double, BondOrder::Double).unwrap();
         g.add_bond(c[1], c[2]).unwrap();
         g.add_bond(c[2], c[3]).unwrap();
         g

@@ -21,13 +21,13 @@ use crate::io::lammps::fields::{
 use crate::io::reader::{FrameReader, Reader};
 use crate::io::streaming::{FrameIndexBuilder, FrameIndexEntry};
 use crate::io::writer::FrameWriter;
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::FrameAccess;
+use molrs::core::SimBox;
+use molrs::core::TypeLabels;
+use molrs::core::keys;
 use molrs::op::types::{F, I, Idx, Pbc3};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::FrameAccess;
-use molrs::store::keys;
-use molrs::store::type_labels::TypeLabels;
 use ndarray::ArrayViewD;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -35,15 +35,7 @@ use std::io::{BufRead, BufReader, Cursor, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::OnceLock;
 
-/// Frame meta key: every `* Coeffs` section of the data file, verbatim
-/// (`PairIJ` and the class2 cross terms included). The force-field reader
-/// `io::forcefield::readers::lammps::LammpsFfReader::read_data_coeffs` takes
-/// the frame and reads this, with the type labels the `* Type Labels`
-/// sections declared.
-pub const COEFFS_TEXT_META: &str = "lammps_coeffs_text";
-/// Frame meta key: the unit style the `write_data` title line stated
-/// (`units = real`); absent when the file states none.
-pub const UNITS_META: &str = "lammps_units";
+use crate::core::keys::{LAMMPS_COEFFS_TEXT, LAMMPS_UNITS};
 
 // ============================================================================
 // Header
@@ -1149,7 +1141,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     );
     // Unit style from the `write_data` title line; absent when not stated.
     if let Some(units) = &h.units {
-        frame.meta.insert(UNITS_META.to_string(), units.clone());
+        frame.meta.insert(LAMMPS_UNITS.to_string(), units.clone());
     }
     // Which box axes appeared in the header (zero-volume boxes still set has_*).
     frame.meta.insert(
@@ -1165,7 +1157,7 @@ fn build_frame(mut data: ParsedData) -> std::io::Result<Frame> {
     if !data.coeffs_text.is_empty() {
         frame
             .meta
-            .insert(COEFFS_TEXT_META.to_string(), data.coeffs_text);
+            .insert(LAMMPS_COEFFS_TEXT.to_string(), data.coeffs_text);
     }
 
     Ok(frame)
@@ -1326,7 +1318,7 @@ fn dispatch_section<R: BufRead>(
 /// into a `cmaps` block of `atomi` … `atomm` and the numeric `type_id`, the
 /// map's index in the `fix cmap` file); every `* Coeffs` section
 /// (`PairIJ` and the class2 cross terms included) is kept verbatim in the
-/// frame's [`COEFFS_TEXT_META`] meta. Any other section — `Ellipsoids`,
+/// frame's [`LAMMPS_COEFFS_TEXT`] meta. Any other section — `Ellipsoids`,
 /// `Lines`, `Triangles`, `Bodies`, or a fix-defined one such as `BiTorsions` — is
 /// refused with an `InvalidData` error naming it, unless it was named in
 /// [`with_skipped_section`], in which case its body is read past and
@@ -1633,7 +1625,7 @@ fn resolve_row_masses(frame: &impl FrameAccess, n: usize) -> Vec<F> {
         for (i, mass) in masses.iter_mut().enumerate() {
             let sym = el[[i]].as_str();
             let known = *memo.entry(sym).or_insert_with(|| {
-                crate::system::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
+                crate::core::Element::by_symbol(sym).map(|e| F::from(e.atomic_mass()))
             });
             if let Some(m) = known {
                 *mass = m;
@@ -1941,7 +1933,7 @@ fn write_lammps_data_frame_with<W: Write>(
     // w, never per pair. Writing the file without it would run a different
     // force field.
     if let Some(present) = frame.visit_block("pairs", |b| {
-        crate::store::schema::PAIR_OVERRIDE_COLUMNS
+        crate::core::schema::PAIR_OVERRIDE_COLUMNS
             .iter()
             .copied()
             .filter(|k| b.contains_key(k))
@@ -2347,7 +2339,7 @@ mod streaming_tests {
 #[cfg(test)]
 mod atom_style_tests {
     use super::*;
-    use molrs::store::FrameAccess;
+    use molrs::core::FrameAccess;
 
     fn parse_text(text: &str) -> Frame {
         parse_frame_bytes(text.as_bytes()).expect("parse")
@@ -2403,11 +2395,11 @@ mod atom_style_tests {
         );
         let frame = parse_text(&titled);
         assert_eq!(
-            frame.meta.get(UNITS_META).and_then(|v| v.as_str()),
+            frame.meta.get(LAMMPS_UNITS).and_then(|v| v.as_str()),
             Some("lj")
         );
         let bare = parse_text(&format!("LAMMPS data file\n{body}"));
-        assert!(!bare.meta.contains_key(UNITS_META));
+        assert!(!bare.meta.contains_key(LAMMPS_UNITS));
     }
 
     #[test]
@@ -2764,8 +2756,8 @@ mod atom_style_tests {
     /// wrap (`p`) or drop (`f`, `s`) the atoms out of.
     #[test]
     fn write_boxless_frame_inside_the_bounds_of_its_atoms() {
-        use crate::store::Block;
-        use crate::store::Frame as CoreFrame;
+        use crate::core::Block;
+        use crate::core::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let column = |v: Vec<f64>| ArrayD::from_shape_vec(ndarray::IxDyn(&[3]), v).unwrap();
@@ -2816,8 +2808,8 @@ mod atom_style_tests {
 
     #[test]
     fn write_refuses_bonds_without_mol_id() {
-        use crate::store::Block;
-        use crate::store::Frame as CoreFrame;
+        use crate::core::Block;
+        use crate::core::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();
@@ -2856,8 +2848,8 @@ mod atom_style_tests {
     /// `h1-c3-c3` are two angle types, both written.
     #[test]
     fn write_keeps_reverse_angle_type_labels_as_two_types() {
-        use crate::store::Block;
-        use crate::store::Frame as CoreFrame;
+        use crate::core::Block;
+        use crate::core::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();
@@ -2929,8 +2921,8 @@ mod atom_style_tests {
     fn write_resolves_string_types_ids_and_masses_without_prepare() {
         // Frame carries only string `type` + coords + element — no type_id,
         // no id, no mass column. Writer must still emit a complete data file.
-        use crate::store::Block;
-        use crate::store::Frame as CoreFrame;
+        use crate::core::Block;
+        use crate::core::Frame as CoreFrame;
         use ndarray::ArrayD;
 
         let mut frame = CoreFrame::new();
@@ -3153,7 +3145,7 @@ mod atom_style_tests {
         let frame = parse_text(&text);
         let coeffs = frame
             .meta
-            .get(COEFFS_TEXT_META)
+            .get(LAMMPS_COEFFS_TEXT)
             .and_then(|value| value.as_str())
             .expect("PairIJ Coeffs must land in lammps_coeffs_text");
         assert!(coeffs.contains("PairIJ Coeffs"), "{coeffs}");
@@ -3184,7 +3176,7 @@ mod atom_style_tests {
             .expect("one frame");
         let coeffs = frame
             .meta
-            .get(COEFFS_TEXT_META)
+            .get(LAMMPS_COEFFS_TEXT)
             .and_then(|value| value.as_str())
             .expect("Pair Coeffs must land in lammps_coeffs_text");
         assert!(coeffs.contains("1 0.1 3.0"), "{coeffs}");

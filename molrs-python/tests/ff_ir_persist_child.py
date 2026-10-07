@@ -20,18 +20,18 @@ XYZ = np.array(
 ENDPOINTS = ("atomi", "atomj", "atomk", "atoml", "atomm")
 
 
-def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.store.Frame:
+def frame(block: str, rows: list[list[int]], types: list[str]) -> molrs.core.Frame:
     """Four atoms of type ``A`` and the terms ``rows`` (typed ``types``) in
     ``block``."""
-    atoms = molrs.store.Block()
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, XYZ[:, d].copy())
     atoms.insert("type", ["A"] * 4)
-    terms = molrs.store.Block()
+    terms = molrs.core.Block()
     for i, key in enumerate(ENDPOINTS[: len(rows[0])]):
         terms.insert(key, np.array([r[i] for r in rows], dtype=np.uint32))
     terms.insert("type", list(types))
-    out = molrs.store.Frame()
+    out = molrs.core.Frame()
     out["atoms"] = atoms
     out[block] = terms
     return out
@@ -69,10 +69,10 @@ def exact(section: molrs.io.mrec.ForceFieldSection) -> dict:
 def main(cases: dict) -> dict:
     out = {}
     for name, (path, block, rows, types) in cases.items():
-        ff = molrs.ff.forcefield.ForceField.from_section(molrs.io.read_mrec_forcefield(path))
+        ff = molrs.io.read_mrec_forcefield(path).to_forcefield()
         out[name] = {
             "price": price(ff, block, rows, types),
-            "section": exact(ff.to_section()),
+            "section": exact(molrs.io.mrec.ForceFieldSection.from_forcefield(ff)),
             "styles": [[s.category, s.name] for s in ff.styles],
         }
     return out

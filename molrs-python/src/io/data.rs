@@ -2,9 +2,9 @@
 //! or a few frames out — PDB, XYZ, GRO, LAMMPS data and molecule templates,
 //! MOL2, XSF, CHGCAR, cube, AMBER inpcrd / prmtop structure, antechamber
 //! ``.ac`` and ``prep``. Every reader emits the canonical column names
-//! (`molrs.store.keys`); the format's own spelling never reaches Python.
+//! (`molrs.core.keys`); the format's own spelling never reaches Python.
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::{io_error_to_pyerr, molrs_error_to_pyerr};
 use crate::path::path_str;
 use molrs::io::data::ac::read_ac as read_ac_rs;
@@ -764,7 +764,7 @@ pub fn write_lammps_data(
         Some(extra) => {
             let mut work = frame.clone_core_frame()?;
             for (block, labels) in &extra {
-                molrs::store::type_labels::TypeLabels::declare(&mut work, block, labels)
+                molrs::core::TypeLabels::declare(&mut work, block, labels)
                     .map_err(pyo3::exceptions::PyValueError::new_err)?;
             }
             write_lammps_data_rs(path, &work).map_err(io_error_to_pyerr)

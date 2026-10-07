@@ -22,7 +22,7 @@ use pyo3::prelude::*;
 
 use molrs::conformer::{Conformer, ConformerOptions, ConformerReport, ConformerSpeed, StageKind};
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
 
 /// Map a `StageKind` enum to a human-readable name.
@@ -242,7 +242,7 @@ impl PyConformer {
     /// Generate 3D coordinates for a molecular graph.
     ///
     /// Runs the full distance-geometry + optimization pipeline. The input
-    /// molecule is not modified; the result is an :class:`~molrs.system.Atomistic`
+    /// molecule is not modified; the result is an :class:`~molrs.core.Atomistic`
     /// that keeps the input's ports and its ``frag_id`` labels.
     ///
     /// Parameters

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use molrs::error::MolRsError;
+use molrs::core::MolRsError;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::storage::byte_range::{ByteRange, ByteRangeIterator};
 use zarrs::storage::{

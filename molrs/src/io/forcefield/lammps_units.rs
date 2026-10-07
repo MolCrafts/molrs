@@ -17,12 +17,12 @@
 //! never hard-coding eV↔kcal factors in the FF reader.
 //!
 //! This module is the LAMMPS reader/writer adapter: it maps a LAMMPS `units`
-//! token onto a core [`crate::units::UnitPreset`] name and converts through
+//! token onto a core [`crate::core::UnitPreset`] name and converts through
 //! [`UnitRegistry`]. It does not define a unit-system type.
 
 use crate::ff::ir::UnitScale;
+use molrs::core::{Quantity, UnitRegistry, UnitsError};
 use molrs::op::types::F;
-use molrs::units::{Quantity, UnitRegistry, UnitsError};
 
 /// Map a LAMMPS `units` keyword onto a core preset name (`"lj"` / `"real"` / `"metal"`).
 pub fn parse_style(s: &str) -> Result<&'static str, String> {

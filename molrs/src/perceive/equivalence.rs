@@ -39,7 +39,7 @@
 //! oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
 //! antechamber **merges** them and averages their charges. Any partition that
 //! respects bond order or formal charge (Morgan / Weisfeiler-Leman /
-//! [`crate::system::structural_hash`], which folds both into its colours) **splits**
+//! [`crate::core::structural_hash`], which folds both into its colours) **splits**
 //! them. Orbits are therefore a **strictly finer** partition: the path score never
 //! splits an orbit — an automorphism maps a path to a path with the same ordered
 //! atomic numbers, hence the same score, bit for bit — but it does merge atoms that
@@ -90,20 +90,12 @@
 
 use std::collections::HashMap;
 
+use crate::core::Atomistic;
+use crate::core::BondOrder;
+use crate::core::NodeId;
+use crate::core::keys;
 use crate::op::vec3::{cross, dot, sub};
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::BondType;
-use crate::system::NodeId;
-use molrs::system::Element;
-
-/// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
-/// the 0-based id of the atom's charge-equivalence class.
-///
-/// Class ids are assigned in order of first appearance in the graph's atom order,
-/// so the atom that antechamber would pick as a class's representative (its
-/// lowest-indexed member) is the one that names it.
-pub const EQUIV_CLASS: &str = "equiv_class";
+use molrs::core::Element;
 
 /// Weight of a path position, `0.11` (Antechamber Eq. (I)).
 const POSITION_WEIGHT: f64 = 0.11;
@@ -343,7 +335,7 @@ struct Flat {
     /// Per atom: coordinates, for the `-eq 2` torsions.
     xyz: Vec<[f64; 3]>,
     /// Per bond: endpoints and chemical class.
-    bonds: Vec<(usize, usize, BondType)>,
+    bonds: Vec<(usize, usize, BondOrder)>,
 }
 
 impl Flat {
@@ -391,7 +383,7 @@ impl Flat {
             adj[j].push(i);
             // The *class*, not the number: "is this a double bond" must stay
             // false for an aromatic bond whose Kekulé phase happens to be 2.
-            bonds.push((i, j, BondType::from_prop(bond.props.get(keys::BOND_TYPE))));
+            bonds.push((i, j, BondOrder::from_prop(bond.props.get(keys::BOND_TYPE))));
         }
 
         Self {
@@ -443,10 +435,10 @@ impl Flat {
             .bonds
             .iter()
             .find(|(a, b, _)| (*a == j && *b == k) || (*a == k && *b == j))
-            .map_or(BondType::Unknown, |(_, _, t)| *t);
+            .map_or(BondOrder::Unknown, |(_, _, t)| *t);
 
         // C=C.
-        if zj == 6 && zk == 6 && bond_type == BondType::Double {
+        if zj == 6 && zk == 6 && bond_type == BondOrder::Double {
             return true;
         }
         // Amide C–N: the carbon carries a double bond to a chalcogen.
@@ -461,7 +453,7 @@ impl Flat {
                     } else {
                         return false;
                     };
-                    *o == BondType::Double && (self.z[other] == 8 || self.z[other] == 16)
+                    *o == BondOrder::Double && (self.z[other] == 8 || self.z[other] == 16)
                 })
         };
         amide(j, k) || amide(k, j)

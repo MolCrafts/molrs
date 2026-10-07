@@ -12,7 +12,7 @@
 //! are out of scope here.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -22,8 +22,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Class2 proper dihedral (core 3-term cosine) with pre-resolved flat arrays.
 pub struct DihedralClass2 {

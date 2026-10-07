@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
-use molrs::store::keys;
-use molrs::store::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
-use molrs::store::type_labels::TypeName;
-use molrs::system::Atomistic;
-use molrs::system::{MolGraph, NodeId, PropValue};
+use molrs::core::Atomistic;
+use molrs::core::TypeName;
+use molrs::core::keys;
+use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
+use molrs::core::{MolGraph, NodeId, PropValue};
 
 use crate::ff::forcefield::ForceField;
 use crate::ff::typifier::{Annotation, Match, Typifier};
@@ -47,7 +47,7 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 /// # Example
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::typifier::{ElementTypifier, Typing};
 ///
 /// let mut mol = Atomistic::new();
@@ -182,8 +182,8 @@ mod tests {
     //! `ElementTypifier` through `Typing::typify` on hand-built graphs. Every
     //! expected label is written by hand.
 
-    use molrs::system::{Atom, PropValue};
-    use molrs::system::{Atomistic, NodeId};
+    use molrs::core::{Atom, PropValue};
+    use molrs::core::{Atomistic, NodeId};
 
     use super::*;
     use crate::ff::typifier::Typing;

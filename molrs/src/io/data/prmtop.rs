@@ -93,17 +93,17 @@ use std::path::Path;
 
 use ndarray::{Array1, IxDyn, array};
 
+use molrs::core::Block;
+use molrs::core::Element;
+use molrs::core::Frame;
+use molrs::core::SimBox;
+use molrs::core::TypeName;
+use molrs::core::keys;
+use molrs::core::schema::block_names;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::keys;
-use molrs::store::schema::block_names;
-use molrs::store::type_labels::TypeName;
-use molrs::system::Element;
 
 use super::prmtop_tables;
-use crate::units::constants::AMBER_CHARGE_FACTOR;
+use crate::core::constants::AMBER_CHARGE_FACTOR;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -872,7 +872,7 @@ pub(crate) fn frame_from_sections(sections: &HashMap<String, Vec<String>>) -> Re
     }
     // A chamber file scales by CHARMM's √332.0716, an AMBER one by 18.2223.
     let charge_factor = if prmtop_tables::is_chamber(sections) {
-        crate::units::constants::CHARMM_COULOMB.sqrt()
+        crate::core::constants::CHARMM_COULOMB.sqrt()
     } else {
         AMBER_CHARGE_FACTOR
     };

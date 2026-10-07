@@ -1,4 +1,4 @@
-//! Per-element data — the WASM face of `molrs::system::Element`.
+//! Per-element data — the WASM face of `molrs::core::Element`.
 
 use wasm_bindgen::prelude::*;
 
@@ -18,5 +18,5 @@ use wasm_bindgen::prelude::*;
 /// ```
 #[wasm_bindgen(js_name = covalentRadius)]
 pub fn covalent_radius(symbol: &str) -> Option<f64> {
-    molrs::system::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
+    molrs::core::Element::by_symbol(symbol).map(|el| f64::from(el.covalent_radius()))
 }

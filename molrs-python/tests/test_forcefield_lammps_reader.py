@@ -45,16 +45,16 @@ def read_ff(tmp_path):
     return read
 
 
-def _frame(atom_types: list[str], **blocks: list[str]) -> molrs.store.Frame:
+def _frame(atom_types: list[str], **blocks: list[str]) -> molrs.core.Frame:
     """A Frame with ``atoms`` typed ``atom_types`` and one labelled row per
     entry of each topology block (``bonds=[...]``, ``dihedrals=[...]``)."""
-    frame = molrs.store.Frame()
-    atoms = molrs.store.Block()
+    frame = molrs.core.Frame()
+    atoms = molrs.core.Block()
     atoms.insert("type", atom_types)
     frame["atoms"] = atoms
     arity = {"bonds": 2, "angles": 3, "dihedrals": 4, "impropers": 4}
     for name, labels in blocks.items():
-        block = molrs.store.Block()
+        block = molrs.core.Block()
         for key in _ENDPOINTS[: arity[name]]:
             block.insert(key, np.zeros(len(labels), dtype=np.uint32))
         block.insert("type", labels)
@@ -62,7 +62,7 @@ def _frame(atom_types: list[str], **blocks: list[str]) -> molrs.store.Frame:
     return frame
 
 
-def _ff_frame() -> molrs.store.Frame:
+def _ff_frame() -> molrs.core.Frame:
     """A system using every type of ``_FF``."""
     return _frame(
         ["c3", "c3", "oh"],
@@ -210,14 +210,14 @@ def _hand_ff() -> molrs.ff.forcefield.ForceField:
     return ff
 
 
-def _labelled_frame(bond_label: str = "c3-c3") -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def _labelled_frame(bond_label: str = "c3-c3") -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     atoms.insert("type", ["c3", "c3"])
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", np.array([0], dtype=np.uint32))
     bonds.insert("atomj", np.array([1], dtype=np.uint32))
     bonds.insert("type", [bond_label])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     return frame

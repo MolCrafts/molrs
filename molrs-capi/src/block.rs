@@ -20,8 +20,8 @@
 //! `F` is `f64`, `I` is `i32`, `Idx` is `u64`. `out_len` is an element
 //! count. `molrs_block_copy`'s `buf_bytes` is a byte capacity.
 
+use molrs::core::{Column, DType};
 use molrs::op::types::{F, I, Idx};
-use molrs::store::{Column, DType};
 use ndarray::ArrayD;
 
 use crate::error::{self, MolrsDType, MolrsStatus, ffi_err_to_status};

@@ -55,7 +55,7 @@
 //! half-updated charge back into χ mid-sweep (Gauss–Seidel) changes the convergence
 //! trajectory and the answer.
 
-use molrs::system::{Atomistic, NodeId};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::params::{GASTEIGER_PARAMS, GasteigerRow};
 use crate::ff::typifier::{AtdParameterSet, AtdTypifier};
@@ -99,7 +99,7 @@ const CHI_FLOOR: f64 = 1.0e-10;
 /// # Examples
 ///
 /// ```
-/// use molrs::system::Atomistic;
+/// use molrs::core::Atomistic;
 /// use molrs::ff::charge::{ChargeModel, GasteigerModel};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -315,7 +315,7 @@ fn rms_change(previous: &[f64], current: &[f64]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::keys;
+    use molrs::core::keys;
 
     /// Methane — the smallest molecule that still needs seven sweeps.
     fn methane() -> Atomistic {

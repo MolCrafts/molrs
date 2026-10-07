@@ -13,11 +13,11 @@
 //! [`MolGraph`]. All higher layers (`aromaticity`, `atomtype`,
 //! `charges`) read from it and never mutate the graph.
 
+use molrs::core::Element;
+use molrs::core::PropValue;
+use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::Hybridization;
 use molrs::perceive::rings::{RingInfo, find_rings};
-use molrs::system::Element;
-use molrs::system::PropValue;
-use molrs::system::{Atomistic, NodeId};
 
 /// Bond order (Kekulé): we treat the SDF integer order verbatim.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,8 +32,8 @@ pub enum BondOrder {
 impl BondOrder {
     /// From the localized bond number. Aromaticity is *not* inferable here —
     /// it is the bond's class, and the caller passes it separately.
-    fn from_number(n: crate::system::BondNumber) -> Self {
-        use crate::system::BondNumber;
+    fn from_number(n: crate::core::BondNumber) -> Self {
+        use crate::core::BondNumber;
         match n {
             BondNumber::Triple | BondNumber::Quadruple => BondOrder::Triple,
             BondNumber::Double => BondOrder::Double,

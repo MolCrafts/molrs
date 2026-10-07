@@ -14,7 +14,7 @@ from typing import Self as _Self
 from typing import overload as _overload
 
 if _TYPE_CHECKING:
-    from ..store import Frame
+    from ..core import Frame
 
 __all__ = ["TrajectoryReader"]
 

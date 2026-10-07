@@ -70,8 +70,11 @@ pub(crate) mod expression;
 mod form;
 pub(crate) mod registry;
 mod spec;
+mod style_table;
 
-pub use category::{Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categories};
+pub use category::{
+    Arity, CategorySpec, Coordinate, EndpointOrder, builtin_categories, category_arity,
+};
 pub use dim::Dim;
 pub use engine::{
     Engine, EngineCodec, LammpsCodec, LammpsCoeffs, LammpsForm, Token, UnitScale, positional,
@@ -85,6 +88,7 @@ pub use registry::{
     register_form, register_style, set_expression_compiler, unregister_style, with_global,
 };
 pub use spec::{Mix, ParamKind, ParamSpec, Sample, StyleSpec, Value, builtin_styles};
+pub use style_table::{ANNOTATION_COLUMNS, CMAP_GRID, ENDPOINT_COLUMNS, is_parameter_column};
 
 #[cfg(test)]
 mod builtin_conformance;

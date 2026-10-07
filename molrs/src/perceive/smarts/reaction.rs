@@ -33,11 +33,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::error::MolRsError;
-use crate::system::Atomistic;
-use crate::system::{BondNumber, BondType};
-use crate::system::{NodeId, RelationId};
-use molrs::system::Element;
+use crate::core::Atomistic;
+use crate::core::MolRsError;
+use crate::core::{BondNumber, BondOrder};
+use crate::core::{NodeId, RelationId};
+use molrs::core::Element;
 
 use super::SmartsPattern;
 use super::ast::MolContext;
@@ -81,17 +81,17 @@ fn query_charge(q: &AtomQuery) -> Option<i32> {
 /// `:` yields `(Aromatic, Unknown)` on purpose — the query declares the product
 /// bond delocalized and says nothing about which Kekulé phase it takes.
 /// Perception on the product is what decides that.
-fn query_bond_class(q: &BondQuery) -> (BondType, BondNumber) {
+fn query_bond_class(q: &BondQuery) -> (BondOrder, BondNumber) {
     match q {
-        BondQuery::Prim(BondPrimitive::Double) => (BondType::Double, BondNumber::Double),
-        BondQuery::Prim(BondPrimitive::Triple) => (BondType::Triple, BondNumber::Triple),
-        BondQuery::Prim(BondPrimitive::Aromatic) => (BondType::Aromatic, BondNumber::Unknown),
-        BondQuery::Prim(_) => (BondType::Single, BondNumber::Single),
+        BondQuery::Prim(BondPrimitive::Double) => (BondOrder::Double, BondNumber::Double),
+        BondQuery::Prim(BondPrimitive::Triple) => (BondOrder::Triple, BondNumber::Triple),
+        BondQuery::Prim(BondPrimitive::Aromatic) => (BondOrder::Aromatic, BondNumber::Unknown),
+        BondQuery::Prim(_) => (BondOrder::Single, BondNumber::Single),
         BondQuery::And(items) | BondQuery::Or(items) => items
             .first()
             .map(query_bond_class)
-            .unwrap_or((BondType::Single, BondNumber::Single)),
-        BondQuery::Not(_) => (BondType::Single, BondNumber::Single),
+            .unwrap_or((BondOrder::Single, BondNumber::Single)),
+        BondQuery::Not(_) => (BondOrder::Single, BondNumber::Single),
     }
 }
 
@@ -101,7 +101,7 @@ struct AtomInfo {
     element: Option<String>,
     charge: Option<i32>,
     /// `(mapped-neighbour label, bond order)` for each bond to a mapped atom.
-    attach: Vec<(u32, (BondType, BondNumber))>,
+    attach: Vec<(u32, (BondOrder, BondNumber))>,
 }
 
 /// Read the per-atom facts (label, element, charge, mapped-neighbour bonds).
@@ -140,7 +140,7 @@ fn ordered(a: u32, b: u32) -> (u32, u32) {
 
 /// Collect the `{(map_a, map_b): (type, number)}` bonds whose *both*
 /// endpoints are mapped.
-fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondType, BondNumber)>) {
+fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondOrder, BondNumber)>) {
     for b in &g.bonds {
         if let (Some(la), Some(lb)) = (g.atoms[b.a].map_label, g.atoms[b.b].map_label) {
             out.insert(ordered(la, lb), query_bond_class(&b.query));
@@ -206,9 +206,9 @@ struct PropDelta {
 pub struct Transform {
     delete: Vec<DeleteSpec>,
     add_atoms: Vec<AddAtomSpec>,
-    form_bonds: Vec<(NodeRef, NodeRef, (BondType, BondNumber))>,
+    form_bonds: Vec<(NodeRef, NodeRef, (BondOrder, BondNumber))>,
     break_bonds: Vec<(u32, u32)>,
-    set_order: Vec<(u32, u32, (BondType, BondNumber))>,
+    set_order: Vec<(u32, u32, (BondOrder, BondNumber))>,
     set_props: Vec<PropDelta>,
 }
 
@@ -285,8 +285,8 @@ impl Transform {
         let mut p_mm = HashMap::new();
         collect_mapped_bonds(&product.graph, &mut p_mm);
 
-        let mut form_bonds: Vec<(NodeRef, NodeRef, (BondType, BondNumber))> = Vec::new();
-        let mut set_order: Vec<(u32, u32, (BondType, BondNumber))> = Vec::new();
+        let mut form_bonds: Vec<(NodeRef, NodeRef, (BondOrder, BondNumber))> = Vec::new();
+        let mut set_order: Vec<(u32, u32, (BondOrder, BondNumber))> = Vec::new();
         for (&(a, b), &po) in &p_mm {
             match r_mm.get(&(a, b)) {
                 None => form_bonds.push((NodeRef::Mapped(a), NodeRef::Mapped(b), po)),
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(t.set_order.len(), 1);
         let (a, b, class) = t.set_order[0];
         assert_eq!(ordered(a, b), (1, 2));
-        assert_eq!(class, (BondType::Single, BondNumber::Single));
+        assert_eq!(class, (BondOrder::Single, BondNumber::Single));
     }
 
     #[test]
@@ -944,7 +944,7 @@ mod tests {
         let o2 = mol.add_atom_xyz("O", 5.0, -1.3, 0.0);
         let c3 = mol.add_atom_xyz("C", 5.0, -2.6, 0.0);
         let bo = mol.add_bond(c0, o1).unwrap();
-        mol.set_bond_type(bo, BondType::Double).unwrap();
+        mol.set_bond_type(bo, BondOrder::Double).unwrap();
         mol.add_bond(c0, o2).unwrap();
         mol.add_bond(o2, c3).unwrap();
 
@@ -1013,7 +1013,7 @@ mod tests {
         let s3 = mol.add_atom_xyz("S", 3.0, 0.0, 0.0);
         let hs = mol.add_atom_xyz("H", 3.0, 1.0, 0.0);
         let b = mol.add_bond(c1, c2).unwrap();
-        mol.set_bond_type(b, BondType::Double).unwrap();
+        mol.set_bond_type(b, BondOrder::Double).unwrap();
         mol.add_bond(s3, hs).unwrap();
 
         // No leaving group; the binding pins the three reacting atoms directly.

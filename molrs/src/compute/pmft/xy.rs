@@ -22,10 +22,10 @@
 //! works in the lab frame.
 
 use crate::compute::ComputeResult;
+use molrs::core::BoxKind;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::BoxKind;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 use ndarray::Array2;
 
 use crate::compute::Compute;
@@ -104,10 +104,7 @@ impl PMFTXY {
         let n_pairs = nlist.n_pairs();
         // The pair coordinate is built from the bond vector itself.
         let disp = require_disp(nlist)?;
-        let symmetric = matches!(
-            nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-        );
+        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
 
         let push = |dxp: F, dyp: F, counts: &mut Array2<u64>| {
             if dxp.abs() >= self.x_max || dyp.abs() >= self.y_max {
@@ -295,9 +292,9 @@ impl ComputeResult for PMFTXYResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

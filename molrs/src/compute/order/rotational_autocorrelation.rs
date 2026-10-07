@@ -25,8 +25,8 @@
 //! `Ψ_ℓ(i)` across particles.
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -137,7 +137,7 @@ impl ComputeResult for RotationalAutocorrelationResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
 
     fn frame() -> Frame {
         Frame::new()

@@ -18,7 +18,7 @@
 //! `w = 0` (or absent) is the AMBER use of the style.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::DIHEDRALS;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -28,8 +28,8 @@ use crate::ff::potential::geometry::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// CHARMM proper dihedral with pre-resolved flat arrays.
 pub struct DihedralCharmm {
@@ -208,8 +208,8 @@ mod tests {
     /// dihedral at φ = 60°.
     fn lammps_charmm(w: &str) -> (crate::ff::forcefield::ForceField, Frame) {
         use crate::io::forcefield::readers::ForceFieldReader;
+        use molrs::core::Block;
         use molrs::op::types::Idx;
-        use molrs::store::Block;
         use ndarray::Array1;
         let text = format!(
             "special_bonds charmm\ndihedral_style charmm\ndihedral_coeff a-b-c-d 0.2 3 180 {w}\n"

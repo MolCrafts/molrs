@@ -2,12 +2,12 @@
 //!
 //! Every science/representation choice is an explicit field — no silent policy.
 
-use molrs::system::NodeId;
+use molrs::core::NodeId;
 
 /// Options for [`super::from_atomistic()`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmilesEmitOptions {
-    /// Use WL [`canonical_order`](molrs::system::Atomistic::canonical_order)
+    /// Use WL [`canonical_order`](molrs::core::Atomistic::canonical_order)
     /// for root selection and branch ordering.
     pub canonical: bool,
     /// Override root atom; when set, root selection ignores `canonical` root pick

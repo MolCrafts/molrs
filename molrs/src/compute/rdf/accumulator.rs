@@ -12,9 +12,9 @@
 //! itself implemented on top of this accumulator — one source of truth for
 //! the accumulation math.
 
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
 use molrs::op::types::F;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use super::{RDF, RDFResult, RdfMode};

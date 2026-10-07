@@ -14,10 +14,11 @@ mod result;
 pub use accumulator::RDFAccumulator;
 pub use result::{RDFResult, RdfMode};
 
+use molrs::core::FrameAccess;
+use molrs::core::SimBox;
+use molrs::core::neighbors::Backend;
+use molrs::core::{LinkCell, NeighborList, Neighbors};
 use molrs::op::types::{F, FNx3View};
-use molrs::spatial::SimBox;
-use molrs::spatial::neighbors::{Backend, LinkCell, NeighborList, Neighbors};
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
@@ -325,9 +326,9 @@ mod tests {
     use super::super::positions::get_positions_ref;
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
     use rand::RngExt;
 
@@ -496,7 +497,7 @@ mod tests {
         let mut frame = random_frame(50, 10.0, 1);
         frame.simbox = None;
         let nlist = {
-            use molrs::spatial::neighbors::NeighborQuery;
+            use molrs::core::NeighborQuery;
             let (xs, ys, zs) = get_positions_ref(&frame).unwrap();
             NeighborQuery::free_columns(xs.slice(), ys.slice(), zs.slice(), 4.0).query_self()
         };
@@ -530,7 +531,7 @@ mod tests {
 
     #[test]
     fn zero_distance_pairs_are_skipped() {
-        use molrs::store::Block;
+        use molrs::core::Block;
 
         let mut block = Block::new();
         block
@@ -587,7 +588,7 @@ mod tests {
     /// 8.526157665637252 — both asserts below fail.
     #[test]
     fn rdf_self_half_list_factor_two_vs_cross() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborPair, NeighborsStorage, QueryMode};
 
         /// g(r) in bin 1 for the two-particle fixture, factor 2 included.
         const G_BIN1: F = 17.052315331274503;

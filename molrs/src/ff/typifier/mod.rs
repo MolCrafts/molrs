@@ -10,7 +10,7 @@
 //! a private copy of the input and defines the matched types in the output
 //! force field the base owns. No implementor writes the output itself.
 //!
-//! Materializing a typed graph into a [`Frame`](molrs::store::Frame) for
+//! Materializing a typed graph into a [`Frame`](molrs::core::Frame) for
 //! `PotentialCompiler::compile` is the graph's `to_frame` job; typifiers stay on
 //! the graph boundary.
 
@@ -39,8 +39,8 @@ pub use uff::UFFTypifier;
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
-use molrs::system::Atomistic;
-use molrs::system::{KindId, MolGraph, NodeId, PropValue, RelationId};
+use molrs::core::Atomistic;
+use molrs::core::{KindId, MolGraph, NodeId, PropValue, RelationId};
 
 use crate::ff::forcefield::{ForceField, Params, Style};
 use crate::ff::ir::{Arity, EndpointOrder};
@@ -723,8 +723,8 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
-    use molrs::system::Atomistic;
-    use molrs::system::{Atom, PropValue};
+    use molrs::core::Atomistic;
+    use molrs::core::{Atom, PropValue};
 
     use super::*;
     use crate::ff::forcefield::tests::assert_same_definitions;

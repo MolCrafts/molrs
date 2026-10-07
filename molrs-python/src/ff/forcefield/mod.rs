@@ -20,7 +20,7 @@ use pyo3::types::{PyCapsule, PyDict, PyList, PyString, PyTuple};
 use molrs::ff::forcefield::ForceField;
 use molrs_ffi::ForceFieldRef;
 
-use crate::core::store::frame::PyFrame;
+use crate::core::frame::PyFrame;
 use crate::error::py_value_err;
 use crate::ff::ir;
 
@@ -101,7 +101,7 @@ pub(crate) fn params_from_dict(
 /// GIL is held, so no cross-thread `Rc` access occurs. `#[repr(transparent)]`
 /// makes the capsule's `void*` reinterpretable as `*mut *mut ForceFieldRef`,
 /// matching the frame convention a consumer resolves (mirrors
-/// [`crate::core::store::frame`]'s `FrameRefPtr`).
+/// [`crate::core::frame`]'s `FrameRefPtr`).
 #[repr(transparent)]
 struct ForceFieldRefPtr(*mut ForceFieldRef);
 

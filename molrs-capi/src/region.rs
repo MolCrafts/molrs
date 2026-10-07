@@ -25,12 +25,12 @@
 
 use std::sync::Arc;
 
-use molrs::op::types::{F3, FNx3};
-use molrs::spatial::TriMesh;
-use molrs::spatial::region::{
+use molrs::core::TriMesh;
+use molrs::core::{
     AndRegion, Cuboid, Cylinder, Ellipsoid, HalfSpace, NotRegion, OrRegion, Parallelepiped,
     Polyhedron, Region, Sphere, SphereUnion,
 };
+use molrs::op::types::{F3, FNx3};
 use molrs_ffi::RegionRef;
 use ndarray::{Array2, ArrayView2};
 

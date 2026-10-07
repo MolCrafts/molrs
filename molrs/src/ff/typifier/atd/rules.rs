@@ -5,7 +5,7 @@
 //! tried in file order and the first match wins, so the table's own ordering —
 //! most specific first — is load-bearing and must never be sorted or dedup'd.
 
-use molrs::system::NodeId;
+use molrs::core::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{AtdRule, AtdTable};

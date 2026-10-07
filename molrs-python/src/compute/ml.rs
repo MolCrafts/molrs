@@ -4,7 +4,7 @@
 use super::result::PyDescriptorRow;
 use crate::error::py_value_err;
 use molrs::compute::{Compute, KMeans, KMeansResult, Pca2, PcaResult};
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1, PyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

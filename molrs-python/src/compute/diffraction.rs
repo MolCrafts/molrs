@@ -6,7 +6,7 @@
 use super::collect_frames;
 use crate::error::py_value_err;
 use molrs::compute::{Compute, StaticStructureFactorDebye};
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 use pyo3::types::PyAny;

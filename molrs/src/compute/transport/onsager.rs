@@ -35,7 +35,7 @@
 use crate::compute::ComputeResult;
 use ndarray::Array1;
 
-use molrs::store::FrameAccess;
+use molrs::core::FrameAccess;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -182,7 +182,7 @@ impl ComputeResult for OnsagerResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::array;
 
     /// Empty frame slice for the series-based `OnsagerCorrelation` compute.

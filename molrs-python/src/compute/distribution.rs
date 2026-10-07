@@ -8,7 +8,7 @@ use molrs::compute::{
     CombinedDistributionResult, Compute, DihedralObservable, DistanceObservable,
     DistributionFunction, DistributionResult,
 };
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

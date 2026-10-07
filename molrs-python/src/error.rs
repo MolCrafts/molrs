@@ -2,15 +2,15 @@
 //! mapping.
 //!
 //! Each exception is declared under the module that owns it:
-//! `molrs.store.BlockDtypeError` (a column value the Store cannot hold),
-//! `molrs.units.UnitsError` and `molrs.io.smiles.SmilesError`. A subsystem whose
+//! `molrs.core.BlockDtypeError` (a column value the Store cannot hold),
+//! `molrs.core.UnitsError` and `molrs.io.smiles.SmilesError`. A subsystem whose
 //! refusals form a family of their own (`molrs.ff.ir`'s `IrError` tree)
 //! declares it beside its bindings.
 //!
 //! `BlockDtypeError` is the single error a column write raises when the value
 //! is not numpy-representable by the Rust Store (object dtype, None-bearing, or
 //! ragged/mixed). It subclasses Python `TypeError` so downstream code can
-//! `except molrs.store.BlockDtypeError` precisely while still being caught by
+//! `except molrs.core.BlockDtypeError` precisely while still being caught by
 //! broad `except TypeError` handlers.
 
 use molrs_ffi::FfiError;
@@ -19,7 +19,7 @@ use pyo3::exceptions::{PyIOError, PyKeyError, PyRuntimeError, PyTypeError, PyVal
 use pyo3::prelude::*;
 
 create_exception!(
-    molrs.store,
+    molrs.core,
     BlockDtypeError,
     PyTypeError,
     "Raised when a Block column value is not a numpy-representable dtype \
@@ -28,7 +28,7 @@ create_exception!(
 );
 
 create_exception!(
-    molrs.units,
+    molrs.core,
     UnitsError,
     PyValueError,
     "Raised when unit parsing, definition, arithmetic, or conversion fails."
@@ -49,7 +49,7 @@ create_exception!(
 );
 
 /// Preserve the native units error message at the Python boundary.
-pub fn units_error(error: ::molrs::units::UnitsError) -> PyErr {
+pub fn units_error(error: ::molrs::core::UnitsError) -> PyErr {
     UnitsError::new_err(error.to_string())
 }
 
@@ -129,8 +129,8 @@ pub fn io_error_to_pyerr(e: std::io::Error) -> PyErr {
     PyIOError::new_err(e.to_string())
 }
 
-/// Convert a [`molrs::error::MolRsError`] to a Python `ValueError`.
-pub fn molrs_error_to_pyerr(e: molrs::error::MolRsError) -> PyErr {
+/// Convert a [`molrs::core::MolRsError`] to a Python `ValueError`.
+pub fn molrs_error_to_pyerr(e: molrs::core::MolRsError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 

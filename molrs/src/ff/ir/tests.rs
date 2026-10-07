@@ -13,9 +13,10 @@ use crate::ff::ir::{
 use crate::ff::potential::bond::bond_harmonic_ctor;
 use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
 use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler};
+use crate::io::mrec::ForceFieldSection;
+use molrs::core::Block;
+use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
-use molrs::store::Block;
-use molrs::store::Frame;
 use ndarray::Array1;
 
 /// `scale · k (q − q0)²`, its derivative off by `wrong` (1 is right).
@@ -1119,15 +1120,18 @@ fn a_custom_category_round_trips_through_its_section() {
     let ff = ub_ff("harmonic", Params::new(), |ff, p| {
         ff.def_style_in(&r, "urey_bradley", "harmonic", p)
     });
-    let section = ff.to_section().unwrap();
+    let section = ForceFieldSection::from_forcefield(&ff).unwrap();
     let table = section.table("urey_bradley", "harmonic").unwrap();
     assert!(table.contains_key("ktom") && !table.contains_key("ltom"));
-    let back = ForceField::from_section(&section).unwrap();
+    let back = section.to_forcefield().unwrap();
     assert_eq!(back.styles().len(), 1);
     assert_eq!(back.styles()[0].category(), "urey_bradley");
     assert_eq!(back.styles()[0].arity(), 3);
     assert_eq!(back.styles()[0].type_rows(), ff.styles()[0].type_rows());
-    assert_eq!(back.to_section().unwrap().document, section.document);
+    assert_eq!(
+        ForceFieldSection::from_forcefield(&back).unwrap().document,
+        section.document
+    );
     let frame = two_terms("urey_bradley");
     let price = |ff: &ForceField| {
         PotentialCompiler::with_registry(ff, &r)
@@ -1149,7 +1153,10 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     let bare = ub_ff("spring", Params::new(), |ff, p| {
         ff.def_style_with_arity("urey_bradley", 3, "spring", p)
     });
-    let back = ForceField::from_section(&bare.to_section().unwrap()).unwrap();
+    let back = ForceFieldSection::from_forcefield(&bare)
+        .unwrap()
+        .to_forcefield()
+        .unwrap();
     assert_eq!(back.styles()[0].arity(), 3);
     assert_eq!(back.styles()[0].type_rows(), bare.styles()[0].type_rows());
     let compiler = PotentialCompiler::new(&back);
@@ -1177,12 +1184,12 @@ fn an_unregistered_category_round_trips_and_is_priced_only_by_an_expression() {
     let priced = ub_ff("spring", style, |ff, p| {
         ff.def_style_with_arity("urey_bradley", 3, "spring", p)
     });
-    let section = priced.to_section().unwrap();
+    let section = ForceFieldSection::from_forcefield(&priced).unwrap();
     assert_eq!(
         section.document["styles"][0]["expression"],
         serde_json::json!(UB_EXPRESSION)
     );
-    let back = ForceField::from_section(&section).unwrap();
+    let back = section.to_forcefield().unwrap();
     let got = PotentialCompiler::new(&back)
         .compile(&two_terms("urey_bradley"))
         .unwrap()
@@ -1325,10 +1332,12 @@ fn bits(e: F, f: &[F]) -> Vec<u64> {
 /// with the registry's; a built-in style, and a native-only custom one, with
 /// none; an instance's own expression byte for byte.
 #[test]
-fn to_section_writes_a_custom_styles_registry_expression() {
+fn a_section_writes_a_custom_styles_registry_expression() {
     let r = persist_registry();
     let expression = |ff: &ForceField| {
-        ff.to_section_in(&r).unwrap().document["styles"][0]
+        ForceFieldSection::from_forcefield_in(ff, &r)
+            .unwrap()
+            .document["styles"][0]
             .get("expression")
             .cloned()
     };
@@ -1342,7 +1351,9 @@ fn to_section_writes_a_custom_styles_registry_expression() {
     assert_eq!(expression(&cases[3].1), None, "native only");
     // The process-wide registry does not hold them: nothing to write.
     assert!(
-        cases[0].1.to_section().unwrap().document["styles"][0]
+        ForceFieldSection::from_forcefield(&cases[0].1)
+            .unwrap()
+            .document["styles"][0]
             .get("expression")
             .is_none()
     );
@@ -1361,12 +1372,12 @@ fn to_section_writes_a_custom_styles_registry_expression() {
     params.set_str("expression", own);
     let mut ff = ForceField::new("own");
     ff.def_style_in(&r, "bond", "fene", params).unwrap();
-    let section = ff.to_section_in(&r).unwrap();
+    let section = ForceFieldSection::from_forcefield_in(&ff, &r).unwrap();
     assert_eq!(
         section.document["styles"][0]["expression"],
         serde_json::json!(own)
     );
-    let back = ForceField::from_section(&section).unwrap();
+    let back = section.to_forcefield().unwrap();
     assert_eq!(back.styles()[0].params().get_str("expression"), Some(own));
 }
 
@@ -1428,7 +1439,7 @@ fn custom_styles_persist_to_a_fresh_process() {
     let dir = tempfile::tempdir().unwrap();
     let mut expected = serde_json::Map::new();
     for (name, ff, frame) in persist_cases(&r) {
-        let section = ff.to_section_in(&r).unwrap();
+        let section = ForceFieldSection::from_forcefield_in(&ff, &r).unwrap();
         molrs::io::mrec::write_forcefield_file(
             dir.path().join(format!("{name}.mrec")),
             &section,
@@ -1483,7 +1494,7 @@ fn fresh_process_reads_custom_styles() {
         let section = molrs::io::mrec::read_forcefield_file(dir.join(format!("{name}.mrec")))
             .unwrap()
             .unwrap();
-        ForceField::from_section(&section).unwrap()
+        section.to_forcefield().unwrap()
     };
     let want = |name: &str| -> Vec<u64> { serde_json::from_value(expected[name].clone()).unwrap() };
 
@@ -1551,7 +1562,10 @@ fn an_array_param_style_prices_its_table_and_round_trips() {
     let table: Vec<F> = torsion_table().iter().copied().collect();
     let (hand, _) = TableLinear::at(&table, phi);
     assert!((e - hand).abs() <= 1e-12 * hand.abs(), "{e} vs {hand}");
-    let back = ForceField::from_section(&ff.to_section_in(&r).unwrap()).unwrap();
+    let back = ForceFieldSection::from_forcefield_in(&ff, &r)
+        .unwrap()
+        .to_forcefield()
+        .unwrap();
     assert_eq!(bits(e, &f), {
         let (e, f) = price(&back);
         bits(e, &f)

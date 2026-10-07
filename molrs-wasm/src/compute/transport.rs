@@ -31,7 +31,7 @@ impl VACF {
         let dt = self.dt;
         let resolution = self.resolution;
         let v = array2(velocities, n_frames, n_dof, "VACF velocities")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::VACF;
         let r = calc
             .compute(&frames, (&v, dt, resolution))
@@ -65,7 +65,7 @@ impl GreenKuboDiffusion {
         let dt = self.dt;
         let resolution = self.resolution;
         let v = array2(velocities, n_frames, n_dof, "GreenKuboDiffusion velocities")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::GreenKuboDiffusion;
         let r = calc
             .compute(&frames, (&v, dt, resolution))
@@ -94,7 +94,7 @@ impl GreenKuboConductivity {
         let dt = self.dt;
         let max_lag = self.max_lag;
         let c = array2(current, n_frames, 3, "GreenKuboConductivity current")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::GreenKuboConductivity;
         let r = calc
             .compute(&frames, (&c, dt, max_lag))
@@ -128,7 +128,7 @@ impl EinsteinConductivity {
             3,
             "EinsteinConductivity translationalDipole",
         )?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::EinsteinConductivity;
         let r = calc
             .compute(&frames, (&d, dt, max_lag))
@@ -158,7 +158,7 @@ impl OnsagerCorrelation {
         let max_lag = self.max_lag;
         let pi = array2(pi, n_frames, 3, "Onsager p_i")?;
         let pj = array2(pj, n_frames, 3, "Onsager p_j")?;
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let calc = molrs::compute::OnsagerCorrelation;
         let r = calc
             .compute(&frames, (&pi, &pj, dt, max_lag))
@@ -173,7 +173,7 @@ impl OnsagerCorrelation {
 #[wasm_bindgen(js_name = EinsteinDiffusion)]
 pub struct EinsteinDiffusion {
     dt: F,
-    frames: Vec<molrs::store::Frame>,
+    frames: Vec<molrs::core::Frame>,
 }
 
 #[wasm_bindgen(js_class = EinsteinDiffusion)]
@@ -195,7 +195,7 @@ impl EinsteinDiffusion {
 
     pub fn compute(&self) -> Result<JsValue, JsValue> {
         let dt = self.dt;
-        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
         let calc = molrs::compute::EinsteinDiffusion;
         let r = calc
             .compute(&refs, molrs::compute::EinsteinDiffusionArgs { dt })
@@ -255,7 +255,7 @@ impl DebyeRelaxation {
             temperature: self.temperature,
             boundary,
         };
-        let frames: [&molrs::store::Frame; 0] = [];
+        let frames: [&molrs::core::Frame; 0] = [];
         let r = calc
             .compute(&frames, (&dipoles, dt, max_lag))
             .map_err(|e| JsValue::from_str(&format!("DebyeRelaxation: {e}")))?;

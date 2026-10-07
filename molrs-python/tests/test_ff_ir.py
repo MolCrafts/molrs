@@ -95,17 +95,17 @@ def chain_bonds() -> tuple[np.ndarray, np.ndarray]:
     return i, i + 1
 
 
-def bond_frame(xyz: np.ndarray = CHAIN) -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def bond_frame(xyz: np.ndarray = CHAIN) -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, xyz[:, d].copy())
     atoms.insert("type", ["B"] * len(xyz))
     i, j = chain_bonds()
-    bonds = molrs.store.Block()
+    bonds = molrs.core.Block()
     bonds.insert("atomi", i.astype(np.uint32))
     bonds.insert("atomj", j.astype(np.uint32))
     bonds.insert("type", ["B-B"] * len(i))
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["bonds"] = bonds
     return frame
@@ -122,7 +122,7 @@ def fene_ff(style: str) -> molrs.ff.forcefield.ForceField:
     return bond_ff(style, k=K, r0=R0, epsilon=EPS, sigma=SIG)
 
 
-def energy_forces(ff: molrs.ff.forcefield.ForceField, frame: molrs.store.Frame):
+def energy_forces(ff: molrs.ff.forcefield.ForceField, frame: molrs.core.Frame):
     pots = molrs.ff.potential.PotentialCompiler(ff).compile(frame)
     return pots.calc_energy(frame), pots.calc_forces(frame)
 
@@ -565,15 +565,15 @@ PAIR_TYPES = ["A", "B", "A"]
 PAIRS = [(0, 1), (0, 2), (1, 2)]
 
 
-def pair_frame() -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def pair_frame() -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, PAIR_XYZ[:, d].copy())
     atoms.insert("type", PAIR_TYPES)
-    pairs = molrs.store.Block()
+    pairs = molrs.core.Block()
     pairs.insert("atomi", np.array([i for i, _ in PAIRS], dtype=np.uint64))
     pairs.insert("atomj", np.array([j for _, j in PAIRS], dtype=np.uint64))
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame["pairs"] = pairs
     return frame
@@ -680,16 +680,16 @@ def test_a_pair_expression_reads_the_self_rows(registered) -> None:
 UB = (33.0, 2.2)  # k_ub, r_ub
 
 
-def ub_frame(xyz: np.ndarray, block: str) -> molrs.store.Frame:
-    atoms = molrs.store.Block()
+def ub_frame(xyz: np.ndarray, block: str) -> molrs.core.Frame:
+    atoms = molrs.core.Block()
     for d, key in enumerate("xyz"):
         atoms.insert(key, xyz[:, d].copy())
     atoms.insert("type", ["A"] * len(xyz))
-    rows = molrs.store.Block()
+    rows = molrs.core.Block()
     for key, atom in (("atomi", 0), ("atomj", 1), ("atomk", 2)):
         rows.insert(key, np.array([atom], dtype=np.uint32))
     rows.insert("type", ["t"])
-    frame = molrs.store.Frame()
+    frame = molrs.core.Frame()
     frame["atoms"] = atoms
     frame[block] = rows
     return frame

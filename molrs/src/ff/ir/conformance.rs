@@ -34,13 +34,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ff::forcefield::Params;
+use crate::ff::ir::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 use crate::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, IrError, Kernel, Mix, ParamKind, Sample, StyleSpec,
 };
 use crate::ff::ir::{ExpressionCompiler, ExpressionForm};
 use crate::ff::potential::generic::{CompoundForm, ScalarForm, TermParams, columns};
 use molrs::op::types::F;
-use molrs::store::forcefield_section::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 
 /// `dE/dq` against a central difference.
 pub const DERIVATIVE_RTOL: F = 1e-6;
@@ -302,7 +302,7 @@ fn check_param_names(spec: &StyleSpec, pair: bool) -> Result<(), IrError> {
             name,
             "name" | "type" | "style" | "r" | "theta" | "phi" | "chi"
         ) || ENDPOINT_COLUMNS.contains(&name)
-            || molrs::store::keys::ENDPOINTS.contains(&name)
+            || molrs::core::keys::ENDPOINTS.contains(&name)
             || ANNOTATION_COLUMNS.contains(&name)
             || point
             || pair_input

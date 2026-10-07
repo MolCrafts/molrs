@@ -41,8 +41,8 @@
 //!
 //! ```
 //! use molrs::perceive::smarts::SmartsPattern;
-//! use molrs::system::BondType;
-//! use molrs::system::{Atom, Atomistic};
+//! use molrs::core::BondOrder;
+//! use molrs::core::{Atom, Atomistic};
 //!
 //! // Acetamide skeleton C-C(=O)-N (no Hs needed for this query).
 //! let mut g = Atomistic::new();
@@ -52,7 +52,7 @@
 //! let n = g.add_atom(Atom::xyz("N", 1.0, 1.0, 0.0));
 //! g.add_bond(c0, c1).unwrap();
 //! let bo = g.add_bond(c1, o).unwrap();
-//! g.set_bond_type(bo, BondType::Double).unwrap();
+//! g.set_bond_type(bo, BondOrder::Double).unwrap();
 //! g.add_bond(c1, n).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();
@@ -67,9 +67,9 @@ mod reaction;
 
 use std::collections::HashMap;
 
-use crate::error::MolRsError;
-use crate::system::Atomistic;
-use crate::system::NodeId;
+use crate::core::Atomistic;
+use crate::core::MolRsError;
+use crate::core::NodeId;
 
 use compile::QueryGraph;
 

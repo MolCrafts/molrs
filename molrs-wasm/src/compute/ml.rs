@@ -67,7 +67,7 @@ impl Pca2 {
         let rows: Vec<PcaRow> = (0..n_rows)
             .map(|i| PcaRow(matrix[i * n_cols..(i + 1) * n_cols].to_vec()))
             .collect();
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         RsPca2::<PcaRow>::new()
             .compute(&[&dummy], &rows)
             .map(|inner| PcaResult { inner })
@@ -185,7 +185,7 @@ impl KMeans {
             coords: coords.to_vec(),
             variance: [0.0 as F, 0.0 as F],
         };
-        let dummy = molrs::store::Frame::new();
+        let dummy = molrs::core::Frame::new();
         let labels = self
             .inner
             .compute(&[&dummy], &pca)

@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::error::MolRsError;
+use crate::core::MolRsError;
 use crate::io::smiles::{
     AtomNode, AtomPrimitive as SynPrimitive, AtomQuery as SynQuery, AtomSpec, BondKind,
     BondQuery as SynBond, BracketSymbol, Chain, ChainElement, SmilesIR, parse_smarts,
@@ -259,7 +259,7 @@ impl Compiler<'_> {
     }
 
     fn element(&self, symbol: &str, aromatic: bool) -> Result<AtomQuery, MolRsError> {
-        let z = molrs::system::Element::by_symbol(symbol)
+        let z = molrs::core::Element::by_symbol(symbol)
             .ok_or_else(|| self.err(format!("unknown element '{symbol}'")))?
             .z();
         Ok(AtomQuery::Prim(if aromatic {

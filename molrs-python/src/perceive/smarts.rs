@@ -7,12 +7,12 @@
 
 use std::collections::HashMap;
 
+use molrs::core::{NodeId, node_from_u64, node_to_u64};
 use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
-use molrs::system::{NodeId, node_from_u64, node_to_u64};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
-use crate::core::system::molgraph::PyAtomistic;
+use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 //! hidden factor, so a `bond_coeff t K r0` line is `k = K` here.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::BONDS;
+use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
@@ -12,8 +12,8 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::forcefield::Params;
 use crate::ff::potential::geometry::{term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 /// Harmonic bond potential with pre-resolved flat arrays.
 pub struct BondHarmonic {

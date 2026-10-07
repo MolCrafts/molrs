@@ -11,8 +11,8 @@ use ndarray::ArrayD;
 
 use crate::ff::forcefield::Params;
 use crate::ff::ir::IrError;
+use molrs::core::Block;
 use molrs::op::types::F;
-use molrs::store::Block;
 
 /// `style` lacks `param`: in the type row `type_`, or (`type_` empty) among
 /// its style params or its per-instance columns.

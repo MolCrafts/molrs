@@ -10,7 +10,7 @@
 //! Recorded facet normals are read past and thrown away. Writers routinely
 //! leave them at `0 0 0` — molpack's own STL writer does — so the normal a
 //! consumer can trust is the one
-//! [`TriMesh::face_normal`](crate::spatial::TriMesh::face_normal) computes from
+//! [`TriMesh::face_normal`](crate::core::TriMesh::face_normal) computes from
 //! the winding.
 //!
 //! What comes back is triangles, nothing more: no watertight gate, no
@@ -22,8 +22,8 @@ use crate::io::invalid_data;
 use std::io::{Error, Result};
 use std::path::Path;
 
+use crate::core::TriMesh;
 use crate::op::types::F;
-use crate::spatial::TriMesh;
 
 /// 80-byte header plus the `u32` triangle count.
 const BINARY_HEADER_BYTES: usize = 84;

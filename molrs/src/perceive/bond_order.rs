@@ -57,12 +57,12 @@
 
 use std::collections::HashMap;
 
-use crate::store::keys;
-use crate::system::Atomistic;
-use crate::system::BondNumber;
-use crate::system::NodeId;
-use crate::system::PropValue;
-use molrs::system::Element;
+use crate::core::Atomistic;
+use crate::core::BondNumber;
+use crate::core::NodeId;
+use crate::core::PropValue;
+use crate::core::keys;
+use molrs::core::Element;
 
 /// `define.h`'s `PSCUTOFF`: penalties above it are never tried as valence states.
 const PSCUTOFF: i32 = 10;
@@ -867,7 +867,7 @@ impl IntPartition {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::BondType;
+    use crate::core::BondOrder;
 
     /// A molecule as a mol2 file lists it: atoms by element, bonds in file
     /// order, every bond stated single (what `antechamber` reads).
@@ -876,7 +876,7 @@ mod tests {
         let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
         for (i, j) in bonds {
             let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
-            mol.set_bond_type(b, BondType::Single).unwrap();
+            mol.set_bond_type(b, BondOrder::Single).unwrap();
         }
         mol
     }
@@ -974,9 +974,9 @@ mod tests {
         let bonds: Vec<_> = mol.bonds().map(|(b, _)| b).collect();
         for (k, b) in bonds.iter().take(8).enumerate() {
             let t = if k % 2 == 0 {
-                BondType::Double
+                BondOrder::Double
             } else {
-                BondType::Single
+                BondOrder::Single
             };
             mol.set_bond_type(*b, t).unwrap();
         }
@@ -1043,7 +1043,7 @@ mod tests {
             .collect();
         assert_eq!(numbers, vec![1, 2, 1]);
         let (b, _) = out.bonds().nth(1).unwrap();
-        assert_eq!(out.bond_type(b), BondType::Double);
+        assert_eq!(out.bond_type(b), BondOrder::Double);
     }
 
     #[test]

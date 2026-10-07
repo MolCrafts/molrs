@@ -55,9 +55,9 @@ use crate::io::smiles::{
     ResolvedPair,
 };
 use crate::io::smiles::{Notation, SmilesError, SmilesErrorKind};
-use molrs::system::Atomistic;
-use molrs::system::NodeId;
-use molrs::system::PropValue;
+use molrs::core::Atomistic;
+use molrs::core::NodeId;
+use molrs::core::PropValue;
 
 /// Pair the bonding descriptors of every level of `ir`, coarsest level first.
 ///

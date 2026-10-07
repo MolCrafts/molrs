@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ff::constants::VACUUM_DIELECTRIC;
+use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::ff::forcefield::{DefError, ForceField, Params, SpecialBonds};
 use crate::ff::params::OPLSAA_TYPING;
 use crate::ff::params::{
@@ -23,8 +23,8 @@ use crate::ff::params::{
     OPLSAA_MIXING, OPLSAA_NAME,
 };
 use crate::ff::params::{OplsAtomRow, OplsRuleRow};
-use molrs::store::type_labels::TypeName;
-use molrs::units::constants::COULOMB_REAL;
+use molrs::core::TypeName;
+use molrs::core::constants::COULOMB_REAL;
 
 use super::meta::{OplsTypeRow, OplsTypingMeta};
 
@@ -199,9 +199,9 @@ mod tests {
     use crate::ff::params::{OplsAtomRow, OplsRuleRow};
     use crate::ff::typifier::OPLSAATypifier;
     use crate::ff::typifier::{Typifier, Typing};
-    use molrs::system::BondType;
-    use molrs::system::PropValue;
-    use molrs::system::{Atom, Atomistic, NodeId};
+    use molrs::core::BondOrder;
+    use molrs::core::PropValue;
+    use molrs::core::{Atom, Atomistic, NodeId};
 
     /// Relative tolerance of the source-equivalence pins. A zero expectation
     /// therefore demands an exact zero (`-0.0` compares equal).
@@ -487,12 +487,12 @@ mod tests {
     // GROMACS v2026.3 `atomtypes.atp` description of that type; each molecule is
     // neutral, so the `OPLSAA_ATOMS` charges of its types sum to 0.
 
-    const S: BondType = BondType::Single;
-    const D: BondType = BondType::Double;
-    const T: BondType = BondType::Triple;
-    const A: BondType = BondType::Aromatic;
+    const S: BondOrder = BondOrder::Single;
+    const D: BondOrder = BondOrder::Double;
+    const T: BondOrder = BondOrder::Triple;
+    const A: BondOrder = BondOrder::Aromatic;
     /// A Kekulé six-ring: `r0=r1-r2=r3-r4=r5-r0`.
-    const KEKULE6: [BondType; 6] = [D, S, D, S, D, S];
+    const KEKULE6: [BondOrder; 6] = [D, S, D, S, D, S];
 
     /// A hand-built golden molecule: the graph plus the OPLS-AA type each of
     /// its atoms must receive.
@@ -528,14 +528,14 @@ mod tests {
             id
         }
 
-        fn bond(&mut self, a: NodeId, b: NodeId, order: BondType) {
+        fn bond(&mut self, a: NodeId, b: NodeId, order: BondOrder) {
             let bond = self.graph.add_bond(a, b).unwrap();
             self.graph.set_bond_type(bond, order).unwrap();
         }
 
         /// Close `atoms` into a ring, bond `k` joining `atoms[k]` and
         /// `atoms[k + 1]` (wrapping) with `orders[k]`.
-        fn ring(&mut self, atoms: &[NodeId], orders: &[BondType]) {
+        fn ring(&mut self, atoms: &[NodeId], orders: &[BondOrder]) {
             assert_eq!(atoms.len(), orders.len(), "one order per ring bond");
             for (k, &order) in orders.iter().enumerate() {
                 self.bond(atoms[k], atoms[(k + 1) % atoms.len()], order);

@@ -17,12 +17,12 @@ use std::sync::Arc;
 
 use wasm_bindgen::prelude::*;
 
+use molrs::core::Atomistic;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{PotentialCompiler, Potentials as RsPotentials};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::UFFTypifier as RsUFF;
 use molrs::ff::typifier::mmff::{MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94};
-use molrs::system::Atomistic;
 
 use crate::core::frame::Frame;
 

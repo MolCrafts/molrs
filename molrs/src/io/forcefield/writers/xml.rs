@@ -73,7 +73,7 @@
 //! does this system's data file need" and is keyed by the system's
 //! `TypeLabels`.
 
-use crate::units::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
+use crate::core::constants::{ANGSTROM_PER_NM, KJ_PER_KCAL};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 

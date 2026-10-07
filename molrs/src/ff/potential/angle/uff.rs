@@ -4,7 +4,7 @@
 //! coefficients `c0`/`c1`/`c2` derived from θ₀.
 
 use crate::ff::potential::need;
-use molrs::store::schema::block_names::ANGLES;
+use molrs::core::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
@@ -12,8 +12,8 @@ use crate::ff::potential::angle::accumulate_angle_forces;
 use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
 use crate::ff::potential::{IndexedTerms, Member, Potential};
 use crate::op::vec3::{dot, norm};
+use molrs::core::Frame;
 use molrs::op::types::F;
-use molrs::store::Frame;
 
 pub struct UffAngle {
     atom_i: Vec<usize>,

@@ -27,7 +27,7 @@ class TestAmberAliasDeleted:
 class TestErrorMessages:
     def test_pyo3_type_error_names_the_argument(self):
         with pytest.raises(TypeError, match="center"):
-            molrs.spatial.Sphere("not-an-array", 1.0)
+            molrs.core.Sphere("not-an-array", 1.0)
 
 
 class TestReadPdb:
@@ -157,10 +157,10 @@ def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
     mesh = molrs.io.read_stl(str(path))
-    assert isinstance(mesh, molrs.spatial.TriMesh)
+    assert isinstance(mesh, molrs.core.TriMesh)
     assert mesh.n_faces == 4 and mesh.n_vertices == 4
     assert mesh.is_watertight()
-    tet = molrs.spatial.Polyhedron(mesh.scaled(2.0))
+    tet = molrs.core.Polyhedron(mesh.scaled(2.0))
     assert tet.contains(np.array([[0.2, 0.2, 0.2]]))[0]
     assert not tet.contains(np.array([[3.0, 3.0, 3.0]]))[0]
 
@@ -169,7 +169,7 @@ class TestBlockCsv:
     """``molrs.io.read_block_csv`` / ``write_block_csv`` — CSV for one Block."""
 
     def test_headered_round_trip(self):
-        src = molrs.store.Block(
+        src = molrs.core.Block(
             {
                 "x": [1.0, 2.0],
                 "id": np.array([10, 20], dtype=np.uint32),
@@ -197,13 +197,13 @@ class TestBlockCsv:
             molrs.io.read_block_csv(StringIO(""))
 
     def test_no_header(self):
-        b = molrs.store.Block({"count": np.array([1, 2], dtype=np.int64)})
+        b = molrs.core.Block({"count": np.array([1, 2], dtype=np.int64)})
         text = molrs.io.write_block_csv(b, header=False)
         assert "count" not in text.splitlines()[0]
 
     def test_writes_a_file(self, tmp_path):
         path = tmp_path / "out.csv"
-        assert molrs.io.write_block_csv(molrs.store.Block({"x": [1.0, 2.0]}), path) is None
+        assert molrs.io.write_block_csv(molrs.core.Block({"x": [1.0, 2.0]}), path) is None
         np.testing.assert_allclose(molrs.io.read_block_csv(path)["x"], [1.0, 2.0])
 
 
@@ -347,8 +347,8 @@ class TestInpcrdIntoFrame:
     def test_coordinates_go_into_the_given_frame(self, tmp_path):
         path = tmp_path / "x.inpcrd"
         path.write_text(self.TEXT)
-        frame = molrs.store.Frame()
-        atoms = molrs.store.Block()
+        frame = molrs.core.Frame()
+        atoms = molrs.core.Block()
         atoms.insert("x", np.zeros(2))
         atoms.insert("charge", np.array([0.5, -0.5]))
         frame["atoms"] = atoms
@@ -361,8 +361,8 @@ class TestInpcrdIntoFrame:
     def test_a_count_mismatch_leaves_the_frame_alone(self, tmp_path):
         path = tmp_path / "x.inpcrd"
         path.write_text(self.TEXT)
-        frame = molrs.store.Frame()
-        atoms = molrs.store.Block()
+        frame = molrs.core.Frame()
+        atoms = molrs.core.Block()
         atoms.insert("x", np.zeros(3))
         frame["atoms"] = atoms
         with pytest.raises(OSError, match="rows"):

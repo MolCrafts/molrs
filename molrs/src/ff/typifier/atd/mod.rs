@@ -13,7 +13,7 @@
 //! break another.
 //!
 //! ```no_run
-//! use molrs::system::Atomistic;
+//! use molrs::core::Atomistic;
 //! use molrs::ff::typifier::Typing;
 //! use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 //!
@@ -54,10 +54,10 @@ pub(crate) use facts::antechamber_bond_type;
 
 use std::sync::OnceLock;
 
+use molrs::core::PropValue;
+use molrs::core::keys;
+use molrs::core::{Atomistic, NodeId};
 use molrs::perceive::Perceive;
-use molrs::store::keys;
-use molrs::system::PropValue;
-use molrs::system::{Atomistic, NodeId};
 
 use self::facts::MolFacts;
 use crate::ff::forcefield::ForceField;
@@ -314,7 +314,7 @@ impl Typifier for AtdTypifier {
 mod tests {
     use super::*;
     use crate::ff::typifier::Typing;
-    use molrs::system::BondType;
+    use molrs::core::BondOrder;
 
     /// Methane, hand-built: C is atom 0, the four hydrogens follow.
     fn methane() -> Atomistic {
@@ -359,12 +359,12 @@ mod tests {
 
     /// A molecule as a mol2 file lists it — atoms by element, bonds in file
     /// order — with `stated` bond types (single where it says nothing).
-    fn mol2(elements: &[&str], bonds: &[(usize, usize)], stated: &[BondType]) -> Atomistic {
+    fn mol2(elements: &[&str], bonds: &[(usize, usize)], stated: &[BondOrder]) -> Atomistic {
         let mut mol = Atomistic::new();
         let ids: Vec<NodeId> = elements.iter().map(|e| mol.add_atom_bare(e)).collect();
         for (k, (i, j)) in bonds.iter().enumerate() {
             let b = mol.add_bond(ids[*i], ids[*j]).unwrap();
-            mol.set_bond_type(b, stated.get(k).copied().unwrap_or(BondType::Single))
+            mol.set_bond_type(b, stated.get(k).copied().unwrap_or(BondOrder::Single))
                 .unwrap();
         }
         mol
@@ -415,7 +415,7 @@ mod tests {
         )
     }
 
-    fn cyclooctatetraene(stated: &[BondType]) -> Atomistic {
+    fn cyclooctatetraene(stated: &[BondOrder]) -> Atomistic {
         mol2(
             &elements(&["C"; 8], 8),
             &[
@@ -460,7 +460,7 @@ mod tests {
     /// types the structure the input drew instead.
     #[test]
     fn cyclooctatetraene_types_as_antechamber_types_it() {
-        use BondType::{Double, Single};
+        use BondOrder::{Double, Single};
         let want = "cc cc cd cd cc cc cd cd ha ha ha ha ha ha ha ha";
         let drawn = [
             Double, Single, Double, Single, Double, Single, Double, Single,

@@ -42,15 +42,15 @@
 //! code is needed.
 
 use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
 use molrs::op::types::F;
-use molrs::store::FrameAccess;
 use ndarray::Array1;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
 use crate::compute::positions::get_positions_ref;
 use crate::op::vec3::sub;
-use molrs::spatial::{Mic, SimBox};
+use molrs::core::{Mic, SimBox};
 
 /// Legendre reorientational TCF analyzer.
 ///

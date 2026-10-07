@@ -665,7 +665,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .source(PerInstance),
         // ---- cmap
         s("cmap", "charmm")
-            .params(vec![p("grid", "E").kind(ParamKind::Array { rank: 2 })])
+            .params(vec![p(super::CMAP_GRID, "E").kind(ParamKind::Array { rank: 2 })])
             .lammps(custom(&lc::FIX_CMAP)),
         // ---- pair
         s("pair", "lj/cut")

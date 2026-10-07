@@ -8,9 +8,9 @@
 //! `N × 3` path (proven by `engine_build_columns_matches_build`), so every
 //! rewired test produces identical results.
 
+use molrs::core::FrameAccess;
+use molrs::core::{NeighborList, Neighbors, NeighborsStorage};
 use molrs::op::types::F;
-use molrs::spatial::neighbors::{NeighborList, Neighbors, NeighborsStorage};
-use molrs::store::FrameAccess;
 
 use super::positions::get_positions_ref;
 

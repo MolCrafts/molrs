@@ -15,7 +15,7 @@ use molrs::op::types::F;
 
 use super::cell::VoronoiCells;
 use crate::compute::ComputeError;
-use crate::system::Topology;
+use crate::core::Topology;
 
 /// Outcome of a [`VoidAnalysis`].
 #[derive(Debug, Clone)]

@@ -4,8 +4,8 @@
 use super::{collect_frames, collect_neighbors};
 use crate::error::py_value_err;
 use molrs::compute::{Compute, RDF, RDFResult};
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
+use molrs::core::Neighbors;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

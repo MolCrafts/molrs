@@ -50,10 +50,10 @@ use std::path::Path;
 use ndarray::Array1;
 
 use super::vasp_header::{expand_symbols, parse_usize_vec, read_coords, read_header};
-use molrs::error::MolRsError;
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::MolRsError;
 use molrs::op::types::F;
-use molrs::store::Block;
-use molrs::store::Frame;
 
 // ---------------------------------------------------------------------------
 // Public API

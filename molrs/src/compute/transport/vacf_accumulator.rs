@@ -180,7 +180,7 @@ mod tests {
     use super::*;
     use crate::compute::Compute;
     use crate::compute::VACF;
-    use molrs::store::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 

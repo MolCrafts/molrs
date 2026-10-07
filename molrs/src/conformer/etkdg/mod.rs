@@ -27,12 +27,12 @@ use rand::{SeedableRng, random, rngs::StdRng};
 use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
 use crate::conformer::{ConformerOptions, ForceFieldKind};
 use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
-use molrs::error::MolRsError;
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
 use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::MMFF94Typifier;
 use molrs::perceive::hydrogens::add_hydrogens;
-use molrs::system::Atomistic;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
 const EMBED_DIM: usize = 4;

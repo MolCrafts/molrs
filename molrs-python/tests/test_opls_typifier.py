@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 
-def _ethane() -> "molrs.system.Atomistic":
+def _ethane() -> "molrs.core.Atomistic":
     """Ethane (C2H6) with explicit hydrogens and a plausible geometry."""
-    mol = molrs.system.Atomistic()
+    mol = molrs.core.Atomistic()
     c1 = mol.add_atom("C", 0.0, 0.0, 0.0)
     c2 = mol.add_atom("C", 1.54, 0.0, 0.0)
     hpos = [
@@ -39,7 +39,7 @@ def test_typify_assigns_atom_types():
     """typify() returns a typed Atomistic graph."""
     typifier = molrs.ff.typifier.OPLSAATypifier()
     typed = typifier.typify(_ethane())
-    assert isinstance(typed, molrs.system.Atomistic)
+    assert isinstance(typed, molrs.core.Atomistic)
     frame = typed.to_frame()
     atoms = frame["atoms"]
     assert atoms.nrows == 8
@@ -92,6 +92,6 @@ def test_invalid_xml_raises_not_panics():
 
 def test_oplsaa_rejects_coarse_grain():
     typifier = molrs.ff.typifier.OPLSAATypifier()
-    cg = molrs.system.CoarseGrain()
+    cg = molrs.core.CoarseGrain()
     with pytest.raises(TypeError):
         typifier.typify(cg)

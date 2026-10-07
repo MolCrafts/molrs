@@ -61,17 +61,17 @@
 //! # }
 //! ```
 
+use crate::core::constants::ANGSTROM_PER_NM;
 use crate::io::invalid_data;
 use crate::io::reader::{FrameReader, ReadSeek, Reader, TrajectoryReader};
 use crate::io::streaming::{BinaryFrameScanner, FrameIndexBuilder, FrameIndexEntry};
 use crate::io::trajectory::xdr;
 use crate::io::writer::{FrameWriter, Writer};
-use crate::units::constants::ANGSTROM_PER_NM;
+use molrs::core::Block;
+use molrs::core::Frame;
+use molrs::core::FrameAccess;
+use molrs::core::SimBox;
 use molrs::op::types::{F, Idx};
-use molrs::spatial::SimBox;
-use molrs::store::Block;
-use molrs::store::Frame;
-use molrs::store::FrameAccess;
 use ndarray::{Array1, Array2, IxDyn, array};
 use std::fs::File;
 use std::io::{BufRead, BufWriter, Cursor, Read, Result, Seek, SeekFrom, Write};

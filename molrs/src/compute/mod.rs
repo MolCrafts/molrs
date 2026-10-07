@@ -33,8 +33,8 @@
 //! Most analyses here are *pair* analyses: they answer a question about every
 //! pair of particles lying closer together than a fixed **cutoff** distance.
 //! Finding those pairs is not their job. The search lives in
-//! [`molrs::spatial::neighbors`], and what it
-//! produces — a [`Neighbors`](molrs::spatial::neighbors::Neighbors) table, a
+//! [`molrs::core::NeighborList`], and what it
+//! produces — a [`Neighbors`](molrs::core::Neighbors) table, a
 //! column store holding one row per pair — is handed to the kernel as its
 //! `Args`:
 //! `&Neighbors` for a single frame, `&Vec<Neighbors>` for a trajectory, in
@@ -47,7 +47,7 @@
 //! Every table stores each pair's two particle indices `(i, j)`. Its two
 //! *physical* columns are stored only if the caller asked for them when the
 //! table was materialized, by naming a
-//! [`NeighborsStorage`](molrs::spatial::neighbors::NeighborsStorage) policy:
+//! [`NeighborsStorage`](molrs::core::NeighborsStorage) policy:
 //!
 //! - `dist_sq` — the squared pair distance `|r_j − r_i|²` in Å², taken under
 //!   the **minimum-image convention**: with periodic boundaries the box is
@@ -72,13 +72,13 @@
 //!
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`compute_qlm`]), every PMFT kernel, [`BondOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`MatchEnv`] | `NeighborsStorage::DISP` or `FULL` |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`compute_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`MatchEnv`] | `NeighborsStorage::DISP` or `FULL` |
 //! | `dist_sq` — distances only | [`RDF`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborsStorage::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
 //! list — pair direction is an independent property, recorded by the table's
-//! [`QueryMode`](molrs::spatial::neighbors::QueryMode). A **self-query**
+//! [`QueryMode`](molrs::core::QueryMode). A **self-query**
 //! searches one point set against itself and is half-shell: each unordered pair
 //! appears exactly once, with `i < j`. A **cross-query** searches query points
 //! against a separate reference set and is directed, with both orderings
@@ -187,10 +187,11 @@ pub use dynamics::{
 pub use environment::{
     AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
     AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
-    BondOrder, BondOrderResult, LocalBondProjection, LocalBondProjectionArgs,
-    LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsResult, MatchEnv, MatchEnvResult,
+    BondOrientationalOrder, BondOrientationalOrderResult, LocalBondProjection,
+    LocalBondProjectionArgs, LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsResult,
+    MatchEnv, MatchEnvResult,
 };
-pub use error::{ComputeError, NodeId};
+pub use error::ComputeError;
 pub use fitting::{
     CumulativeTrapezoid, CumulativeTrapezoidResult, LinearFit, LinearFitResult, Plateau,
     PlateauResult,
@@ -217,10 +218,10 @@ pub use rdf::{RDF, RDFAccumulator, RDFResult, RdfMode};
 /// endpoints of a row and so depends on the table being half-shell.
 /// Deliberately not public API — a caller outside the crate holds the table
 /// itself and asks it directly with
-/// [`Neighbors::disp()`](molrs::spatial::neighbors::Neighbors::disp),
-/// [`Neighbors::dist_sq()`](molrs::spatial::neighbors::Neighbors::dist_sq) and
-/// [`Neighbors::mode()`](molrs::spatial::neighbors::Neighbors::mode), which
-/// answer `Option` / [`QueryMode`](molrs::spatial::neighbors::QueryMode) rather
+/// [`Neighbors::disp()`](molrs::core::Neighbors::disp),
+/// [`Neighbors::dist_sq()`](molrs::core::Neighbors::dist_sq) and
+/// [`Neighbors::mode()`](molrs::core::Neighbors::mode), which
+/// answer `Option` / [`QueryMode`](molrs::core::QueryMode) rather
 /// than [`ComputeError`].
 pub(crate) use require::{require_disp, require_dist_sq, require_self_query};
 pub use result::{ComputeResult, DescriptorRow};
@@ -260,7 +261,7 @@ pub use voronoi::{
 /// `require_disp` / `require_dist_sq`: the one place a compute kernel turns
 /// "this table never stored that column" into a [`ComputeError::BadShape`].
 ///
-/// A [`Neighbors`](molrs::spatial::neighbors::Neighbors) table reports an
+/// A [`Neighbors`](molrs::core::Neighbors) table reports an
 /// absent column as `None`, never as a fabricated zero — so every kernel that
 /// needs one has to reject `None` itself. These helpers are that rejection,
 /// written once: a kernel calls one of them and gets either the column or an
@@ -280,8 +281,8 @@ pub use voronoi::{
 mod require_tests {
     use crate::compute::ComputeError;
     use crate::compute::{require_disp, require_dist_sq};
+    use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
     use molrs::op::types::F;
-    use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
 
     /// Two hard-coded half-shell pairs (`i < j`), legal under
     /// `SelfQuery { num_points: 4 }`.

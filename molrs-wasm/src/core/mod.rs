@@ -1,5 +1,4 @@
-//! Core data model exported to JavaScript — the WASM face of molrs' `store`,
-//! `system` and `spatial` domains.
+//! Core data model exported to JavaScript — the WASM face of `molrs::core`.
 //!
 //! - [`Frame`] -- hierarchical container of named [`Block`]s, plus an
 //!   optional [`Box`] (simulation box).
@@ -7,10 +6,13 @@
 //! - [`NDArray`] -- owned float array with shape metadata for passing
 //!   multi-dimensional numeric data across the WASM boundary.
 //! - `schema` -- the Frame schema vocabulary (`schemaDocument`, …).
-//! - [`Topology`] -- the bond graph of a frame (`molrs::system::Topology`).
-//! - `covalentRadius` -- per-element data (`molrs::system::Element`).
-//! - `spatial` -- the simulation [`Box`], regions, [`Mesh`] and neighbor
-//!   search.
+//! - [`Topology`] -- the bond graph of a frame (`molrs::core::Topology`).
+//! - `covalentRadius` -- per-element data (`molrs::core::Element`).
+//! - [`Box`] -- the periodic cell (Rust's `SimBox`).
+//! - the regions -- the geometric solids and their composition.
+//! - [`Mesh`] -- triangle surfaces.
+//! - [`NeighborList`] (self) / [`NeighborQuery`] (cross) -- neighbor search,
+//!   and the [`Neighbors`] pair table they produce.
 //!
 //! # Internal details
 //!
@@ -34,16 +36,22 @@ use molrs_ffi::FfiError;
 pub(crate) mod block;
 pub(crate) mod element;
 pub(crate) mod frame;
+pub(crate) mod mesh;
+pub(crate) mod neighbors;
+pub(crate) mod region;
 pub(crate) mod schema;
-pub(crate) mod spatial;
+pub(crate) mod simbox;
 pub(crate) mod topology;
 pub(crate) mod types;
 
 pub use block::Block;
 pub use element::covalent_radius;
 pub use frame::Frame;
+pub use mesh::Mesh;
+pub use neighbors::{NeighborList, NeighborQuery, Neighbors};
+pub use region::*;
 pub use schema::*;
-pub use spatial::*;
+pub use simbox::Box;
 pub use topology::Topology;
 pub use types::NDArray;
 

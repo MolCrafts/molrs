@@ -3,7 +3,7 @@
 
 use super::{Grid3Out, array2, js_value, usize_pairs};
 use crate::core::frame::Frame;
-use crate::core::spatial::neighbors::Neighbors;
+use crate::core::neighbors::Neighbors;
 use molrs::compute::Compute;
 use molrs::op::types::F;
 use serde::Serialize;
@@ -207,7 +207,7 @@ impl SphereVoxelization {
 #[wasm_bindgen(js_name = SpatialDistribution)]
 pub struct SpatialDistribution {
     inner: molrs::compute::SpatialDistribution,
-    frames: Vec<molrs::store::Frame>,
+    frames: Vec<molrs::core::Frame>,
     bulk_density: Option<F>,
 }
 
@@ -283,7 +283,7 @@ impl SpatialDistribution {
             n_frames: usize,
             bulk_density: Option<F>,
         }
-        let refs: Vec<&molrs::store::Frame> = self.frames.iter().collect();
+        let refs: Vec<&molrs::core::Frame> = self.frames.iter().collect();
         let r = self
             .inner
             .compute(&refs, ())

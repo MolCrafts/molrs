@@ -10,7 +10,7 @@ use molrs::compute::{
     EinsteinDiffusionArgs, EwaldBoundary, Fit, GreenKuboConductivity, GreenKuboDiffusion,
     OnsagerCorrelation, VACF,
 };
-use molrs::store::Frame as CoreFrame;
+use molrs::core::Frame as CoreFrame;
 use numpy::{IntoPyArray, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyDictMethods};

@@ -17,10 +17,10 @@
 //! `Y_ℓm`) is a follow-up.
 
 use crate::compute::ComputeResult;
-use molrs::math::complex::Complex;
-use molrs::math::spherical_harmonics::ylm_all;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::FrameAccess;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::core::ylm_all;
 
 use crate::compute::Compute;
 use crate::compute::ComputeError;
@@ -146,11 +146,11 @@ impl ComputeResult for LocalDescriptorsResult {}
 mod tests {
     use super::*;
     use crate::compute::test_support::nlist_from_frame;
-    use molrs::math::spherical_harmonics::ylm_complex;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
+    use molrs::core::ylm_complex;
     use molrs::op::types::F;
-    use molrs::spatial::SimBox;
-    use molrs::store::Block;
-    use molrs::store::Frame;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
