@@ -6,12 +6,12 @@ import molrs
 
 The top level of `molrs` is its subsystems and nothing else, exactly as the
 Rust crate's root is: every symbol has one path, the Python module named after
-its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). Import the
+its Rust owner (`molrs.core.Frame` is `molrs::core::Frame`). Import the
 subsystem you use:
 
 ```python
-from molrs.store import Frame, Block
-from molrs.spatial import Box, NeighborList
+from molrs.core import Frame, Block
+from molrs.core import Box, NeighborList
 from molrs.ff.potential import PotentialCompiler
 ```
 
@@ -22,10 +22,10 @@ and the docs build.
 
 | Module | Rust owner | Holds |
 |---|---|---|
-| `molrs.store` | `molrs::store` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ScalarObservable`, `VectorObservable`, `BlockDtypeError`; `keys`, `schema` |
-| `molrs.spatial` | `molrs::spatial` | `Box`, `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace` |
-| `molrs.system` | `molrs::system` | `Graph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `Topology` |
-| `molrs.units` | `molrs::units` | `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError`, `AMBER_COULOMB` |
+| `molrs.core` | `molrs::core` | `Block`, `Frame`, `FrameMeta`, `MetaValue`, `MetaDocument`, `Trajectory`, `ScalarObservable`, `VectorObservable`, `BlockDtypeError`; `Box` (Rust `SimBox`), `NeighborList`, `Neighbors`, `NeighborQuery`, `VerletSkin`, the regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain`, the node / relation views, `ExtractedSubgraph`, `Element`, `Topology`; `Unit`, `Quantity`, `UnitRegistry`, `UnitPreset`, `UnitsError` |
+| `molrs.core.keys` | `molrs::core::keys` | the canonical column, frame-meta and graph keys |
+| `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
+| `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Fit`, `DEFAULT_GAP_TOL` |
 | `molrs.perceive` | `molrs::perceive` | `Perceive`, `RingInfo`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
 | `molrs.io` | `molrs::io` | every file reader and writer, as a function: structure, trajectory and force-field files, `*.mrec` records (`read_mrec` / `write_mrec` and partners), frame bytes, `read_smiles`, the LAMMPS log |
@@ -33,13 +33,13 @@ and the docs build.
 | `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIR`, `SmilesError`, `CGSmilesIR` and the CGsmiles records |
 | `molrs.io.log` | `molrs::io::log` | the `Lammps*` log records |
 | `molrs.io.lammps_bond_react` | `molrs::io::data::lammps_bond_react` | `BondReactTemplate` |
-| `molrs.io.mrec` | `molrs::io::mrec` | `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
+| `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles (the data model; its files are `molrs.io`'s) |
 | `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
-| `molrs.ff.params` | `molrs::ff::params` | `AMBER_SCEE`, `AMBER_SCNB`, `clpol_polarizability` |
+| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
 | `molrs.ff.scale_lj` | `molrs::ff::scale_lj` | `FragmentScaling`, `compute_k_ij`, `fragment_scaling_data`, `scale_lj` |
 | `molrs.optimize` | `molrs::optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
@@ -49,15 +49,15 @@ and the docs build.
 | `molrs.signal` | `molrs::signal` | `acf_fft`, `xcorr_fft`, `apply_window`, `frequency_grid` |
 | `molrs.stream` | `molrs::stream` | `Publisher`, `ControlCommand` |
 
-## `molrs.store`
+## `molrs.core`
 
-::: molrs.store.Block
+::: molrs.core.Block
 
-::: molrs.store.Frame
+::: molrs.core.Frame
 
-::: molrs.store.FrameMeta
+::: molrs.core.FrameMeta
 
-::: molrs.store.MetaValue
+::: molrs.core.MetaValue
 
 Every door of `frame.meta` hands back a frozen value: a fixed-length vector
 is a `tuple`, and a JSON object is a `MetaDocument`. Nested arrays are
@@ -65,31 +65,28 @@ tuples. `json.dumps` accepts a tuple and rejects a document — use
 `json.dumps(frame.meta["run"].copy())`. Order inside a nested document is
 unspecified.
 
-::: molrs.store.MetaDocument
+::: molrs.core.MetaDocument
 
-::: molrs.store.Trajectory
+::: molrs.core.Trajectory
 
-::: molrs.store.ScalarObservable
+::: molrs.core.ScalarObservable
 
-::: molrs.store.VectorObservable
+::: molrs.core.VectorObservable
 
-## `molrs.system`
+::: molrs.core.Atomistic
 
-::: molrs.system.Atomistic
+::: molrs.core.CoarseGrain
 
-::: molrs.system.CoarseGrain
-
-::: molrs.system.Graph
+::: molrs.core.MolGraph
 
 Rigid-body moves are methods of `Atomistic` and `CoarseGrain`, not module
 functions: `translate(delta)`, `rotate(axis, angle, about=None)` and
 `scale(factor, about=None)`. Each moves every node that has coordinates in
 place and returns the graph itself, so moves chain:
 `mol.translate([1, 0, 0]).rotate([0, 0, 1], 0.5).scale([2, 2, 2])`.
+In Rust the moves are `molrs::op::geometry`'s functions over a `MolGraph`.
 
-## `molrs.spatial`
-
-::: molrs.spatial.Box
+::: molrs.core.Box
 
 A region is a solid with a signed distance to its boundary: every class
 answers `contains`, `distance` (negative inside) and `bounds`, and composes
@@ -98,31 +95,31 @@ with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
 what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 `readSTL` into `Mesh`).
 
-::: molrs.spatial.Sphere
+::: molrs.core.Sphere
 
-::: molrs.spatial.Cuboid
+::: molrs.core.Cuboid
 
-::: molrs.spatial.Parallelepiped
+::: molrs.core.Parallelepiped
 
-::: molrs.spatial.HalfSpace
+::: molrs.core.HalfSpace
 
-::: molrs.spatial.Cylinder
+::: molrs.core.Cylinder
 
-::: molrs.spatial.Ellipsoid
+::: molrs.core.Ellipsoid
 
-::: molrs.spatial.TriMesh
+::: molrs.core.TriMesh
 
-::: molrs.spatial.Polyhedron
+::: molrs.core.Polyhedron
 
-::: molrs.spatial.SphereUnion
+::: molrs.core.SphereUnion
 
-::: molrs.spatial.Region
+::: molrs.core.Region
 
-::: molrs.spatial.NeighborList
+::: molrs.core.NeighborList
 
-::: molrs.spatial.Neighbors
+::: molrs.core.Neighbors
 
-::: molrs.spatial.NeighborQuery
+::: molrs.core.NeighborQuery
 
 ## `molrs.perceive`
 
@@ -136,7 +133,7 @@ what `molrs.io.read_stl` reads (the WASM binding reads the same file with
 
 Reader and writer names pair: `read_X` / `write_X` for one frame,
 `read_X_trajectory` / `write_X_trajectory` for a sequence. Every reader emits
-the canonical column names (`molrs.store.keys`). `read_frame` /
+the canonical column names (`molrs.core.keys`). `read_frame` /
 `write_frame` pick the format from the file name. The LAMMPS dump, XYZ, DCD,
 TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
@@ -396,7 +393,7 @@ The Rust compute facade is flat, and so is `molrs.compute`: every analysis is
 
 ::: molrs.compute.PMFTXY
 
-::: molrs.compute.BondOrder
+::: molrs.compute.BondOrientationalOrder
 
 ### Order
 

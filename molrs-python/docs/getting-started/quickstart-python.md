@@ -81,7 +81,7 @@ periodic simulation cell.
 ```python
 import numpy as np
 
-frame.box = molrs.spatial.Box.cube(
+frame.box = molrs.core.Box.cube(
     20.0,
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
@@ -104,7 +104,7 @@ points = np.column_stack(
     [atoms["x"], atoms["y"], atoms["z"]]
 ).astype(np.float64, copy=False)
 
-nl = molrs.spatial.NeighborList(6.0)
+nl = molrs.core.NeighborList(6.0)
 nl.build(points, frame.box)
 neigh = nl.neighbors()
 

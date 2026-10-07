@@ -45,17 +45,15 @@ assert forces.shape == (frame["atoms"].nrows, 3)
 ## Package layout
 
 The top level is the subsystems, exactly as the Rust crate's root is; every
-symbol has one path, named after its Rust owner (`molrs.store.Frame` is
-`molrs::store::Frame`).
+symbol has one path, named after its Rust owner (`molrs.core.Frame` is
+`molrs::core::Frame`).
 
 | Import | Owns |
 |--------|------|
-| `molrs.store` | `Frame`, `Block`, `Trajectory`, frame metadata; `keys`, `schema` |
-| `molrs.spatial` | `Box`, neighbour search, regions, `TriMesh`, `Trace` |
-| `molrs.system` | `Atomistic`, `CoarseGrain`, `Graph` and their live views |
-| `molrs.units` | `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
+| `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
+| `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
 | `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_*` / `write_*`; per-format classes in `io.trajectory`, `io.smiles`, `io.log`, `io.lammps_bond_react`, `io.mrec` |
-| `molrs.io.mrec` | `*.mrec` store pieces: streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
+| `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
 | `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
 | `molrs.optimize` | `LBFGS`, `OptReport` |
 | `molrs.md` | Integrators and the `MD` driver |
@@ -68,7 +66,7 @@ Analysis kernels take `dt` in the time unit of your trajectory, and
 time-valued results come back in that unit. MSD needs **unwrapped**
 coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D and VDOS.
 
-Upgrading from 0.14? See the
+Upgrading from 0.15? See the
 [migration guide](https://docs.molcrafts.org/molrs/migration/).
 
 ## Development

@@ -167,7 +167,7 @@ an older molrs needs its values converted:
 ### Records: molrec_version 2
 
 Every record molrs 0.16 writes is `molrec_version` 2
-(`molrs.io.mrec.schema.MOLREC_VERSION`, Rust `molrs::store::MOLREC_VERSION`). In
+(`molrs.io.mrec.MOLREC_VERSION`, Rust `molrs::io::mrec::MOLREC_VERSION`). In
 version 2 the `forcefield` section is the force-field IR, so some stored
 numbers mean something else than in the version-1 records molrs 0.15 wrote.
 0.16 never reads a version-1 record as version 2: it converts every changed
@@ -327,14 +327,14 @@ The `cmap` category (five endpoints) and its kernel `cmap charmm` — LAMMPS
   `DefError::UnknownCategory`), and its `def_type` takes exactly five
   endpoints.
 - **Rust: `ENDPOINT_COLUMNS` has five entries.**
-  `store::forcefield_section::ENDPOINT_COLUMNS` is `[&str; 5]`
+  `ff::ir::ENDPOINT_COLUMNS` is `[&str; 5]`
   (`itom` … `ltom`, `mtom`), and `category_arity("cmap")` is `Some(5)`
   (0.15: `None`). A `cmap` style table must carry all five endpoint columns.
 - **Frame vocabulary.** The canonical key `atomm` (`u64`, fifth relation
   endpoint) and the block `cmaps` (relation of arity 5, optional `type`,
   `type_id`, `style`) are new; `subset`, `replicate` and the validator
   renumber and range-check `atomi` … `atomm`. `keys::ENDPOINTS` (Rust
-  `[&str; 5]`, Python `molrs.store.keys.ENDPOINTS`) gains `atomm`, so a block
+  `[&str; 5]`, Python `molrs.core.keys.ENDPOINTS`) gains `atomm`, so a block
   without a spec now reads an `atomm` column as an endpoint into `atoms`, an
   `atomm` column at another dtype than `u64` is refused, and the fifth
   endpoint column of a five-node `MolGraph` relation is `atomm` (0.15:
@@ -431,7 +431,7 @@ LAMMPS's three 1-4 mechanisms are all priced, LAMMPS's way; see
   a non-zero `w`.
 - **Per-pair overrides on `pairs`.** Float columns `epsilon`, `sigma`,
   `charge_product`, `lj_scale`, `coul_scale` (null cell: the force field's
-  value; `molrs::store::schema::PAIR_OVERRIDE_COLUMNS`). Explicit values are
+  value; `molrs::core::schema::PAIR_OVERRIDE_COLUMNS`). Explicit values are
   final and the scales replace the `special_bonds` weight (or `w`).
   Precedence: override > `w` > `special_bonds`. The LAMMPS data-file writer
   and the Python LAMMPS force-field writers refuse a frame carrying them.
@@ -980,17 +980,21 @@ paths that moved or went away, by subsystem:
 
 The rule, applied crate-wide:
 
-- **The crate root holds subsystems only** (and `VERSION`). `molrs::core` is
-  private: its domains are top-level facades of their own — `molrs::store`,
-  `molrs::system`, `molrs::spatial`, `molrs::math`, `molrs::units`,
-  `molrs::error`. Nothing is flattened to the root any more: not core's types
-  (`molrs::Frame`, `molrs::Element`, …) and not the builders
-  (`molrs::GrapheneBuilder`, …).
+- **The crate root holds subsystems only.** The core data model is one
+  module, `molrs::core`, with every public name flat on it
+  (`molrs::core::Frame`, `molrs::core::SimBox`, `molrs::core::Atomistic`,
+  `molrs::core::Quantity`, `molrs::core::MolRsError`); there is no
+  `molrs::store`, `system`, `spatial`, `math`, `units` or `error` any more
+  (see [One core](#one-core-molrscore-and-molrscore)). Nothing is flattened
+  to the root: not core's types (`molrs::Frame`, `molrs::Element`, …), not
+  the builders (`molrs::GrapheneBuilder`, …), and not `molrs::VERSION`
+  (use `env!("CARGO_PKG_VERSION")` of the crate you build, or Python
+  `molrs.__version__`).
 - **A facade re-exports its implementation files, which are private.** Where
   a module re-exports a child, the child is private and the facade carries
   its whole public API; a child module stays public only as a namespace whose
-  items nothing re-exports (`ff::potential::pair`, `spatial::neighbors`,
-  `spatial::region`, `store::keys`, `store::schema`, `units::constants`,
+  items nothing re-exports (`ff::potential::pair`, `core::keys`,
+  `core::schema`, `core::constants`,
   `ff::params::atomtype_amber`, `io::data::pdb`, …).
 - **One owner per symbol.** Re-exports of another module's items are gone
   (`spatial::region::FNx3`, `io::mrec::schema::MOLREC_VERSION`,
@@ -998,15 +1002,15 @@ The rule, applied crate-wide:
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs::Frame`, `Block`, `FrameAccess`, `FrameView`, `ForceFieldSection`, `MetaMap`, `MetaValue`, `MolRec`, `Trajectory`, … (crate root, `molrs::core::…`, `molrs::store::frame::Frame`, `store::block::Block`, …) | `molrs::store::{Frame, Block, …}` |
-| `molrs::Atomistic`, `Element`, `MolGraph`, `NodeId`, `RelationId`, `Topology`, `CoarseGrain`, … (crate root, `molrs::system::{atomistic, molgraph, topology, coarsegrain, bond, bond_weights, extract, graph_hash, link, port}::…`) | `molrs::system::{Atomistic, Element, …}` (also `FromMolGraph`, `TopologyError`) |
-| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::spatial::{SimBox, Mic, BoxKind, BoxError, translate, rotate, scale, center, CenterError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}` |
-| `molrs::spatial::neighbors::{aabb, bruteforce, filter, grid}::…`, `spatial::region::{region, cylinder, ellipsoid, half_space, polyhedron, sphere_union}::…` | `molrs::spatial::neighbors::…`, `molrs::spatial::region::…` |
-| `molrs::units::{dimension, error, preset, quantity, registry, unit}::…` (and the crate-root `Unit`, `UnitRegistry`, …) | `molrs::units::…` |
-| `molrs::math::virial::Virial` | `molrs::math::Virial` |
+| `molrs::Frame`, `Block`, `FrameAccess`, `FrameView`, `ForceFieldSection`, `MetaMap`, `MetaValue`, `MolRec`, `Trajectory`, … (crate root, `molrs::core::…`, `molrs::store::frame::Frame`, `store::block::Block`, …) | `molrs::core::{Frame, Block, …}` |
+| `molrs::Atomistic`, `Element`, `MolGraph`, `NodeId`, `RelationId`, `Topology`, `CoarseGrain`, … (crate root, `molrs::system::{atomistic, molgraph, topology, coarsegrain, bond, bond_weights, extract, graph_hash, link, port}::…`) | `molrs::core::{Atomistic, Element, …}` (also `FromMolGraph`, `TopologyError`) |
+| `molrs::SimBox`, `BoxKind`, `Mic`, `CenterError` (crate root), `molrs::spatial::{simbox, geometry, mesh, periodic, trace}::…` | `molrs::core::{SimBox, Mic, BoxKind, BoxError, TriMesh, DEGENERATE_AREA2, GhostSet, ImageRange, Trace}`; `molrs::op::geometry::{translate, rotate, scale, center, CenterError}` |
+| `molrs::spatial::neighbors::{aabb, bruteforce, filter, grid}::…`, `spatial::region::{region, cylinder, ellipsoid, half_space, polyhedron, sphere_union}::…` | `molrs::core::…`, `molrs::core::…` |
+| `molrs::units::{dimension, error, preset, quantity, registry, unit}::…` (and the crate-root `Unit`, `UnitRegistry`, …) | `molrs::core::…` |
+| `molrs::math::virial::Virial` | `molrs::core::Virial` |
 | `molrs::types::{F, F3, FNx3, …, I, Idx, Pbc3}` (also `molrs::core::types`) | `molrs::op::types::…`, the one owner of the scalar and array aliases |
-| `molrs::store::schema::consts::…` | `molrs::store::keys::…` |
-| `molrs::store::schema::{block, column, document, validator, violation}::…` | `molrs::store::schema::…` |
+| `molrs::store::schema::consts::…` | `molrs::core::keys::…` |
+| `molrs::store::schema::{block, column, document, validator, violation}::…` | `molrs::core::schema::…` |
 | `molrs::GrapheneBuilder`, `CarbonTubeBuilder`, `Assembler`, … | `molrs::builder::…` |
 | `molrs::compute::<family>::X`, `compute::<family>::<file>::X` (`compute::order::Nematic`, `compute::distribution::AtomGroups`, `compute::dynamics::persist::pair_survival_tcf`, `compute::dielectric::compute_dipole_moment`, …) | `molrs::compute::X` — now also the `*Args` aliases, `EinsteinDiffusionResult`, `AnyObservable`, `Observable` and the distribution observables, `NodeId`, `BOUNDARY`, `compute_qlm` |
 | `molrs::ff::potential::<family>::<file>::X` (`pair::lj_cut::LJCut`, `bond::harmonic::BondHarmonic`, `kspace::pme::PmePotential`, …) | `molrs::ff::potential::<family>::X` (also `pair::{VdwAtomParams, VdwStyleParams, lj_ab_to_sigma_epsilon}`, `angle::CharmmAngleParams`, `kspace::PmeParams`) |
@@ -1019,7 +1023,7 @@ The rule, applied crate-wide:
 | `molrs::io::format::{read_frame, write_frame, FrameFormat}` | `molrs::io::…` |
 | `molrs::io::smiles::{smiles, chem::ast, error}::…` | `molrs::io::smiles::…` |
 | `molrs::io::log::lammps::…`, `molrs::io::mesh::stl::…` | `molrs::io::log::…`, `molrs::io::mesh::…` |
-| `molrs::io::mrec::schema::{MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::store::{MOLREC_VERSION, RESERVED_META_KEYS}` |
+| `molrs::io::mrec::schema::{MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::io::mrec::{MOLREC_VERSION, RESERVED_META_KEYS}` |
 | `molrs::io::mrec::{FrameSequence, FrameSequenceWriter}` | `molrs::io::mrec::{MrecReader, MrecWriter}` (Python `molrs.io.mrec.MrecReader` / `MrecWriter`, WASM `MrecReader`) |
 | `molrs::io::log::parse_lammps_log_text` | `molrs::io::log::read_lammps_log_str` |
 | `molrs::md::{error, forces, integrators, maxwell, pairs, types}::…` | `molrs::md::…` (also `com_velocity`) |
@@ -1043,25 +1047,75 @@ layered::{LayeredTypingEngine, MAX_CIRCULAR_ITERATIONS}}`. Removed outright:
 `store::forcefield_section::parse_style_block_name` (unused) and
 `store::meta::META_TYPES_ATTR` (private to the `*.mrec` adapter, its one user).
 
-#### Engine constants are unit facts (`units::constants`)
+#### One core: `molrs::core` and `molrs.core`
+
+The data model is one module in every language. Rust's `molrs::core` and
+Python's `molrs.core` hold every public name flat; the implementation files
+are private. Three vocabularies stay submodules: `core::keys`,
+`core::schema` and `core::constants` (Python `molrs.core.keys`,
+`molrs.core.schema`, `molrs.core.constants`). The simulation cell is
+`SimBox` in Rust only (Rust reserves `Box`); Python, JS, C and C++ say
+`Box`. Builds of the 0.16 line before this change spelled the paths in the
+left column.
+
+| Earlier 0.16 builds | 0.16 |
+|---|---|
+| `molrs::store::X`, `molrs::system::X`, `molrs::spatial::X`, `molrs::units::X`, `molrs::math::X`, `molrs::error::MolRsError` | `molrs::core::X`, `molrs::core::MolRsError` |
+| `molrs::spatial::neighbors::X`, `molrs::spatial::region::X` | `molrs::core::X` |
+| `molrs::math::{complex::Complex, spherical_harmonics::ylm_all, wigner3j::wigner_3j, wigner_d::wigner_d_matrix, …}` | `molrs::core::{Complex, ylm_all, wigner_3j, wigner_d_matrix, …}` |
+| `molrs::store::{type_labels, precision}::X` | `molrs::core::X` |
+| `molrs::store::typed_json` | crate-private (`typed_json::{encode_complex, decode_complex}` removed: unused) |
+| `molrs::store::keys`, `molrs::store::schema`, `molrs::units::constants` | `molrs::core::keys`, `molrs::core::schema`, `molrs::core::constants` |
+| `molrs::units::{lookup_preset, preset_names, register_preset, replace_preset}` | `molrs::core::{lookup_unit_preset, unit_preset_names, register_unit_preset, replace_unit_preset}` |
+| `molrs::spatial::{translate, rotate, scale, center, CenterError}`; `Atomistic::{translate, rotate, scale, center}`, `CoarseGrain::{translate, rotate, scale, center}` (Rust) | `molrs::op::geometry::{translate, rotate, scale, center, CenterError}` over `as_molgraph()` / `as_molgraph_mut()` (Python keeps the methods) |
+| `molrs::system::BondType` | `molrs::core::BondOrder` (the chemical bond class; the `bond_type` key is unchanged) |
+| `molrs::compute::{BondOrder, BondOrderResult}`, Python `molrs.compute.BondOrder`, JS `BondOrder` | `molrs::compute::{BondOrientationalOrder, BondOrientationalOrderResult}`, `molrs.compute.BondOrientationalOrder`, JS `BondOrientationalOrder` |
+| `molrs::store::ColumnHolder`, `Column::from_<dtype>_holder` | `molrs::core::ColumnArray`, `Column::from_<dtype>_array` |
+| `molrs::store::ObservableData` | `molrs::core::ObservableValues` |
+| `molrs::system::entity_table::{Column, Cell}` | `molrs::core::{EntityColumn, EntityCell}` |
+| `molrs::system::{Topology::find_rings, TopologyRingInfo}` | `molrs::perceive::rings::{find_rings, RingInfo}` (the one ring perception; RingInfo keeps RDKit's name) |
+| `molrs::compute::NodeId` and the unused graph variants of `ComputeError` | removed |
+| `molrs::store::{ForceFieldSection, StyleEntry, EndpointKey, style_block_name, MolRec, Observables, MOLREC_VERSION, RESERVED_META_KEYS}` | `molrs::io::mrec::…` (feature `zarr`, which now enables `ff`) |
+| `ForceField::to_section()`, `to_section_in(&registry)`, `ForceField::from_section(&section)`; Python `ForceField.to_section()` / `ForceField.from_section(s)` | `ForceFieldSection::from_forcefield(&ff)`, `from_forcefield_in(&ff, &registry)`, `section.to_forcefield()`; Python `molrs.io.mrec.ForceFieldSection.from_forcefield(ff)` / `section.to_forcefield()` |
+| `store::forcefield_section::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity, MIXING_RULES, ONE_FOUR_VALUES}` | `molrs::ff::ir::{ENDPOINT_COLUMNS, ANNOTATION_COLUMNS, CMAP_GRID, is_parameter_column, category_arity}`, `molrs::ff::forcefield::mixing::MIXING_RULES`, `molrs::ff::forcefield::one_four::ONE_FOUR_VALUES` |
+| a section's `units.preset` of the LAMMPS styles only | the LAMMPS styles and `openmm` (`nm`, `kJ/mol`, `ps`) |
+| `molrs::system::port::PORTS`, `perceive::equivalence::EQUIV_CLASS`, `perceive::bond_type::BCC_BOND_TYPE`, `io::data::lammps_bond_react::REACT_ID`, `io::data::lammps_data::{COEFFS_TEXT_META, UNITS_META}` | `molrs::core::keys::{PORTS, EQUIV_CLASS, BCC_BOND_TYPE, REACT_ID, LAMMPS_COEFFS_TEXT, LAMMPS_UNITS}`; also `FRAG_ID`, `VSITE`, `BEAD_ATOMS` (Python `molrs.core.keys.*`) |
+| `molrs::ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`, Python `molrs.ff.params.AMBER_SCEE` / `AMBER_SCNB` | `molrs::core::constants::{AMBER_SCEE, AMBER_SCNB}`, `molrs.core.constants.*` |
+| `ff::constants::{MDYNE_A_TO_KCAL, VACUUM_DIELECTRIC, DEG2RAD}` (crate-private) | `molrs::core::constants::{KCAL_MOL_PER_MDYNE_ANGSTROM, VACUUM_DIELECTRIC}`; `f64::to_radians` |
+| `molrs::ff::params::uff::G` (332.06) | `molrs::core::constants::UFF_COULOMB` |
+| the spectroscopy literals (`c`, fs → s, m → cm, `1.438777`) | `molrs::core::constants::{SPEED_OF_LIGHT, FEMTOSECOND_S, CENTIMETER_PER_METER, SECOND_RADIATION_CONSTANT}` (`c₂ = 1.438776877` cm·K, CODATA 2018) |
+| — | `molrs::core::constants::ANGSTROM3_PER_CM3` (1e24) |
+| `molrs::VERSION` | `env!("CARGO_PKG_VERSION")`; Python `molrs.__version__` |
+| Python `molrs.store`, `molrs.spatial`, `molrs.system`, `molrs.units` | `molrs.core` |
+| Python `molrs.store.keys`, `molrs.store.schema` | `molrs.core.keys`, `molrs.core.schema` |
+| Python `molrs.system.Graph` | `molrs.core.MolGraph` |
+| Python `molrs.units.AMBER_COULOMB` | `molrs.core.constants.AMBER_COULOMB` (with every other constant) |
+| Python `molrs.io.mrec.schema.MOLREC_VERSION` / `RESERVED_META_KEYS` | `molrs.io.mrec.MOLREC_VERSION` / `RESERVED_META_KEYS` |
+
+A pickle names a class by its public path, so a `Box`, `Element`,
+`MolGraph`, … pickled under `molrs.spatial` / `molrs.system` /
+`molrs.store` does not unpickle; `Frame`, `Block`, `Atomistic` and
+`CoarseGrain` pickled as `molrs._lib.*` still load.
+
+#### Engine constants are unit facts (`core::constants`)
 
 Each engine's Coulomb constant and charge factor has one owner,
-`molrs::units::constants`, used by `io` and `ff` alike:
+`molrs::core::constants`, used by `io` and `ff` alike:
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs::ff::params::amber::AMBER_COULOMB` | `molrs::units::constants::AMBER_COULOMB` |
-| `molrs::io::data::prmtop::CHARGE_CONVERSION_FACTOR` | `molrs::units::constants::AMBER_CHARGE_FACTOR` |
-| `molrs::io::data::prmtop_tables::CHAMBER_COULOMB` | `molrs::units::constants::CHARMM_COULOMB` |
-| `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::units::constants::OPENMM_COULOMB` |
-| `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::units::constants::GROMACS_COULOMB` |
-| `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | `molrs::units::constants::ANGSTROM_PER_BOHR` |
-| `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `molrs::units::constants::BOLTZMANN_REAL` (1.98720425864083e-3): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
+| `molrs::ff::params::amber::AMBER_COULOMB` | `molrs::core::constants::AMBER_COULOMB` |
+| `molrs::io::data::prmtop::CHARGE_CONVERSION_FACTOR` | `molrs::core::constants::AMBER_CHARGE_FACTOR` |
+| `molrs::io::data::prmtop_tables::CHAMBER_COULOMB` | `molrs::core::constants::CHARMM_COULOMB` |
+| `molrs::ff::forcefield::readers::opls::OPENMM_COULOMB` | `molrs::core::constants::OPENMM_COULOMB` |
+| `molrs::ff::forcefield::readers::gromacs::GROMACS_COULOMB` | `molrs::core::constants::GROMACS_COULOMB` |
+| `molrs::compute::voronoi::BOHR_TO_ANG` (and the cube reader's copy) | `molrs::core::constants::ANGSTROM_PER_BOHR` |
+| `molrs::compute::distribution::KB_KCAL_PER_MOL_K` (1.987204e-3) | `molrs::core::constants::BOLTZMANN_REAL` (1.98720425864083e-3): `CombinedDistributionResult::free_energy` moves by 1.3·10⁻⁷ relative |
 
 New beside them: `KJ_PER_KCAL` and `ANGSTROM_PER_NM`, which replace the
 private copies in the GROMACS, OpenMM XML, `.gro`, `.trr` and `.xtc` code.
 LAMMPS `real`'s `qqr2e` stays `COULOMB_REAL`. Python's `AMBER_COULOMB` is
-`molrs.units.AMBER_COULOMB` (it was `molrs.ff.AMBER_COULOMB`).
+`molrs.core.constants.AMBER_COULOMB` (it was `molrs.ff.AMBER_COULOMB`).
 
 The AMBER 1-4 divisors `SCEE` = 1.2 / `SCNB` = 2.0 are force-field knowledge
 (`ff::params::amber::{AMBER_SCEE, AMBER_SCNB}`), and only the force-field
@@ -1179,8 +1233,8 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
 - **`molrs::math::pair_form::lj_ab_to_sigma_epsilon` →
   `molrs::ff::potential::pair::lj_ab_to_sigma_epsilon`.**
 - **`molrs::store::record_v1` is removed** (the version-1 conversion is
-  crate-private in `ff::forcefield`): reading a `molrec_version` 1 record
-  needs the `ff` feature; without it such a record is refused.
+  crate-private in the `*.mrec` reader): reading a `molrec_version` 1
+  record needs the `zarr` feature, which enables `ff`.
 - **CMAP is ordered.** The built-in `cmap` category's endpoint order is
   `Ordered` (was `Reversible`): a cmap type row matches its five atoms as
   written only, since reversing them would swap φ and ψ against the grid.
@@ -1189,7 +1243,7 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
 #### Core, io, perceive, compute, conformer, md
 
 - Minimum image: `molrs::compute::util` is gone. `MicHelper` is
-  `molrs::spatial::Mic` (`SimBox::mic()`, or `Mic::ortho(lengths)` for bare
+  `molrs::core::Mic` (`SimBox::mic()`, or `Mic::ortho(lengths)` for bare
   edge lengths); `get_positions_ref` is crate-private.
 - `molrs::op::random::standard_normal` is the one Gaussian draw (md had two
   private copies).
@@ -1258,32 +1312,33 @@ lammps_units}` and the `molrs::ff` re-exports of their items). `ff` names
     ETKDG stages are their one user); `optimize::LBFGS` is the optimizer.
   - `molrs::ff::charge::compute_gasteiger_charges` is gone:
     `GasteigerModel` is the door.
-  - `store::forcefield_section::unit_preset` derives each section preset
-    from `units::UnitPreset::builtin` (new), the one table of preset units,
-    spelled as the record spells them; `forcefield_section::SECTION_PRESETS`
-    names the presets a section may state.
+  - The record section's units table derives each section preset from
+    `core::UnitPreset::builtin` (new), the one table of preset units,
+    spelled as the record spells them; the presets a section may state are
+    the LAMMPS `units` styles and `openmm` (`nm`, `kJ/mol`, `ps`), as
+    molrec lists them.
   - Hybridization perception takes an element's first valence from
     `Element::default_valences` (its private table is gone): Ga, In, Sn, Sb,
     Te, Rb, Cs, Sr and Ba now have one, and Ge's is 2.
   - Version-1 records are converted by the `*.mrec` reader itself
     (`ff::forcefield::record_v1` → the reader's private `record_v1`): the
-    conversion needs only `store`, so `io` no longer reaches into `ff` and a
-    version-1 record reads without the `ff` feature (it was refused).
+    conversion needs only core data and the force-field IR's table
+    vocabulary (`ff::ir`), which the record codec's `zarr` feature enables.
 - One name per handle and payload type: `AtomId`, `BeadId` → `NodeId`;
   `BondId`, `AngleId`, `DihedralId`, `ImproperId`, `PortId` → `RelationId`;
   `Bead` → `Atom`; `Bond`, `Angle`, `Dihedral`, `Improper` → `Relation`
-  (all in `molrs::system`).
+  (all in `molrs::core`).
 
 #### Python paths
 
 The Python package follows the same rule. `molrs` holds the subsystems and
-nothing else — `store`, `spatial`, `system`, `units`, `op`, `perceive`, `io`,
-`ff`, `optimize`, `md`, `conformer`, `builder`, `compute`, `signal`,
-`stream` — and every symbol has one public path: the Python module named
-after its Rust owner (`molrs.store.Frame` is `molrs::store::Frame`). A
+nothing else — `core`, `op`, `perceive`, `io`, `ff`, `optimize`, `md`,
+`conformer`, `builder`, `compute`, `signal`, `stream` — and every symbol has
+one public path: the Python module named after its Rust owner
+(`molrs.core.Frame` is `molrs::core::Frame`). A
 class's and a function's `__module__` and `__name__` are that path (0.15
 functions said `molrs._lib`, and the `molrs.op`, `molrs.ff.ir` and
-`molrs.store.schema` ones said `op`, `ir`, `schema`), so `repr`, pickle and
+`molrs.core.schema` ones said `op`, `ir`, `schema`), so `repr`, pickle and
 the docs name every symbol the way it is imported. A public module exports
 exactly its `__all__`: no `typing` or stdlib name imported for an annotation
 (`molrs.io.Path`, `molrs.ff.ir.Callable`, `annotations`, …) is reachable on
@@ -1292,10 +1347,10 @@ it any more.
 - A Rust namespace below a subsystem's facade is not a Python module of its
   own: `ff::potential::pair::LJCut` is `molrs.ff.potential.LJCut`,
   `perceive::smarts::Reaction` is `molrs.perceive.Reaction`,
-  `spatial::{neighbors, region}` are `molrs.spatial`, and the
+  the core's neighbour search and regions are `molrs.core`, and the
   `io::{data, trajectory, mesh, csv}` formats' functions are `molrs.io`.
-  Kept as modules: the vocabularies `molrs.store.keys` and
-  `molrs.store.schema`, `molrs.ff.ir`, and one submodule of `molrs.io` per
+  Kept as modules: the vocabularies `molrs.core.keys`,
+  `molrs.core.schema` and `molrs.core.constants`, `molrs.ff.ir`, and one submodule of `molrs.io` per
   format that owns classes (below).
 - **Every file-format factory has one shape** — a function at the top of
   `molrs.io`, `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`, or a class
@@ -1350,78 +1405,78 @@ it any more.
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs.Angle` | `molrs.system.Angle` |
-| `molrs.Atom` | `molrs.system.Atom` |
-| `molrs.Atomistic` | `molrs.system.Atomistic` |
-| `molrs.Bead` | `molrs.system.Bead` |
-| `molrs.Block` | `molrs.store.Block` |
-| `molrs.BlockDtypeError` | `molrs.store.BlockDtypeError` |
-| `molrs.Bond` | `molrs.system.Bond` |
-| `molrs.Box` | `molrs.spatial.Box` |
-| `molrs.CGBond` | `molrs.system.CGBond` |
-| `molrs.CoarseGrain` | `molrs.system.CoarseGrain` |
-| `molrs.Cuboid` | `molrs.spatial.Cuboid` |
-| `molrs.Cylinder` | `molrs.spatial.Cylinder` |
-| `molrs.Dihedral` | `molrs.system.Dihedral` |
-| `molrs.DrudeParticle` | `molrs.system.DrudeParticle` |
-| `molrs.Element` | `molrs.system.Element` |
-| `molrs.Ellipsoid` | `molrs.spatial.Ellipsoid` |
-| `molrs.ExtractedSubgraph` | `molrs.system.ExtractedSubgraph` |
-| `molrs.Frame` | `molrs.store.Frame` |
-| `molrs.FrameMeta` | `molrs.store.FrameMeta` |
-| `molrs.Graph` | `molrs.system.Graph` |
-| `molrs.HalfSpace` | `molrs.spatial.HalfSpace` |
-| `molrs.Improper` | `molrs.system.Improper` |
-| `molrs.MasslessSite` | `molrs.system.MasslessSite` |
-| `molrs.MetaDocument` | `molrs.store.MetaDocument` |
-| `molrs.MetaValue` | `molrs.store.MetaValue` |
-| `molrs.NeighborList` | `molrs.spatial.NeighborList` |
-| `molrs.NeighborQuery` | `molrs.spatial.NeighborQuery` |
-| `molrs.Neighbors` | `molrs.spatial.Neighbors` |
-| `molrs.NodeRef` | `molrs.system.NodeRef` |
-| `molrs.Parallelepiped` | `molrs.spatial.Parallelepiped` |
-| `molrs.Polyhedron` | `molrs.spatial.Polyhedron` |
-| `molrs.Port` | `molrs.system.Port` |
-| `molrs.Quantity` | `molrs.units.Quantity` |
+| `molrs.Angle` | `molrs.core.Angle` |
+| `molrs.Atom` | `molrs.core.Atom` |
+| `molrs.Atomistic` | `molrs.core.Atomistic` |
+| `molrs.Bead` | `molrs.core.Bead` |
+| `molrs.Block` | `molrs.core.Block` |
+| `molrs.BlockDtypeError` | `molrs.core.BlockDtypeError` |
+| `molrs.Bond` | `molrs.core.Bond` |
+| `molrs.Box` | `molrs.core.Box` |
+| `molrs.CGBond` | `molrs.core.CGBond` |
+| `molrs.CoarseGrain` | `molrs.core.CoarseGrain` |
+| `molrs.Cuboid` | `molrs.core.Cuboid` |
+| `molrs.Cylinder` | `molrs.core.Cylinder` |
+| `molrs.Dihedral` | `molrs.core.Dihedral` |
+| `molrs.DrudeParticle` | `molrs.core.DrudeParticle` |
+| `molrs.Element` | `molrs.core.Element` |
+| `molrs.Ellipsoid` | `molrs.core.Ellipsoid` |
+| `molrs.ExtractedSubgraph` | `molrs.core.ExtractedSubgraph` |
+| `molrs.Frame` | `molrs.core.Frame` |
+| `molrs.FrameMeta` | `molrs.core.FrameMeta` |
+| `molrs.Graph` | `molrs.core.MolGraph` |
+| `molrs.HalfSpace` | `molrs.core.HalfSpace` |
+| `molrs.Improper` | `molrs.core.Improper` |
+| `molrs.MasslessSite` | `molrs.core.MasslessSite` |
+| `molrs.MetaDocument` | `molrs.core.MetaDocument` |
+| `molrs.MetaValue` | `molrs.core.MetaValue` |
+| `molrs.NeighborList` | `molrs.core.NeighborList` |
+| `molrs.NeighborQuery` | `molrs.core.NeighborQuery` |
+| `molrs.Neighbors` | `molrs.core.Neighbors` |
+| `molrs.NodeRef` | `molrs.core.NodeRef` |
+| `molrs.Parallelepiped` | `molrs.core.Parallelepiped` |
+| `molrs.Polyhedron` | `molrs.core.Polyhedron` |
+| `molrs.Port` | `molrs.core.Port` |
+| `molrs.Quantity` | `molrs.core.Quantity` |
 | `molrs.Reaction` | `molrs.perceive.Reaction` |
-| `molrs.Refs` | `molrs.system.Refs` |
-| `molrs.Region` | `molrs.spatial.Region` |
-| `molrs.RelationBuckets` | `molrs.system.RelationBuckets` |
-| `molrs.RelationRef` | `molrs.system.RelationRef` |
-| `molrs.ScalarObservable` | `molrs.store.ScalarObservable` |
-| `molrs.Sphere` | `molrs.spatial.Sphere` |
-| `molrs.SphereUnion` | `molrs.spatial.SphereUnion` |
-| `molrs.Topology` | `molrs.system.Topology` |
-| `molrs.Trace` | `molrs.spatial.Trace` |
-| `molrs.Trajectory` | `molrs.store.Trajectory` |
-| `molrs.TriMesh` | `molrs.spatial.TriMesh` |
-| `molrs.Unit` | `molrs.units.Unit` |
-| `molrs.UnitPreset` | `molrs.units.UnitPreset` |
-| `molrs.UnitRegistry` | `molrs.units.UnitRegistry` |
-| `molrs.UnitsError` | `molrs.units.UnitsError` |
-| `molrs.VectorObservable` | `molrs.store.VectorObservable` |
-| `molrs.VerletSkin` | `molrs.spatial.VerletSkin` |
-| `molrs.VirtualSite` | `molrs.system.VirtualSite` |
-| `molrs.keys` | `molrs.store.keys` (and `molrs.keys.<NAME>` → `molrs.store.keys.<NAME>`) |
-| `molrs.schema` | `molrs.store.schema` (and its block-name constants) |
-| `molrs.schema.BlockSpec` | `molrs.store.schema.BlockSpec` |
-| `molrs.schema.ColumnSpec` | `molrs.store.schema.ColumnSpec` |
-| `molrs.schema.block` | `molrs.store.schema.block` |
-| `molrs.schema.blocks` | `molrs.store.schema.blocks` |
-| `molrs.schema.column` | `molrs.store.schema.column` |
-| `molrs.schema.columns` | `molrs.store.schema.columns` |
-| `molrs.schema.relation_endpoints` | `molrs.store.schema.relation_endpoints` |
-| `molrs.schema.to_json` | `molrs.store.schema.to_json` |
-| `molrs.schema.to_markdown` | `molrs.store.schema.to_markdown` |
+| `molrs.Refs` | `molrs.core.Refs` |
+| `molrs.Region` | `molrs.core.Region` |
+| `molrs.RelationBuckets` | `molrs.core.RelationBuckets` |
+| `molrs.RelationRef` | `molrs.core.RelationRef` |
+| `molrs.ScalarObservable` | `molrs.core.ScalarObservable` |
+| `molrs.Sphere` | `molrs.core.Sphere` |
+| `molrs.SphereUnion` | `molrs.core.SphereUnion` |
+| `molrs.Topology` | `molrs.core.Topology` |
+| `molrs.Trace` | `molrs.core.Trace` |
+| `molrs.Trajectory` | `molrs.core.Trajectory` |
+| `molrs.TriMesh` | `molrs.core.TriMesh` |
+| `molrs.Unit` | `molrs.core.Unit` |
+| `molrs.UnitPreset` | `molrs.core.UnitPreset` |
+| `molrs.UnitRegistry` | `molrs.core.UnitRegistry` |
+| `molrs.UnitsError` | `molrs.core.UnitsError` |
+| `molrs.VectorObservable` | `molrs.core.VectorObservable` |
+| `molrs.VerletSkin` | `molrs.core.VerletSkin` |
+| `molrs.VirtualSite` | `molrs.core.VirtualSite` |
+| `molrs.keys` | `molrs.core.keys` (and `molrs.keys.<NAME>` → `molrs.core.keys.<NAME>`) |
+| `molrs.schema` | `molrs.core.schema` (and its block-name constants) |
+| `molrs.schema.BlockSpec` | `molrs.core.schema.BlockSpec` |
+| `molrs.schema.ColumnSpec` | `molrs.core.schema.ColumnSpec` |
+| `molrs.schema.block` | `molrs.core.schema.block` |
+| `molrs.schema.blocks` | `molrs.core.schema.blocks` |
+| `molrs.schema.column` | `molrs.core.schema.column` |
+| `molrs.schema.columns` | `molrs.core.schema.columns` |
+| `molrs.schema.relation_endpoints` | `molrs.core.schema.relation_endpoints` |
+| `molrs.schema.to_json` | `molrs.core.schema.to_json` |
+| `molrs.schema.to_markdown` | `molrs.core.schema.to_markdown` |
 | `molrs.Atomistic.max_ring_system_size()` | `molrs.perceive.RingInfo(mol).max_ring_system_size()` |
 
 **Force fields: `molrs.ff` holds only its submodules**
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs.ff.AMBER_COULOMB` | `molrs.units.AMBER_COULOMB` |
-| `molrs.ff.AMBER_SCEE` | `molrs.ff.params.AMBER_SCEE` |
-| `molrs.ff.AMBER_SCNB` | `molrs.ff.params.AMBER_SCNB` |
+| `molrs.ff.AMBER_COULOMB` | `molrs.core.constants.AMBER_COULOMB` |
+| `molrs.ff.AMBER_SCEE` | `molrs.core.constants.AMBER_SCEE` |
+| `molrs.ff.AMBER_SCNB` | `molrs.core.constants.AMBER_SCNB` |
 | `molrs.ff.AngleStyle` | `molrs.ff.forcefield.AngleStyle` |
 | `molrs.ff.AngleType` | `molrs.ff.forcefield.AngleType` |
 | `molrs.ff.AtdTypifier` | `molrs.ff.typifier.AtdTypifier` |
@@ -1660,7 +1715,7 @@ it any more.
 
 | 0.15 | 0.16 |
 |---|---|
-| `molrs.store.Trajectory.from_frames(frames, step, time)` | `molrs.store.Trajectory(frames, step, time)` |
+| `molrs.store.Trajectory.from_frames(frames, step, time)` | `molrs.core.Trajectory(frames, step, time)` |
 | `molrs.store.Trajectory.count_frames()` | `len(traj)` |
 
 #### WASM and C++ bindings
@@ -1679,7 +1734,7 @@ The JS namespace stays flat. What changes for callers:
 | `new BruteForce(cutoff, …).build(frame)` | `NeighborList.bruteForce(cutoff)`, then `build` / `neighbors` (no 8 000-atom refusal) |
 | `new LinkedCell(cutoff).query(refFrame, otherFrame)` | `new NeighborQuery(refFrame, cutoff).query(otherFrame)` (both columns kept) |
 | `topology.findRings()` → `TopologyRingInfo` (`numRings`, `ringSizes`, `rings`, `isAtomInRing`, `numAtomRings`, `atomRingMask`) | `new Perceive().findRings(frame)` → a new `Frame` whose atoms and bonds carry `is_in_ring` and `n_rings` |
-| `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::system::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
+| `Topology.fromFrame(frame)` read `bonds.i` / `bonds.j`, so a canonical frame came back with no bonds | reads `bonds.atomi` / `atomj` (`molrs::core::Topology::from_frame`); a missing endpoint column or an out-of-range atom throws |
 | `new XYZReader(text)` / `PDBReader` / `SDFReader` / `LAMMPSReader` / `LAMMPSTrajReader` (whole-content readers) | removed: `XYZStream` / `PDBStream` / `SDFStream` / `LAMMPSStream` / `LAMMPSTrajStream` (`allocInputBuffer` → `feedIndexChunk` + `finishIndex` → `parseRangeInInput` per frame) are the one reader of those formats |
 | `new DCDReader(bytes)` / `TRRReader` / `XTCReader` | removed: `DCDStream` / `TRRStream` / `XTCStream` |
 | `new TrajectoryReader(files)` / `TrajectoryReader.fromZip` / `.fromStore` (a `*.mrec` store) | `new MrecReader(files)` / `MrecReader.fromZip` / `.fromStore`: named as Rust's `molrs::io::mrec::MrecReader` |
@@ -1715,15 +1770,15 @@ but without `stream` did not compile. `CarbonTubeBuilder` is compiled only
 with the `builder` feature (on by default).
 
 `covalentRadius` is bound in the wasm `core` module (`core/element.rs`, over
-`molrs::system::Element`), not the crate root; its JS name is unchanged.
+`molrs::core::Element`), not the crate root; its JS name is unchanged.
 `molrs-wasm`'s `io::reader` holds only the formats with no stream (CIF, Cube,
 CHGCAR, GRO, MOL2, POSCAR, XSF, inpcrd, AC).
 
 C API (`molrs.h`): `molrs_ff_to_json` / `molrs_ff_from_json` read and write
 the core `forcefield` record section as JSON, `{"document": {…}, "tables":
 {<block>: Block}}` — the serde form (`serde` feature, `molrs/src/serialize.rs`)
-of `molrs::store::ForceFieldSection`, i.e. `ForceField::to_section` /
-`from_section`, the section an `*.mrec` record stores. The C-API-only
+of `molrs::io::mrec::ForceFieldSection`, i.e.
+`ForceFieldSection::from_forcefield` / `to_forcefield`, the section an `*.mrec` record stores. The C-API-only
 document (`name` / `units` / `special_bonds` / `styles[]` with `params` /
 `str_params` / `array_params` / `types`) is gone and refused on read; a force
 field `to_section` refuses is `InvalidArgument` from `molrs_ff_to_json`.
@@ -1918,14 +1973,14 @@ the bullet says so):
 - CL&Pol: `ff::params::CLPOL_POLARIZABILITY` (`alpha.ff`, 78 types),
   `io::forcefield::readers::clpol::read_alpha_ff`, and
   `molrs.ff.params.clpol_polarizability(path=None)`.
-- `molrs.spatial.Box(h=None, origin=None, pbc=None, cell_defined=None)`
+- `molrs.core.Box(h=None, origin=None, pbc=None, cell_defined=None)`
   takes a `(3, 3)` matrix, a `(3,)` diagonal or any array-like of either;
   `None` or an all-zero matrix is no cell (a free box, `cell_defined`
   false), and `pbc` defaults to whether there is a cell. Explicit
   `cell_defined=False` keeps its meaning but now defaults `pbc` to
   non-periodic. (molpy's `Box` subclass did this; `molpy.Box` can now be
-  `molrs.spatial.Box`.)
-- `molrs.store.Trajectory`: `traj[-1]`, `traj[a:b:c]` (a sub-trajectory with
+  `molrs.core.Box`.)
+- `molrs.core.Trajectory`: `traj[-1]`, `traj[a:b:c]` (a sub-trajectory with
   its `step` / `time` labels sliced alike; Rust `Trajectory::select`),
   `traj.map(func)` and a `repr` (molpy's `Trajectory` subclass did these).
 - The cross-engine equivalence check and the completeness matrix

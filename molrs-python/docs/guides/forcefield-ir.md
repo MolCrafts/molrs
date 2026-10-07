@@ -249,8 +249,8 @@ parameters:
    | absent or `"regular"` | the regular `epsilon` / `sigma` — LAMMPS |
    | `"epsilon14"` | `epsilon14` / `sigma14` (the cross row's for an explicit pair, else the two types' mixed by `mixing`) |
 
-   Any other value is refused (by the compile doors, `to_section` /
-   `from_section` and every reader of a record). LAMMPS's pair style has no
+   Any other value is refused (by the compile doors, `ForceFieldSection.from_forcefield` /
+   `to_forcefield` and every reader of a record). LAMMPS's pair style has no
    `"epsilon14"` form, so the IR holds those pairs as per-pair override
    rows (below): **`ForceField.materialize_one_four(frame)`** (Rust
    `ForceField::materialize_one_four`) writes, on every `is_14` row of the

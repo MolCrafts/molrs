@@ -267,7 +267,7 @@ registry's is checked for agreement with it at first compile.
 ## Persistence
 
 A custom style persists as its molrec style entry: its style parameters, its
-**expression** (the instance's, else the registry's: `to_section` writes the
+**expression** (the instance's, else the registry's: `ForceFieldSection.from_forcefield` writes the
 registry expression of a registered custom style, so a process that
 registered nothing can price it), and its table (array columns included,
 `f64[T, S…]`). A category beyond the built-ins is kept with the arity of

@@ -12,7 +12,7 @@ There is no marshalling layer and no `to_dict`/`from_dict` round-trip — a cons
 holds molrs data directly (native) or through a stable handle (FFI). The reference
 Rust consumer, [`molcrafts-molpack`](https://github.com/MolCrafts/molpack), uses the
 native path: its `Cargo.toml` depends on `molcrafts-molrs` directly and operates on
-`molrs::store::Frame` / `molrs::ff::forcefield::ForceField` natively.
+`molrs::core::Frame` / `molrs::ff::forcefield::ForceField` natively.
 
 ---
 
@@ -31,7 +31,7 @@ Then use the native types directly — no FFI, no copies. For example, building
 evaluable MMFF94 potentials from a molecule (the pattern molpack's relaxer follows):
 
 ```rust,no_run
-use molrs::system::Atomistic;
+use molrs::core::Atomistic;
 use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
 use molrs::ff::typifier::mmff::MMFF94Typifier;

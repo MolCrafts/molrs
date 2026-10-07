@@ -163,15 +163,29 @@ blocks; the `openmm` unit preset and `k_B` are native; and the CL&Pol
 - A version-1 record (molrs 0.15) is converted exactly on read, or refused
   by name; it is never read as version 2. Every 0.15.0 test record prices in
   0.16 at the energy 0.15.0 computed for it.
+- A `forcefield` section may state the `openmm` units preset (`nm`,
+  `kJ/mol`, `ps`) beside the LAMMPS styles, as molrec lists it; such a
+  section reads as a force field in the `openmm` preset.
 
 ### One path per symbol
 
 Every module has one job and every public symbol one path, in Rust and in
-Python alike. The Rust crate root holds subsystems only (`molrs::store`,
-`molrs::system`, `molrs::spatial`, `molrs::units`, `molrs::ff`, …), and so
-does `import molrs`: `molrs.store.Frame`, `molrs.spatial.Box`,
-`molrs.system.Atomistic`, `molrs.ff.forcefield.ForceField`,
-`molrs.ff.potential.PotentialCompiler`, `molrs.compute.RDF`. `molrs.io.raw`,
+Python alike. The Rust crate root holds subsystems only (`molrs::core`,
+`molrs::ff`, `molrs::io`, …), and so does `import molrs`:
+`molrs.core.Frame`, `molrs.core.Box`, `molrs.core.Atomistic`,
+`molrs.ff.forcefield.ForceField`, `molrs.ff.potential.PotentialCompiler`,
+`molrs.compute.RDF`. The data model is **one core**: every core name is flat
+on `molrs::core` / `molrs.core`, with three vocabularies as submodules —
+`core::keys` (every column, frame-meta and graph key, in one place),
+`core::schema` and `core::constants` (every physical and engine constant:
+CODATA values, each engine's Coulomb constant, AMBER's 1-4 divisors, UFF's
+Coulomb constant, unit factors). The cell is `SimBox` in Rust and `Box`
+everywhere else; the graph is `MolGraph` everywhere; the chemical bond class
+is `BondOrder`, and freud's bond-orientational histogram is
+`BondOrientationalOrder`. Ring perception has one owner,
+`molrs::perceive::rings`; whole-graph moves are `molrs::op::geometry`; the
+record's `ForceFieldSection` and `MOLREC_VERSION` are `molrs::io::mrec`'s.
+`molrs.__version__` is the package version. `molrs.io.raw`,
 `molrs.fields` and the alias functions are gone — every reader emits the
 canonical column names. A function's `__module__` names its public path as
 a class's does. The [migration guide](migration.md#python-paths) lists every

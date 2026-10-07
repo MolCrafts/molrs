@@ -32,7 +32,7 @@ however the array was spelled.
 import numpy as np
 import molrs
 
-atoms = molrs.store.Block({
+atoms = molrs.core.Block({
     "element": ["O", "H", "H"],
     "x": np.array([0.000, 0.757, -0.757]),
     "y": np.array([0.000, 0.586, 0.586]),
@@ -41,13 +41,13 @@ atoms = molrs.store.Block({
     "res_name": ["HOH", "HOH", "HOH"],
     "chain": ["A", "A", "A"],
 })
-bonds = molrs.store.Block({
+bonds = molrs.core.Block({
     "atomi": np.array([0, 0], dtype=np.uint64),
     "atomj": np.array([1, 2], dtype=np.uint64),
 })
-frame = molrs.store.Frame(
+frame = molrs.core.Frame(
     {"atoms": atoms, "bonds": bonds},
-    box=molrs.spatial.Box.cube(20.0),
+    box=molrs.core.Box.cube(20.0),
 )
 frame.meta["title"] = "water"
 frame.meta["temperature"] = 300.0
@@ -78,7 +78,7 @@ so every value reads back at the dtype it was stored with, `float("nan")`
 included. A JSON object comes back as a frozen `MetaDocument`.
 
 ```python
-frame.meta["n_steps"] = molrs.store.MetaValue("i32", 5000)
+frame.meta["n_steps"] = molrs.core.MetaValue("i32", 5000)
 frame.meta["run"] = {"ensemble": "NVT", "thermostat": "langevin"}
 molrs.io.write_mrec("water.mrec", frame)
 
@@ -100,7 +100,7 @@ format readers produce. `chain`, `res_id`, `res_name`, `icode`, `altloc`,
 `occupancy` and `b_factor` are canonical `atoms` columns; the PDB, mmCIF, GRO
 and extxyz readers fill them under those names. Extra blocks with fixed
 meanings are `constraints`, `virtual_sites`, `drudes` and `members` (bead →
-atom membership in a coarse-grained frame). `molrs.store.schema` prints the whole
+atom membership in a coarse-grained frame). `molrs.core.schema` prints the whole
 vocabulary.
 
 A `uint64` column can declare which block its values index. Writers store
@@ -108,7 +108,7 @@ that as the block's `targets` attribute and refuse a reference that does not
 resolve, so a dangling index fails at write time instead of at analysis time:
 
 ```python
-contacts = molrs.store.Block({
+contacts = molrs.core.Block({
     "site": np.array([0, 2], dtype=np.uint64),
     "distance": np.array([2.8, 3.1]),
 })
@@ -155,7 +155,7 @@ for i in range(4):
     f["atoms"]["x"] = frame["atoms"]["x"] + 0.01 * i
     frames.append(f)
 
-traj = molrs.store.Trajectory(
+traj = molrs.core.Trajectory(
     frames,
     step=np.arange(4, dtype=np.int64) * 100,
     time=np.arange(4, dtype=np.float64) * 0.2,
@@ -227,8 +227,8 @@ with MrecReader(zipped) as reader:
 A `forcefield` section stores a force field as data: a document (styles,
 units, mixing rule, special-bond weights) and one table per style. Units are
 recorded as declared and read back as recorded; only a `molrec_version` 1
-section's numbers are converted, as above. `ForceField.to_section` and
-`ForceField.from_section` map between the two, and every record writer takes
+section's numbers are converted, as above. `ForceFieldSection.from_forcefield` and
+`ForceFieldSection.to_forcefield` map between the two, and every record writer takes
 a force field next to the structure it parameterizes:
 
 ```python
@@ -246,7 +246,7 @@ print(sorted(molrs.io.mrec.section_names("water.mrec")))
 
 section = molrs.io.read_mrec_forcefield("water.mrec")
 print(section.name, sorted(section.tables))
-restored = molrs.ff.forcefield.ForceField.from_section(section)
+restored = section.to_forcefield()
 print([(s.category, s.name) for s in restored.styles])
 ```
 
@@ -274,7 +274,7 @@ compiled examples.
 use molrs::io::mrec::{read_frame_file, section_names, write_frame_file};
 
 fn main() -> Result<(), molrs::error::MolRsError> {
-    write_frame_file("water.mrec", &molrs::store::Frame::new(), None, None)?;
+    write_frame_file("water.mrec", &molrs::core::Frame::new(), None, None)?;
     let frame = read_frame_file("water.mrec")?;
     println!("{:?} {}", section_names("water.mrec")?, frame.len());
     Ok(())
