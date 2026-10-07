@@ -249,25 +249,32 @@ pub fn read_gromacs_top_system_py(
     ))
 }
 
-/// The :class:`ForceField` a LAMMPS data file's ``* Coeffs`` sections define,
-/// from the :class:`Frame` :func:`molrs.io.read_lammps_data` returned.
+/// Read the :class:`ForceField` a LAMMPS data file's ``* Coeffs`` sections
+/// define.
 ///
-/// The sections are the frame's ``meta["lammps_coeffs_text"]``; a row's
+/// The file is read as :func:`molrs.io.read_lammps_data` reads it; a row's
 /// numeric type id is named by the label the file's ``* Type Labels``
-/// section gave it (the reader keeps them, ids as written, in
-/// ``meta["<kind>_type_labels"]``), else by the id itself. ``units`` is the
-/// unit style the coefficients are in: the one the file's ``write_data`` title
-/// line stated when ``None``, else ``"real"``. Styles come from the section
-/// headers' ``# style`` comments, default harmonic / ``lj/cut/coul/cut``.
+/// section gave it, else by the id itself. ``units`` is the unit style the
+/// coefficients are in: the one the file's ``write_data`` title line stated
+/// when ``None``, else ``"real"``. Styles come from the section headers'
+/// ``# style`` comments, default harmonic / ``lj/cut/coul/cut``.
 ///
-/// Raises ``ValueError`` for a frame with no ``* Coeffs`` sections, a
-/// ``units`` that disagrees with the file's, an unsupported style, or a row
-/// that does not parse.
+/// Raises ``ValueError`` for an unreadable data file, one with no
+/// ``* Coeffs`` sections, a ``units`` that disagrees with the file's, an
+/// unsupported style, or a row that does not parse.
 #[pyfunction]
-#[pyo3(name = "read_lammps_data_coeffs", signature = (frame, *, units = None))]
-pub fn read_lammps_data_coeffs_py(frame: &PyFrame, units: Option<&str>) -> PyResult<PyForceField> {
-    let forcefield = frame
-        .with_frame(|frame| molrs::io::read_lammps_data_coeffs(frame, units))?
+#[pyo3(name = "read_lammps_data_coeffs", signature = (path, *, units = None))]
+pub fn read_lammps_data_coeffs_py(path: PathBuf, units: Option<&str>) -> PyResult<PyForceField> {
+    let forcefield = molrs::io::read_lammps_data_coeffs(&path, units)
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+    Ok(PyForceField { inner: forcefield })
+}
+
+/// :func:`read_lammps_data_coeffs` on the text of a whole LAMMPS data file.
+#[pyfunction]
+#[pyo3(name = "read_lammps_data_coeffs_str", signature = (text, *, units = None))]
+pub fn read_lammps_data_coeffs_str_py(text: &str, units: Option<&str>) -> PyResult<PyForceField> {
+    let forcefield = molrs::io::read_lammps_data_coeffs_str(text, units)
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
     Ok(PyForceField { inner: forcefield })
 }
@@ -330,6 +337,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m,
         "molrs.io",
         wrap_pyfunction!(read_lammps_data_coeffs_py, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.io",
+        wrap_pyfunction!(read_lammps_data_coeffs_str_py, m)?,
     )?;
     crate::add_function(
         m,

@@ -99,6 +99,17 @@ def test_the_system_covers_template_only_types(tmp_path):
     assert (workdir / "rxn1.map").exists()
 
 
+def test_a_forcefield_missing_a_label_writes_nothing(tmp_path):
+    workdir = tmp_path / "rxn"
+    ff = molrs.ff.forcefield.ForceField("hand")
+    atoms = ff.def_style("atom", "full")
+    c3 = atoms.def_type("c3", mass=12.011)
+    ff.def_style("pair", "lj/cut", {"cutoff": 9.0}).def_type("c3", c3, epsilon=0.1, sigma=3.4)
+    with pytest.raises(ValueError):
+        molrs.io.write_lammps_bond_react_system(workdir, _system(), ff, {"rxn1": _template()})
+    assert not workdir.exists()
+
+
 def test_a_sequence_of_templates_is_named_rxn_n(tmp_path):
     workdir = tmp_path / "seq"
     molrs.io.write_lammps_bond_react_system(workdir, _system(), _forcefield(), [_template()])

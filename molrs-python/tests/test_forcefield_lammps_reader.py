@@ -107,7 +107,7 @@ def test_unknown_keyword_maps_to_value_error(read_ff):
         read_ff("mystery_style foo\n")
 
 
-def test_write_lammps_data_coeffs_keeps_reverse_dihedral_names_apart(read_ff):
+def test_write_lammps_data_coeffs_str_keeps_reverse_dihedral_names_apart(read_ff):
     """A label is a type name: reverse spellings are two types, two ids, one
     coeff row per id."""
     src = """\
@@ -121,7 +121,7 @@ dihedral_coeff os-c3-c3-h1 2 0.250000 1 0.000000 0.000000 3 0.000000
 """
     ff = read_ff(src)
     frame = _frame(["c3"], dihedrals=["h1-c3-c3-os", "os-c3-c3-h1"])
-    text = molrs.io.write_lammps_data_coeffs(ff, frame)
+    text = molrs.io.write_lammps_data_coeffs_str(ff, frame)
     body = text.split("Dihedral Coeffs", 1)[1]
     ids = [
         int(line.split()[0])
@@ -235,8 +235,8 @@ def test_label_write_lammps_forcefield_to_path_takes_frame(tmp_path):
     assert "bond_coeff c3-c3" in out.read_text()
 
 
-def test_label_write_lammps_data_coeffs_takes_frame():
-    text = molrs.io.write_lammps_data_coeffs(_hand_ff(), _labelled_frame())
+def test_label_write_lammps_data_coeffs_str_takes_frame():
+    text = molrs.io.write_lammps_data_coeffs_str(_hand_ff(), _labelled_frame())
     assert isinstance(text, str)
     assert "Bond Coeffs" in text
 
@@ -246,9 +246,9 @@ def test_label_write_lammps_forcefield_str_missing_label_raises_value_error():
         molrs.io.write_lammps_forcefield_str(_hand_ff(), _labelled_frame("c3-n"))
 
 
-def test_label_write_lammps_data_coeffs_missing_label_raises_value_error():
+def test_label_write_lammps_data_coeffs_str_missing_label_raises_value_error():
     with pytest.raises(ValueError, match="c3-n"):
-        molrs.io.write_lammps_data_coeffs(_hand_ff(), _labelled_frame("c3-n"))
+        molrs.io.write_lammps_data_coeffs_str(_hand_ff(), _labelled_frame("c3-n"))
 
 
 def test_label_io_has_no_lammps_type_ids_from_frame():
@@ -336,14 +336,19 @@ Angles
 
 
 @pytest.fixture
-def data_frame(tmp_path):
+def data_path(tmp_path):
     path = tmp_path / "in.data"
     path.write_text(_DATA)
-    return molrs.io.read_lammps_data(path)
+    return path
 
 
-def test_read_lammps_data_coeffs_takes_the_frame(data_frame):
-    ff = molrs.io.read_lammps_data_coeffs(data_frame)
+@pytest.fixture
+def data_frame(data_path):
+    return molrs.io.read_lammps_data(data_path)
+
+
+def test_read_lammps_data_coeffs_reads_the_data_file(data_path, data_frame):
+    ff = molrs.io.read_lammps_data_coeffs(data_path)
     text = molrs.io.write_lammps_forcefield_str(ff, data_frame)
     assert "pair_coeff hc hc 0.015700 2.649500" in text
     assert "pair_coeff c3 c3 0.109400 3.399700" in text
@@ -351,32 +356,44 @@ def test_read_lammps_data_coeffs_takes_the_frame(data_frame):
     assert "angle_coeff hc-c3-hc 35.000000 109.500000" in text
 
 
-def test_lammps_data_forcefield_lammps_round_trip(data_frame, tmp_path):
+def test_read_lammps_data_coeffs_str_is_the_path_door_on_text(data_path, data_frame):
+    by_path = molrs.io.read_lammps_data_coeffs(data_path)
+    by_text = molrs.io.read_lammps_data_coeffs_str(_DATA)
+    assert molrs.io.write_lammps_forcefield_str(
+        by_text, data_frame
+    ) == molrs.io.write_lammps_forcefield_str(by_path, data_frame)
+
+
+def test_lammps_data_forcefield_lammps_round_trip(data_path, data_frame, tmp_path):
     """data file -> ForceField -> data file (frame + ``* Coeffs``) -> the
     same ForceField."""
-    ff = molrs.io.read_lammps_data_coeffs(data_frame)
+    ff = molrs.io.read_lammps_data_coeffs(data_path)
     out = tmp_path / "out.data"
     molrs.io.write_lammps_data(out, data_frame)
     out.write_text(
-        out.read_text() + "\n" + molrs.io.write_lammps_data_coeffs(ff, data_frame)
+        out.read_text()
+        + "\n"
+        + molrs.io.write_lammps_data_coeffs_str(ff, data_frame)
     )
     again_frame = molrs.io.read_lammps_data(out)
-    again = molrs.io.read_lammps_data_coeffs(again_frame, units="real")
+    again = molrs.io.read_lammps_data_coeffs(out, units="real")
     assert molrs.io.write_lammps_forcefield_str(
         again, again_frame
     ) == molrs.io.write_lammps_forcefield_str(ff, data_frame)
 
 
-def test_read_lammps_data_coeffs_refuses_other_units(data_frame):
+def test_read_lammps_data_coeffs_refuses_other_units(data_path):
     with pytest.raises(ValueError, match="metal"):
-        molrs.io.read_lammps_data_coeffs(data_frame, units="metal")
+        molrs.io.read_lammps_data_coeffs(data_path, units="metal")
 
 
-def test_read_lammps_data_coeffs_needs_coeffs(tmp_path):
+def test_read_lammps_data_coeffs_needs_coeffs(data_frame, tmp_path):
+    path = tmp_path / "bare.data"
+    molrs.io.write_lammps_data(path, data_frame)
     with pytest.raises(ValueError, match="lammps_coeffs_text"):
-        molrs.io.read_lammps_data_coeffs(_labelled_frame())
+        molrs.io.read_lammps_data_coeffs(path)
 
 
-def test_read_lammps_data_coeffs_text_form_is_gone(data_frame):
-    with pytest.raises(TypeError):
-        molrs.io.read_lammps_data_coeffs(data_frame.meta["lammps_coeffs_text"])
+def test_read_lammps_data_coeffs_names_a_missing_file(tmp_path):
+    with pytest.raises(ValueError, match="absent.data"):
+        molrs.io.read_lammps_data_coeffs(tmp_path / "absent.data")

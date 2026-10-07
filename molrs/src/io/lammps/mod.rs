@@ -11,6 +11,7 @@
 //! | dump | [`read_lammps_dump_trajectory`](crate::io::read_lammps_dump_trajectory), [`read_lammps_dump_bytes`](crate::io::read_lammps_dump_bytes), [`write_lammps_dump_trajectory`](crate::io::write_lammps_dump_trajectory), [`write_lammps_dump_local`](crate::io::write_lammps_dump_local) |
 //! | `fix bond/react` | [`write_lammps_bond_react_map`](crate::io::write_lammps_bond_react_map), [`write_lammps_bond_react_system`](crate::io::write_lammps_bond_react_system) |
 //! | log | [`read_lammps_log`](crate::io::read_lammps_log), [`read_lammps_log_str`](crate::io::read_lammps_log_str) |
+//! | data-file `* Coeffs` | [`read_lammps_data_coeffs`](crate::io::read_lammps_data_coeffs), [`read_lammps_data_coeffs_str`](crate::io::read_lammps_data_coeffs_str), [`write_lammps_data_coeffs_str`](crate::io::write_lammps_data_coeffs_str) |
 //! | `fix cmap` grid | [`read_lammps_cmap_str`](crate::io::read_lammps_cmap_str), [`write_lammps_cmap_str`](crate::io::write_lammps_cmap_str) |
 //!
 //! This module holds the family's classes and records: the readers and
@@ -26,6 +27,8 @@
 
 pub(crate) mod atom_style;
 pub(crate) mod bond_react;
+#[cfg(feature = "ff")]
+pub(crate) mod bond_react_system;
 pub(crate) mod box_bounds;
 pub(crate) mod columns;
 pub(crate) mod data;
@@ -40,7 +43,9 @@ pub(crate) mod molecule;
 #[cfg(feature = "ff")]
 pub(crate) mod units;
 
-pub use bond_react::{BondReactSystem, BondReactTemplate, DroppedRows};
+pub use bond_react::BondReactTemplate;
+#[cfg(feature = "ff")]
+pub use bond_react_system::{BondReactSystem, DroppedRows};
 pub use data::{LammpsDataIndexBuilder, LammpsDataReader, LammpsDataWriter};
 pub use dump::{LammpsDumpIndexBuilder, LammpsDumpReader, LammpsDumpWriter};
 #[cfg(feature = "ff")]

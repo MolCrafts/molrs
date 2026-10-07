@@ -10,6 +10,7 @@
 # with molrs.io.read_lammps_log (scripts/engine_check_tables.py).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
 PYTHON=${PYTHON:-python3}
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
@@ -32,7 +33,7 @@ dump            d all custom 1 forces.dump id fx fy fz
 dump_modify     d format float %.17g sort id
 run             0
 IN
-(cd "$dir" && "${LMP:-lmp}" -in in.lammps -log log.lammps -screen none)
+(cd "$dir" && without_slurm_step "${LMP:-lmp}" -in in.lammps -log log.lammps -screen none)
 
 PYTHONPATH=scripts "$PYTHON" - "$dir" <<'PY'
 import sys

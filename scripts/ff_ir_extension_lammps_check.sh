@@ -32,6 +32,7 @@
 #                     molrs.io.read_lammps_dump_trajectory; python3)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
 LMP=${LMP:-lmp}
 PYTHON=${PYTHON:-python3}
 pin=
@@ -47,12 +48,6 @@ if [[ -n ${MOLRS_PYTHON:-} ]]; then
     "$MOLRS_PYTHON" -m pytest -q -p no:cacheprovider \
         molrs-python/tests/test_ff_ir_extension.py -k write_lammps_inputs >/dev/null
 fi
-
-# Without the Slurm / PMI environment: inside one Slurm step a second MPI
-# singleton start dies of SIGPIPE.
-bare() {
-    env $(env | grep -o '^\(PMI\|PMIX\|SLURM\|OMPI\)[A-Za-z0-9_]*' | sed 's/^/-u /') "$@"
-}
 
 for case in "$dir"/*/*/; do
     case=${case%/}
@@ -81,7 +76,7 @@ dump            d all custom 1 forces_$k.dump id fx fy fz
 dump_modify     d format float %.17g sort id
 run             0
 IN
-        (cd "$case" && bare "$lmp" -in "in.$k" -log "log.$k" -screen none </dev/null) ||
+        (cd "$case" && without_slurm_step "$lmp" -in "in.$k" -log "log.$k" -screen none </dev/null) ||
             { echo "lmp failed on $case/in.$k" >&2; tail -20 "$case/log.$k" >&2; exit 1; }
     done
 done

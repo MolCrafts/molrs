@@ -301,6 +301,11 @@ def test_retired_modules_do_not_import(gone):
         "molrs.core.Trajectory.count_frames",
         "molrs.perceive.SmartsMatch.as_list",
         "molrs.perceive.SmartsMatch.as_dict",
+        # The data-file `* Coeffs` writer returns text: it is the `_str` door.
+        "molrs.io.write_lammps_data_coeffs",
+        # Private natives are named after the Rust doors they bind.
+        "molrs._native.csv_block_from_text",
+        "molrs._native.csv_block_to_text",
     ],
 )
 def test_retired_names_are_absent(gone):
@@ -452,6 +457,10 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.write_molrs_xml_forcefield",
         "molrs.io.read_lammps_log_str",
         "molrs.io.write_lammps_bond_react_map",
+        "molrs.io.write_lammps_bond_react_system",
+        "molrs.io.read_lammps_data_coeffs",
+        "molrs.io.read_lammps_data_coeffs_str",
+        "molrs.io.write_lammps_data_coeffs_str",
         "molrs.io.pdb.PdbReader",
         "molrs.io.xyz.XyzReader",
         "molrs.io.gro.GroReader",

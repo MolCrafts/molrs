@@ -29,7 +29,6 @@ import argparse
 import json
 import math
 import os
-import struct
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -225,35 +224,16 @@ GMX_TERMS = {
 
 
 def trr_forces(path: Path):
-    """The forces of a GROMACS .trr's first frame (XDR, single or double),
-    in kcal/(mol·Å)."""
-    b = path.read_bytes()
-    pos = 0
+    """The forces of a GROMACS .trr's first frame, flattened ``fx fy fz`` per
+    atom, in kcal/(mol·Å). molrs's TRR reader gives kJ/(mol·Å)."""
+    import molrs
 
-    def ints(n):
-        nonlocal pos
-        v = struct.unpack(f">{n}i", b[pos : pos + 4 * n])
-        pos += 4 * n
-        return v
-
-    magic, _ = ints(2)
-    assert magic == 1993, path
-    (slen,) = ints(1)
-    pos += (slen + 3) // 4 * 4
-    (_ir, _e, box, vir, pres, _top, _sym, x, v, f, natoms, _step, _nre) = ints(13)
-    real = 8 if (box or x or f) == (9 if box else 3 * natoms) * 8 else 4
-    pos += 2 * real
-    pos += box + vir + pres + x + v
-    fmt = ">d" if real == 8 else ">f"
-    kj_per_kcal, angstrom_per_nm = (
-        unit_factor("kcal", "kJ"),
-        unit_factor("nm", "angstrom"),
-    )
+    atoms = molrs.io.read_trr_trajectory(path).read_frame(0)["atoms"]
+    kj_per_kcal = unit_factor("kcal", "kJ")
     return [
-        struct.unpack(fmt, b[pos + real * i : pos + real * (i + 1)])[0]
-        / kj_per_kcal
-        / angstrom_per_nm
-        for i in range(3 * natoms)
+        float(c) / kj_per_kcal
+        for fx, fy, fz in zip(atoms["fx"], atoms["fy"], atoms["fz"])
+        for c in (fx, fy, fz)
     ]
 
 

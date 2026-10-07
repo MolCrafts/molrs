@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use molrs::core::Frame;
 use molrs::core::keys::REACT_ID;
-use molrs::io::lammps::{BondReactTemplate, LammpsForcefieldWriteOptions, LammpsForcefieldWriter};
-use molrs::io::writer::ForceFieldWriter;
+use molrs::io::lammps::BondReactTemplate;
+use molrs::io::writer::ForceFieldWriteError;
 use molrs::io::{
     write_lammps_bond_react_map as write_map_rs, write_lammps_bond_react_system as write_system_rs,
 };
@@ -186,8 +186,10 @@ pub fn write_lammps_bond_react_map(
 ///
 /// ``{stem}.data`` (the system), ``{stem}.ff`` (``forcefield``'s styles and
 /// coefficients, without a ``units`` line: the input sets ``units`` and
-/// ``atom_style``, reads the data file, then includes it), and per template ``{name}_pre.mol``, ``{name}_post.mol``
-/// and ``{name}.map``; ``stem`` is ``workdir``'s own name. Every type label
+/// ``atom_style``, reads the data file, then includes it), and per template
+/// ``{name}_pre.mol``, ``{name}_post.mol`` and ``{name}.map``; ``stem`` is
+/// ``workdir``'s own name. Every check runs before the first file is
+/// written. Every type label
 /// the system and the templates use is declared in the data file and covered
 /// by the ``.ff`` include, so the templates' type ids match the system's.
 /// Template topology rows without a type label are left out of the molecule
@@ -234,30 +236,21 @@ pub fn write_lammps_bond_react_system(
         .map(|(name, t)| Ok((name.clone(), t.borrow(py).to_rust(py)?)))
         .collect::<PyResult<_>>()?;
     let system = frame.clone_core_frame()?;
-    let written = write_system_rs(path_str(&workdir)?, &system, &rust).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::InvalidData
-            || e.kind() == std::io::ErrorKind::InvalidInput
-        {
-            PyValueError::new_err(e.to_string())
-        } else {
-            io_error_to_pyerr(e)
-        }
-    })?;
-    // The include is read after `read_data` (its coefficients need the
-    // box), where LAMMPS refuses a `units` line: the input states the units.
-    let options = LammpsForcefieldWriteOptions {
-        skip_units: true,
-        ..LammpsForcefieldWriteOptions::default()
-    };
-    LammpsForcefieldWriter::with_options(&written.labels, options)
-        .write(
-            &forcefield.inner,
-            written
-                .ff_path
-                .to_str()
-                .ok_or_else(|| PyValueError::new_err("the .ff path is not valid UTF-8"))?,
-        )
-        .map_err(crate::ff::ir::write_err)?;
+    let written =
+        write_system_rs(path_str(&workdir)?, &system, &forcefield.inner, &rust).map_err(|e| {
+            if let Some(refusal) = e
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<ForceFieldWriteError>())
+            {
+                crate::ff::ir::write_err(refusal.clone())
+            } else if e.kind() == std::io::ErrorKind::InvalidData
+                || e.kind() == std::io::ErrorKind::InvalidInput
+            {
+                PyValueError::new_err(e.to_string())
+            } else {
+                io_error_to_pyerr(e)
+            }
+        })?;
     let warnings = py.import("warnings")?;
     for d in &written.dropped {
         warnings.call_method1(

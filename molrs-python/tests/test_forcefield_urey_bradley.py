@@ -93,5 +93,5 @@ def test_the_lammps_writer_and_reader_keep_it_as_written(tmp_path: Path) -> None
     back = molrs.io.read_lammps_forcefield(path)
     (t,) = back.get_types("angle")
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
-    data = molrs.io.write_lammps_data_coeffs(_ub_ff(), _frame())
+    data = molrs.io.write_lammps_data_coeffs_str(_ub_ff(), _frame())
     assert "Angle Coeffs # charmm" in data

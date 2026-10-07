@@ -684,19 +684,35 @@ pub fn read_lammps_forcefield_str(text: &str) -> Result<ForceField, String> {
     LammpsForcefieldReader::new().read_str(text)
 }
 
-/// The force field a LAMMPS data file's `* Coeffs` sections define, from the
-/// frame [`read_lammps_data`](crate::io::read_lammps_data) returned
-/// ([`LammpsForcefieldReader::read_data_coeffs`]). `units` is the unit style
-/// of the coefficients: the one the file stated when `None`, else `real`.
+/// Read the force field a LAMMPS data file's `* Coeffs` sections define:
+/// [`read_lammps_data`](crate::io::read_lammps_data), then
+/// [`LammpsForcefieldReader::read_data_coeffs`] on its frame. `units` is the
+/// unit style of the coefficients: the one the file stated when `None`, else
+/// `real`.
 ///
 /// # Errors
 ///
-/// Every error of [`LammpsForcefieldReader::read_data_coeffs`].
+/// An unreadable or malformed data file, and every error of
+/// [`LammpsForcefieldReader::read_data_coeffs`].
 pub fn read_lammps_data_coeffs(
-    frame: &impl FrameAccess,
+    path: impl AsRef<Path>,
     units: Option<&str>,
 ) -> Result<ForceField, String> {
-    LammpsForcefieldReader::new().read_data_coeffs(frame, units)
+    let path = path.as_ref();
+    let frame =
+        crate::io::read_lammps_data(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    LammpsForcefieldReader::new().read_data_coeffs(&frame, units)
+}
+
+/// [`read_lammps_data_coeffs`] on the in-memory text of a whole data file.
+///
+/// # Errors
+///
+/// A malformed data file, and every error of
+/// [`LammpsForcefieldReader::read_data_coeffs`].
+pub fn read_lammps_data_coeffs_str(text: &str, units: Option<&str>) -> Result<ForceField, String> {
+    let frame = crate::io::read_lammps_data_bytes(text.as_bytes()).map_err(|e| e.to_string())?;
+    LammpsForcefieldReader::new().read_data_coeffs(&frame, units)
 }
 
 /// Read a LAMMPS `fix cmap` file (CHARMM layout) as a force field of one
@@ -2247,6 +2263,34 @@ Angles
             Some(340.0)
         );
         assert!(ff.get_style("angle", "harmonic").is_some());
+    }
+
+    /// The path and string doors read the data file and then its frame's
+    /// `* Coeffs`: the force field `read_data_coeffs` gives on that frame.
+    #[test]
+    fn data_coeffs_doors_read_the_whole_data_file() {
+        use crate::io::writer::ForceFieldWriter;
+        let include = |ff: &ForceField| {
+            let frame = data_frame(LABELLED_DATA);
+            crate::io::lammps::forcefield_writer::LammpsForcefieldWriter::new(
+                &TypeLabels::from_frame(&frame).unwrap(),
+            )
+            .write_str(ff)
+            .unwrap()
+        };
+        let by_frame = LammpsForcefieldReader::new()
+            .read_data_coeffs(&data_frame(LABELLED_DATA), None)
+            .unwrap();
+        let by_str = crate::io::read_lammps_data_coeffs_str(LABELLED_DATA, None).unwrap();
+        assert_eq!(include(&by_str), include(&by_frame));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("labelled.data");
+        std::fs::write(&path, LABELLED_DATA).unwrap();
+        let by_path = crate::io::read_lammps_data_coeffs(&path, None).unwrap();
+        assert_eq!(include(&by_path), include(&by_frame));
+        let err =
+            crate::io::read_lammps_data_coeffs(dir.path().join("absent.data"), None).unwrap_err();
+        assert!(err.contains("absent.data"), "{err}");
     }
 
     /// LAMMPS data -> force field -> LAMMPS data (the frame plus the force

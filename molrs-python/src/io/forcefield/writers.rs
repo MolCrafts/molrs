@@ -231,7 +231,7 @@ pub fn write_lammps_forcefield_str_py(
 /// used explicit cross pair raises ``ValueError``.
 #[pyfunction]
 #[pyo3(
-    name = "write_lammps_data_coeffs",
+    name = "write_lammps_data_coeffs_str",
     signature = (
         forcefield,
         frame,
@@ -241,7 +241,7 @@ pub fn write_lammps_forcefield_str_py(
     )
 )]
 
-pub fn write_lammps_data_coeffs_py(
+pub fn write_lammps_data_coeffs_str_py(
     forcefield: &PyForceField,
     frame: &PyFrame,
     precision: usize,
@@ -249,7 +249,9 @@ pub fn write_lammps_data_coeffs_py(
 ) -> PyResult<String> {
     let options = lammps_options(precision, units)?;
     frame
-        .with_frame(|frame| molrs::io::write_lammps_data_coeffs(&forcefield.inner, frame, options))?
+        .with_frame(|frame| {
+            molrs::io::write_lammps_data_coeffs_str(&forcefield.inner, frame, options)
+        })?
         .map_err(crate::ff::ir::write_err)
 }
 
@@ -405,7 +407,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(
         m,
         "molrs.io",
-        wrap_pyfunction!(write_lammps_data_coeffs_py, m)?,
+        wrap_pyfunction!(write_lammps_data_coeffs_str_py, m)?,
     )?;
     crate::add_function(
         m,

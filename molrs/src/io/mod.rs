@@ -112,7 +112,9 @@ pub use gromacs::{
     top_reader::{read_gromacs_top_forcefield, read_gromacs_top_system},
     top_writer::{write_gromacs_top_forcefield, write_gromacs_top_system},
 };
-pub use lammps::bond_react::{write_lammps_bond_react_map, write_lammps_bond_react_system};
+pub use lammps::bond_react::write_lammps_bond_react_map;
+#[cfg(feature = "ff")]
+pub use lammps::bond_react_system::write_lammps_bond_react_system;
 pub use lammps::data::{read_lammps_data, read_lammps_data_bytes, write_lammps_data};
 pub use lammps::dump::{
     read_lammps_dump_bytes, read_lammps_dump_trajectory, write_lammps_dump_local,
@@ -127,10 +129,10 @@ pub use lammps::molecule::{
 pub use lammps::{
     forcefield_reader::{
         read_lammps_cmap_forcefield, read_lammps_cmap_str, read_lammps_data_coeffs,
-        read_lammps_forcefield, read_lammps_forcefield_str,
+        read_lammps_data_coeffs_str, read_lammps_forcefield, read_lammps_forcefield_str,
     },
     forcefield_writer::{
-        write_lammps_cmap_forcefield, write_lammps_cmap_str, write_lammps_data_coeffs,
+        write_lammps_cmap_forcefield, write_lammps_cmap_str, write_lammps_data_coeffs_str,
         write_lammps_forcefield, write_lammps_forcefield_str,
     },
 };
@@ -167,7 +169,7 @@ pub use xyz::codec::{
 };
 
 #[cfg(feature = "smiles")]
-pub use cgsmiles::read_cgsmiles_str;
+pub use cgsmiles::to_atomistic::read_cgsmiles_str;
 #[cfg(feature = "smiles")]
 pub use smiles::{ir_from_atomistic::write_smiles_str, ir_to_atomistic::read_smiles_str};
 

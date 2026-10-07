@@ -313,6 +313,17 @@ impl CgSmilesIr {
     }
 }
 
+/// Read the molecule a `CGsmiles` string states: [`CgSmilesIr::parse`] then
+/// [`CgSmilesIr::to_atomistic`] — topology only, every bead of the lowest
+/// level replaced by its fragment body, each resolved descriptor pair one bond.
+///
+/// # Errors
+///
+/// Every [`CgSmilesIr::parse`] and [`CgSmilesIr::to_atomistic`] error.
+pub fn read_cgsmiles_str(text: &str) -> Result<Atomistic, SmilesError> {
+    CgSmilesIr::parse(text)?.to_atomistic()
+}
+
 // ==========================================================================
 // Tests
 // ==========================================================================

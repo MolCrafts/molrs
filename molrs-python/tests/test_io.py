@@ -206,6 +206,20 @@ class TestCsvBlock:
         assert molrs.io.write_csv_block(path, molrs.core.Block({"x": [1.0, 2.0]})) is None
         np.testing.assert_allclose(molrs.io.read_csv_block(path)["x"], [1.0, 2.0])
 
+    def test_a_one_character_delimiter_is_used(self):
+        rt = molrs.io.read_csv_block_str("a;b\n1;2\n", delimiter=";")
+        np.testing.assert_array_equal(rt["b"], [2])
+        text = molrs.io.write_csv_block_str(rt, delimiter=";")
+        assert text.splitlines()[0] == "a;b"
+
+    @pytest.mark.parametrize("delimiter", ["", "::", ", "])
+    def test_a_delimiter_not_one_character_raises_value_error(self, delimiter):
+        block = molrs.core.Block({"x": [1.0, 2.0]})
+        with pytest.raises(ValueError, match="one character"):
+            molrs.io.read_csv_block_str("a,b\n1,2\n", delimiter=delimiter)
+        with pytest.raises(ValueError, match="one character"):
+            molrs.io.write_csv_block_str(block, delimiter=delimiter)
+
 
 class TestCanonicalNativeColumns:
     """Every reader emits the canonical column names in Rust, so the readers

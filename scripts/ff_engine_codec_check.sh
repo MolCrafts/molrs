@@ -18,6 +18,7 @@
 #   PYTHON  python with openmm 8.x and molrs (python3)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/without_slurm_step.sh
 LMP=${LMP:-lmp}
 PYTHON=${PYTHON:-python3}
 pin=
@@ -28,12 +29,6 @@ mkdir -p "$dir"
 
 MOLRS_ENGINE_CODEC_DIR="$dir" cargo mrs-test -- \
     ff::engine_codec_check::write_engine_inputs --exact >/dev/null
-
-# Without the Slurm / PMI environment: inside one Slurm step a second MPI
-# singleton start dies of SIGPIPE.
-bare() {
-    env $(env | grep -o '^\(PMI\|PMIX\|SLURM\|OMPI\)[A-Za-z0-9_]*' | sed 's/^/-u /') "$@"
-}
 
 for case in "$dir"/*/; do
     case=${case%/}
@@ -52,7 +47,7 @@ thermo_style    custom step ebond eangle evdwl pe
 thermo_modify   format float %.17g
 run             0
 IN
-        (cd "$case" && bare "$LMP" -in "in.$k" -log "log.$k" -screen none </dev/null) ||
+        (cd "$case" && without_slurm_step "$LMP" -in "in.$k" -log "log.$k" -screen none </dev/null) ||
             { echo "lmp failed on $case/in.$k" >&2; tail -20 "$case/log.$k" >&2; exit 1; }
     done
 done

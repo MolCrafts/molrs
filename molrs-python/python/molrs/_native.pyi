@@ -1775,7 +1775,7 @@ class RelationBuckets:
     def exact_bucket(self, cls: type[_TRef]) -> Refs[_TRef]: ...
 
 class op:
-    """``molrs::op`` — superposition and centroids.
+    """``molrs::op`` — superposition, centroids and NeRF placement.
 
     Superposition finds the rotation ``R`` and translation ``t`` that best lay
     matched points ``reference[i]`` onto ``target[i]`` (weighted least
@@ -1848,6 +1848,19 @@ class op:
             ``points`` is not shape ``(k, 3)`` or ``weights`` is
             not 1-D.
         """
+    @staticmethod
+    def place_from_internal_coords(
+        a: Sequence[float] | ArrayF,
+        b: Sequence[float] | ArrayF,
+        c: Sequence[float] | ArrayF,
+        bond: float,
+        angle: float,
+        torsion: float,
+    ) -> ArrayF:
+        """The point ``d`` (shape ``(3,)``) at distance ``bond`` from ``c``,
+        with ∠b–c–d ``angle`` and dihedral a–b–c–d ``torsion`` (radians):
+        NeRF (Parsons et al. 2005). Collinear ``a, b, c`` give no off-axis
+        component."""
 
 class SmartsMatch:
     """One SMARTS embedding."""
@@ -2526,11 +2539,11 @@ class CgSmilesIr:
 # classes in its submodule)
 # ---------------------------------------------------------------------------
 
-def csv_block_from_text(
+def read_csv_block_str(
     text: str, delimiter: str = ",", header: list[str] | None = None
 ) -> Block:
     """Native half of ``molrs.io.read_csv_block_str``."""
-def csv_block_to_text(block: Block, delimiter: str = ",", header: bool = True) -> str:
+def write_csv_block_str(block: Block, delimiter: str = ",", header: bool = True) -> str:
     """Native half of ``molrs.io.write_csv_block_str``."""
 def read_msgpack_frame_bytes(data: bytes) -> Frame: ...
 def write_msgpack_frame_bytes(frame: Frame) -> bytes: ...
@@ -3870,13 +3883,16 @@ def clpol_polarizability(path: PathInput | None = None) -> dict[str, dict[str, f
     ``alpha``, ``a_thole``): the shipped ``alpha.ff`` table, or ``path``
     read the same way. Raises ``ValueError`` for an unreadable file."""
 
-def read_lammps_data_coeffs(frame: Frame, *, units: str | None = None) -> ForceField:
-    """The force field a LAMMPS data file's ``* Coeffs`` sections define, from
-    the frame :func:`molrs.io.read_lammps_data` returned: its
-    ``meta["lammps_coeffs_text"]``, rows named by the file's ``* Type Labels``
-    (ids as written). ``units`` defaults to the file's stated units, else
-    ``"real"``. Raises ``ValueError`` for a frame with no ``* Coeffs``
-    sections or a ``units`` that disagrees with the file's."""
+def read_lammps_data_coeffs(path: PathInput, *, units: str | None = None) -> ForceField:
+    """The force field a LAMMPS data file's ``* Coeffs`` sections define,
+    rows named by the file's ``* Type Labels`` (ids as written). ``units``
+    defaults to the file's stated units, else ``"real"``. Raises
+    ``ValueError`` for an unreadable file, one with no ``* Coeffs``
+    sections, or a ``units`` that disagrees with the file's."""
+
+def read_lammps_data_coeffs_str(text: str, *, units: str | None = None) -> ForceField:
+    """:func:`read_lammps_data_coeffs` on the text of a whole data file."""
+
 def write_lammps_forcefield(
     path: PathInput,
     forcefield: ForceField,
@@ -3900,7 +3916,7 @@ def write_lammps_forcefield_str(
     units: str = "real",
     cmap_file: str | None = None,
 ) -> str: ...
-def write_lammps_data_coeffs(
+def write_lammps_data_coeffs_str(
     forcefield: ForceField,
     frame: Frame,
     *,
