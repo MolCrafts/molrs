@@ -55,8 +55,8 @@ gate_fmt() {
     done
 }
 
-# Every partner pin in .github/partners.env exists on its remote, no path
-# dependency points where CI has no checkout, no workflow spells its own pin.
+# Every partner in .github/partners.env resolves, no path dependency points
+# where CI has no checkout, no workflow spells a partner commit of its own.
 gate_partners() {
     python3 scripts/partners.py check
 }
@@ -161,8 +161,8 @@ gate_wasm() {
 }
 
 # molrec's conformance suite through molrs.io.mrec, as ci-snapshot.yml's mrec
-# step runs it: molrec at the commit .github/partners.env pins (fetched into a
-# temp dir, never a sibling checkout), the extension built by `maturin
+# step runs it: molrec at the commit scripts/partners.py resolves (fetched into
+# a temp dir, never a sibling's working tree), the extension built by `maturin
 # develop` into a fresh venv on CI's Python, scripts/ci-conformance.py judging
 # every case. Any case that does not pass fails the gate.
 gate_mrec() {

@@ -46,6 +46,15 @@ pip install ".[doc]"
 zensical build --clean      # must end with "No issues found"
 ```
 
+## Partners
+
+On `dev`, `.github/partners.env` tracks molrec's `dev` (`MOLREC_REF=dev`).
+A release is judged against a fixed molrec instead: the release commit on
+`master` sets `MOLREC_REF` to the molrec tag or full commit the release was
+checked against, so the tag's CI run (`ci-snapshot.yml`'s `mrec` step)
+fetches exactly that. When `master` is merged back into `dev`, keep
+`MOLREC_REF=dev` there.
+
 ## Publishing
 
 1. Finish the checks and review the release diff. The GitHub Release created

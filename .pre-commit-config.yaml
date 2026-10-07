@@ -7,7 +7,8 @@
 #               compiles, so a commit never waits for a build (or for Slurm).
 #   pre-push    the hygiene hooks on --all-files, `partners`, clippy + doc +
 #               test, the binder gates and `ext` whose files changed, `mrec` (molrec's
-#               conformance suite at the commit .github/partners.env pins,
+#               conformance suite at the molrec commit scripts/partners.py
+#               resolves -- molrec's dev, or its branch named like this one --
 #               as ci-snapshot.yml runs it) and `docs` (the site as Cloudflare
 #               Pages builds it). Each binder links molrs under its own
 #               feature set / target, i.e. one more full compile, so none runs
@@ -78,7 +79,7 @@ repos:
         stages: [pre-push]
 
       - id: partners
-        name: check partners (pins exist; path deps resolve in CI)
+        name: check partners (partners resolve; path deps resolve in CI)
         entry: scripts/check.sh partners
         language: system
         pass_filenames: false
@@ -145,9 +146,9 @@ repos:
         stages: [pre-push]
 
       # molrec's conformance suite through molrs.io.mrec, against the molrec
-      # commit .github/partners.env pins (ci-snapshot.yml's mrec step).
+      # commit scripts/partners.py resolves (ci-snapshot.yml's mrec step).
       - id: mrec
-        name: check mrec (molrec conformance at the pinned commit)
+        name: check mrec (molrec conformance at the resolved commit)
         entry: scripts/check.sh mrec
         language: system
         pass_filenames: false

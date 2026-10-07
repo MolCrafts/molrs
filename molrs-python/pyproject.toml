@@ -53,6 +53,14 @@ exclude = [
   "python/molrs/*.dSYM/**",
 ]
 
+# uv caches a molrs it built from a checkout by these keys. Its default, this
+# file alone, would keep handing a wheel built from an older commit to the
+# projects that build molrs from a checkout of its dev (molrec, molpack,
+# molpy); with the commit as a key, a checkout that moves is rebuilt.
+# Uncommitted Rust edits still need `--reinstall-package molcrafts-molrs`.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { git = { commit = true } }]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

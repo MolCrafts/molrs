@@ -37,10 +37,11 @@ jobs:
         with:
           persist-credentials: false
       # The suite and its molrs adapter live in molrec, not in this repo, at
-      # the commit .github/partners.env pins: the one place that pin lives,
-      # read by `scripts/check.sh mrec` (the pre-push gate) as well.
-      - name: Partner pins
-        run: grep -E '^[A-Z][A-Z0-9_]*=' .github/partners.env >> "$GITHUB_ENV"
+      # the commit scripts/partners.py resolves from .github/partners.env
+      # (molrec's dev, or its branch named like this one), the same
+      # resolution `scripts/check.sh mrec` (the pre-push gate) makes.
+      - name: Resolve partners
+        run: python3 scripts/partners.py resolve >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
         with:
           repository: ${{ env.MOLREC_REPOSITORY }}
