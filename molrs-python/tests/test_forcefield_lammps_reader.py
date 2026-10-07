@@ -1,6 +1,6 @@
 """Python-binding coverage for the native LAMMPS force-field reader.
 
-The parsing/unit logic is exercised in Rust (``io::forcefield::readers::lammps``);
+The parsing/unit logic is exercised in Rust (``io::lammps::forcefield_reader``);
 these tests only assert the PyO3 surface — that ``read_lammps_forcefield``
 yields the one :class:`ForceField` (with the FFI capsule a consumer like molpack
 resolves) and that errors map to ``ValueError``.
@@ -99,7 +99,7 @@ def test_read_lammps_forcefield_from_path(tmp_path):
     p.write_text(_FF)
     ff = molrs.io.read_lammps_forcefield(str(p))
     # LAMMPS `dihedral_style fourier` is molrs's `dihedral periodic`.
-    assert len(ff.get_style("dihedral", "periodic").types) == 1
+    assert len(ff.get_style("dihedral", "periodic").get_types()) == 1
 
 
 def test_unknown_keyword_maps_to_value_error(read_ff):
@@ -196,7 +196,7 @@ def test_write_lammps_forcefield_to_path(tmp_path, read_ff):
 
 # --- label-driven writing (system-forcefield-06): the frame argument seam ---
 # Coefficient selection and error text are unit-tested in Rust
-# (``io::forcefield::writers::lammps``); these tests prove only that the
+# (``io::lammps::forcefield_writer``); these tests prove only that the
 # bindings take a frame and map a missing label to ``ValueError``.
 
 
@@ -258,8 +258,8 @@ def test_label_io_has_no_lammps_type_ids_from_frame():
 def test_ff_file_io_accepts_pathlike(tmp_path):
     """``molrs.ff`` path functions take ``os.PathLike`` like ``molrs.io`` does."""
     xml = tmp_path / "hand.xml"
-    molrs.io.write_forcefield_xml(xml, _hand_ff())
-    back = molrs.io.read_forcefield_xml(xml)
+    molrs.io.write_openmm_xml_forcefield(xml, _hand_ff())
+    back = molrs.io.read_openmm_xml_forcefield(xml)
     assert back.get_style("bond", "harmonic").get_type_by_name("c3-c3") is not None
 
     out = tmp_path / "hand.ff"

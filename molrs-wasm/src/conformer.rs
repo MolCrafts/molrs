@@ -29,7 +29,7 @@ use crate::core::frame::Frame;
 /// The input frame must have an `"atoms"` block with a `"element"`
 /// string column (element symbols like `"C"`, `"N"`, `"O"`). A
 /// `"bonds"` block with `atomi`, `atomj` and the bond order (`bond_type` /
-/// `bond_number`, as `parseSMILES` writes them) is required for correct
+/// `bond_number`, as `readSmilesStr` writes them) is required for correct
 /// geometry.
 ///
 /// Returns a **new** [`Frame`] with 3D coordinates added as `x`, `y`,
@@ -38,7 +38,7 @@ use crate::core::frame::Frame;
 /// # Arguments
 ///
 /// * `frame` - Input molecular frame with atoms and bonds (from
-///   [`parseSMILES`](crate::io::smiles::parse_smiles) or file readers)
+///   [`readSmilesStr`](crate::io::smiles::read_smiles_str) or file readers)
 /// * `speed` - Quality/speed preset:
 ///   - `"fast"` -- minimal refinement, suitable for visualization
 ///   - `"medium"` (default) -- balanced quality/speed
@@ -62,7 +62,7 @@ use crate::core::frame::Frame;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ir = parseSMILES("c1ccccc1"); // benzene
+/// const ir = SmilesIr.parse("c1ccccc1"); // benzene
 /// const frame2d = ir.toFrame();
 /// const frame3d = generate3D(frame2d, "fast", 42);
 ///

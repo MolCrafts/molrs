@@ -1,5 +1,6 @@
-//! `CGsmiles` coarse-graph intermediate representation, exposed to Python as
-//! classes under `molrs.io`.
+//! `CGsmiles` (`molrs::io::cgsmiles`): the coarse-graph intermediate
+//! representation, its classes under `molrs.io.cgsmiles`, and the
+//! `molrs.io.read_cgsmiles_str` door.
 //!
 //! *Coarse-graining* is standing one particle — a **bead** — in for a whole
 //! group of atoms, so a polymer can be written and simulated without naming
@@ -10,24 +11,23 @@
 //! is ordinary atomistic SMILES. Reference: Grünewald et al., *J. Chem. Inf.
 //! Model.* (2025), DOI 10.1021/acs.jcim.5c00064.
 //!
-//! [`PyCGSmilesIR`] is the single front door: `molrs.io.smiles.CGSmilesIR(text)`
+//! [`PyCgSmilesIr`] is the single front door: `molrs.io.cgsmiles.CgSmilesIr(text)`
 //! parses, and every other class here is a read-only view over one record of
 //! the value it returns — a resolution level, a node, an edge, a fragment
 //! definition, a resolved descriptor pair, one end of such a pair, or a
-//! bonding descriptor. They are produced by `CGSmilesIR` and nowhere else, so
+//! bonding descriptor. They are produced by `CgSmilesIr` and nowhere else, so
 //! none of them has a constructor on the Python side.
 //!
-//! There is deliberately **no** `CGSmilesReader`: in this binding "Reader"
-//! means a lazy, path-backed trajectory cursor (`molrs.io.trajectory.TrajectoryReader`),
-//! and a text-in / IR-out parser is not that object. The
-//! reader-shaped API belongs to molpy, wrapping this class the way its
-//! `SmilesReader` wraps `molrs.io.smiles.SmilesIR`.
+//! There is deliberately **no** `CgSmilesReader`: in this binding "Reader"
+//! means a lazy, path-backed trajectory cursor (`molrs.io.pdb.PdbReader`, …),
+//! and a text-in / IR-out parser is not that object; the one-shot door is
+//! `molrs.io.read_cgsmiles_str`.
 //!
 //! # Values at the boundary
 //!
-//! An enum that *is* a count crosses as the count: [`PyCGEdge::multiplicity`]
-//! is `CGBondOrder` read through
-//! [`CGBondOrder::multiplicity`](molrs::io::smiles::CGBondOrder::multiplicity),
+//! An enum that *is* a count crosses as the count: [`PyCgEdge::multiplicity`]
+//! is `CgBondOrder` read through
+//! [`CgBondOrder::multiplicity`](molrs::io::cgsmiles::CgBondOrder::multiplicity),
 //! a dimensionless `1..=4`. Every other enum crosses as a *name*, never as
 //! the small integer `core` stores such a value as (`BondOrder::code`: 0
 //! unknown, 1 single, 2 double, 3 triple, 4 aromatic). The storage codes are
@@ -56,16 +56,17 @@
 //! which does: no input can panic across the seam, and a new variant upstream
 //! is a compile error rather than a runtime one.
 
-use molrs::io::smiles::{
-    BondKind, BondingDescriptor, CGEdge, CGFragmentDef, CGGraph, CGNode, CGSmilesIR,
-    DescriptorKind, EdgeOrigin, FragmentBody, PairEnd, ResolvedPair, parse_cgsmiles,
+use molrs::io::cgsmiles::{
+    CgEdge, CgFragmentDef, CgGraph, CgNode, CgSmilesIr, EdgeOrigin, FragmentBody, PairEnd,
+    ResolvedPair,
 };
+use molrs::io::smiles::{BondKind, BondingDescriptor, DescriptorKind};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 use crate::core::molgraph::{PyAtomistic, PyCoarseGrain};
 use crate::error::smiles_error_to_pyerr;
-use crate::io::smiles::PySmilesIR;
+use crate::io::smiles::PySmilesIr;
 
 /// The lowercase Python spelling of a [`BondKind`].
 ///
@@ -211,18 +212,18 @@ impl PyBondingDescriptor {
 ///     instantiated from; ``None`` in ``levels[0]`` and in every fragment
 ///     body, which is a template rather than an instance.
 #[pyclass(
-    module = "molrs.io.smiles",
-    name = "CGNode",
+    module = "molrs.io.cgsmiles",
+    name = "CgNode",
     frozen,
     skip_from_py_object
 )]
 #[derive(Clone)]
-pub struct PyCGNode {
-    inner: CGNode,
+pub struct PyCgNode {
+    inner: CgNode,
 }
 
 #[pymethods]
-impl PyCGNode {
+impl PyCgNode {
     /// The fragment name written after ``#``.
     #[getter]
     fn name(&self) -> String {
@@ -259,11 +260,11 @@ impl PyCGNode {
         self.inner.parent
     }
 
-    /// ``CGNode(name=…, charge=…, descriptors=…, parent=…)``, where
+    /// ``CgNode(name=…, charge=…, descriptors=…, parent=…)``, where
     /// ``descriptors`` is the *number* of descriptors rather than the list.
     fn __repr__(&self) -> String {
         format!(
-            "CGNode(name={:?}, charge={:?}, descriptors={}, parent={:?})",
+            "CgNode(name={:?}, charge={:?}, descriptors={}, parent={:?})",
             self.inner.name,
             self.inner.charge,
             self.inner.descriptors.len(),
@@ -292,18 +293,18 @@ impl PyCGNode {
 ///     resolved pair is one bond, so a coarse edge of multiplicity *n*
 ///     induces *n* separate derived edges rather than one multiple edge.
 #[pyclass(
-    module = "molrs.io.smiles",
-    name = "CGEdge",
+    module = "molrs.io.cgsmiles",
+    name = "CgEdge",
     frozen,
     skip_from_py_object
 )]
 #[derive(Clone)]
-pub struct PyCGEdge {
-    inner: CGEdge,
+pub struct PyCgEdge {
+    inner: CgEdge,
 }
 
 #[pymethods]
-impl PyCGEdge {
+impl PyCgEdge {
     /// Index of the first endpoint.
     #[getter]
     fn i(&self) -> usize {
@@ -332,10 +333,10 @@ impl PyCGEdge {
         }
     }
 
-    /// ``CGEdge(i=…, j=…, multiplicity=…, derived_from=…)``.
+    /// ``CgEdge(i=…, j=…, multiplicity=…, derived_from=…)``.
     fn __repr__(&self) -> String {
         format!(
-            "CGEdge(i={}, j={}, multiplicity={}, derived_from={:?})",
+            "CgEdge(i={}, j={}, multiplicity={}, derived_from={:?})",
             self.inner.i,
             self.inner.j,
             self.multiplicity(),
@@ -352,31 +353,31 @@ impl PyCGEdge {
 ///
 /// Attributes
 /// ----------
-/// nodes : list of CGNode
+/// nodes : list of CgNode
 ///     The beads of this level. A node is addressed by its index here, and
 ///     that index is what an edge's ``i`` / ``j`` name.
-/// edges : list of CGEdge
+/// edges : list of CgEdge
 ///     The bonds between them, each naming two indices into ``nodes``.
 #[pyclass(
-    module = "molrs.io.smiles",
-    name = "CGGraph",
+    module = "molrs.io.cgsmiles",
+    name = "CgGraph",
     frozen,
     skip_from_py_object
 )]
 #[derive(Clone)]
-pub struct PyCGGraph {
-    inner: CGGraph,
+pub struct PyCgGraph {
+    inner: CgGraph,
 }
 
 #[pymethods]
-impl PyCGGraph {
+impl PyCgGraph {
     /// Nodes in parse order; a node is addressed by its index here.
     #[getter]
-    fn nodes(&self) -> Vec<PyCGNode> {
+    fn nodes(&self) -> Vec<PyCgNode> {
         self.inner
             .nodes
             .iter()
-            .map(|node| PyCGNode {
+            .map(|node| PyCgNode {
                 inner: node.clone(),
             })
             .collect()
@@ -384,20 +385,20 @@ impl PyCGGraph {
 
     /// Edges in parse order, each naming two indices into ``nodes``.
     #[getter]
-    fn edges(&self) -> Vec<PyCGEdge> {
+    fn edges(&self) -> Vec<PyCgEdge> {
         self.inner
             .edges
             .iter()
-            .map(|edge| PyCGEdge {
+            .map(|edge| PyCgEdge {
                 inner: edge.clone(),
             })
             .collect()
     }
 
-    /// ``CGGraph(nodes=…, edges=…)`` — the two list *lengths*, not the lists.
+    /// ``CgGraph(nodes=…, edges=…)`` — the two list *lengths*, not the lists.
     fn __repr__(&self) -> String {
         format!(
-            "CGGraph(nodes={}, edges={})",
+            "CgGraph(nodes={}, edges={})",
             self.inner.nodes.len(),
             self.inner.edges.len()
         )
@@ -410,46 +411,46 @@ impl PyCGGraph {
 /// ----------
 /// name : str
 ///     The fragment name written after ``#``, without the sigil.
-/// body : CGGraph or SmilesIR
+/// body : CgGraph or SmilesIr
 ///     What the name stands for. An intermediate block's bodies are coarse
 ///     graphs over the next level's nodes; the last block's are atomistic
 ///     SMILES fragment bodies, with their bonding descriptors intact. There
 ///     is no ``body_kind``: the Python type *is* the tag, so callers dispatch
 ///     with ``isinstance``.
 ///
-///     A ``SmilesIR`` body still carrying descriptors is not convertible on
-///     its own — :meth:`SmilesIR.to_atomistic` refuses a descriptor-bearing
+///     A ``SmilesIr`` body still carrying descriptors is not convertible on
+///     its own — :meth:`SmilesIr.to_atomistic` refuses a descriptor-bearing
 ///     IR with ``ValueError`` rather than drop the descriptors silently. Use
-///     :meth:`CGSmilesIR.to_atomistic`, which expands every body *and* bonds
+///     :meth:`CgSmilesIr.to_atomistic`, which expands every body *and* bonds
 ///     the ports the reader paired.
 ///
 ///     Such a body's ``repr`` echoes the fragment-table entry as written —
 ///     ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES,
 ///     because the entry's span is the text the IR records.
 #[pyclass(
-    module = "molrs.io.smiles",
-    name = "CGFragmentDef",
+    module = "molrs.io.cgsmiles",
+    name = "CgFragmentDef",
     frozen,
     skip_from_py_object
 )]
 #[derive(Clone)]
-pub struct PyCGFragmentDef {
-    inner: CGFragmentDef,
-    /// The entry's own source text, handed to a `SmilesIR` body so that its
+pub struct PyCgFragmentDef {
+    inner: CgFragmentDef,
+    /// The entry's own source text, handed to a `SmilesIr` body so that its
     /// `__repr__` echoes what was written. Never re-parsed.
     input: String,
 }
 
 #[pymethods]
-impl PyCGFragmentDef {
+impl PyCgFragmentDef {
     /// The fragment name written after ``#``.
     #[getter]
     fn name(&self) -> String {
         self.inner.name.clone()
     }
 
-    /// The body the name stands for: a :class:`CGGraph` or a
-    /// :class:`SmilesIR`.
+    /// The body the name stands for: a :class:`CgGraph` or a
+    /// :class:`SmilesIr`.
     ///
     /// Raises
     /// ------
@@ -460,28 +461,28 @@ impl PyCGFragmentDef {
     #[getter]
     fn body(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.inner.body {
-            FragmentBody::Graph(graph) => Ok(PyCGGraph {
+            FragmentBody::Graph(graph) => Ok(PyCgGraph {
                 inner: graph.clone(),
             }
             .into_pyobject(py)?
             .into_any()
             .unbind()),
-            FragmentBody::Smiles(ir) => Ok(PySmilesIR::from_core(ir.clone(), self.input.clone())
+            FragmentBody::Smiles(ir) => Ok(PySmilesIr::from_core(ir.clone(), self.input.clone())
                 .into_pyobject(py)?
                 .into_any()
                 .unbind()),
         }
     }
 
-    /// ``CGFragmentDef(name=…, body=CGGraph)``, or ``body=SmilesIR`` for an
+    /// ``CgFragmentDef(name=…, body=CgGraph)``, or ``body=SmilesIr`` for an
     /// atomistic body: the body's *type*, which is what a caller dispatches
     /// on.
     fn __repr__(&self) -> String {
         let body = match &self.inner.body {
-            FragmentBody::Graph(_) => "CGGraph",
-            FragmentBody::Smiles(_) => "SmilesIR",
+            FragmentBody::Graph(_) => "CgGraph",
+            FragmentBody::Smiles(_) => "SmilesIr",
         };
-        format!("CGFragmentDef(name={:?}, body={})", self.inner.name, body)
+        format!("CgFragmentDef(name={:?}, body={})", self.inner.name, body)
     }
 }
 
@@ -503,18 +504,18 @@ impl PyCGFragmentDef {
 ///     a node are the descriptors written on its atomistic body.
 /// index : int
 ///     For ``"sub"``: index into ``levels[k + 1].nodes`` of the child
-///     carrying the port, whose own :attr:`CGNode.parent` is the
+///     carrying the port, whose own :attr:`CgNode.parent` is the
 ///     ``levels[k]`` instance the port belongs to. For ``"body"``: index into
 ///     ``levels[k].nodes`` of the instance whose body holds the port.
 /// port : int
-///     For ``"sub"``: index into that child's :attr:`CGNode.descriptors`. For
+///     For ``"sub"``: index into that child's :attr:`CgNode.descriptors`. For
 ///     ``"body"``: index into the descriptor map of that body, ordered by the
 ///     atom the descriptor sits on in the order the body's atoms were read,
 ///     and within one atom in written order. There is no Python object for
-///     that map; the index is what :meth:`CGSmilesIR.to_atomistic` resolves
+///     that map; the index is what :meth:`CgSmilesIr.to_atomistic` resolves
 ///     against the converted body.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "PairEnd",
     frozen,
     skip_from_py_object
@@ -580,7 +581,7 @@ impl PyPairEnd {
 ///     final edge list — derived edges are appended to a level before it is
 ///     resolved, so this index is valid against the list a caller reads.
 /// bond : int
-///     Which of that edge's :attr:`CGEdge.multiplicity` bonds this is,
+///     Which of that edge's :attr:`CgEdge.multiplicity` bonds this is,
 ///     0-based.
 /// src : PairEnd
 ///     The port the edge's first endpoint offered.
@@ -592,7 +593,7 @@ impl PyPairEnd {
 ///     neither wrote one and both port atoms are written aromatic, and
 ///     ``"single"`` otherwise.
 #[pyclass(
-    module = "molrs.io.smiles",
+    module = "molrs.io.cgsmiles",
     name = "ResolvedPair",
     frozen,
     skip_from_py_object
@@ -663,10 +664,10 @@ impl PyResolvedPair {
 ///
 /// Attributes
 /// ----------
-/// levels : list of CGGraph
+/// levels : list of CgGraph
 ///     Resolution levels, coarsest first. Level 0 is the base block that was
 ///     written; every later level is the expansion of the table above it.
-/// fragments : list of dict of (str, CGFragmentDef)
+/// fragments : list of dict of (str, CgFragmentDef)
 ///     Fragment tables, coarsest first, each keyed by the name written after
 ///     ``#`` and in name order. ``fragments[k]`` resolves the names of
 ///     ``levels[k]``.
@@ -683,21 +684,21 @@ impl PyResolvedPair {
 ///
 /// Examples
 /// --------
-/// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+/// >>> ir = molrs.io.cgsmiles.CgSmilesIr("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
 /// >>> len(ir.levels[0].nodes)
 /// 5
 /// >>> ir.to_atomistic().n_atoms
 /// 11
-#[pyclass(module = "molrs.io.smiles", name = "CGSmilesIR")]
-pub struct PyCGSmilesIR {
-    inner: CGSmilesIR,
+#[pyclass(module = "molrs.io.cgsmiles", name = "CgSmilesIr")]
+pub struct PyCgSmilesIr {
+    inner: CgSmilesIr,
     /// The string that was parsed, kept for `__repr__` and for slicing a
     /// fragment entry's own text out by its span. Never re-parsed.
     input: String,
 }
 
 #[pymethods]
-impl PyCGSmilesIR {
+impl PyCgSmilesIr {
     /// Parse `text` into its `CGsmiles` intermediate representation.
     ///
     /// Parameters
@@ -721,11 +722,11 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> molrs.io.smiles.CGSmilesIR("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
+    /// >>> molrs.io.cgsmiles.CgSmilesIr("{[#A][#B]}.{#A=[$]C,#B=[$]O}").to_atomistic().n_atoms
     /// 2
     #[new]
     fn new(text: &str) -> PyResult<Self> {
-        let inner = parse_cgsmiles(text).map_err(smiles_error_to_pyerr)?;
+        let inner = CgSmilesIr::parse(text).map_err(smiles_error_to_pyerr)?;
         Ok(Self {
             inner,
             input: text.to_owned(),
@@ -736,13 +737,13 @@ impl PyCGSmilesIR {
     ///
     /// Returns
     /// -------
-    /// list of CGGraph
+    /// list of CgGraph
     #[getter]
-    fn levels(&self) -> Vec<PyCGGraph> {
+    fn levels(&self) -> Vec<PyCgGraph> {
         self.inner
             .levels
             .iter()
-            .map(|level| PyCGGraph {
+            .map(|level| PyCgGraph {
                 inner: level.clone(),
             })
             .collect()
@@ -755,7 +756,7 @@ impl PyCGSmilesIR {
     ///
     /// Returns
     /// -------
-    /// list of dict of (str, CGFragmentDef)
+    /// list of dict of (str, CgFragmentDef)
     ///
     /// Raises
     /// ------
@@ -781,7 +782,7 @@ impl PyCGSmilesIR {
                         .to_owned();
                     dict.set_item(
                         name,
-                        PyCGFragmentDef {
+                        PyCgFragmentDef {
                             inner: def.clone(),
                             input,
                         },
@@ -854,7 +855,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.CgSmilesIr("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> ir.to_atomistic().n_atoms
     /// 11
     fn to_atomistic(&self, py: Python<'_>) -> PyResult<Py<PyAtomistic>> {
@@ -890,14 +891,14 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> ir = molrs.io.smiles.CGSmilesIR("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
+    /// >>> ir = molrs.io.cgsmiles.CgSmilesIr("{[#OH][#PEO]|3[#OH]}.{#OH=[$]O,#PEO=[$]COC[$]}")
     /// >>> sorted(ir.templates())
     /// ['OH', 'PEO']
     /// >>> ir.templates()["PEO"].n_ports
     /// 2
     ///
     /// A single unit needs no table:
-    /// ``SmilesIR.from_fragment("[<]OCC[>]").to_template()`` builds the same
+    /// ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` builds the same
     /// template from the body alone.
     fn templates<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let templates = self.inner.templates().map_err(smiles_error_to_pyerr)?;
@@ -935,7 +936,7 @@ impl PyCGSmilesIR {
     ///
     /// Examples
     /// --------
-    /// >>> cg = molrs.io.smiles.CGSmilesIR("{[#1][#1][#1][#4]}").to_coarsegrain()
+    /// >>> cg = molrs.io.cgsmiles.CgSmilesIr("{[#1][#1][#1][#4]}").to_coarsegrain()
     /// >>> cg.n_beads
     /// 4
     fn to_coarsegrain(&self, py: Python<'_>) -> PyResult<Py<PyCoarseGrain>> {
@@ -943,23 +944,55 @@ impl PyCGSmilesIR {
         PyCoarseGrain::from_core(py, cg)
     }
 
-    /// ``CGSmilesIR('…', levels=…)``, quoting the string that was parsed.
+    /// ``CgSmilesIr('…', levels=…)``, quoting the string that was parsed.
     fn __repr__(&self) -> String {
         format!(
-            "CGSmilesIR('{}', levels={})",
+            "CgSmilesIr('{}', levels={})",
             self.input,
             self.inner.levels.len()
         )
     }
 }
 
+/// Read the molecule a CGsmiles string states: its lowest resolution expanded
+/// into atoms (``CgSmilesIr(text).to_atomistic()``).
+///
+/// Topology only — atoms, bonds and the per-atom ``frag_id`` saying which
+/// bead each atom came from; no coordinates, no added hydrogens.
+///
+/// Parameters
+/// ----------
+/// text : str
+///     A CGsmiles string, every resolution block it writes.
+///
+/// Returns
+/// -------
+/// Atomistic
+///
+/// Raises
+/// ------
+/// SmilesError
+///     A :class:`ValueError`: the string does not parse, or its lowest level
+///     does not expand.
+///
+/// Examples
+/// --------
+/// >>> molrs.io.read_cgsmiles_str("{[#A][#B]}.{#A=[$]C,#B=[$]O}").n_atoms
+/// 2
+#[pyfunction]
+pub fn read_cgsmiles_str(py: Python<'_>, text: &str) -> PyResult<Py<PyAtomistic>> {
+    let mol = molrs::io::read_cgsmiles_str(text).map_err(smiles_error_to_pyerr)?;
+    PyAtomistic::from_core(py, mol)
+}
+
 /// Register the CGsmiles front door and the read-only records it hands out.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyCGSmilesIR>()?;
-    m.add_class::<PyCGGraph>()?;
-    m.add_class::<PyCGNode>()?;
-    m.add_class::<PyCGEdge>()?;
-    m.add_class::<PyCGFragmentDef>()?;
+    crate::add_function(m, "molrs.io", wrap_pyfunction!(read_cgsmiles_str, m)?)?;
+    m.add_class::<PyCgSmilesIr>()?;
+    m.add_class::<PyCgGraph>()?;
+    m.add_class::<PyCgNode>()?;
+    m.add_class::<PyCgEdge>()?;
+    m.add_class::<PyCgFragmentDef>()?;
     m.add_class::<PyResolvedPair>()?;
     m.add_class::<PyPairEnd>()?;
     m.add_class::<PyBondingDescriptor>()?;

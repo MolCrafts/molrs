@@ -132,8 +132,8 @@ class TestFrameBlockHandle:
         rows = self._grid_frame()["atoms"].select_rows([2, 0])
         np.testing.assert_array_equal(rows["x"], [3.0, 1.0])
 
-    def test_write_block_csv_writes_the_stored_rows(self):
-        text = molrs.io.write_block_csv(self._grid_frame()["atoms"])
+    def test_write_csv_block_str_writes_the_stored_rows(self):
+        text = molrs.io.write_csv_block_str(self._grid_frame()["atoms"])
         lines = text.splitlines()
         assert lines[0] == "x"
         assert [float(v) for v in lines[1:]] == [1.0, 2.0, 3.0]

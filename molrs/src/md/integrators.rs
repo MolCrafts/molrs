@@ -3,7 +3,7 @@
 //! Required pieces go in the constructor — no `bind_*` afterthoughts:
 //!
 //! ```ignore
-//! VelocityVerlet::new(dt, MicPairs::new(Member::pair(lj), skin).unwrap(), mass, Some(bx))?;
+//! VelocityVerlet::new(dt, MicPairs::new(ForceTerm::pair(lj), skin).unwrap(), mass, Some(bx))?;
 //! Langevin::new(dt, gamma, kbt, SelfPairedForces::new(potentials), mass, seed, None)?;
 //! ```
 //!
@@ -498,17 +498,17 @@ mod tests {
     use ndarray::{Array2, ArrayView2, array};
 
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::ff::potential::{Member, Potential, Potentials};
+    use molrs::ff::potential::{ForceTerm, Potential, Potentials};
 
     use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::pair::PairLjCut;
 
     fn cube(a: F) -> SimBox {
         SimBox::cube(a, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
-    fn soft_lj(n: usize, box_a: F) -> (LJCut, VerletSkin, Array2<F>) {
+    fn soft_lj(n: usize, box_a: F) -> (PairLjCut, VerletSkin, Array2<F>) {
         let cutoff = 2.5;
         let skin = 0.5;
         let mut pos = Array2::<F>::zeros((n, 3));
@@ -526,7 +526,7 @@ mod tests {
             cube(box_a),
         )
         .unwrap();
-        let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
+        let lj = PairLjCut::lj126(1.0, 1.0, cutoff).unwrap();
         (lj, nl, pos)
     }
 
@@ -562,7 +562,7 @@ mod tests {
             dt,
             gamma,
             kbt,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(mass, 1).unwrap().view(),
             0,
             None,
@@ -582,7 +582,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(2, 40.0);
         let nve = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
@@ -593,7 +593,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 2).unwrap().view(),
             0,
             None,
@@ -608,7 +608,7 @@ mod tests {
         assert!(
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
                 array![-1.0, 1.0].view(),
                 None
             )
@@ -623,7 +623,7 @@ mod tests {
             0.01,
             0.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             array![1.0].view(),
             0,
             None,
@@ -642,7 +642,7 @@ mod tests {
                 0.01,
                 1.0,
                 0.0,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
                 array![1.0].view(),
                 0,
                 None
@@ -659,7 +659,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
@@ -670,7 +670,7 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
@@ -690,7 +690,7 @@ mod tests {
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
@@ -707,7 +707,7 @@ mod tests {
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
         let mut a = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
@@ -715,7 +715,7 @@ mod tests {
         let (lj, nl, _) = soft_lj(4, 40.0);
         let mut b = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
@@ -732,12 +732,12 @@ mod tests {
 
     #[test]
     fn potentials_merge_nonbond_and_bonded_terms() {
-        // A Potentials collection [LJCut, Uniform] through the integrator
+        // A Potentials collection [PairLjCut, Uniform] through the integrator
         // must equal the lone LJ evaluation plus the uniform offsets.
         let (lj, nl, pos) = soft_lj(2, 40.0);
         let mut lone = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
@@ -746,14 +746,14 @@ mod tests {
 
         let (lj, nl, _) = soft_lj(2, 40.0);
         let mut pots = Potentials::new();
-        pots.push(Member::pair(lj));
-        pots.push(Member::plain(Uniform {
+        pots.push(ForceTerm::pair(lj));
+        pots.push(ForceTerm::plain(Uniform {
             energy: 0.25,
             fx: -1.5,
         }));
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(pots), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(pots), nl).unwrap(),
             uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
@@ -802,10 +802,10 @@ mod tests {
                 cube(20.0),
             )
             .unwrap();
-            let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
+            let lj = PairLjCut::lj126(1.0, 1.0, cutoff).unwrap();
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
                 uniform_masses(1.0, 2).unwrap().view(),
                 None,
             )
@@ -847,8 +847,8 @@ mod ghost_path_tests {
     use super::*;
     use molrs::core::SimBox;
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::ff::potential::Member;
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::ForceTerm;
+    use molrs::ff::potential::pair::PairLjCut;
     use ndarray::array;
 
     use molrs::core::GhostHalo;
@@ -906,7 +906,7 @@ mod ghost_path_tests {
         let mut ig = VelocityVerlet::new(
             0.2,
             GhostPairs::new(
-                Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
+                ForceTerm::pair(PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
                 halo,
             )
             .unwrap(),
@@ -996,7 +996,7 @@ mod ghost_path_tests {
             let mut ig = VelocityVerlet::new(
                 1.0,
                 GhostPairs::new(
-                    Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
+                    ForceTerm::pair(PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
                     halo,
                 )
                 .unwrap(),
@@ -1039,7 +1039,7 @@ mod ghost_path_tests {
     /// have been none.
     #[test]
     fn the_two_regimes_derive_the_same_virial() {
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::forcefield::combining_rule::CombiningRule;
 
         let l = 12.0_f64;
         let cutoff = 5.0;
@@ -1060,10 +1060,10 @@ mod ghost_path_tests {
         let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
         let type_id: Vec<u32> = (0..n).map(|i| (i % 2) as u32).collect();
         let lj = || {
-            LJCut::typed(
+            PairLjCut::typed(
                 type_id.clone(),
                 &per_type,
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 cutoff,
                 12,
                 6,
@@ -1085,7 +1085,7 @@ mod ghost_path_tests {
             bx.clone(),
         )
         .unwrap();
-        let mic = MicPairs::new(Member::pair(lj()), skin)
+        let mic = MicPairs::new(ForceTerm::pair(lj()), skin)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
@@ -1093,7 +1093,7 @@ mod ghost_path_tests {
             .expect("a typed pair kernel tallies its virial");
 
         let halo = GhostHalo::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let ghost = GhostPairs::new(Member::pair(lj()), halo)
+        let ghost = GhostPairs::new(ForceTerm::pair(lj()), halo)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()

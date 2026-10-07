@@ -11,29 +11,29 @@
 //! Callers pass only flat coordinates — no [`Frame`] in the hot loop.
 //! Construction from a [`Frame`] happens once via [`PotentialCompiler::compile`](compile::PotentialCompiler::compile).
 
-pub mod geometry;
+pub(crate) mod flat_coords;
 
 pub mod angle;
 pub mod bond;
+pub(crate) mod builtin_kernels;
 pub mod cmap;
 pub(crate) mod compile;
 pub mod dihedral;
 mod error;
-pub mod generic;
+mod explicit_terms;
+pub mod form_kernel;
 pub mod improper;
-mod instances;
 pub mod kspace;
-pub(crate) mod need;
 mod neighbor_pairs;
 pub mod pair;
-pub(crate) mod registry;
+pub(crate) mod param_reads;
 pub mod soft;
 
+pub(crate) use builtin_kernels::BuiltinKernels;
 pub use compile::PotentialCompiler;
 pub use error::CompileError;
-pub use instances::Instances;
+pub use explicit_terms::ExplicitTerms;
 pub use neighbor_pairs::intramolecular_pairs_from_neighbors;
-pub use registry::KernelRegistry;
 
 use std::collections::{HashMap, HashSet};
 
@@ -297,7 +297,7 @@ pub(crate) fn end_pairs(
 /// * [`PairDriven`] — the sum runs over whatever pairs a neighbour search turns
 ///   up. Every pair kernel.
 ///
-/// [`Member`] is the three of them as one value, chosen when the kernel is
+/// [`ForceTerm`] is the three of them as one value, chosen when the kernel is
 /// built. It exists because a `Box<dyn Potential>` cannot be asked which of the
 /// two it also is — the question used to be put to `terms()`, whose job is to
 /// return a table and which allocated one per member per step to answer it.
@@ -482,7 +482,7 @@ pub trait PairDriven: Potential {
 /// reads neither. Which part a member plays is settled by its constructor, and
 /// this is where that answer is kept, so no loop has to re-derive it per step
 /// and no method has to carry a default that is wrong for half its implementors.
-pub enum Member {
+pub enum ForceTerm {
     /// A bonded term: evaluated against an index table the caller supplies.
     Indexed(Box<dyn IndexedTerms>),
     /// A non-bonded term: evaluated against a neighbour table, with per-pair
@@ -493,35 +493,35 @@ pub enum Member {
     Plain(Box<dyn Potential>),
 }
 
-impl Member {
+impl ForceTerm {
     /// A bonded term — one whose rows are named by an index table.
     pub fn indexed(p: impl IndexedTerms + 'static) -> Self {
-        Member::Indexed(Box::new(p))
+        ForceTerm::Indexed(Box::new(p))
     }
 
     /// A non-bonded term — one summed over a neighbour table.
     pub fn pair(p: impl PairDriven + 'static) -> Self {
-        Member::Pair(Box::new(p))
+        ForceTerm::Pair(Box::new(p))
     }
 
     /// Anything else — evaluated from coordinates alone.
     pub fn plain(p: impl Potential + 'static) -> Self {
-        Member::Plain(Box::new(p))
+        ForceTerm::Plain(Box::new(p))
     }
 
     /// This member as a plain potential, whatever part it plays.
     pub fn as_potential(&self) -> &dyn Potential {
         match self {
-            Member::Indexed(p) => &**p,
-            Member::Pair(p) => &**p,
-            Member::Plain(p) => &**p,
+            ForceTerm::Indexed(p) => &**p,
+            ForceTerm::Pair(p) => &**p,
+            ForceTerm::Plain(p) => &**p,
         }
     }
 
     /// The index table, for a bonded member.
     pub fn terms(&self) -> Option<Array2<u32>> {
         match self {
-            Member::Indexed(p) => Some(p.terms()),
+            ForceTerm::Indexed(p) => Some(p.terms()),
             _ => None,
         }
     }
@@ -531,7 +531,7 @@ impl Member {
     /// table is bound to none.
     pub fn binds_a_fixed_pair_list(&self) -> bool {
         match self {
-            Member::Pair(p) => p.binds_a_fixed_pair_list(),
+            ForceTerm::Pair(p) => p.binds_a_fixed_pair_list(),
             _ => false,
         }
     }
@@ -539,23 +539,23 @@ impl Member {
     /// Extend per-atom state onto periodic copies. Only a pair member keeps
     /// any; see [`PairDriven::gather_onto_copies`].
     pub fn gather_onto_copies(&mut self, owner: &[u32]) {
-        if let Member::Pair(p) = self {
+        if let ForceTerm::Pair(p) = self {
             p.gather_onto_copies(owner);
         }
     }
 }
 
-impl std::fmt::Debug for Member {
+impl std::fmt::Debug for ForceTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Member::Indexed(_) => "Member::Indexed",
-            Member::Pair(_) => "Member::Pair",
-            Member::Plain(_) => "Member::Plain",
+            ForceTerm::Indexed(_) => "ForceTerm::Indexed",
+            ForceTerm::Pair(_) => "ForceTerm::Pair",
+            ForceTerm::Plain(_) => "ForceTerm::Plain",
         })
     }
 }
 
-impl Potential for Member {
+impl Potential for ForceTerm {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         self.as_potential().calc_energy_forces(coords)
     }
@@ -591,7 +591,7 @@ impl Potential for Box<dyn Potential> {
 /// A kernel built for a neighbour-driven evaluation, and which of a force
 /// field's special-bonds weight sets scales it. `None` for a bonded kernel:
 /// it *is* the bonded interaction, not a scaled copy of one.
-pub type TypedKernel = (Member, Option<crate::ff::ir::SpecialClass>);
+pub type ScaledTerm = (ForceTerm, Option<crate::ff::ir::SpecialClass>);
 
 /// One member of a neighbour-driven evaluation: the kernel, and the weights
 /// its non-bonded term takes.
@@ -599,7 +599,7 @@ pub type TypedKernel = (Member, Option<crate::ff::ir::SpecialClass>);
 /// The weights travel with the member because a force field may scale close
 /// van-der-Waals and electrostatic neighbours differently, and in molrs those
 /// are separate kernels.
-pub type TypedMember = (Member, Option<PairWeights>);
+pub type WeightedTerm = (ForceTerm, Option<PairWeights>);
 
 /// The weights a neighbour-driven non-bonded member applies: by bond distance
 /// (`special_bonds`), and zero on the pairs the 1-4 exceptions kernel prices
@@ -837,8 +837,8 @@ pub struct Potentials {
     /// which of them held atom indices, because the role had to be recovered by
     /// calling `terms()` — a method whose job is to return a table, and which
     /// allocated one per bonded member per step to answer a question that was
-    /// settled at construction. [`Member`] is that answer, kept.
-    inner: Vec<Member>,
+    /// settled at construction. [`ForceTerm`] is that answer, kept.
+    inner: Vec<ForceTerm>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
     /// `0` when unknown (e.g. built incrementally via [`Potentials::push`]).
     n_atoms: usize,
@@ -860,9 +860,9 @@ impl Potentials {
         }
     }
 
-    /// Add a member. Which part it plays is [`Member`]'s to say, and its
+    /// Add a member. Which part it plays is [`ForceTerm`]'s to say, and its
     /// constructor already said it.
-    pub fn push(&mut self, member: Member) {
+    pub fn push(&mut self, member: ForceTerm) {
         self.inner.push(member);
     }
 
@@ -894,12 +894,12 @@ impl Potentials {
     /// neighbour table — needs them one at a time, because the index table a
     /// member wants is the member's own. Summing them all is what
     /// [`calc_energy_forces`](Self::calc_energy_forces) is for.
-    pub fn members(&self) -> &[Member] {
+    pub fn members(&self) -> &[ForceTerm] {
         &self.inner
     }
 
     /// Give up the members, for a caller that wants to own them individually.
-    pub fn into_members(self) -> Vec<Member> {
+    pub fn into_members(self) -> Vec<ForceTerm> {
         self.inner
     }
 
@@ -970,7 +970,7 @@ impl Potential for Potentials {
 /// members that read a pair table and evaluates the rest the ordinary way.
 ///
 /// The split used to be a `Vec<bool>` filled by calling `terms()` on every
-/// member; it is now the member's own [`Member`] variant, which its
+/// member; it is now the member's own [`ForceTerm`] variant, which its
 /// constructor chose.
 impl PairDriven for Potentials {
     /// Every member accumulates into the same buffer, and one member that
@@ -991,7 +991,7 @@ impl PairDriven for Potentials {
         let mut total_w = Some(Virial::ZERO);
         for m in &self.inner {
             let (e, w) = match m {
-                Member::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
+                ForceTerm::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
                 other => {
                     let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
                     for (acc, v) in out.iter_mut().zip(&f) {
@@ -1017,7 +1017,7 @@ impl PairDriven for Potentials {
     /// True if *any* member is. One compiled kernel is enough to make the
     /// aggregate's answer independent of the table it is handed.
     fn binds_a_fixed_pair_list(&self) -> bool {
-        self.inner.iter().any(Member::binds_a_fixed_pair_list)
+        self.inner.iter().any(ForceTerm::binds_a_fixed_pair_list)
     }
 
     /// The members' virials, summed — and `None` the moment one of them
@@ -1037,7 +1037,7 @@ impl PairDriven for Potentials {
         let mut total_w = Some(Virial::ZERO);
         for m in &self.inner {
             let (e, f, w) = match m {
-                Member::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
+                ForceTerm::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
                 other => {
                     let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
                     (e, f, None)
@@ -1277,7 +1277,7 @@ mod tests {
             let Some(terms) = member.terms() else {
                 continue;
             };
-            let Member::Indexed(pot) = member else {
+            let ForceTerm::Indexed(pot) = member else {
                 unreachable!("only an indexed member answers with a table")
             };
             let (e0, f0) = pot.calc_energy_forces(&coords);
@@ -1348,8 +1348,8 @@ mod tests {
     #[test]
     fn test_potentials_collection() {
         let mut pots = Potentials::new();
-        pots.push(Member::plain(DummyPotential { value: 1.0 }));
-        pots.push(Member::plain(DummyPotential { value: 2.0 }));
+        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
+        pots.push(ForceTerm::plain(DummyPotential { value: 2.0 }));
 
         assert_eq!(pots.len(), 2);
 
@@ -1398,8 +1398,8 @@ mod tests {
             molrs::core::QueryMode::SelfQuery { n_points: 3 },
         );
         let mut pots = Potentials::new();
-        pots.push(Member::plain(PairCounting));
-        pots.push(Member::plain(DummyPotential { value: 1.0 }));
+        pots.push(ForceTerm::plain(PairCounting));
+        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
         let coords: Vec<F> = vec![0.0; 9];
         let (e, _) = pots.calc_energy_forces_with_pairs(&coords, &pairs);
         assert!((e - 3.0).abs() < 1e-12);
@@ -1422,16 +1422,16 @@ mod tests {
     fn registering_a_style_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
         // registering its constructor — no edit to PotentialCompiler required.
-        fn my_ctor(
+        fn my_constructor(
             _sp: &Params,
             _tp: &[(&str, &Params)],
             _f: &Frame,
-        ) -> Result<Member, crate::ff::potential::CompileError> {
-            Ok(Member::plain(DummyPotential { value: 42.0 }))
+        ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+            Ok(ForceTerm::plain(DummyPotential { value: 42.0 }))
         }
         crate::ff::ir::register_style(
             crate::ff::ir::StyleSpec::new("pair", "test/custom"),
-            Some(crate::ff::ir::Kernel::ctor(my_ctor)),
+            Some(crate::ff::ir::Kernel::constructor(my_constructor)),
         )
         .unwrap();
 
@@ -1748,7 +1748,7 @@ mod tests {
 }
 
 #[cfg(test)]
-pub(crate) mod test_util {
+pub(crate) mod fixtures {
     use super::Potential;
     use molrs::op::F;
 

@@ -10,17 +10,17 @@
 //! | [`charge`]         | `ff::charge`         | `molrs.ff.charge`      |
 //! | [`ir`]             | `ff::ir`             | `molrs.ff.ir`          |
 //! | [`params`]         | `ff::params`         | `molrs.ff.params`      |
-//! | [`scale_lj`]       | `ff::scale_lj`       | `molrs.ff.scale_lj`    |
+//! | [`clpol_scaling`]  | `ff::clpol_scaling`  | `molrs.ff.clpol_scaling` |
 //!
 //! No file format is here: force-field files, like every other file, are
-//! `molrs.io`'s (`crate::io::forcefield`).
+//! `molrs.io`'s (`crate::io`).
 
 pub mod charge;
+pub mod clpol_scaling;
 pub mod forcefield;
 pub mod ir;
 pub mod params;
 pub mod potential;
-pub mod scale_lj;
 pub mod typifier;
 
 use pyo3::prelude::*;
@@ -33,6 +33,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     typifier::register(m)?;
     charge::register(m)?;
     params::register(m)?;
-    scale_lj::register(m)?;
+    clpol_scaling::register(m)?;
     crate::add_submodule(m, "ir", "molrs.ff.ir", ir::register)
 }

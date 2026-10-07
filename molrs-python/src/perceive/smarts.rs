@@ -1,16 +1,20 @@
 //! SMARTS matching and reaction transforms (`molrs::perceive::smarts`):
 //! [`PySmartsPattern`] and the [`PySmartsMatch`] it yields, and the
 //! reaction-SMARTS [`PyReaction`]. A pattern is a query over a *perceived*
-//! graph — matching needs ring membership and aromaticity — so it is
-//! perception's, not a text format's; the SMILES / SMARTS front-end that
-//! writes the text is `molrs.io`'s.
+//! graph — matching needs ring membership and aromaticity — so SMARTS is
+//! perception's, wholly: parsing, matching, and a pattern generated from an
+//! atom's environment ([`PySmartsPattern::from_environment`]).
 
 use std::collections::HashMap;
 
 use molrs::core::{NodeId, node_from_u64, node_to_u64};
-use molrs::perceive::smarts::{MatchOptions, Reaction, RingPrimitive, SmartsPattern};
+use molrs::perceive::smarts::{
+    EnvironmentOptions, MatchOptions, NeighborStyle, Reaction, RingPrimitive, SmartsPattern,
+};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
+use pyo3::types::PyType;
 
 use crate::core::molgraph::PyAtomistic;
 use crate::error::molrs_error_to_pyerr;
@@ -191,11 +195,111 @@ impl PySmartsPattern {
         self.inner.map_label(query_atom)
     }
 
+    /// The pattern that states the local environment of ``center`` in
+    /// ``mol``: its element, and as many of degree, hydrogen count, charge,
+    /// aromaticity, ring membership and neighbours out to ``reach`` bonds as
+    /// the flags ask for. The pattern matches ``mol`` at ``center`` (as query
+    /// atom 0); ``str(pattern)`` is its SMARTS text.
+    ///
+    /// Parameters
+    /// ----------
+    /// mol : Atomistic
+    ///     The molecule.
+    /// center : int
+    ///     Atom handle of the centre atom.
+    /// reach : int, default 1
+    ///     Bond depth from the centre; at least 1.
+    /// atomic_number : bool, default True
+    ///     Write the centre as ``[#Z]`` rather than its element symbol.
+    /// include_degree, include_h_count, include_charge, include_aromatic : bool, default True
+    /// include_ring_membership, include_ring_size : bool, default False
+    /// include_explicit_h_atoms : bool, default False
+    /// include_bond_orders : bool, default True
+    /// neighbor_style : {"chain", "recursive"}, default "chain"
+    ///     Neighbours as spanning-tree branches, or as recursive ``$(...)``
+    ///     environments of the centre.
+    /// canonical_neighbor_order : bool, default True
+    ///
+    /// Returns
+    /// -------
+    /// SmartsPattern
+    ///
+    /// Raises
+    /// ------
+    /// ValueError
+    ///     ``reach`` is 0, ``center`` is not an atom of ``mol``, an atom has
+    ///     no known element, or ``neighbor_style`` is not one of the two.
+    #[classmethod]
+    #[pyo3(signature = (
+        mol,
+        center,
+        *,
+        reach = 1,
+        atomic_number = true,
+        include_degree = true,
+        include_h_count = true,
+        include_charge = true,
+        include_aromatic = true,
+        include_ring_membership = false,
+        include_ring_size = false,
+        include_explicit_h_atoms = false,
+        include_bond_orders = true,
+        neighbor_style = "chain",
+        canonical_neighbor_order = true,
+    ))]
+    #[allow(clippy::too_many_arguments, reason = "Public Python keyword arguments")]
+    fn from_environment(
+        _cls: &Bound<'_, PyType>,
+        mol: &PyAtomistic,
+        center: u64,
+        reach: u32,
+        atomic_number: bool,
+        include_degree: bool,
+        include_h_count: bool,
+        include_charge: bool,
+        include_aromatic: bool,
+        include_ring_membership: bool,
+        include_ring_size: bool,
+        include_explicit_h_atoms: bool,
+        include_bond_orders: bool,
+        neighbor_style: &str,
+        canonical_neighbor_order: bool,
+    ) -> PyResult<Self> {
+        let neighbor_style = match neighbor_style {
+            "chain" => NeighborStyle::Chain,
+            "recursive" => NeighborStyle::Recursive,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "neighbor_style must be 'chain' or 'recursive', got {other:?}"
+                )));
+            }
+        };
+        let options = EnvironmentOptions {
+            reach,
+            atomic_number,
+            include_degree,
+            include_h_count,
+            include_charge,
+            include_aromatic,
+            include_ring_membership,
+            include_ring_size,
+            include_explicit_h_atoms,
+            include_bond_orders,
+            neighbor_style,
+            canonical_neighbor_order,
+        };
+        let inner = SmartsPattern::from_environment(mol.core(), node_from_u64(center), &options)
+            .map_err(molrs_error_to_pyerr)?;
+        Ok(Self { inner })
+    }
+
+    /// The pattern's SMARTS text.
+    fn __str__(&self) -> String {
+        self.inner.to_string()
+    }
+
     fn __repr__(&self) -> String {
-        format!(
-            "SmartsPattern(num_query_atoms={})",
-            self.inner.num_query_atoms()
-        )
+        format!("SmartsPattern({:?})", self.inner.to_string())
     }
 }
 

@@ -6,20 +6,20 @@
 //! the plane (centre, `atomj`, `atomk`) — MMFF's `I J K L` with `J` central,
 //! read centre first.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
 
 use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 
-pub struct MMFFOutOfPlane {
+pub struct ImproperMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -27,7 +27,7 @@ pub struct MMFFOutOfPlane {
     koop: Vec<F>,
 }
 
-impl MMFFOutOfPlane {
+impl ImproperMmff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -95,7 +95,7 @@ impl MMFFOutOfPlane {
     }
 }
 
-impl Potential for MMFFOutOfPlane {
+impl Potential for ImproperMmff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -114,7 +114,7 @@ impl Potential for MMFFOutOfPlane {
     }
 }
 
-impl IndexedTerms for MMFFOutOfPlane {
+impl IndexedTerms for ImproperMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -145,11 +145,11 @@ impl IndexedTerms for MMFFOutOfPlane {
     }
 }
 
-pub fn mmff_oop_ctor(
+pub fn improper_mmff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked koop onto each improper.
     // This kernel only reads the column and evaluates.
     let block = frame
@@ -171,7 +171,7 @@ pub fn mmff_oop_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("missing atoml")?;
-    let koopc = need::instance_col("mmff_oop", block, "koop")?;
+    let koopc = param_reads::instance_col("mmff_oop", block, "koop")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al, mut koop) = (
@@ -189,7 +189,7 @@ pub fn mmff_oop_ctor(
         al.push(lc[idx] as usize);
         koop.push(koopc[idx] as F);
     }
-    Ok(Member::indexed(MMFFOutOfPlane {
+    Ok(ForceTerm::indexed(ImproperMmff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

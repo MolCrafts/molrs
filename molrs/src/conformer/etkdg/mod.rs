@@ -31,7 +31,7 @@ use molrs::core::Atomistic;
 use molrs::core::MolRsError;
 use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
 use molrs::ff::typifier::Typing;
-use molrs::ff::typifier::mmff::MMFF94Typifier;
+use molrs::ff::typifier::mmff::Mmff94Typifier;
 use molrs::perceive::add_hydrogens;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
@@ -438,9 +438,9 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
     // A fresh typing per call: its output holds exactly this molecule's types.
-    // `MMFF94Typifier::new` shares the process-wide memoised MMFF94 library, so
+    // `Mmff94Typifier::new` shares the process-wide memoised MMFF94 library, so
     // this costs no parameter assembly.
-    let mut typing = Typing::new(MMFF94Typifier::new());
+    let mut typing = Typing::new(Mmff94Typifier::new());
     let mut frame = typing
         .typify(&staged)?
         .to_frame()

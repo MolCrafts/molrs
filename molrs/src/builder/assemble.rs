@@ -278,7 +278,7 @@ enum PortChoice {
 /// library template and each bond joins two units. A position `p` (Å) and an
 /// axis ([`CoarseGrain::axes`]) are optional: a site graph read from a CG
 /// model carries them, one written from a CGsmiles topology
-/// (`CGSmilesIR::to_coarsegrain`) does not.
+/// (`CgSmilesIr::to_coarsegrain`) does not.
 ///
 /// # Ports
 ///

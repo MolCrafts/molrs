@@ -19,7 +19,7 @@ import pytest
 
 def _acetanilide() -> molrs.core.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
-    heavy = molrs.io.smiles.SmilesIR("CC(=O)Nc1ccccc1").to_atomistic()
+    heavy = molrs.io.smiles.SmilesIr("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 
@@ -110,7 +110,7 @@ def test_a_native_gaff_subclass_cannot_override_match() -> None:
     with pytest.raises(TypeError, match="native typifier"):
 
         class _Bad(molrs.ff.typifier.GaffTypifier):  # pragma: no cover - refused
-            def match(self, graph):
+            def assign(self, graph):
                 return None
 
 

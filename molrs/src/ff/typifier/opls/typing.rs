@@ -5,7 +5,7 @@
 //! a `%label` (e.g. benzene's aromatic-H type `opls_146` =
 //! `[#1]-[c;%opls_145]`) is matched only after its dependency is resolved. The
 //! engine returns the per-atom `opls_NNN` assignment, which this function turns
-//! into the node [`Annotation`]s of a [`Match`](crate::ff::typifier::Match):
+//! into the node [`Annotation`]s of a [`TypeAssignment`](crate::ff::typifier::TypeAssignment):
 //! each type's `type` (with its `atom/full` row's `mass` and `charge`) and
 //! `class`. It writes nothing; the typing base stamps the match.
 //!
@@ -36,7 +36,7 @@
 //! When several defs match the same atom *within a level*:
 //! 1. candidates dominated by another candidate drop out — a type dominates
 //!    another when it sits on a higher `layer`, or on the same layer overrides
-//!    it directly or transitively (see [`OplsTypingMeta`]);
+//!    it directly or transitively (see [`OplsTypingMetadata`]);
 //! 2. among the rest, higher explicit `priority` wins (absent = 0);
 //! 3. then the more specific pattern (more query atoms);
 //! 4. then the earlier sorted type name.
@@ -66,7 +66,7 @@ use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::typifier::Annotation;
 
 use super::layered::LayeredTypingEngine;
-use super::meta::OplsTypingMeta;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// The OPLS-AA atom typing of one graph.
 pub(crate) struct AtomTyping {
@@ -90,7 +90,7 @@ pub(crate) struct AtomTyping {
 /// - `class` → [`Annotation::Value`] of the type's class, when `meta` has one.
 ///
 /// Atoms typed by no def get no annotation (and stay untyped); the strict
-/// [`OPLSAATypifier`](super::OPLSAATypifier) refuses such a molecule.
+/// [`OplsAaTypifier`](super::OplsAaTypifier) refuses such a molecule.
 ///
 /// # Errors
 ///
@@ -98,7 +98,7 @@ pub(crate) struct AtomTyping {
 /// `def`, an override naming an absent type, or an overrides cycle.
 pub(crate) fn typify_atoms(
     mol: &Atomistic,
-    meta: &OplsTypingMeta,
+    meta: &OplsTypingMetadata,
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
@@ -138,8 +138,8 @@ pub(crate) fn typify_atoms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::Match;
     use crate::ff::typifier::OplsTypeRow;
+    use crate::ff::typifier::TypeAssignment;
     use molrs::core::Atom;
     use molrs::core::BondOrder;
 
@@ -147,14 +147,14 @@ mod tests {
     /// through the typing base's one execution path.
     fn typed_graph(
         mol: &Atomistic,
-        meta: &OplsTypingMeta,
+        meta: &OplsTypingMetadata,
         ff: &ForceField,
     ) -> Result<Atomistic, String> {
         let typing = typify_atoms(mol, meta, ff)?;
         let mut graph = mol.clone();
-        let mut m = Match {
+        let mut m = TypeAssignment {
             nodes: typing.nodes,
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         m.declare_styles_of(ff);
         m.write_onto(&mut graph, &mut ff.empty_like())?;
@@ -164,7 +164,7 @@ mod tests {
     /// Build a tiny ethane-like skeleton C-C with explicit H neighbours so the
     /// `[C;X4](C)(H)(H)H` style defs have something to match. (Pure-function
     /// unit fixture — typing of real molecules by the shipped rules is the
-    /// golden tests of `opls/embedded.rs`.)
+    /// golden tests of `opls/shipped_forcefield.rs`.)
     fn ethane() -> Atomistic {
         let mut g = Atomistic::new();
         let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -179,8 +179,8 @@ mod tests {
         g
     }
 
-    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMeta {
-        let mut m = OplsTypingMeta::new();
+    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMetadata {
+        let mut m = OplsTypingMetadata::new();
         for (name, row) in rows {
             m.insert(*name, row.clone());
         }
@@ -293,7 +293,7 @@ mod tests {
         // matching dependency present (nothing is ever typed opls_145), the
         // `%opls_145` predicate never holds, so the def matches nothing — and
         // it is NOT an error. (Real layered typing is covered in
-        // `opls/layered.rs` and the golden tests of `opls/embedded.rs`.)
+        // `opls/layered.rs` and the golden tests of `opls/shipped_forcefield.rs`.)
         let m = meta_with(&[("opls_ref", row("HA", Some("[H][C;%opls_145]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
         let typed = typed_graph(&ethane(), &m, &ff).unwrap();

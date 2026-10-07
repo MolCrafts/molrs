@@ -41,45 +41,10 @@ use molrs::ff::charge::{
 
 use crate::core::molgraph::PyAtomistic;
 
-/// The `-c` flag of every correction family, paired with the table it reads.
-///
-/// Two, not seven: `BCCPARM.DAT` and `BCCPARM_ABCG2.DAT` are the only correction
-/// families that exist. `ATOMTYPE_GAS.DEF` is a set of atom *types* with no
-/// correction table, and `gaff` is an atom-type table too — naming either here would
-/// be naming a table that cannot correct a bond.
-const BCC_PARAMETER_SETS: &[(&str, BccParameterSet)] = &[
-    ("bcc", BccParameterSet::Bcc),
-    ("abcg2", BccParameterSet::Abcg2),
-];
-
-/// The correction family named by an antechamber `-c` flag.
-///
-/// # Errors
-///
-/// `ValueError` — an unknown name, including the atom-type table names (`"gaff"`)
-/// that a caller might reasonably confuse for one. Never a fallback: a correction row
-/// is keyed on atom types, so the wrong family silently looks up the wrong rows.
+/// The correction family named by an antechamber `-c` flag
+/// ([`BccParameterSet::from_name`]), as a Python `ValueError` when it names none.
 fn bcc_set_from_name(name: &str) -> PyResult<BccParameterSet> {
-    BCC_PARAMETER_SETS
-        .iter()
-        .find(|(flag, _)| *flag == name)
-        .map(|(_, set)| *set)
-        .ok_or_else(|| {
-            let known: Vec<&str> = BCC_PARAMETER_SETS.iter().map(|(flag, _)| *flag).collect();
-            PyValueError::new_err(format!(
-                "unknown BCC correction family {name:?}; expected one of {}",
-                known.join(", ")
-            ))
-        })
-}
-
-/// The `-c` flag of a correction family — the inverse of [`bcc_set_from_name`].
-fn bcc_set_name(set: BccParameterSet) -> &'static str {
-    BCC_PARAMETER_SETS
-        .iter()
-        .find(|(_, known)| *known == set)
-        .map(|(flag, _)| *flag)
-        .unwrap_or("")
+    BccParameterSet::from_name(name).map_err(PyValueError::new_err)
 }
 
 /// A charge failure, as a Python `ValueError`.
@@ -148,7 +113,7 @@ impl PyBccModel {
     /// The antechamber ``-c`` flag of this model's correction family.
     #[getter]
     fn parameter_set(&self) -> &'static str {
-        bcc_set_name(self.inner.parameter_set())
+        self.inner.parameter_set().name()
     }
 
     /// ``True`` — AM1-BCC averages its base charges over the topological-equivalence

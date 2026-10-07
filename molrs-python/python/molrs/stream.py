@@ -5,10 +5,11 @@ A producer binds a :class:`Publisher` and calls ``send(frame)`` once per
 simulation step. The call never blocks on the network: frames go through a
 bounded buffer that drops the oldest payload when a viewer cannot keep up, so
 a slow client slows nothing down. Viewers dial the socket and decode payloads
-with :func:`molrs.io.read_frame_bytes`; :func:`molrs.io.write_frame_bytes` is
-its inverse, the encoding the publisher puts on the wire (``"msgpack"`` or
-``"json"``). Like every reader and writer, those two are :mod:`molrs.io`'s;
-this module is the transport.
+with :func:`molrs.io.read_msgpack_frame_bytes` (or
+:func:`molrs.io.read_json_frame_str` from a JSON publisher); their inverses
+:func:`molrs.io.write_msgpack_frame_bytes` / :func:`molrs.io.write_json_frame_str`
+are the encodings the publisher puts on the wire. Like every reader and
+writer, those are :mod:`molrs.io`'s; this module is the transport.
 
 Traffic the other way is :class:`ControlCommand` — a viewer asking the producer
 to pause, change rate, or restrict the streamed atom subset. Nothing here acts

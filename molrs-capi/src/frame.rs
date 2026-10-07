@@ -153,14 +153,7 @@ pub unsafe extern "C" fn molrs_frame_from_smiles(
             }
         };
 
-        let ir = match molrs::io::smiles::parse_smiles(smiles_str) {
-            Ok(ir) => ir,
-            Err(e) => {
-                error::set_last_error(format!("{e}"));
-                return MolrsStatus::ParseError;
-            }
-        };
-        let mol = match molrs::io::smiles::to_atomistic(&ir) {
+        let mol = match molrs::io::read_smiles_str(smiles_str) {
             Ok(m) => m,
             Err(e) => {
                 error::set_last_error(format!("{e}"));

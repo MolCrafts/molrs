@@ -17,8 +17,8 @@ use crate::core::Atomistic;
 
 use crate::core::NodeId;
 
-use super::ast::{BondFacts, MolContext, RecursiveEval};
 use super::compile::QueryGraph;
+use super::predicate::{BondFacts, MolContext, RecursiveEval};
 use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.

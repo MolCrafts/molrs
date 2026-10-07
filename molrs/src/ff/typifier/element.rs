@@ -14,7 +14,7 @@ use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS};
 use molrs::core::{MolGraph, NodeId, PropValue};
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::typifier::{Annotation, Match, Typifier};
+use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
 
 /// A typifier whose labels are the elements themselves; it defines no force
 /// field.
@@ -34,7 +34,7 @@ use crate::ff::typifier::{Annotation, Match, Typifier};
 ///
 /// # Stamp-only
 ///
-/// The [`Match`] carries only [`Annotation::Value`] entries and no styles or
+/// The [`TypeAssignment`] carries only [`Annotation::Value`] entries and no styles or
 /// pair rows, so [`Typing::forcefield`](crate::ff::typifier::Typing::forcefield)
 /// stays empty. Masses and charges are left on the atoms as they are.
 ///
@@ -135,7 +135,7 @@ fn link_labels(
 }
 
 impl Typifier for ElementTypifier {
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         if graph.n_impropers() > 0 {
             return Err(format!(
                 "ElementTypifier derives no improper labels; the graph has {} impropers",
@@ -165,14 +165,14 @@ impl Typifier for ElementTypifier {
                 link_labels(graph, kind, &elements, &mut cache)?,
             );
         }
-        Ok(Match {
+        Ok(TypeAssignment {
             nodes,
             links,
-            ..Match::default()
+            ..TypeAssignment::default()
         })
     }
 
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         &self.library
     }
 }

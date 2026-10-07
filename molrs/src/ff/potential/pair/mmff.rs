@@ -24,7 +24,7 @@
 //! [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 //! [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
@@ -32,12 +32,12 @@ use crate::ff::forcefield::Params;
 #[cfg(test)]
 use crate::ff::params::mmff::DA_NEITHER;
 use crate::ff::params::mmff::{DA_ACCEPTOR, DA_DONOR};
+use crate::ff::potential::flat_coords::{sub3, validate_coords};
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::{sub3, validate_coords};
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::core::Neighbors;
@@ -45,13 +45,13 @@ use molrs::core::Virial;
 use molrs::op::F;
 
 // ---------------------------------------------------------------------------
-// MMFFVdW: Buffered 14-7 potential
+// PairMmffVdw: Buffered 14-7 potential
 // ---------------------------------------------------------------------------
 
 /// Buffered 14-7 van der Waals (MMFF.I eq. 8), one row per non-excluded pair.
 ///
 /// `r_star` is in Å and `epsilon` in kcal·mol⁻¹; both are the *combined* pair
-/// values produced by [`mmff_vdw_ctor`]'s combining rules (including the
+/// values produced by [`pair_mmff_vdw_constructor`]'s combining rules (including the
 /// donor/acceptor corrections), with the 1-4 weight (`lj14scale`, 1.0 for MMFF)
 /// already folded into `epsilon`.
 /// Where a pair's `(R*, ε)` comes from.
@@ -75,19 +75,19 @@ enum Source {
     /// today — but a style that set one would need the caller's special-bonds
     /// weights.
     PerAtom {
-        atoms: Vec<VdwAtomParams>,
-        style: VdwStyleParams,
+        atoms: Vec<PairMmffVdwAtomParams>,
+        style: PairMmffVdwStyleParams,
         /// How many of the entries above are atoms; the rest are copies, and
         /// are rebuilt from their owners whenever the copy list is.
         n_owned: usize,
     },
 }
 
-pub struct MMFFVdW {
+pub struct PairMmffVdw {
     source: Source,
 }
 
-impl MMFFVdW {
+impl PairMmffVdw {
     /// Parameters combined against a fixed pair list.
     pub fn compiled(
         atom_i: Vec<usize>,
@@ -109,8 +109,8 @@ impl MMFFVdW {
     }
 
     /// Per-atom vdW parameters, combined when a pair turns up by the same
-    /// rule [`mmff_vdw_ctor`] applies.
-    pub fn typed(atoms: Vec<VdwAtomParams>, style: VdwStyleParams) -> Self {
+    /// rule [`pair_mmff_vdw_constructor`] applies.
+    pub fn typed(atoms: Vec<PairMmffVdwAtomParams>, style: PairMmffVdwStyleParams) -> Self {
         let n_owned = atoms.len();
         Self {
             source: Source::PerAtom {
@@ -210,7 +210,7 @@ impl MMFFVdW {
     }
 }
 
-impl Potential for MMFFVdW {
+impl Potential for PairMmffVdw {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let _n = validate_coords(coords);
         let Source::Compiled {
@@ -235,7 +235,7 @@ impl Potential for MMFFVdW {
     }
 }
 
-impl PairDriven for MMFFVdW {
+impl PairDriven for PairMmffVdw {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -299,7 +299,7 @@ impl PairDriven for MMFFVdW {
 /// effective electron number N, `a_i` / `g_i` the MMFF scale factors A and G, and
 /// `da` the hydrogen-bond role ([`DA_NEITHER`](crate::ff::params::mmff::DA_NEITHER) / [`DA_DONOR`] / [`DA_ACCEPTOR`]).
 #[derive(Clone, Debug)]
-pub struct VdwAtomParams {
+pub struct PairMmffVdwAtomParams {
     /// Atomic polarizability α (Å³).
     pub alpha: f64,
     /// Slater-Kirkwood effective electron number N.
@@ -319,7 +319,7 @@ pub struct VdwAtomParams {
 /// the defaults below are MMFF94's own values and exist only so a hand-built
 /// style without the section still evaluates the standard force field.
 #[derive(Clone, Debug)]
-pub struct VdwStyleParams {
+pub struct PairMmffVdwStyleParams {
     /// `B` in the R* combining rule.
     pub b: f64,
     /// `Beta` in the R* combining rule.
@@ -330,11 +330,11 @@ pub struct VdwStyleParams {
     pub daeps: f64,
 }
 
-impl VdwStyleParams {
+impl PairMmffVdwStyleParams {
     /// Read the global vdW line from a gathered style: a hand-built style
     /// that omits the section has MMFF94's own values, the spec's defaults.
     pub fn from_style(sp: &Params) -> Result<Self, crate::ff::ir::IrError> {
-        let get = |key: &str| need::style_num("mmff_vdw", sp, key);
+        let get = |key: &str| param_reads::style_num("mmff_vdw", sp, key);
         Ok(Self {
             b: get("B")?,
             beta: get("Beta")?,
@@ -370,7 +370,11 @@ impl VdwStyleParams {
 ///
 /// `eps_ij` is evaluated at the **unscaled** `R*_ij`, then scaled — the order is
 /// load-bearing (`R*^-6` would otherwise pick up a spurious `DARAD^-6` = 3.8x).
-fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) -> (F, F) {
+fn vdw_combining(
+    pi: &PairMmffVdwAtomParams,
+    pj: &PairMmffVdwAtomParams,
+    sp: &PairMmffVdwStyleParams,
+) -> (F, F) {
     let rs_i = pi.a_i * pi.alpha.powf(0.25);
     let rs_j = pj.a_i * pj.alpha.powf(0.25);
     let gamma = (rs_i - rs_j) / (rs_i + rs_j);
@@ -415,12 +419,12 @@ fn vdw_combining(pi: &VdwAtomParams, pj: &VdwAtomParams, sp: &VdwStyleParams) ->
 ///
 /// [`SpecialBonds`]: crate::ff::forcefield::SpecialBonds
 /// [`PotentialCompiler::compile`]: crate::ff::potential::PotentialCompiler::compile
-pub fn mmff_vdw_ctor(
+pub fn pair_mmff_vdw_constructor(
     sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
-    let style = VdwStyleParams::from_style(sp)?;
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    let style = PairMmffVdwStyleParams::from_style(sp)?;
     let lj_14 = sp.get("lj14scale").unwrap_or(1.0) as F;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let atoms = frame.get(ATOMS).ok_or("mmff_vdw: missing \"atoms\"")?;
@@ -457,16 +461,17 @@ pub fn mmff_vdw_ctor(
             .get(tj.as_str())
             .ok_or_else(|| format!("mmff_vdw: unknown atom type '{}'", tj))?;
 
-        let to_vdw = |p: &Params, label: &str| -> Result<VdwAtomParams, crate::ff::ir::IrError> {
-            let get = |k: &str| need::type_num("mmff_vdw", label, p, k);
-            Ok(VdwAtomParams {
-                alpha: get("alpha")?,
-                n_eff: get("n_eff")?,
-                a_i: get("a_i")?,
-                g_i: get("g_i")?,
-                da: get("da")? as u8,
-            })
-        };
+        let to_vdw =
+            |p: &Params, label: &str| -> Result<PairMmffVdwAtomParams, crate::ff::ir::IrError> {
+                let get = |k: &str| param_reads::type_num("mmff_vdw", label, p, k);
+                Ok(PairMmffVdwAtomParams {
+                    alpha: get("alpha")?,
+                    n_eff: get("n_eff")?,
+                    a_i: get("a_i")?,
+                    g_i: get("g_i")?,
+                    da: get("da")? as u8,
+                })
+            };
         let (rs, eps) = vdw_combining(&to_vdw(pi, ti)?, &to_vdw(pj, tj)?, &style);
         // The 1-4 weight scales the well depth, hence the whole pair energy
         // (E is linear in eps). For MMFF this multiplies by exactly 1.0.
@@ -480,21 +485,23 @@ pub fn mmff_vdw_ctor(
         rs_vec.push(rs);
         eps_vec.push(eps * scale);
     }
-    Ok(Member::pair(MMFFVdW::compiled(ai, aj, rs_vec, eps_vec)))
+    Ok(ForceTerm::pair(PairMmffVdw::compiled(
+        ai, aj, rs_vec, eps_vec,
+    )))
 }
 
-/// Construct a neighbour-driven [`MMFFVdW`] from per-atom parameters.
+/// Construct a neighbour-driven [`PairMmffVdw`] from per-atom parameters.
 ///
-/// The counterpart of [`mmff_vdw_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_mmff_vdw_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn mmff_vdw_typed_ctor(
+pub fn pair_mmff_vdw_typed_constructor(
     sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
-    let style = VdwStyleParams::from_style(sp)?;
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    let style = PairMmffVdwStyleParams::from_style(sp)?;
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let mut per_type = Vec::with_capacity(labels.len());
@@ -502,8 +509,8 @@ pub fn mmff_vdw_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("mmff_vdw: unknown atom type '{l}'"))?;
-        let get = |k: &str| need::type_num("mmff_vdw", l, p, k);
-        per_type.push(VdwAtomParams {
+        let get = |k: &str| param_reads::type_num("mmff_vdw", l, p, k);
+        per_type.push(PairMmffVdwAtomParams {
             alpha: get("alpha")?,
             n_eff: get("n_eff")?,
             a_i: get("a_i")?,
@@ -515,7 +522,7 @@ pub fn mmff_vdw_typed_ctor(
         .iter()
         .map(|&t| per_type[t as usize].clone())
         .collect();
-    Ok(Member::pair(MMFFVdW::typed(atoms, style)))
+    Ok(ForceTerm::pair(PairMmffVdw::typed(atoms, style)))
 }
 
 #[cfg(test)]
@@ -525,24 +532,24 @@ mod tests {
     /// number as having run them earlier against a fixed list — bit for bit.
     #[test]
     fn per_atom_parameters_score_a_pair_exactly_as_compiled_ones() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 
-        let style = VdwStyleParams {
+        let style = PairMmffVdwStyleParams {
             b: 0.2,
             beta: 12.0,
             darad: 0.8,
             daeps: 0.5,
         };
-        let atoms: Vec<VdwAtomParams> = [
+        let atoms: Vec<PairMmffVdwAtomParams> = [
             (1.05, 2.490, 3.890, 1.282),
             (0.25, 0.800, 4.200, 1.209),
             (1.35, 2.490, 3.890, 1.282),
             (0.70, 3.150, 3.890, 1.282),
         ]
         .iter()
-        .map(|&(alpha, n_eff, a_i, g_i)| VdwAtomParams {
+        .map(|&(alpha, n_eff, a_i, g_i)| PairMmffVdwAtomParams {
             alpha,
             n_eff,
             a_i,
@@ -566,8 +573,8 @@ mod tests {
             rs.push(r);
             eps.push(e);
         }
-        let compiled = MMFFVdW::compiled(ai, aj, rs, eps);
-        let typed = MMFFVdW::typed(atoms, style);
+        let compiled = PairMmffVdw::compiled(ai, aj, rs, eps);
+        let typed = PairMmffVdw::typed(atoms, style);
 
         let table = table_over(&coords, &links);
         assert_same(
@@ -585,8 +592,8 @@ mod tests {
 
     /// MMFF94's global vdW line (`<VdWParams B="0.2" Beta="12.0" DARAD="0.8"
     /// DAEPS="0.5">`), as the reader hands it to the kernel.
-    fn mmff94_vdw_style() -> VdwStyleParams {
-        VdwStyleParams::from_style(&Params::from_pairs(&[
+    fn mmff94_vdw_style() -> PairMmffVdwStyleParams {
+        PairMmffVdwStyleParams::from_style(&Params::from_pairs(&[
             ("B", 0.2),
             ("Beta", 12.0),
             ("DARAD", 0.8),
@@ -597,7 +604,7 @@ mod tests {
 
     #[test]
     fn test_mmff_vdw_combining() {
-        let p = VdwAtomParams {
+        let p = PairMmffVdwAtomParams {
             alpha: 1.050,
             n_eff: 2.490,
             a_i: 3.890,
@@ -611,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_mmff_vdw_energy() {
-        let pot = MMFFVdW::compiled(vec![0], vec![1], vec![1.94], vec![0.02]);
+        let pot = PairMmffVdw::compiled(vec![0], vec![1], vec![1.94], vec![0.02]);
         let coords: Vec<F> = vec![0.0, 0.0, 0.0, 3.0, 0.0, 0.0];
         let (e, forces) = pot.calc_energy_forces(&coords);
         assert!(e.is_finite());

@@ -17,7 +17,7 @@
 //! - `opls`: 1-propanol, OPLS-AA (molpy's `oplsaa.xml`): RB torsions, foyer's
 //!   geometric `combining_rule`.
 //!
-//! The molrs force field is the XML read by [`OplsXmlReader`]; the frame lists
+//! The molrs force field is the XML read by [`OpenmmXmlReader`]; the frame lists
 //! the bonds, angles and propers of the bond graph and the impropers and
 //! crossterms with the atoms OpenMM priced, each row typed by the rule OpenMM
 //! matches with (the first row without a wildcard, else the first with one;
@@ -46,18 +46,16 @@ use serde_json::Value;
 
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::opls::OplsXmlReader;
-use crate::io::forcefield::writers::ForceFieldWriter;
-use crate::io::forcefield::writers::xml::XmlForceFieldWriter;
-use crate::io::{
-    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
-};
+use crate::io::openmm_xml::reader::OpenmmXmlReader;
+use crate::io::openmm_xml::writer::OpenmmXmlWriter;
+use crate::io::reader::ForceFieldReader;
+use crate::io::writer::ForceFieldWriter;
+use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
 use molrs::core::TypeLabels;
-use molrs::io::data::lammps_data::write_lammps_data;
+use molrs::io::lammps::data::write_lammps_data;
 use molrs::op::{F, Idx};
 
 use crate::ff::equivalence_check::{self, TERMS};
@@ -126,7 +124,7 @@ fn strings(v: &Value, key: &str) -> Vec<String> {
 /// The XML read with OpenMM's `NoCutoff` stated as a cutoff beyond every
 /// pair.
 pub(crate) fn read(c: &Case) -> ForceField {
-    let mut ff = OplsXmlReader::new().read_str(c.xml).unwrap();
+    let mut ff = OpenmmXmlReader::new().read_str(c.xml).unwrap();
     for name in ["lj/charmm", "coul/charmm", "lj/cut", "coul/cut"] {
         if let Some(style) = ff.get_style_mut("pair", name) {
             style.set_param("cutoff", 1000.0);
@@ -313,12 +311,12 @@ fn write_lammps(dir: &Path, c: &Case) {
     write_lammps_data(dir.join(format!("{}.data", c.name)), &data).unwrap();
     let labels = TypeLabels::from_frame(&data).unwrap();
     let has_cmap = data.get("cmaps").is_some();
-    let options = LammpsWriteOptions {
+    let options = LammpsForcefieldWriteOptions {
         precision: 17,
         cmap_file: has_cmap.then(|| format!("{}.cmap", c.name)),
-        ..LammpsWriteOptions::default()
+        ..LammpsForcefieldWriteOptions::default()
     };
-    let writer = LammpsFfWriter::with_options(&labels, options);
+    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     if has_cmap {
         std::fs::write(
             dir.join(format!("{}.cmap", c.name)),
@@ -606,12 +604,12 @@ fn assert_same_field(a: &ForceField, b: &ForceField, what: &str) {
 #[test]
 fn read_write_read_is_the_identity() {
     for c in &CASES {
-        let ff = OplsXmlReader::new().read_str(c.xml).unwrap();
-        let xml = XmlForceFieldWriter::new().write_str(&ff).unwrap();
-        let back = OplsXmlReader::new().read_str(&xml).unwrap();
+        let ff = OpenmmXmlReader::new().read_str(c.xml).unwrap();
+        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
+        let back = OpenmmXmlReader::new().read_str(&xml).unwrap();
         assert_same_field(&ff, &back, c.name);
-        let again = XmlForceFieldWriter::new().write_str(&back).unwrap();
-        let third = OplsXmlReader::new().read_str(&again).unwrap();
+        let again = OpenmmXmlWriter::new().write_str(&back).unwrap();
+        let third = OpenmmXmlReader::new().read_str(&again).unwrap();
         assert_same_field(&back, &third, c.name);
     }
 }
@@ -637,7 +635,7 @@ fn report() {
         if let Some(dir) = &dir {
             write_lammps(Path::new(dir), c);
             // The molrs-written XML, for scripts/openmm_xml_check.py --written.
-            let xml = XmlForceFieldWriter::new().write_str(&read(c)).unwrap();
+            let xml = OpenmmXmlWriter::new().write_str(&read(c)).unwrap();
             std::fs::write(Path::new(dir).join(format!("{}.written.xml", c.name)), xml).unwrap();
             let (lff, lframe) = lammps_form(c);
             let l = molrs_terms(&lff, &lframe);

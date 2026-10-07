@@ -7,8 +7,8 @@ A record is one self-describing store on disk: ``meta`` plus a snapshot
 in-memory objects.
 
 Whole records are read and written like every other format, by functions at
-the top of :mod:`molrs.io`: :func:`~molrs.io.read_mrec` /
-:func:`~molrs.io.write_mrec` (Structure: ``meta`` + ``frame/``), their
+the top of :mod:`molrs.io`: :func:`~molrs.io.read_mrec_frame` /
+:func:`~molrs.io.write_mrec_frame` (Structure: ``meta`` + ``frame/``), their
 ``_system`` / ``_trajectory`` / ``_forcefield`` partners, and
 :func:`~molrs.io.read_mrec_meta` (the identity document).
 
@@ -24,18 +24,18 @@ This module holds the rest:
   (:meth:`ForceFieldSection.from_forcefield` /
   :meth:`ForceFieldSection.to_forcefield` map it onto a force field)
 * :func:`section_names` — which sections a store holds
-* :func:`pack` — collapse a closed store into one ``*.mrec.zip``
+* :func:`pack_mrec_zip` — collapse a closed store into one ``*.mrec.zip``
 * :data:`MOLREC_VERSION` / :data:`RESERVED_META_KEYS` — the record
   contract's version and the ``meta`` keys it reserves
-* :mod:`molrs.io.mrec.schema` — runtime check for path suffix and ``meta``
-  keys
+* :mod:`molrs.io.mrec.validation` — runtime check for path suffix and
+  ``meta`` keys
 
 The names are those of ``molrs::io::mrec`` — ``MrecReader``, ``MrecWriter``,
 ``SequenceSchema``, ``section_names``.
 """
 
 from ..._lib import mrec as _mrec
-from . import schema
+from . import validation
 
 ForceFieldSection = _mrec.ForceFieldSection
 MOLREC_VERSION = _mrec.MOLREC_VERSION
@@ -43,7 +43,7 @@ RESERVED_META_KEYS = _mrec.RESERVED_META_KEYS
 MrecReader = _mrec.MrecReader
 MrecWriter = _mrec.MrecWriter
 SequenceSchema = _mrec.SequenceSchema
-pack = _mrec.pack
+pack_mrec_zip = _mrec.pack_mrec_zip
 section_names = _mrec.section_names
 
 __all__ = [
@@ -53,7 +53,7 @@ __all__ = [
     "MrecReader",
     "MrecWriter",
     "SequenceSchema",
-    "pack",
-    "schema",
+    "pack_mrec_zip",
     "section_names",
+    "validation",
 ]

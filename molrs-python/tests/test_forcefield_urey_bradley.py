@@ -57,7 +57,7 @@ def _hand_energy() -> float:
 def test_an_angle_style_named_charmm_carries_the_four_params() -> None:
     style = _ub_ff().get_style("angle", "charmm")
     assert isinstance(style, molrs.ff.forcefield.AngleStyle)
-    (t,) = style.types
+    (t,) = style.get_types()
     assert (t["k"], t["theta0"], t["k_ub"], t["r_ub"]) == (K, THETA0, K_UB, R_UB)
 
 

@@ -1,17 +1,17 @@
 //! UFF torsion: E = V/2 · (1 − cosTerm · cos(n·φ)) (RDKit `TorsionAngleContrib`).
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::F;
 
-pub struct UffTorsion {
+pub struct DihedralUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -21,7 +21,7 @@ pub struct UffTorsion {
     cos_term: Vec<F>,
 }
 
-impl UffTorsion {
+impl DihedralUff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -91,7 +91,7 @@ impl UffTorsion {
     }
 }
 
-impl Potential for UffTorsion {
+impl Potential for DihedralUff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -110,7 +110,7 @@ impl Potential for UffTorsion {
     }
 }
 
-impl IndexedTerms for UffTorsion {
+impl IndexedTerms for DihedralUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -224,11 +224,11 @@ fn accumulate_torsion_forces(
     forces[d * 3 + 2] += sin_term * (d_cos_dt[3] * r3[1] - d_cos_dt[4] * r3[0]);
 }
 
-pub fn uff_torsion_ctor(
+pub fn dihedral_uff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let block = frame
         .get(DIHEDRALS)
         .ok_or("uff_torsion: missing \"dihedrals\" block")?;
@@ -248,11 +248,11 @@ pub fn uff_torsion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("uff_torsion: missing atoml")?;
-    let v = need::instance_col("uff_torsion", block, "V")?;
-    let order = need::instance_col("uff_torsion", block, "order")?;
-    let cos_term = need::instance_col("uff_torsion", block, "cosTerm")?;
+    let v = param_reads::instance_col("uff_torsion", block, "V")?;
+    let order = param_reads::instance_col("uff_torsion", block, "order")?;
+    let cos_term = param_reads::instance_col("uff_torsion", block, "cosTerm")?;
     let n = i.len();
-    Ok(Member::indexed(UffTorsion {
+    Ok(ForceTerm::indexed(DihedralUff {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),
@@ -266,10 +266,10 @@ pub fn uff_torsion_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+    use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
-    fn torsion(v: F, order: u8, cos_term: F) -> UffTorsion {
-        UffTorsion {
+    fn torsion(v: F, order: u8, cos_term: F) -> DihedralUff {
+        DihedralUff {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

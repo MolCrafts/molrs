@@ -8,7 +8,9 @@ use std::path::PathBuf;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
+use crate::ff::clpol_scaling::PyFragmentScaling;
 use crate::path::path_str;
 
 /// One row's fields under the names CL&Pol (and molpy) use.
@@ -62,8 +64,8 @@ pub fn clpol_polarizability(
             })
             .collect()),
         Some(path) => {
-            let rows = molrs::io::forcefield::readers::clpol::read_alpha_ff(path_str(&path)?)
-                .map_err(PyValueError::new_err)?;
+            let rows =
+                molrs::io::read_clpol_alpha(path_str(&path)?).map_err(PyValueError::new_err)?;
             Ok(rows
                 .into_iter()
                 .map(|r| {
@@ -77,12 +79,29 @@ pub fn clpol_polarizability(
     }
 }
 
+/// CL&Pol's fragment scaling table (paduagroup/clandpol ``fragment.ff``):
+/// each fragment's charge, dipole and polarizability, by fragment name, as
+/// :func:`molrs.ff.clpol_scaling.scale_lj` reads it.
+#[pyfunction]
+fn clpol_fragment_scaling(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let result = PyDict::new(py);
+    for (name, scaling) in molrs::ff::params::clpol_fragment_scaling() {
+        result.set_item(name, Py::new(py, PyFragmentScaling::from(scaling))?)?;
+    }
+    Ok(result)
+}
+
 /// Register `molrs.ff.params`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crate::add_function(
         m,
         "molrs.ff.params",
         wrap_pyfunction!(clpol_polarizability, m)?,
+    )?;
+    crate::add_function(
+        m,
+        "molrs.ff.params",
+        wrap_pyfunction!(clpol_fragment_scaling, m)?,
     )?;
     Ok(())
 }

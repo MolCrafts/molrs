@@ -3,12 +3,11 @@
 Frame and Trajectory are the in-memory objects; the whole-record doors are
 paired in ``molrs.io``, the store machinery in ``molrs.io.mrec``. Schema checks
 live in ``molrs::io::mrec::schema`` and are
-bound, not reimplemented, at ``molrs.io.mrec.schema``.
+bound, not reimplemented, at ``molrs.io.mrec.validation``.
 """
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import molrs
@@ -60,19 +59,19 @@ class TestMrecReader:
 class TestFrameDoors:
     def test_write_and_read_frame(self, tmp_path: Path) -> None:
         path = tmp_path / "snapshot.mrec"
-        molrs.io.write_mrec(path, _coords_frame())
-        _assert_coords(molrs.io.read_mrec(path))
+        molrs.io.write_mrec_frame(path, _coords_frame())
+        _assert_coords(molrs.io.read_mrec_frame(path))
         assert molrs.io.mrec.section_names(path) == frozenset({"meta", "frame"})
         meta = molrs.io.read_mrec_meta(path)
-        molrs.io.mrec.schema.validate_meta(meta)
+        molrs.io.mrec.validation.validate_meta(meta)
         # Every record is stamped on write, so a producer that handed in
         # nothing still gets the version.
         assert meta == {"molrec_version": molrs.io.mrec.MOLREC_VERSION}
 
     def test_write_frame_with_system(self, tmp_path: Path) -> None:
         path = tmp_path / "both.mrec"
-        molrs.io.write_mrec(path, _coords_frame(), system=_coords_frame())
-        _assert_coords(molrs.io.read_mrec(path))
+        molrs.io.write_mrec_frame(path, _coords_frame(), system=_coords_frame())
+        _assert_coords(molrs.io.read_mrec_frame(path))
         _assert_coords(molrs.io.read_mrec_system(path))
         assert molrs.io.mrec.section_names(path) == frozenset({"meta", "frame", "system"})
 
@@ -105,36 +104,36 @@ class TestSchema:
         # written before molrs stamped the key -- and opens (read by version
         # 1's rules). The retired brand keys are neither checked nor a
         # stand-in for the version.
-        molrs.io.mrec.schema.validate_meta(
+        molrs.io.mrec.validation.validate_meta(
             {"record_schema_version": 99, "format_name": "mrec"}
         )
-        molrs.io.mrec.schema.validate_meta({})
+        molrs.io.mrec.validation.validate_meta({})
 
     def test_a_present_molrec_version_out_of_range_is_refused(self) -> None:
         for bad in (0, 3, "1", None, 1.5):
             with pytest.raises(ValueError, match="molrec_version"):
-                molrs.io.mrec.schema.validate_meta({"molrec_version": bad})
-        molrs.io.mrec.schema.validate_meta({"molrec_version": 1})
-        molrs.io.mrec.schema.validate_meta({"molrec_version": 2})
+                molrs.io.mrec.validation.validate_meta({"molrec_version": bad})
+        molrs.io.mrec.validation.validate_meta({"molrec_version": 1})
+        molrs.io.mrec.validation.validate_meta({"molrec_version": 2})
 
     def test_a_store_without_molrec_version_reads(self, tmp_path: Path) -> None:
         import json
 
         path = tmp_path / "foreign.mrec"
-        molrs.io.write_mrec(path, _coords_frame(), meta={"producer": "other"})
+        molrs.io.write_mrec_frame(path, _coords_frame(), meta={"producer": "other"})
         meta_json = path / "meta" / "zarr.json"
         doc = json.loads(meta_json.read_text())
         del doc["attributes"]["molrec_version"]
         meta_json.write_text(json.dumps(doc))
         assert molrs.io.read_mrec_meta(path) == {"producer": "other"}
-        _assert_coords(molrs.io.read_mrec(path))
+        _assert_coords(molrs.io.read_mrec_frame(path))
 
     def test_retired_path_is_refused(self) -> None:
         with pytest.raises(Exception, match="\\.mrec"):
-            molrs.io.mrec.schema.validate_path("water.zarr")
+            molrs.io.mrec.validation.validate_path("water.zarr")
 
     def test_empty_frame_passes(self) -> None:
-        molrs.io.mrec.schema.validate_frame(molrs.core.Frame())
+        molrs.io.mrec.validation.validate_frame(molrs.core.Frame())
 
 
 class TestMrecSurface:
@@ -146,27 +145,22 @@ class TestMrecSurface:
         assert not hasattr(molrs.io.mrec, "TrajectoryReader")
         assert not hasattr(molrs.io.mrec, "TrajectoryWriter")
 
-    def test_io_import_yields_dump_concatenator(self, water_dcd: Path) -> None:
-        from molrs.io.trajectory import TrajectoryReader
-
+    def test_a_trajectory_door_returns_its_formats_reader(self, water_dcd: Path) -> None:
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
-        assert isinstance(reader, TrajectoryReader)
+        assert isinstance(reader, molrs.io.dcd.DcdReader)
         assert reader.n_frames == 2
         assert reader.read_frame(0)["atoms"].nrows == 3
-        params = inspect.signature(TrajectoryReader.__init__).parameters
-        assert "readers" in params
-        assert "path" not in params
 
     def test_every_record_door_is_flat_on_io(self) -> None:
         doors = sorted(name for name in dir(molrs.io) if "mrec" in name and name != "mrec")
         assert doors == [
-            "read_mrec",
             "read_mrec_forcefield",
+            "read_mrec_frame",
             "read_mrec_meta",
             "read_mrec_system",
             "read_mrec_trajectory",
-            "write_mrec",
             "write_mrec_forcefield",
+            "write_mrec_frame",
             "write_mrec_system",
             "write_mrec_trajectory",
         ]
@@ -200,8 +194,8 @@ class TestCanonicalWidths:
         frame = _coords_frame()
         frame["bonds"] = bonds
         path = tmp_path / "bonds.mrec"
-        molrs.io.write_mrec(path, frame)
-        back = molrs.io.read_mrec(path)
+        molrs.io.write_mrec_frame(path, frame)
+        back = molrs.io.read_mrec_frame(path)
         assert np.asarray(back["bonds"]["atomi"]).dtype == np.uint64
 
 
@@ -211,7 +205,7 @@ class TestUnknownSections:
         import shutil
 
         path = tmp_path / "foreign.mrec"
-        molrs.io.write_mrec(path, _coords_frame())
+        molrs.io.write_mrec_frame(path, _coords_frame())
         # A section this build does not know, which would not even decode as
         # a frame group: its block claims more rows than its columns hold.
         shutil.copytree(path / "frame", path / "future")
@@ -221,7 +215,7 @@ class TestUnknownSections:
         block_json.write_text(json.dumps(doc))
 
         assert "future" in molrs.io.mrec.section_names(path)
-        _assert_coords(molrs.io.read_mrec(path))
+        _assert_coords(molrs.io.read_mrec_frame(path))
         assert len(molrs.io.read_mrec_trajectory(path)) == 0
 
 
@@ -242,13 +236,13 @@ class TestMetaArgument:
         assert isinstance(frame.meta["cell"], tuple)
 
         path = tmp_path / "doc.mrec"
-        molrs.io.write_mrec(path, frame, meta=run)
+        molrs.io.write_mrec_frame(path, frame, meta=run)
         meta = molrs.io.read_mrec_meta(path)
         assert meta["engine"] == "md"
         assert meta["seeds"] == [1, 2]
 
         path = tmp_path / "nested.mrec"
-        molrs.io.write_mrec(path, frame, meta={"run": run, "cell": frame.meta["cell"]})
+        molrs.io.write_mrec_frame(path, frame, meta={"run": run, "cell": frame.meta["cell"]})
         meta = molrs.io.read_mrec_meta(path)
         assert meta["run"] == {"engine": "md", "seeds": [1, 2]}
         assert meta["cell"] == [1.0, 2.0, 3.0]
@@ -286,7 +280,7 @@ class TestMetaArgument:
 
     def test_a_non_mapping_meta_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(TypeError, match="mapping"):
-            molrs.io.write_mrec(tmp_path / "bad.mrec", _coords_frame(), meta=[1, 2])
+            molrs.io.write_mrec_frame(tmp_path / "bad.mrec", _coords_frame(), meta=[1, 2])
 
 
 class TestDeclaredPrecision:
@@ -326,10 +320,10 @@ class TestDeclaredPrecision:
     ) -> None:
         path = tmp_path / "p.mrec"
         frame = self._frame()
-        molrs.io.write_mrec(path, frame)
+        molrs.io.write_mrec_frame(path, frame)
         # Memory is untouched; the store holds the rounded values.
         np.testing.assert_array_equal(np.asarray(frame["atoms"]["x"]), self._VALUES)
-        back = molrs.io.read_mrec(path)["atoms"]
+        back = molrs.io.read_mrec_frame(path)["atoms"]
         np.testing.assert_array_equal(np.asarray(back["x"]), self._stored())
         assert back.precision("x") == 1e-3
 
@@ -374,8 +368,8 @@ class TestTypedFrameMeta:
         frame.meta["inf"] = float("-inf")
         frame.meta["vec"] = molrs.core.MetaValue("f64x3", (1.0, float("inf"), 2.0))
         frame.meta["doc"] = {"a": [1, 2]}
-        molrs.io.write_mrec(path, frame)
-        meta = molrs.io.read_mrec(path).meta
+        molrs.io.write_mrec_frame(path, frame)
+        meta = molrs.io.read_mrec_frame(path).meta
         assert meta.dtype("n32") == "i32" and meta["n32"] == 7
         assert meta.dtype("big") == "u64" and meta["big"] == 2**64 - 1
         assert meta.dtype("one") == "f64" and meta["one"] == 1.0
@@ -419,8 +413,8 @@ class TestRowReferences:
         frame = self._frame([0, 2])
         assert frame["members"].targets() == {"atom": "/frame/atoms"}
         path = tmp_path / "t.mrec"
-        molrs.io.write_mrec(path, frame)
-        back = molrs.io.read_mrec(path)["members"]
+        molrs.io.write_mrec_frame(path, frame)
+        back = molrs.io.read_mrec_frame(path)["members"]
         assert back.target("atom") == "/frame/atoms"
         assert back.target("ibead") is None
         with pytest.raises(ValueError):
@@ -430,7 +424,7 @@ class TestRowReferences:
         frame = self._frame([5])
         frame["members"].set_target("ibead", "atoms")
         with pytest.raises(ValueError, match="atoms"):
-            molrs.io.write_mrec(tmp_path / "bad.mrec", frame)
+            molrs.io.write_mrec_frame(tmp_path / "bad.mrec", frame)
 
     def test_sequence_schema_declares_a_target(self) -> None:
         schema = molrs.io.mrec.SequenceSchema.from_frame(self._frame([0]))
@@ -556,15 +550,15 @@ class TestForceFieldSection:
         self, tmp_path: Path
     ) -> None:
         path = tmp_path / "frame.mrec"
-        molrs.io.write_mrec(path, _coords_frame())
+        molrs.io.write_mrec_frame(path, _coords_frame())
         assert molrs.io.read_mrec_forcefield(path) is None
         section = molrs.io.mrec.ForceFieldSection({"name": "x", "units": {}})
         with pytest.raises(ValueError, match="units"):
             section.validate()
         with pytest.raises(ValueError):
-            molrs.io.write_mrec(path, _coords_frame(), forcefield=section)
+            molrs.io.write_mrec_frame(path, _coords_frame(), forcefield=section)
         with pytest.raises(TypeError):
-            molrs.io.write_mrec(path, _coords_frame(), forcefield={"name": "x"})
+            molrs.io.write_mrec_frame(path, _coords_frame(), forcefield={"name": "x"})
 
     def test_a_pair_table_prices_each_unordered_pair_once(self) -> None:
         """molrec forcefield linking rule 3: B-A restating A-B is one row when
@@ -601,8 +595,8 @@ class TestForceFieldSection:
 
 
 #: Records the published molrs 0.15.0 wrote (molrec_version 1), and the
-#: energies and forces it computed for them (molrs/src/io/zarr/testdata/v1).
-V1_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/zarr/testdata/v1"
+#: energies and forces it computed for them (molrs/src/io/mrec/zarr_storage/testdata/v1).
+V1_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/mrec/zarr_storage/testdata/v1"
 
 
 def _v1_record(tmp_path: Path, name: str) -> Path:

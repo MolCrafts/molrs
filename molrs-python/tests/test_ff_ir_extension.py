@@ -58,10 +58,10 @@ FENE = (
     "+step(2^(1/6)*sigma-r)*(4*epsilon*((sigma/r)^12-(sigma/r)^6)+epsilon)"
 )
 FENE_PARAMS = [
-    ir.Param("k", "E/L^2"),
-    ir.Param("r0", "L"),
-    ir.Param("epsilon", "E"),
-    ir.Param("sigma", "L"),
+    ir.ParamSpec("k", "E/L^2"),
+    ir.ParamSpec("r0", "L"),
+    ir.ParamSpec("epsilon", "E"),
+    ir.ParamSpec("sigma", "L"),
 ]
 # LAMMPS `pair_style lj/smooth/linear`: φ(r) − φ(rc) − (r − rc) φ′(rc), φ the
 # 12-6 Lennard-Jones, so energy and force vanish at the cutoff.
@@ -70,12 +70,12 @@ SMOOTH = (
     "+(r-cutoff)*4*epsilon*(12*(sigma/cutoff)^12-6*(sigma/cutoff)^6)/cutoff"
 )
 SMOOTH_PARAMS = [
-    ir.Param("epsilon", "E", mix=("lj_epsilon", "sigma")),
-    ir.Param("sigma", "L", mix=("lj_sigma", "epsilon")),
+    ir.ParamSpec("epsilon", "E", mix=("lj_epsilon", "sigma")),
+    ir.ParamSpec("sigma", "L", mix=("lj_sigma", "epsilon")),
 ]
 SMOOTH_STYLE = [
-    ir.Param("cutoff", "L"),
-    ir.Param("mixing", kind="text", choices=["arithmetic", "geometric", "sixthpower"],
+    ir.ParamSpec("cutoff", "L"),
+    ir.ParamSpec("mixing", kind="text", choices=["arithmetic", "geometric", "sixthpower"],
              default="arithmetic"),
 ]
 UB = "k_ub*(distance(p1,p3)-r_ub)^2"
@@ -221,7 +221,7 @@ def extensions() -> Iterator[None]:
                   "theta0": 105.0}],
     )
     ir.register_style("dihedral", "table/linear",
-                      params=[ir.Param("table", "E", kind="array", rank=1)],
+                      params=[ir.ParamSpec("table", "E", kind="array", rank=1)],
                       kernel=table_kernel)
     yield
     for category, name in [
@@ -234,7 +234,7 @@ def extensions() -> Iterator[None]:
         ("bond_angle", "class2/np"),
         ("dihedral", "table/linear"),
     ]:
-        ir.unregister(category, name)
+        ir.unregister_style(category, name)
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +625,7 @@ def test_a_callable_only_style_is_no_kernel_in_a_fresh_process(fresh) -> None:
     assert ["dihedral", "table/linear"] in there["styles"]
     assert "e" in here["table"]
     assert there["table"] == {
-        "error": "NoKernel",
+        "error": "NoKernelError",
         "message": NO_KERNEL.format("dihedral", "table/linear"),
         "value_error": True,
     }
@@ -652,7 +652,7 @@ def _compile_with(kernel: Callable, name: str) -> None:
         ff.def_style("bond", name).def_type("B-B", t["B"], t["B"], k=1.0, r0=1.0)
         price(ff, bead_frame())
     finally:
-        ir.unregister("bond", name)
+        ir.unregister_style("bond", name)
 
 
 def _wrong_arity() -> None:
@@ -666,31 +666,31 @@ def _gromacs(tmp: Path) -> None:
     ff.def_style("bond", "fene/proof").def_type(
         "B-B", t["B"], t["B"], k=K, r0=R0, epsilon=EPS, sigma=SIG
     )
-    molrs.io.write_gromacs_top_ff(tmp / "x.top", ff)
+    molrs.io.write_gromacs_top_forcefield(tmp / "x.top", ff)
 
 
 REFUSALS = [
     ("unknown function",
      lambda tmp: ir.register_style("bond", "x/proof", params={"k": "E"}, expression="k*sinh(r)"),
-     ir.UnknownFunction, {"name": "sinh"}),
+     ir.UnknownFunctionError, {"name": "sinh"}),
     ("unbound variable",
      lambda tmp: ir.register_style("bond", "x/proof", params={"k": "E"}, expression="k*theta"),
-     ir.UnboundVariable, {"style": "x/proof", "name": "theta"}),
+     ir.UnboundVariableError, {"style": "x/proof", "name": "theta"}),
     ("sealed bond harmonic",
      lambda tmp: ir.register_style("bond", "harmonic", params={"k": "E/L^2", "r0": "L"},
                                    expression="2*k*(r-r0)^2"),
-     ir.Sealed, {"category": "bond", "style": "harmonic"}),
+     ir.SealedError, {"category": "bond", "style": "harmonic"}),
     ("wrong def_type arity", lambda tmp: _wrong_arity(),
-     ir.Arity, {"category": "urey_bradley", "arity": 2}),
+     ir.ArityError, {"category": "urey_bradley", "arity": 2}),
     ("kernel of the wrong shape", lambda tmp: _compile_with(_short, "short/proof"),
-     ir.KernelShape, {"style": "short/proof"}),
+     ir.KernelShapeError, {"style": "short/proof"}),
     ("kernel raising", lambda tmp: _compile_with(_raising, "raising/proof"),
-     ir.KernelShape, {"style": "raising/proof"}),
-    ("write_gromacs_top_ff", _gromacs,
-     ir.NoEngineForm, {"engine": "GROMACS", "category": "bond", "style": "fene/proof"}),
+     ir.KernelShapeError, {"style": "raising/proof"}),
+    ("write_gromacs_top_forcefield", _gromacs,
+     ir.NoEngineFormError, {"engine": "GROMACS", "category": "bond", "style": "fene/proof"}),
     ("missing param at compile",
      lambda tmp: price(fene_ff("fene/proof", sigma=None), bead_frame()),
-     ir.MissingParam, {"style": "fene/proof", "type": "B-B", "param": "sigma"}),
+     ir.MissingParamError, {"style": "fene/proof", "type": "B-B", "param": "sigma"}),
 ]
 
 

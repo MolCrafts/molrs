@@ -29,14 +29,14 @@ use std::collections::HashMap;
 
 use ndarray::Array1;
 
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::compile::gathered;
 use crate::ff::potential::intramolecular_pairs;
-use crate::ff::potential::need;
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params};
 use crate::ff::potential::pair::exceptions::dihedral_weights;
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
+use crate::ff::potential::param_reads;
 use molrs::core::Frame;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use molrs::op::F;
@@ -91,8 +91,8 @@ pub(crate) fn has_own_one_four(p: &Params) -> bool {
 /// The van-der-Waals style a 1-4 pair's parameters come from.
 enum Vdw {
     None,
-    LjCut(HashMap<String, Params>, Mixing),
-    Charmm(HashMap<String, Params>, Mixing, OneFour),
+    LjCut(HashMap<String, Params>, CombiningRule),
+    Charmm(HashMap<String, Params>, CombiningRule, OneFour),
 }
 
 fn vdw_style(ff: &ForceField) -> Result<Vdw, String> {
@@ -109,7 +109,8 @@ fn vdw_style(ff: &ForceField) -> Result<Vdw, String> {
             }
             "lj/cut" => {
                 let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                let num = |k: &str| need::style_num("lj/cut", &p, k).map_err(|e| e.to_string());
+                let num =
+                    |k: &str| param_reads::style_num("lj/cut", &p, k).map_err(|e| e.to_string());
                 if num("n")? != 12.0 || num("m")? != 6.0 {
                     return Err(
                         "materialize_one_four: pair lj/cut with n/m ≠ 12/6 has no 1-4 row form"

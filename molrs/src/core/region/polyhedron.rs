@@ -1,7 +1,7 @@
 //! A solid bounded by a watertight triangle mesh.
 //!
 //! Where the mesh came from is not this type's concern: an STL read by
-//! `crate::io::mesh::read_stl` (feature `io`), a marching-cubes extraction, a
+//! `crate::io::stl::read_stl` (feature `io`), a marching-cubes extraction, a
 //! hand-built [`TriMesh`] — anything closed. Unit conversion is the caller's
 //! composition, `Polyhedron::new(mesh.scaled(s))`.
 //!

@@ -6,13 +6,15 @@ pub(crate) mod harmonic;
 pub(crate) mod mmff;
 pub(crate) mod uff;
 
-pub use charmm::{AngleCharmm, CharmmAngleParams, angle_charmm_ctor};
-pub use class2::{AngleClass2, angle_class2_ctor};
-pub use harmonic::{AngleHarmonic, angle_harmonic_ctor};
-pub use mmff::{MMFFAngleBend, MMFFStretchBend, mmff_angle_ctor, mmff_stbn_ctor};
-pub use uff::{UffAngle, uff_angle_ctor};
+pub use charmm::{AngleCharmm, AngleCharmmParams, angle_charmm_constructor};
+pub use class2::{AngleClass2, angle_class2_constructor};
+pub use harmonic::{AngleHarmonic, angle_harmonic_constructor};
+pub use mmff::{
+    AngleMmff, AngleMmffStretchBend, angle_mmff_constructor, angle_mmff_stretch_bend_constructor,
+};
+pub use uff::{AngleUff, angle_uff_constructor};
 
 // The angle-geometry chain rule (force = `dE/dθ / sin θ` times the gradient
 // of `cos θ`) is independent of the bending potential, so every angle kernel
 // routes its `dE/dθ` through this one helper.
-pub(crate) use crate::ff::potential::geometry::accumulate_angle_forces;
+pub(crate) use crate::ff::potential::flat_coords::accumulate_angle_forces;

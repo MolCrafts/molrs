@@ -1,7 +1,7 @@
 //! Geometry optimization — the WASM face of `molrs::optimize` (`Lbfgs`).
 //!
 //! ```js
-//! const pots   = new UFFTypifier().toPotentials(typed);
+//! const pots   = new UffTypifier().toPotentials(typed);
 //! const nl     = new NeighborList(12.5);         // or NeighborList.bruteForce
 //! nl.build(typed);
 //! const report = new Lbfgs(pots, nl.neighbors()).minimize(typed);

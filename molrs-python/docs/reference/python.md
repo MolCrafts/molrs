@@ -27,20 +27,20 @@ and the docs build.
 | `molrs.core.schema` | `molrs::core::schema` | `ColumnSpec`, `BlockSpec`, the block names, `relation_endpoints` |
 | `molrs.core.constants` | `molrs::core::constants` | every physical and engine constant (`AVOGADRO`, `COULOMB_REAL`, `AMBER_COULOMB`, `AMBER_SCEE`, …) |
 | `molrs.op` | `molrs::op` | `superpose`, `centroid`, `Superposition`, `DEFAULT_GAP_TOL` |
-| `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingInfo`, the `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
-| `molrs.io` | `molrs::io` | every file reader and writer, as a function: structure, trajectory and force-field files, `*.mrec` records (`read_mrec` / `write_mrec` and partners), frame bytes, `read_smiles`, the LAMMPS log |
-| `molrs.io.trajectory` | `molrs::io::trajectory` | `TrajectoryReader` |
-| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIR`, `SmilesError`, `CGSmilesIR` and the CGsmiles records |
-| `molrs.io.log` | `molrs::io::log` | the `Lammps*` log records |
-| `molrs.io.lammps_bond_react` | `molrs::io::data::lammps_bond_react` | `BondReactTemplate` |
-| `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
-| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles (the data model; its files are `molrs.io`'s) |
-| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
-| `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
+| `molrs.perceive` | `molrs::perceive` | `perceive_rings` → `RingInfo`, the `perceive_*` / `assign_*` functions, `add_hydrogens`, `SmartsPattern`, `SmartsMatch`, `Reaction`, `SubgraphMatcher` |
+| `molrs.io` | `molrs::io` | every file reader and writer, as a function `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory): structure, trajectory and force-field files, `*.mrec` records (`read_mrec_frame` / `write_mrec_frame` and partners), wire-encoded frames, SMILES and CGsmiles text, the LAMMPS log, CSV blocks |
+| `molrs.io.pdb`, `.xyz`, `.gro`, `.dcd`, `.trr`, `.xtc` | `molrs::io::{pdb, xyz, gro, dcd, trr, xtc}` | each format's lazy reader: `PdbReader`, `XyzReader`, `GroReader`, `DcdReader`, `TrrReader`, `XtcReader` |
+| `molrs.io.lammps` | `molrs::io::lammps` | `LammpsDumpReader`, `BondReactTemplate`, the `Lammps*` log records |
+| `molrs.io.smiles` | `molrs::io::smiles` | `SmilesIr`, `SmilesError`, `BondingDescriptor` |
+| `molrs.io.cgsmiles` | `molrs::io::cgsmiles` | `CgSmilesIr` and the CGsmiles records |
+| `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` |
+| `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `ForceFieldType` handles (the data model; its files are `molrs.io`'s) |
+| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `WeightedTerms`, `compile_explicit_terms`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
+| `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `TypeAssignment`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |
-| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability` |
-| `molrs.ff.scale_lj` | `molrs::ff::scale_lj` | `FragmentScaling`, `compute_k_ij`, `fragment_scaling_data`, `scale_lj` |
+| `molrs.ff.params` | `molrs::ff::params` | `clpol_polarizability`, `clpol_fragment_scaling` |
+| `molrs.ff.clpol_scaling` | `molrs::ff::clpol_scaling` | `FragmentScaling`, `compute_k_ij`, `scale_lj` (the shipped table is `molrs.ff.params.clpol_fragment_scaling`) |
 | `molrs.optimize` | `molrs::optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | `molrs::md` | `VelocityVerlet`, `Langevin`, `MDState`, `MaxwellBoltzmann`, `MD` |
 | `molrs.conformer` | `molrs::conformer` | `Conformer`, `ConformerReport`, `ConformerStageReport` |
@@ -93,7 +93,7 @@ answers `contains`, `distance` (negative inside) and `bounds`, and composes
 with `&`, `|` and `~`. Outside a shape is `~shape`; a shell is
 `outer & ~inner`. `TriMesh` is the surface a `Polyhedron` is bounded by and
 what `molrs.io.read_stl` reads (the WASM binding reads the same file with
-`readSTL` into `Mesh`).
+`readStlBytes` into `Mesh`).
 
 ::: molrs.core.Sphere
 
@@ -154,51 +154,106 @@ alone; `assign_<fact>` writes the fact onto a clone and returns it.
 
 ## `molrs.io`
 
-Reader and writer names pair: `read_X` / `write_X` for one frame,
-`read_X_trajectory` / `write_X_trajectory` for a sequence. Every reader emits
-the canonical column names (`molrs.core.keys`). `read_frame` /
-`write_frame` pick the format from the file name. The LAMMPS dump, XYZ, DCD,
-TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
+One module per file format. Every door is a function named after its format:
+`read_X` / `write_X` for one frame, `read_X_trajectory` /
+`write_X_trajectory` for a sequence, `_str` / `_bytes` for text and bytes in
+memory; family formats carry the family name (`read_lammps_data`,
+`read_amber_prmtop`, `read_vasp_poscar`). No door picks the format for the
+caller. Every reader emits the canonical column names (`molrs.core.keys`).
+Each `read_X_trajectory` returns its format's lazy reader,
+`molrs.io.X.<X>Reader`, over one path or a list of paths.
 
-::: molrs.io.read_frame
-
-::: molrs.io.write_frame
-
-::: molrs.io.trajectory.TrajectoryReader
+### Structure files
 
 ::: molrs.io.read_pdb
 
 ::: molrs.io.write_pdb
 
-::: molrs.io.read_pdb_trajectory
-
-::: molrs.io.write_pdb_trajectory
-
 ::: molrs.io.read_xyz
 
 ::: molrs.io.write_xyz
-
-::: molrs.io.read_xyz_trajectory
-
-::: molrs.io.write_xyz_trajectory
 
 ::: molrs.io.read_gro
 
 ::: molrs.io.write_gro
 
+::: molrs.io.read_sdf
+
+::: molrs.io.read_mol2
+
+::: molrs.io.write_mol2
+
+::: molrs.io.read_cif
+
+::: molrs.io.write_cif
+
+::: molrs.io.read_xsf
+
+::: molrs.io.write_xsf
+
+::: molrs.io.read_cube
+
+::: molrs.io.write_cube
+
+::: molrs.io.read_vasp_poscar
+
+::: molrs.io.write_vasp_poscar
+
+::: molrs.io.read_vasp_chgcar
+
+::: molrs.io.read_stl
+
+### Trajectories
+
+::: molrs.io.read_pdb_trajectory
+
+::: molrs.io.write_pdb_trajectory
+
+::: molrs.io.pdb.PdbReader
+
+::: molrs.io.read_xyz_trajectory
+
+::: molrs.io.write_xyz_trajectory
+
+::: molrs.io.xyz.XyzReader
+
 ::: molrs.io.read_gro_trajectory
 
 ::: molrs.io.write_gro_trajectory
+
+::: molrs.io.gro.GroReader
+
+::: molrs.io.read_dcd_trajectory
+
+::: molrs.io.write_dcd_trajectory
+
+::: molrs.io.dcd.DcdReader
+
+::: molrs.io.read_trr_trajectory
+
+::: molrs.io.write_trr_trajectory
+
+::: molrs.io.trr.TrrReader
+
+::: molrs.io.read_xtc_trajectory
+
+::: molrs.io.write_xtc_trajectory
+
+::: molrs.io.xtc.XtcReader
+
+### LAMMPS (`molrs.io.lammps`)
 
 ::: molrs.io.read_lammps_data
 
 ::: molrs.io.write_lammps_data
 
-::: molrs.io.lammps_bond_react.BondReactTemplate
+::: molrs.io.read_lammps_molecule
 
-::: molrs.io.write_bond_react_map
+::: molrs.io.write_lammps_molecule
 
-::: molrs.io.write_lammps_bond_react_system
+::: molrs.io.read_lammps_molecule_json
+
+::: molrs.io.write_lammps_molecule_json
 
 ::: molrs.io.read_lammps_trajectory
 
@@ -206,27 +261,37 @@ TRR and XTC trajectory readers return a lazy `TrajectoryReader`.
 
 ::: molrs.io.write_lammps_dump_local
 
-::: molrs.io.read_dcd_trajectory
+::: molrs.io.lammps.LammpsDumpReader
 
-::: molrs.io.write_dcd_trajectory
+::: molrs.io.lammps.BondReactTemplate
 
-::: molrs.io.read_trr_trajectory
+::: molrs.io.write_lammps_bond_react_map
 
-::: molrs.io.write_trr_trajectory
+::: molrs.io.write_lammps_bond_react_system
 
-::: molrs.io.read_xtc_trajectory
+::: molrs.io.read_lammps_log
 
-::: molrs.io.write_xtc_trajectory
+::: molrs.io.read_lammps_log_str
 
-::: molrs.io.smiles.SmilesIR
+### AMBER
+
+::: molrs.io.read_amber_prmtop
+
+::: molrs.io.read_amber_inpcrd
+
+::: molrs.io.read_amber_ac
+
+::: molrs.io.read_amber_prep
+
+::: molrs.io.write_amber_prep
 
 ### Record files (`molrs.io.mrec`)
 
 The [Record files guide](../guides/records.md) shows these in use.
 
-::: molrs.io.read_mrec
+::: molrs.io.read_mrec_frame
 
-::: molrs.io.write_mrec
+::: molrs.io.write_mrec_frame
 
 ::: molrs.io.read_mrec_system
 
@@ -252,7 +317,7 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.mrec.ForceFieldSection
 
-::: molrs.io.mrec.pack
+::: molrs.io.mrec.pack_mrec_zip
 
 ### Force-field files
 
@@ -260,57 +325,65 @@ The [Record files guide](../guides/records.md) shows these in use.
 
 ::: molrs.io.write_lammps_forcefield
 
-::: molrs.io.read_gromacs_top_ff
+::: molrs.io.read_gromacs_top_forcefield
+
+::: molrs.io.write_gromacs_top_forcefield
 
 ::: molrs.io.read_gromacs_system
 
 ::: molrs.io.write_gromacs_system
 
-::: molrs.io.read_amber_prmtop_ff
+::: molrs.io.read_amber_prmtop_forcefield
+
+::: molrs.io.read_amber_prmtop_system
 
 ::: molrs.io.write_amber_frcmod
 
-::: molrs.io.read_forcefield_xml
+::: molrs.io.read_openmm_xml_forcefield
 
-::: molrs.io.read_opls_xml
+::: molrs.io.write_openmm_xml_forcefield
 
-::: molrs.io.write_forcefield_xml
+::: molrs.io.read_molrs_xml_forcefield
 
-### SMILES, logs and frame bytes
+::: molrs.io.write_molrs_xml_forcefield
 
-::: molrs.io.read_smiles
+### SMILES and CGsmiles
+
+::: molrs.io.read_smiles_str
+
+::: molrs.io.write_smiles_str
+
+::: molrs.io.smiles.SmilesIr
 
 ::: molrs.io.smiles.SmilesError
 
-::: molrs.io.read_lammps_log
+::: molrs.io.read_cgsmiles_str
 
-::: molrs.io.read_lammps_log_str
+::: molrs.io.cgsmiles.CgSmilesIr
 
-::: molrs.io.read_frame_bytes
+### Wire-encoded frames and CSV blocks
 
-::: molrs.io.write_frame_bytes
+::: molrs.io.read_msgpack_frame_bytes
 
-### Other formats
+::: molrs.io.write_msgpack_frame_bytes
 
-::: molrs.io.read_chgcar
+::: molrs.io.read_json_frame_str
 
-::: molrs.io.read_cube
+::: molrs.io.write_json_frame_str
 
-::: molrs.io.write_cube
+::: molrs.io.read_csv_block
 
-::: molrs.io.read_mol2
+::: molrs.io.read_csv_block_str
 
-::: molrs.io.write_mol2
+::: molrs.io.write_csv_block
 
-::: molrs.io.read_amber_inpcrd
-
-::: molrs.io.read_stl
+::: molrs.io.write_csv_block_str
 
 ## `molrs.ff`
 
 ### `molrs.ff.forcefield`
 
-The native force-field model exposes a `Style`/`Type` handle hierarchy
+The native force-field model exposes a `Style`/`ForceFieldType` handle hierarchy
 (`BondStyle`/`BondType`, `PairStyle`/`PairType`, `CmapStyle`/`CmapType`,
 …); a handle's `params` is a plain dict of numbers, strings and float64
 arrays (a CMAP `grid`).
@@ -333,7 +406,7 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.forcefield.CmapStyle
 
-::: molrs.ff.forcefield.Type
+::: molrs.ff.forcefield.ForceFieldType
 
 ::: molrs.ff.forcefield.AtomType
 
@@ -357,11 +430,11 @@ arrays (a CMAP `grid`).
 
 ### `molrs.ff.typifier`
 
-::: molrs.ff.typifier.MMFF94Typifier
+::: molrs.ff.typifier.Mmff94Typifier
 
-::: molrs.ff.typifier.MMFF94STypifier
+::: molrs.ff.typifier.Mmff94sTypifier
 
-::: molrs.ff.typifier.OPLSAATypifier
+::: molrs.ff.typifier.OplsAaTypifier
 
 ::: molrs.ff.typifier.AtdTypifier
 
@@ -369,7 +442,7 @@ arrays (a CMAP `grid`).
 
 ::: molrs.ff.typifier.Typifier
 
-::: molrs.ff.typifier.Match
+::: molrs.ff.typifier.TypeAssignment
 
 ### `molrs.ff.charge`
 

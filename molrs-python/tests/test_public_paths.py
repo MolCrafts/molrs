@@ -130,6 +130,12 @@ def test_a_constant_is_a_value_not_a_second_door():
         "molrs.spatial",
         "molrs.system",
         "molrs.units",
+        # 0.16 wave S2: io is one module per format.
+        "molrs.io.trajectory",
+        "molrs.io.log",
+        "molrs.io.lammps_bond_react",
+        "molrs.io._trajectory_doors",
+        "molrs.io.mrec.schema",
     ],
 )
 def test_retired_modules_do_not_import(gone):
@@ -184,29 +190,29 @@ def test_retired_modules_do_not_import(gone):
         "molrs.ff.forcefield.read_lammps_forcefield",
         "molrs.ff.forcefield.read_lammps_data_coeffs",
         "molrs.ff.forcefield.read_lammps_cmap",
-        "molrs.ff.forcefield.read_gromacs_top_ff",
+        "molrs.ff.forcefield.read_gromacs_top_forcefield",
         "molrs.ff.forcefield.read_gromacs_system",
-        "molrs.ff.forcefield.read_amber_prmtop_ff",
+        "molrs.ff.forcefield.read_amber_prmtop_forcefield",
         "molrs.ff.forcefield.read_amber_prmtop_system",
         "molrs.ff.forcefield.read_forcefield_xml",
-        "molrs.ff.forcefield.read_opls_xml",
+        "molrs.ff.forcefield.read_openmm_xml_forcefield",
         "molrs.ff.forcefield.write_lammps_forcefield",
         "molrs.ff.forcefield.write_lammps_forcefield_str",
         "molrs.ff.forcefield.write_lammps_data_coeffs",
         "molrs.ff.forcefield.write_lammps_cmap",
-        "molrs.ff.forcefield.write_gromacs_top_ff",
+        "molrs.ff.forcefield.write_gromacs_top_forcefield",
         "molrs.ff.forcefield.write_gromacs_system",
         "molrs.ff.forcefield.write_amber_frcmod",
-        "molrs.ff.forcefield.write_forcefield_xml",
+        "molrs.ff.forcefield.write_openmm_xml_forcefield",
         # A class of one format is that format's submodule's.
         "molrs.io.TrajectoryReader",
-        "molrs.io.SmilesIR",
+        "molrs.io.SmilesIr",
         "molrs.io.SmilesError",
-        "molrs.io.CGSmilesIR",
-        "molrs.io.CGGraph",
-        "molrs.io.CGNode",
-        "molrs.io.CGEdge",
-        "molrs.io.CGFragmentDef",
+        "molrs.io.CgSmilesIr",
+        "molrs.io.CgGraph",
+        "molrs.io.CgNode",
+        "molrs.io.CgEdge",
+        "molrs.io.CgFragmentDef",
         "molrs.io.ResolvedPair",
         "molrs.io.PairEnd",
         "molrs.io.BondingDescriptor",
@@ -236,11 +242,53 @@ def test_retired_modules_do_not_import(gone):
         "molrs.ff.params.AMBER_SCEE",
         "molrs.ff.params.AMBER_SCNB",
         # The record's version is io.mrec's, not its schema checker's.
-        "molrs.io.mrec.schema.MOLREC_VERSION",
-        "molrs.io.mrec.schema.RESERVED_META_KEYS",
+        "molrs.io.mrec.validation.MOLREC_VERSION",
+        "molrs.io.mrec.validation.RESERVED_META_KEYS",
         # The force-field <-> section mapping is the section's.
         "molrs.ff.forcefield.ForceField.to_section",
         "molrs.ff.forcefield.ForceField.from_section",
+        # Wave S2: no format dispatch; every door names its format.
+        "molrs.io.read_frame",
+        "molrs.io.write_frame",
+        "molrs.io.read_frame_bytes",
+        "molrs.io.write_frame_bytes",
+        # ... in-memory doors are read_<fmt>_str / _bytes ...
+        "molrs.io.read_smiles",
+        "molrs.io.write_smarts",
+        "molrs.io.smiles.SmilesIr.write_smiles",
+        "molrs.io.smiles.SmilesIr.write_smarts",
+        "molrs.io.read_block_csv",
+        "molrs.io.write_block_csv",
+        # ... family formats carry the family's name ...
+        "molrs.io.read_chgcar",
+        "molrs.io.read_ac",
+        "molrs.io.read_prep",
+        "molrs.io.write_prep",
+        "molrs.io.write_bond_react_map",
+        "molrs.io.read_mrec",
+        "molrs.io.write_mrec",
+        "molrs.io.mrec.pack",
+        # ... force-field doors name the format, never `_ff` ...
+        "molrs.io.read_amber_prmtop_ff",
+        "molrs.io.read_gromacs_top_ff",
+        "molrs.io.write_gromacs_top_ff",
+        "molrs.io.read_forcefield_xml",
+        "molrs.io.write_forcefield_xml",
+        "molrs.io.read_opls_xml",
+        # ... and a door that returns a ForceField says so.
+        "molrs.io.read_lammps_cmap",
+        "molrs.io.write_lammps_cmap",
+        # ... and a class lives in its own format's module.
+        "molrs.io.smiles.CGSmilesIR",
+        "molrs.io.smiles.CGGraph",
+        # Acronyms are cased as words: the line-notation IRs and records.
+        "molrs.io.smiles.SmilesIR",
+        "molrs.io.cgsmiles.CGSmilesIR",
+        "molrs.io.cgsmiles.CGGraph",
+        "molrs.io.cgsmiles.CGNode",
+        "molrs.io.cgsmiles.CGEdge",
+        "molrs.io.cgsmiles.CGFragmentDef",
+        "molrs.core.CGBond",
         # Second doors on a class.
         "molrs.core.Trajectory.from_frames",
         "molrs.core.Trajectory.count_frames",
@@ -249,6 +297,48 @@ def test_retired_modules_do_not_import(gone):
     ],
 )
 def test_retired_names_are_absent(gone):
+    owner_path, _, name = gone.rpartition(".")
+    owner: object = molrs
+    for part in owner_path.split(".")[1:]:
+        owner = getattr(owner, part)
+    assert not hasattr(owner, name), gone
+
+
+@pytest.mark.parametrize(
+    "gone",
+    [
+        # Kernels are <Category><Style>; the explicit-term door names its job.
+        "molrs.ff.potential.LJCut",
+        "molrs.ff.potential.kernel",
+        "molrs.ff.potential.TypedPotentials",
+        "molrs.ff.potential.PairLjCut.eval",
+        "molrs.ff.potential.PairLjCut.eval_table",
+        "molrs.ff.potential.PairLjCut.eval_pairs",
+        "molrs.ff.potential.PairLjCut.pair_eval",
+        # The IR's Python names are the Rust ones; refusals end in Error.
+        "molrs.ff.ir.Param",
+        "molrs.ff.ir.StyleInfo",
+        "molrs.ff.ir.CategoryInfo",
+        "molrs.ff.ir.unregister",
+        "molrs.ff.ir.Arity",
+        "molrs.ff.ir.Dim",
+        "molrs.ff.ir.Sealed",
+        # One accessor per question on the force-field model.
+        "molrs.ff.forcefield.Type",
+        "molrs.ff.forcefield.Style.types",
+        # Typifiers: acronyms cased as words, assign -> TypeAssignment.
+        "molrs.ff.typifier.Match",
+        "molrs.ff.typifier.OPLSAATypifier",
+        "molrs.ff.typifier.MMFF94Typifier",
+        "molrs.ff.typifier.MMFF94STypifier",
+        "molrs.ff.typifier.Typifier.match",
+        "molrs.ff.typifier.Typifier.library",
+        # CL&Pol scaling is its own module; its table is a params table.
+        "molrs.ff.scale_lj",
+        "molrs.ff.clpol_scaling.fragment_scaling_data",
+    ],
+)
+def test_force_field_names_retired_by_wave_s3_are_absent(gone):
     owner_path, _, name = gone.rpartition(".")
     owner: object = molrs
     for part in owner_path.split(".")[1:]:
@@ -326,30 +416,49 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "MrecReader",
         "MrecWriter",
         "SequenceSchema",
-        "pack",
-        "schema",
+        "pack_mrec_zip",
         "section_names",
+        "validation",
     }
 
 
 @pytest.mark.parametrize(
     "path",
     [
-        "molrs.io.read_smiles",
-        "molrs.io.read_mrec",
+        "molrs.io.read_smiles_str",
+        "molrs.io.write_smiles_str",
+        "molrs.io.read_cgsmiles_str",
+        "molrs.io.read_mrec_frame",
         "molrs.io.write_mrec_trajectory",
-        "molrs.io.read_frame_bytes",
-        "molrs.io.write_frame_bytes",
+        "molrs.io.read_msgpack_frame_bytes",
+        "molrs.io.write_msgpack_frame_bytes",
+        "molrs.io.read_json_frame_str",
+        "molrs.io.write_json_frame_str",
+        "molrs.io.read_csv_block",
+        "molrs.io.read_csv_block_str",
+        "molrs.io.write_csv_block",
+        "molrs.io.write_csv_block_str",
         "molrs.io.read_lammps_forcefield",
-        "molrs.io.write_forcefield_xml",
+        "molrs.io.read_openmm_xml_forcefield",
+        "molrs.io.write_openmm_xml_forcefield",
+        "molrs.io.read_molrs_xml_forcefield",
+        "molrs.io.write_molrs_xml_forcefield",
         "molrs.io.read_lammps_log_str",
-        "molrs.io.trajectory.TrajectoryReader",
+        "molrs.io.write_lammps_bond_react_map",
+        "molrs.io.pdb.PdbReader",
+        "molrs.io.xyz.XyzReader",
+        "molrs.io.gro.GroReader",
+        "molrs.io.dcd.DcdReader",
+        "molrs.io.trr.TrrReader",
+        "molrs.io.xtc.XtcReader",
+        "molrs.io.lammps.LammpsDumpReader",
+        "molrs.io.mrec.pack_mrec_zip",
         "molrs.io.mrec.MrecReader",
         "molrs.io.mrec.MrecWriter",
-        "molrs.io.smiles.SmilesIR",
-        "molrs.io.smiles.CGSmilesIR",
-        "molrs.io.log.LammpsLog",
-        "molrs.io.lammps_bond_react.BondReactTemplate",
+        "molrs.io.smiles.SmilesIr",
+        "molrs.io.cgsmiles.CgSmilesIr",
+        "molrs.io.lammps.LammpsLog",
+        "molrs.io.lammps.BondReactTemplate",
         "molrs.io.mrec.MOLREC_VERSION",
         "molrs.io.mrec.ForceFieldSection",
         "molrs.core.Frame",
@@ -371,6 +480,122 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
 )
 def test_the_one_path_exists(path):
     assert path in _objects()
+
+
+# --- Wave S2: every door names its format -----------------------------------
+
+_DOOR = re.compile(r"^(read|write)_[a-z0-9]+(_[a-z0-9]+)*$")
+
+
+def _io_doors() -> dict[str, object]:
+    return {
+        name: getattr(molrs.io, name)
+        for name in molrs.io.__all__
+        if inspect.isroutine(getattr(molrs.io, name))
+    }
+
+
+def _parameters(function: object) -> list[str]:
+    try:
+        return list(inspect.signature(function).parameters)
+    except (TypeError, ValueError):  # a builtin without a text signature
+        return []
+
+
+def test_no_door_dispatches_on_a_format_argument():
+    """A door that picks a format for the caller is format dispatch: every
+    door names its format, so none takes a ``format`` / ``fmt`` / ``encoding
+    name`` argument."""
+    dispatching = sorted(
+        name
+        for name, door in _io_doors().items()
+        if {"format", "fmt"} & set(_parameters(door))
+    )
+    assert not dispatching
+
+
+def test_every_door_is_read_or_write_of_a_named_format():
+    doors = _io_doors()
+    assert doors
+    assert all(_DOOR.match(name) for name in doors), sorted(doors)
+    generic = {"read_frame", "write_frame", "read", "write", "read_file", "write_file"}
+    assert not generic & set(doors)
+
+
+def test_memory_doors_end_in_str_or_bytes():
+    """Text in memory is ``_str``, bytes ``_bytes``: always the last word, and
+    never spelled another way (``_text``, ``_string``, ``from_bytes``…)."""
+    names = list(_io_doors())
+    for word in ("str", "bytes"):
+        assert all(n.endswith(f"_{word}") for n in names if f"_{word}_" in n), word
+    for spelling in ("_text", "_string", "parse_", "format_", "_from_", "_to_"):
+        assert not [n for n in names if spelling in n], spelling
+    assert "read_smiles_str" in names and "read_msgpack_frame_bytes" in names
+
+
+@pytest.mark.parametrize(
+    ("door", "reader"),
+    [
+        ("read_pdb_trajectory", "molrs.io.pdb.PdbReader"),
+        ("read_xyz_trajectory", "molrs.io.xyz.XyzReader"),
+        ("read_gro_trajectory", "molrs.io.gro.GroReader"),
+        ("read_lammps_trajectory", "molrs.io.lammps.LammpsDumpReader"),
+        ("read_dcd_trajectory", "molrs.io.dcd.DcdReader"),
+        ("read_trr_trajectory", "molrs.io.trr.TrrReader"),
+        ("read_xtc_trajectory", "molrs.io.xtc.XtcReader"),
+    ],
+)
+def test_a_trajectory_door_is_its_formats_reader(door, reader):
+    """``read_<fmt>_trajectory`` returns ``molrs.io.<fmt>.<Fmt>Reader``, and the
+    generic concatenating reader is gone."""
+    assert reader in _objects()
+    assert getattr(molrs.io, door).__doc__
+    module, _, name = reader.rpartition(".")
+    assert name in getattr(molrs.io, module.rpartition(".")[2]).__all__
+
+
+def test_a_reader_or_writer_is_named_after_its_module_with_word_cased_acronyms():
+    """``io.<fmt>.<Fmt>…Reader``: the class name starts with its module's name
+    cased as a word (``PdbReader``, ``LammpsDumpReader``), never an all-caps
+    acronym (``PDBReader``, ``DCDTrajReader``)."""
+    wrong = []
+    for path, value in _objects().items():
+        if not inspect.isclass(value) or not value.__name__.endswith(("Reader", "Writer")):
+            continue
+        module = path.rpartition(".")[0].rpartition(".")[2]
+        word = "".join(part.capitalize() for part in module.split("_"))
+        if not value.__name__.startswith(word) or re.search(r"[A-Z]{2}", value.__name__):
+            wrong.append(path)
+    assert not wrong
+
+
+
+# The analysis subsystems (compute, md, optimize, conformer, signal, builder,
+# stream, perceive outside SMARTS) are recased on their own; numpy's own
+# spellings (``DType``) stay as numpy writes them.
+_CASING_SCOPE = ("molrs.core", "molrs.io", "molrs.ff")
+_CASING_KEPT = {"DType"}
+
+
+def test_class_names_case_acronyms_as_words():
+    """``PdbReader``, ``SmilesIr``, ``CgGraph``, ``Mmff94Typifier``: an
+    acronym is cased as a word, never ``PDB``, ``IR`` or ``CG``."""
+    wrong = sorted(
+        path
+        for path, value in _objects().items()
+        if inspect.isclass(value)
+        and path.startswith(_CASING_SCOPE)
+        and value.__name__ not in _CASING_KEPT
+        and re.search(r"[A-Z]{2,}[a-z]|[A-Z]{3,}|[a-z0-9][A-Z]{2,}$", value.__name__)
+    )
+    assert not wrong
+
+
+def test_smarts_is_perceptions_wholly():
+    """SMARTS is generated by ``SmartsPattern.from_environment`` and written by
+    ``str(pattern)``; ``molrs.io`` holds no SMARTS door."""
+    assert callable(molrs.perceive.SmartsPattern.from_environment)
+    assert not [n for n in molrs.io.__all__ if "smarts" in n]
 
 
 def test_find_matches_has_no_mapped_shortcut():

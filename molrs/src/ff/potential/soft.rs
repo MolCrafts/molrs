@@ -26,7 +26,7 @@ use std::sync::Mutex;
 
 use ndarray::ArrayView2;
 
-use crate::ff::potential::geometry::sub3;
+use crate::ff::potential::flat_coords::sub3;
 use crate::ff::potential::{Potential, end_pairs};
 use molrs::core::Frame;
 use molrs::core::NeighborQuery;

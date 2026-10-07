@@ -13,7 +13,7 @@
 //! it knows how many points the chart can show, and slicing a `Float64Array`
 //! in JS costs nothing next to re-parsing.
 
-use molrs::io::log::read_lammps_log_str;
+use molrs::io::read_lammps_log_str;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 

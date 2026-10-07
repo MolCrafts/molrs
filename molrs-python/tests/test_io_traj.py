@@ -10,21 +10,23 @@ import numpy as np
 import pytest
 
 
-class TestReturnsReaderNotList:
-    def test_dcd_returns_reader(self, water_dcd):
+class TestReturnsTheFormatsReader:
+    """``read_<fmt>_trajectory`` returns that format's own lazy reader."""
+
+    def test_dcd_returns_its_reader(self, water_dcd):
         reader = molrs.io.read_dcd_trajectory(str(water_dcd))
-        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
+        assert isinstance(reader, molrs.io.dcd.DcdReader)
         assert reader.n_frames == len(reader) > 0
 
-    def test_lammps_returns_reader(self, water_lammpstrj):
+    def test_lammps_returns_its_reader(self, water_lammpstrj):
         reader = molrs.io.read_lammps_trajectory(str(water_lammpstrj))
-        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
+        assert isinstance(reader, molrs.io.lammps.LammpsDumpReader)
         assert reader.n_frames > 0
 
-    def test_xyz_facade_returns_reader_but_toplevel_returns_list(self, water_xyz):
+    def test_xyz_reader_reads_all_into_a_list(self, water_xyz):
         path = str(water_xyz)
         reader = molrs.io.read_xyz_trajectory(path)
-        assert isinstance(reader, molrs.io.trajectory.TrajectoryReader)
+        assert isinstance(reader, molrs.io.xyz.XyzReader)
         eager = molrs.io.read_xyz_trajectory(path).read_all()
         assert isinstance(eager, list)
         assert reader.n_frames == len(eager)
@@ -170,6 +172,46 @@ class TestDumpTypeField:
         atoms = molrs.io.read_lammps_trajectory(str(path)).read_all()[0]["atoms"]
         assert list(atoms["type_id"]) == [1, 2, 2]
         assert "type" not in atoms
+
+
+class TestPdbAndGroReaders:
+    """PDB models and GRO frames are read lazily too, one class per format."""
+
+    @staticmethod
+    def _frames():
+        out = []
+        for shift in (0.0, 1.0):
+            frame = molrs.core.Frame(
+                {
+                    "atoms": {
+                        "element": ["O", "H", "H"],
+                        "name": ["OW", "HW1", "HW2"],
+                        "x": [0.0 + shift, 0.96, -0.24],
+                        "y": [0.0, 0.0, 0.93],
+                        "z": [0.0, 0.0, 0.0],
+                    }
+                },
+                box=molrs.core.Box.cube(10.0),
+            )
+            out.append(frame)
+        return out
+
+    def test_pdb_models_by_index(self, tmp_path):
+        path = tmp_path / "two.pdb"
+        molrs.io.write_pdb_trajectory(path, self._frames())
+        reader = molrs.io.read_pdb_trajectory(path)
+        assert isinstance(reader, molrs.io.pdb.PdbReader)
+        assert len(reader) == 2
+        np.testing.assert_allclose(reader[-1]["atoms"]["x"][0], 1.0, atol=1e-3)
+        assert len(molrs.io.read_pdb_trajectory([path, path])) == 4
+
+    def test_gro_frames_by_index(self, tmp_path):
+        path = tmp_path / "two.gro"
+        molrs.io.write_gro_trajectory(path, self._frames())
+        reader = molrs.io.read_gro_trajectory(path)
+        assert isinstance(reader, molrs.io.gro.GroReader)
+        assert [f["atoms"].nrows for f in reader] == [3, 3]
+        np.testing.assert_allclose(reader[1]["atoms"]["x"][0], 1.0, atol=1e-2)
 
 
 class TestMultiFile:

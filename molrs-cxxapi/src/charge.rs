@@ -21,7 +21,7 @@ use crate::frame::{FrameRef, with_block_inserted_res};
 /// what this bridge already carries for every other choice it offers (`block`,
 /// `col`, `path`) and because an unrecognized one then has somewhere to go: the
 /// `Err` arm. Both families molrs ships are reachable — see
-/// [`parse_bcc_parameter_set`].
+/// [`BccParameterSet::from_name`].
 ///
 /// # Errors
 ///
@@ -46,7 +46,7 @@ pub(crate) fn am1_bcc_assign_frame_from_base(
     am1_charges: &[f64],
     parameter_set: &str,
 ) -> Result<Vec<f64>, String> {
-    let set = parse_bcc_parameter_set(parameter_set)?;
+    let set = BccParameterSet::from_name(parameter_set)?;
 
     fref.0
         .with_mut(|frame| -> Result<Vec<f64>, String> {
@@ -62,28 +62,6 @@ pub(crate) fn am1_bcc_assign_frame_from_base(
             Ok(charges)
         })
         .map_err(|e| e.to_string())?
-}
-
-/// Resolve a [`BccParameterSet`] from the name the C++ caller passed.
-///
-/// The names are the charge-model ids (`"bcc"` / `"abcg2"`), so a C++ caller that already knows
-/// which charge method it wants knows what to spell here.
-///
-/// # Errors
-///
-/// An unknown name. It is *refused*, not defaulted to BCC: silently substituting a
-/// different correction family would hand the caller charges from a table it did
-/// not ask for, which is indistinguishable from correct output until someone
-/// is checked against the offline `am1bcc_reference` golden table in tests.
-fn parse_bcc_parameter_set(name: &str) -> Result<BccParameterSet, String> {
-    match name.trim() {
-        n if n.eq_ignore_ascii_case("bcc") => Ok(BccParameterSet::Bcc),
-        n if n.eq_ignore_ascii_case("abcg2") => Ok(BccParameterSet::Abcg2),
-        other => Err(format!(
-            "unknown AM1-BCC parameter set '{other}': molrs ships two correction families, \
-             'bcc' (BCCPARM.DAT) and 'abcg2' (BCCPARM_ABCG2.DAT)"
-        )),
-    }
 }
 
 #[cfg(test)]

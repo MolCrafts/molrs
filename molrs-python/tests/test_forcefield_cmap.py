@@ -37,7 +37,7 @@ def test_a_cmap_style_takes_five_endpoints_and_a_grid() -> None:
     ff = _cmap_ff()
     style = ff.get_style("cmap", "charmm")
     assert isinstance(style, molrs.ff.forcefield.CmapStyle)
-    (cmap,) = style.types
+    (cmap,) = style.get_types()
     assert isinstance(cmap, molrs.ff.forcefield.CmapType)
     assert cmap.category == "cmap"
     assert [t.name for t in cmap.endpoints] == list(ENDS)
@@ -66,7 +66,7 @@ def test_an_array_param_is_taken_from_any_numeric_array_or_nested_list() -> None
 def test_a_restatement_compares_its_arrays_exactly() -> None:
     ff = _cmap_ff()
     style = ff.get_style("cmap", "charmm")
-    ends = ff.get_style("atom", "full").types
+    ends = ff.get_style("atom", "full").get_types()
     name = "-".join(ENDS)
     style.def_type(name, *ends, grid=_grid())
     nudged = _grid()
@@ -134,8 +134,8 @@ def test_a_cmaps_block_renumbers_atomi_through_atomm(tmp_path: Path) -> None:
     assert list(two["cmaps"]["atomm"]) == [4, 5, 10, 11]
 
     path = tmp_path / "cmaps.mrec"
-    molrs.io.write_mrec(path, frame)
-    back = molrs.io.read_mrec(path)
+    molrs.io.write_mrec_frame(path, frame)
+    back = molrs.io.read_mrec_frame(path)
     assert list(back["cmaps"]["atomm"]) == [4, 5]
 
 
@@ -168,7 +168,7 @@ def _number_lines(text: str) -> list[str]:
 
 
 def _alanine_ff() -> molrs.ff.forcefield.ForceField:
-    (row,) = molrs.io.read_lammps_cmap(ALANINE).get_types("cmap")
+    (row,) = molrs.io.read_lammps_cmap_forcefield(ALANINE).get_types("cmap")
     ff = molrs.ff.forcefield.ForceField("charmm", units="real")
     atoms = ff.def_style("atom", "full")
     by_name = {name: atoms.def_type(name, mass=12.0) for name in set(ALA)}
@@ -195,7 +195,7 @@ def _backbone() -> molrs.core.Frame:
 
 
 def test_read_lammps_cmap_names_rows_by_crossterm_type() -> None:
-    ff = molrs.io.read_lammps_cmap(ALANINE)
+    ff = molrs.io.read_lammps_cmap_forcefield(ALANINE)
     assert ff.units == "real"
     (row,) = ff.get_types("cmap")
     assert row.name == "1"
@@ -221,7 +221,7 @@ def test_lammps_fix_cmap_files_round_trip(tmp_path: Path) -> None:
     del frame["dihedrals"]
 
     cmap = tmp_path / "charmm.cmap"
-    molrs.io.write_lammps_cmap(cmap, ff, frame)
+    molrs.io.write_lammps_cmap_forcefield(cmap, ff, frame)
     assert _number_lines(cmap.read_text()) == _number_lines(ALANINE.read_text())
 
     include = molrs.io.write_lammps_forcefield_str(

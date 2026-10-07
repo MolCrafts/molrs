@@ -11,31 +11,31 @@
 use std::borrow::Cow;
 
 use crate::ff::forcefield::Params;
-use crate::ff::forcefield::mixing::Mixing;
+use crate::ff::forcefield::combining_rule::CombiningRule;
 use crate::ff::ir::LammpsForm;
-use crate::ff::ir::{Dim, IrError};
+use crate::ff::ir::{IrError, ParamDimension};
 use crate::ff::ir::{ParamSource, SpecialClass};
 use molrs::op::F;
 
 /// A parameter value: a number or a string.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub enum ParamValue {
     Num(F),
     Text(Cow<'static, str>),
 }
 
-impl Value {
+impl ParamValue {
     pub fn as_num(&self) -> Option<F> {
         match self {
-            Value::Num(v) => Some(*v),
-            Value::Text(_) => None,
+            ParamValue::Num(v) => Some(*v),
+            ParamValue::Text(_) => None,
         }
     }
 
     pub fn as_text(&self) -> Option<&str> {
         match self {
-            Value::Text(s) => Some(s),
-            Value::Num(_) => None,
+            ParamValue::Text(s) => Some(s),
+            ParamValue::Num(_) => None,
         }
     }
 }
@@ -58,7 +58,7 @@ pub enum ParamKind {
 /// How a pair style's parameter combines from the two self rows when no
 /// cross row gives the pair its own value.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Mix {
+pub enum ParamCombination {
     /// It does not: an unlike pair needs a cross row stating it (LAMMPS
     /// `buck`, `morse`). Every bonded parameter.
     None,
@@ -67,7 +67,7 @@ pub enum Mix {
     /// `√(pᵢ pⱼ)`.
     Geometric,
     /// The well depth of the joint (ε, σ) rule the style's `mixing` names
-    /// ([`Mixing`]; absent:
+    /// ([`CombiningRule`]; absent:
     /// the style's default), combined with the length parameter `sigma`.
     LjEpsilon { sigma: Cow<'static, str> },
     /// The length of that rule, combined with the depth `epsilon`.
@@ -79,13 +79,13 @@ pub enum Mix {
 pub struct ParamSpec {
     /// `^[A-Za-z_][A-Za-z0-9_]*$`, not a reserved name.
     pub name: Cow<'static, str>,
-    pub dim: Dim,
+    pub dim: ParamDimension,
     pub kind: ParamKind,
     /// The value a row (or the style) that lacks the parameter takes; `None`
     /// makes it required.
-    pub default: Option<Value>,
+    pub default: Option<ParamValue>,
     /// Pair styles only.
-    pub mix: Mix,
+    pub mix: ParamCombination,
     /// A numbered family `<name>1 … <name>M`, contiguous from 1, one `M`
     /// per table shared by every indexed parameter of the style.
     pub indexed: bool,
@@ -93,13 +93,13 @@ pub struct ParamSpec {
 
 impl ParamSpec {
     /// A required scalar parameter that does not mix.
-    pub fn new(name: impl Into<Cow<'static, str>>, dim: Dim) -> Self {
+    pub fn new(name: impl Into<Cow<'static, str>>, dim: ParamDimension) -> Self {
         Self {
             name: name.into(),
             dim,
             kind: ParamKind::Scalar,
             default: None,
-            mix: Mix::None,
+            mix: ParamCombination::None,
             indexed: false,
         }
     }
@@ -107,7 +107,7 @@ impl ParamSpec {
     /// A text parameter, one of `choices` when there are any.
     pub fn text(name: impl Into<Cow<'static, str>>, choices: &[&'static str]) -> Self {
         let choices = (!choices.is_empty()).then(|| choices.iter().map(|&c| c.into()).collect());
-        Self::new(name, Dim::NONE).kind(ParamKind::Text { choices })
+        Self::new(name, ParamDimension::NONE).kind(ParamKind::Text { choices })
     }
 
     pub fn kind(mut self, kind: ParamKind) -> Self {
@@ -115,16 +115,16 @@ impl ParamSpec {
         self
     }
 
-    pub fn default_value(mut self, value: Value) -> Self {
+    pub fn default_value(mut self, value: ParamValue) -> Self {
         self.default = Some(value);
         self
     }
 
     pub fn default_num(self, value: F) -> Self {
-        self.default_value(Value::Num(value))
+        self.default_value(ParamValue::Num(value))
     }
 
-    pub fn mix(mut self, mix: Mix) -> Self {
+    pub fn mix(mut self, mix: ParamCombination) -> Self {
         self.mix = mix;
         self
     }
@@ -140,8 +140,8 @@ impl ParamSpec {
 /// with these parameter values and the coordinate drawn from `q` (for a
 /// compound category, `q` bounds the step lengths of the seeded atoms).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Sample {
-    pub params: Vec<(Cow<'static, str>, Value)>,
+pub struct ConformanceSample {
+    pub params: Vec<(Cow<'static, str>, ParamValue)>,
     pub q: (F, F),
 }
 
@@ -179,7 +179,7 @@ pub struct StyleSpec {
     pub lammps: LammpsForm,
     /// Points the conformance checks run on at registration; without any
     /// they run once per process at the style's first compile.
-    pub samples: Vec<Sample>,
+    pub samples: Vec<ConformanceSample>,
 }
 
 impl StyleSpec {
@@ -230,7 +230,7 @@ impl StyleSpec {
         self
     }
 
-    pub fn sample(mut self, sample: Sample) -> Self {
+    pub fn sample(mut self, sample: ConformanceSample) -> Self {
         self.samples.push(sample);
         self
     }
@@ -257,7 +257,7 @@ impl StyleSpec {
     ///
     /// The one place a [`ParamSpec::default`] takes effect.
     /// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) gathers
-    /// through it before any kernel — a Tier-3 constructor, a generic kernel
+    /// through it before any kernel — a Tier-3 constructor, a form kernel
     /// or an expression — sees a parameter, so no kernel states a default of
     /// its own and every tier prices an absent parameter alike. A row is
     /// filled whatever it is: a pair style's cross row lacking a parameter
@@ -326,8 +326,8 @@ impl StyleSpec {
             for key in keys {
                 let present = self.check(label, decl, &key, row)?;
                 match (&decl.default, present) {
-                    (Some(Value::Num(v)), false) => row.set(&key, *v),
-                    (Some(Value::Text(t)), false) => row.set_str(&key, t),
+                    (Some(ParamValue::Num(v)), false) => row.set(&key, *v),
+                    (Some(ParamValue::Text(t)), false) => row.set_str(&key, t),
                     _ => {}
                 }
             }
@@ -414,7 +414,7 @@ fn family(row: &Params, base: &str) -> Vec<String> {
 /// expression.
 const D: &str = "0.017453292519943295";
 
-/// A scalar parameter of dimension `dim` (a [`Dim`] spelling); the built-in
+/// A scalar parameter of dimension `dim` (a [`ParamDimension`] spelling); the built-in
 /// table is written with it, and a test parses every spelling.
 fn p(name: &'static str, dim: &str) -> ParamSpec {
     ParamSpec::new(
@@ -440,13 +440,13 @@ fn untruncated() -> ParamSpec {
 }
 
 fn mixing() -> ParamSpec {
-    mixing_by(Mixing::UNDECLARED)
+    mixing_by(CombiningRule::UNDECLARED)
 }
 
 /// `mixing`, absent `rule` (LAMMPS's own default for the style).
-fn mixing_by(rule: Mixing) -> ParamSpec {
+fn mixing_by(rule: CombiningRule) -> ParamSpec {
     ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
-        .default_value(Value::Text(rule.name().into()))
+        .default_value(ParamValue::Text(rule.name().into()))
 }
 
 /// CHARMM's switch `S(r)` from `inner` to `cutoff`, as an expression
@@ -456,8 +456,8 @@ fn charmm_switch() -> String {
         .to_owned()
 }
 
-/// The spec of every style molrs registers: each kernel of
-/// [`KernelRegistry::builtin`], `dihedral rb` (expression only), and the
+/// The spec of every style molrs registers: each built-in kernel (the
+/// crate-private table `ff::potential::BuiltinKernels`), `dihedral rb` (expression only), and the
 /// styles of the categories that price no energy.
 ///
 /// Names, order and dimensions are the force-field IR's
@@ -467,21 +467,19 @@ fn charmm_switch() -> String {
 /// `dihedral periodic` and `nharmonic`, are left to the expression engine).
 /// The per-instance styles (MMFF, UFF, the per-atom-charge Coulomb styles)
 /// list the Frame columns their kernels read.
-///
-/// [`KernelRegistry::builtin`]: crate::ff::potential::KernelRegistry::builtin
 pub fn builtin_styles() -> Vec<StyleSpec> {
-    use crate::ff::forcefield::lammps_codecs::{self as lc, custom};
+    use crate::ff::ir::engine_codec::lammps::{self as lc, custom};
     use ParamSource::PerInstance;
     let positional = LammpsForm::positional;
     use SpecialClass::{Coulomb, Vdw};
     let s = StyleSpec::new;
     let eps = |sigma: &'static str| {
-        p("epsilon", "E").mix(Mix::LjEpsilon {
+        p("epsilon", "E").mix(ParamCombination::LjEpsilon {
             sigma: sigma.into(),
         })
     };
     let sig = |epsilon: &'static str| {
-        p("sigma", "L").mix(Mix::LjSigma {
+        p("sigma", "L").mix(ParamCombination::LjSigma {
             epsilon: epsilon.into(),
         })
     };
@@ -686,7 +684,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
         s("pair", "lj/class2")
             .params(vec![eps("sigma"), sig("epsilon")])
             // LAMMPS mixes `lj/class2` sixthpower unless told otherwise.
-            .style_params(vec![untruncated(), mixing_by(Mixing::SixthPower)])
+            .style_params(vec![untruncated(), mixing_by(CombiningRule::SixthPower)])
             .special(Vdw)
             .expression("epsilon*(2*(sigma/r)^9-3*(sigma/r)^6)")
             .lammps(custom(&lc::LJ_CLASS2)),
@@ -706,10 +704,10 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
             .params(vec![
                 eps("sigma"),
                 sig("epsilon"),
-                p("epsilon14", "E").mix(Mix::LjEpsilon {
+                p("epsilon14", "E").mix(ParamCombination::LjEpsilon {
                     sigma: "sigma14".into(),
                 }),
-                p("sigma14", "L").mix(Mix::LjSigma {
+                p("sigma14", "L").mix(ParamCombination::LjSigma {
                     epsilon: "epsilon14".into(),
                 }),
             ])
@@ -718,7 +716,7 @@ pub fn builtin_styles() -> Vec<StyleSpec> {
                 cutoff(),
                 mixing(),
                 ParamSpec::text("one_four", &["regular", "epsilon14"])
-                    .default_value(Value::Text("regular".into())),
+                    .default_value(ParamValue::Text("regular".into())),
             ])
             .special(Vdw)
             .expression(format!(

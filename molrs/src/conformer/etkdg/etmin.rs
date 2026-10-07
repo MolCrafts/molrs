@@ -29,7 +29,7 @@ use crate::conformer::distgeom::{
 };
 use crate::ff::forcefield::Params;
 use crate::ff::potential::improper::ImproperDistance;
-use crate::ff::potential::{Instances, Potential, Potentials};
+use crate::ff::potential::{ExplicitTerms, Potential, Potentials};
 use crate::op::vec3::{cross, dot};
 
 /// Per-atom energy threshold above which the first minimization is rejected
@@ -320,7 +320,7 @@ impl ExpTorsionField {
                 });
             }
         }
-        let mut fourier = Instances::new("dihedral", "periodic");
+        let mut fourier = ExplicitTerms::new("dihedral", "periodic");
         let mut any_torsion = false;
         for t in torsions {
             any_torsion = true;

@@ -11,17 +11,17 @@
 //! as separate LAMMPS coeff lines and not part of this style's per-type params,
 //! are out of scope here.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -121,11 +121,11 @@ impl IndexedTerms for DihedralClass2 {
 /// Construct a [`DihedralClass2`] from per-type params (`k1`,`phi1`,…,`k3`,
 /// `phi3`, the phases in degrees as LAMMPS takes them) and a Frame's
 /// `"dihedrals"` block.
-pub fn dihedral_class2_ctor(
+pub fn dihedral_class2_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -171,14 +171,15 @@ pub fn dihedral_class2_ctor(
         let mut t = [(0.0 as F, 0.0 as F); 3];
         for (m, slot) in t.iter_mut().enumerate() {
             let label = tc[idx].as_str();
-            let kn = need::type_num("class2", label, p, &format!("k{}", m + 1))?;
+            let kn = param_reads::type_num("class2", label, p, &format!("k{}", m + 1))?;
             // degrees (LAMMPS `dihedral_style class2`) → radians
-            let pn = need::type_num("class2", label, p, &format!("phi{}", m + 1))?.to_radians();
+            let pn =
+                param_reads::type_num("class2", label, p, &format!("phi{}", m + 1))?.to_radians();
             *slot = (kn, pn);
         }
         terms.push(t);
     }
-    Ok(Member::indexed(DihedralClass2 {
+    Ok(ForceTerm::indexed(DihedralClass2 {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

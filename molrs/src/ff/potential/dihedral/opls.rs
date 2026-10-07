@@ -7,22 +7,22 @@
 //! The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
 //! and coefficients, mirroring the MMFF torsion kernel.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
 /// OPLS 4-cosine proper dihedral with pre-resolved flat arrays.
-pub struct DihedralOPLS {
+pub struct DihedralOpls {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -33,7 +33,7 @@ pub struct DihedralOPLS {
     f4: Vec<F>,
 }
 
-impl DihedralOPLS {
+impl DihedralOpls {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -70,7 +70,7 @@ impl DihedralOPLS {
     }
 }
 
-impl Potential for DihedralOPLS {
+impl Potential for DihedralOpls {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -89,7 +89,7 @@ impl Potential for DihedralOPLS {
     }
 }
 
-impl IndexedTerms for DihedralOPLS {
+impl IndexedTerms for DihedralOpls {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -120,13 +120,13 @@ impl IndexedTerms for DihedralOPLS {
     }
 }
 
-/// Construct a [`DihedralOPLS`] from style params, per-type params (F1..F4),
+/// Construct a [`DihedralOpls`] from style params, per-type params (F1..F4),
 /// and a Frame's `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_opls_ctor(
+pub fn dihedral_opls_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -188,7 +188,7 @@ pub fn dihedral_opls_ctor(
             .into_iter()
             .find(|key| p.get(key).is_some())
         {
-            return Err(need::bad(
+            return Err(param_reads::bad(
                 "opls",
                 label,
                 key,
@@ -197,13 +197,13 @@ pub fn dihedral_opls_ctor(
             )
             .into());
         }
-        let need = |key: &str| need::type_num("opls", label, p, key);
+        let need = |key: &str| param_reads::type_num("opls", label, p, key);
         f1.push(need("k1")?);
         f2.push(need("k2")?);
         f3.push(need("k3")?);
         f4.push(need("k4")?);
     }
-    Ok(Member::indexed(DihedralOPLS {
+    Ok(ForceTerm::indexed(DihedralOpls {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -227,8 +227,8 @@ mod tests {
         vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s]
     }
 
-    fn single(f1: F, f2: F, f3: F, f4: F) -> DihedralOPLS {
-        DihedralOPLS {
+    fn single(f1: F, f2: F, f3: F, f4: F) -> DihedralOpls {
+        DihedralOpls {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

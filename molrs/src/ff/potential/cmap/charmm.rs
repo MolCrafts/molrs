@@ -42,7 +42,7 @@
 //!   cross products `|b_ij × b_jk|²` below 10⁻⁴ Å⁴ — contributes **nothing**
 //!   (`fix cmap` skips it);
 //! - the dihedrals are LAMMPS's, which equal molrs's
-//!   [`compute_dihedral`](crate::ff::potential::geometry::compute_dihedral)
+//!   [`compute_dihedral`](crate::ff::potential::flat_coords::compute_dihedral)
 //!   (the IUPAC sign) to rounding.
 //!
 //! One is not: LAMMPS fixes N = 24 and at most six maps (`CMAPDIM`,
@@ -52,15 +52,15 @@
 //! and read at the value cell — the same numbers, except where a float tie on
 //! a cell edge sent LAMMPS's two lookups to neighbouring cells.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use ndarray::{Array2, ArrayD, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, scale};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, ATOMM, TYPE};
@@ -265,7 +265,7 @@ fn spline(y: &[F], dx: F) -> Vec<F> {
 
 /// LAMMPS `FixCMAP::dihedral_angle_atan2`, degrees.
 #[inline]
-fn dihedral_deg(f: [F; 3], a: [F; 3], b: [F; 3], absg: F) -> F {
+fn fix_cmap_dihedral_angle_deg(f: [F; 3], a: [F; 3], b: [F; 3], absg: F) -> F {
     let arg1 = absg * dot(f, b);
     let arg2 = dot(a, b);
     arg1.atan2(arg2) * 180.0 / PI
@@ -333,8 +333,8 @@ impl CmapCharmm {
             let dpr32r43 = dot(vb32, vb43);
             let dpr45r43 = dot(vb45, vb43);
 
-            let phi = dihedral_deg(vb21, a1, b1, r32);
-            let psi = dihedral_deg(vb32, a2, b2, r43);
+            let phi = fix_cmap_dihedral_angle_deg(vb21, a1, b1, r32);
+            let psi = fix_cmap_dihedral_angle_deg(vb32, a2, b2, r43);
             let (e, de_dphi, de_dpsi) = self.maps[self.map[t]].eval(phi, psi);
             energy += e;
 
@@ -415,11 +415,11 @@ impl IndexedTerms for CmapCharmm {
 /// Only the maps a crossterm uses are prepared. `Err` on a missing column, an
 /// unknown type label, a type without a `grid`, or a grid [`CmapGrid::new`]
 /// refuses.
-pub fn cmap_charmm_ctor(
+pub fn cmap_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(CMAPS)
@@ -456,8 +456,10 @@ pub fn cmap_charmm_ctor(
                     .ok_or_else(|| format!("cmap_charmm: unknown type '{label}'"))?;
                 let grid = params
                     .get_array(GRID)
-                    .ok_or_else(|| need::missing("charmm", label, GRID))?;
-                maps.push(CmapGrid::new(grid).map_err(|e| need::bad("charmm", label, GRID, e))?);
+                    .ok_or_else(|| param_reads::missing("charmm", label, GRID))?;
+                maps.push(
+                    CmapGrid::new(grid).map_err(|e| param_reads::bad("charmm", label, GRID, e))?,
+                );
                 index.insert(label, maps.len() - 1);
                 maps.len() - 1
             }
@@ -465,7 +467,7 @@ pub fn cmap_charmm_ctor(
         atoms.push(std::array::from_fn(|p| cols[p][[row]] as usize));
         map.push(m);
     }
-    Ok(Member::indexed(CmapCharmm::new(atoms, map, maps)))
+    Ok(ForceTerm::indexed(CmapCharmm::new(atoms, map, maps)))
 }
 
 #[cfg(test)]
@@ -473,8 +475,8 @@ pub(crate) mod tests {
     use super::*;
     use crate::ff::forcefield::ForceField;
     use crate::ff::potential::PotentialCompiler;
-    use crate::ff::potential::geometry::compute_dihedral;
-    use crate::io::forcefield::readers::lammps::read_lammps_cmap_str;
+    use crate::ff::potential::flat_coords::compute_dihedral;
+    use crate::io::lammps::forcefield_reader::read_lammps_cmap_str;
     use molrs::core::Block;
     use molrs::op::Idx;
     use ndarray::Array1;
@@ -761,7 +763,7 @@ pub(crate) mod tests {
         assert_eq!(f0, f1);
         assert!(e0 != 0.0);
 
-        let Member::Indexed(k) = &pots.members()[0] else {
+        let ForceTerm::Indexed(k) = &pots.members()[0] else {
             panic!("a cmap member is indexed")
         };
         let terms = k.terms();

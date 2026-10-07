@@ -51,8 +51,7 @@ pub trait FrameReader: Reader {
 
 /// Build a value from a [`Frame`].
 ///
-/// The target side of [`FrameReader::read_as`] and the source side of
-/// [`FrameWriter::write_from`](crate::io::writer::FrameWriter::write_from).
+/// The target side of [`FrameReader::read_as`].
 pub trait FromFrame: Sized {
     /// Convert, or explain why the frame cannot express this type.
     fn from_frame(frame: &Frame) -> Result<Self>;
@@ -183,7 +182,7 @@ impl<'a, R: TrajectoryReader> Iterator for FrameIterator<'a, R> {
 /// A *trajectory* here is any ordered sequence of [`Frame`]s addressed by a
 /// 0-based step index. The contract is deliberately **backend-neutral**: it
 /// says nothing about files, byte offsets or seeking, so a reader over a DCD
-/// file and a reader over a Zarr store (`io::zarr`'s `MrecReader`) implement
+/// file and a reader over a Zarr store (`io::mrec::zarr_storage`'s `MrecReader`) implement
 /// the same three methods. That is also why [`Reader`] — which demands an
 /// underlying `BufRead` — is **not** a supertrait of this one: a store-backed
 /// reader has no byte stream to name.
@@ -349,12 +348,13 @@ pub fn open_streaming<P: AsRef<Path>>(path: P) -> Result<Box<dyn BufRead>> {
     }
 }
 
-/// Check a freshly-read frame against the Frame schema.
+/// Check a freshly-read frame against the Frame schema — the read-side mirror
+/// of [`check_write_frame`](crate::io::writer::check_write_frame).
 ///
 /// Every [`FrameReader::read`] returns through this. The report names
 /// every offending column at once, so a malformed file takes one round trip to
 /// diagnose rather than one per bad column.
-pub fn validated<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
+pub fn check_read_frame<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option<F>> {
     if let Some(ref f) = frame {
         crate::core::schema::Validator::canonical()
             .validate(f)
@@ -366,6 +366,39 @@ pub fn validated<F: crate::core::FrameAccess>(frame: Option<F>) -> Result<Option
             })?;
     }
     Ok(frame)
+}
+
+#[cfg(feature = "ff")]
+/// Parse a force-field file into a molrs
+/// [`ForceField`](crate::ff::forcefield::ForceField), normalized to the
+/// force-field IR (adopts the LAMMPS standard).
+///
+/// Implemented by each force-field format's reader class
+/// ([`LammpsForcefieldReader`](crate::io::lammps::LammpsForcefieldReader),
+/// [`GromacsTopForcefieldReader`](crate::io::gromacs::GromacsTopForcefieldReader),
+/// [`AmberPrmtopForcefieldReader`](crate::io::amber::AmberPrmtopForcefieldReader),
+/// [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader)). A reader owns
+/// the translation from its format — element and attribute names, **and unit
+/// and factor normalization** — so the resulting `ForceField` needs no
+/// downstream fixup.
+///
+/// Implementors own format-specific element/attribute mapping and unit
+/// conversion. Reading is **total**: a malformed document or a missing required
+/// attribute is an `Err`, never a silently-skipped parameter that would later
+/// read as zero.
+pub trait ForceFieldReader {
+    /// Parse from an in-memory string.
+    fn read_str(
+        &self,
+        text: &str,
+    ) -> std::result::Result<crate::ff::forcefield::ForceField, String>;
+
+    /// Parse from a file on disk. Defaults to reading the file and delegating to
+    /// [`read_str`](ForceFieldReader::read_str).
+    fn read(&self, path: &str) -> std::result::Result<crate::ff::forcefield::ForceField, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {}", path, e))?;
+        self.read_str(&text)
+    }
 }
 
 #[cfg(test)]

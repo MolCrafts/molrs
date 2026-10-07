@@ -1205,13 +1205,13 @@ class FragmentScaling:
     def polarizable(self) -> bool: ...
 
 def compute_k_ij(fr_i: FragmentScaling, fr_j: FragmentScaling, r: float) -> float: ...
-def fragment_scaling_data() -> dict[str, FragmentScaling]: ...
+def clpol_fragment_scaling() -> dict[str, FragmentScaling]: ...
 def scale_lj(
     ff: ForceField,
     fragments: dict[
         str, tuple[list[str], list[tuple[float, float, float]], list[float]]
     ],
-    frag_data: dict[str, FragmentScaling] | None = None,
+    fragment_table: dict[str, FragmentScaling] | None = None,
     scale_sigma: bool = False,
 ) -> ForceField: ...
 
@@ -1546,9 +1546,9 @@ class CoarseGrain(MolGraph):
     @property
     def beads(self) -> Refs[Bead]: ...
     @property
-    def cgbonds(self) -> Refs[CGBond]: ...
+    def cgbonds(self) -> Refs[CgBond]: ...
     def def_bead(self, mapping: Any = None, /, **attrs: Any) -> Bead: ...
-    def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CGBond: ...
+    def def_cgbond(self, a: Bead, b: Bead, /, **attrs: Any) -> CgBond: ...
     def add_bead(
         self,
         bead_type: str,
@@ -1744,7 +1744,7 @@ class Bond(RelationRef):
 class Angle(RelationRef): ...
 class Dihedral(RelationRef): ...
 class Improper(Dihedral): ...
-class CGBond(RelationRef): ...
+class CgBond(RelationRef): ...
 
 class Port(RelationRef):
     @property
@@ -1887,6 +1887,29 @@ class SmartsPattern:
     def max_bond_depth(self) -> int: ...
     @property
     def ring_primitives(self) -> list[tuple[str, int | None]]: ...
+    @classmethod
+    def from_environment(
+        cls,
+        mol: Atomistic,
+        center: int,
+        *,
+        reach: int = 1,
+        atomic_number: bool = True,
+        include_degree: bool = True,
+        include_h_count: bool = True,
+        include_charge: bool = True,
+        include_aromatic: bool = True,
+        include_ring_membership: bool = False,
+        include_ring_size: bool = False,
+        include_explicit_h_atoms: bool = False,
+        include_bond_orders: bool = True,
+        neighbor_style: Literal["chain", "recursive"] = "chain",
+        canonical_neighbor_order: bool = True,
+    ) -> SmartsPattern:
+        """The pattern that states the local environment of ``center`` in
+        ``mol`` out to ``reach`` bonds; it matches ``mol`` at ``center``."""
+    def __str__(self) -> str:
+        """The pattern's SMARTS text."""
 
 class Reaction:
     """Compiled Daylight reaction SMARTS (SMIRKS) transform.
@@ -2269,33 +2292,32 @@ class schema:
 # SMILES
 # ---------------------------------------------------------------------------
 
-class SmilesIR:
-    """Intermediate representation of a parsed SMILES or SMARTS string.
+class SmilesIr:
+    """Intermediate representation of a parsed SMILES string (or SMILES
+    fragment body).
 
     ``to_atomistic()`` is the plain conversion: it refuses SMARTS query atoms
     and, since it will not drop them silently, any node carrying a bonding
-    descriptor — which is what a ``CGFragmentDef.body`` from the last CGsmiles
+    descriptor — which is what a ``CgFragmentDef.body`` from the last CGsmiles
     block holds. Build such a body's ported unit with ``to_template()``
-    (parse it with ``SmilesIR.from_fragment``), or expand a whole string
-    through ``CGSmilesIR.to_atomistic``.
+    (parse it with ``SmilesIr.from_fragment``), or expand a whole string
+    through ``CgSmilesIr.to_atomistic``.
     """
 
     def __init__(self, smiles: str) -> None: ...
     @classmethod
-    def from_fragment(cls, body: str) -> SmilesIR:
+    def from_fragment(cls, body: str) -> SmilesIr:
         """Parse a CGsmiles fragment body (SMILES plus bonding descriptors,
         e.g. ``"[<]OCC[>]"``); the plain constructor refuses descriptors."""
     def to_template(self) -> Atomistic:
         """The ported unit of this body: heavy atoms plus one hydrogen handle
         and one port per bonding descriptor; no coordinates, no ``frag_id``.
-        ``SmilesIR.from_fragment("[<]OCC[>]").to_template()`` equals
-        ``CGSmilesIR("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
+        ``SmilesIr.from_fragment("[<]OCC[>]").to_template()`` equals
+        ``CgSmilesIr("{[#EO]}.{#EO=[<]OCC[>]}").templates()["EO"]``."""
     @property
     def n_components(self) -> int: ...
     def to_atomistic(self) -> Atomistic: ...
     def components(self) -> list[Atomistic]: ...
-    def write_smiles(self) -> str: ...
-    def write_smarts(self) -> str: ...
     @classmethod
     def from_atomistic(
         cls,
@@ -2312,14 +2334,14 @@ class SmilesIR:
             "error_if_multiple", "join_dot", "first_only"
         ] = "error_if_multiple",
         organic_subset: bool = True,
-    ) -> SmilesIR: ...
+    ) -> SmilesIr: ...
 
 # ---------------------------------------------------------------------------
 # CGsmiles — one front door plus the read-only records it hands out
 #
-# `CGSmilesIR` parses; every other class here is a read-only view over one
+# `CgSmilesIr` parses; every other class here is a read-only view over one
 # record of the value it returns and has no constructor of its own. There is
-# no `CGSmilesReader`: "Reader" here means a lazy, path-backed trajectory
+# no `CgSmilesReader`: "Reader" here means a lazy, path-backed trajectory
 # cursor, and a text-in / IR-out parser is not that — see the `molrs.io`
 # module docstring.
 #
@@ -2359,7 +2381,7 @@ class BondingDescriptor:
     @property
     def order(self) -> BondKindName | None: ...
 
-class CGNode:
+class CgNode:
     """One coarse-grained node: ``[#PEO]``, ``[#A;q=-0.5]``.
 
     ``charge`` is a *partial* charge in elementary-charge units ``e`` (the
@@ -2378,7 +2400,7 @@ class CGNode:
     @property
     def parent(self) -> int | None: ...
 
-class CGEdge:
+class CgEdge:
     """One coarse edge, joining ``nodes[i]`` and ``nodes[j]`` of its level.
 
     ``multiplicity`` is how many bonds the edge stands for (1–4, from ``-``
@@ -2396,7 +2418,7 @@ class CGEdge:
     @property
     def derived_from(self) -> tuple[int, int] | None: ...
 
-class CGGraph:
+class CgGraph:
     """One resolution level: coarse-grained nodes and the edges between them.
 
     Both lists are in parse order — nodes as their brackets were read, edges
@@ -2405,17 +2427,17 @@ class CGGraph:
     """
 
     @property
-    def nodes(self) -> list[CGNode]: ...
+    def nodes(self) -> list[CgNode]: ...
     @property
-    def edges(self) -> list[CGEdge]: ...
+    def edges(self) -> list[CgEdge]: ...
 
-class CGFragmentDef:
+class CgFragmentDef:
     """One entry of a fragment block: ``#PEO=[$]COC[$]``.
 
-    ``body`` is a ``CGGraph`` in an intermediate block and a ``SmilesIR`` in
+    ``body`` is a ``CgGraph`` in an intermediate block and a ``SmilesIr`` in
     the last one — the Python type is the tag, so dispatch with ``isinstance``.
-    A ``SmilesIR`` body keeps its bonding descriptors, so its own
-    ``to_atomistic()`` refuses it; expand through ``CGSmilesIR.to_atomistic``.
+    A ``SmilesIr`` body keeps its bonding descriptors, so its own
+    ``to_atomistic()`` refuses it; expand through ``CgSmilesIr.to_atomistic``.
     Its ``repr`` echoes the fragment-table entry as written —
     ``#PEO=[$]COC[$]``, name and ``=`` included — not a bare SMILES, because
     the entry's span is the text the IR records.
@@ -2424,7 +2446,7 @@ class CGFragmentDef:
     @property
     def name(self) -> str: ...
     @property
-    def body(self) -> CGGraph | SmilesIR: ...
+    def body(self) -> CgGraph | SmilesIr: ...
 
 class PairEnd:
     """One end of a :class:`ResolvedPair`: the port, and who offered it.
@@ -2462,7 +2484,7 @@ class ResolvedPair:
     @property
     def kind(self) -> BondKindName: ...
 
-class CGSmilesIR:
+class CgSmilesIr:
     """Intermediate representation of a parsed CGsmiles string.
 
     Constructing it parses, validates, expands and resolves the whole string;
@@ -2474,16 +2496,16 @@ class CGSmilesIR:
 
     def __init__(self, text: str) -> None: ...
     @property
-    def levels(self) -> list[CGGraph]: ...
+    def levels(self) -> list[CgGraph]: ...
     @property
-    def fragments(self) -> list[dict[str, CGFragmentDef]]: ...
+    def fragments(self) -> list[dict[str, CgFragmentDef]]: ...
     @property
     def pairs(self) -> list[list[ResolvedPair]]: ...
     def to_atomistic(self) -> Atomistic: ...
     def templates(self) -> dict[str, Atomistic]:
         """One ported :class:`Atomistic` template per definition of the last
         fragment table, keyed by name. One body alone:
-        ``SmilesIR.from_fragment(body).to_template()``."""
+        ``SmilesIr.from_fragment(body).to_template()``."""
     def to_coarsegrain(self) -> CoarseGrain:
         """The coarsest level, ``levels[0]``, as a bead graph: one bead per
         node (``bead_type`` only, no coordinates or mass), one CG bond per
@@ -2497,37 +2519,33 @@ class CGSmilesIR:
         """
 
 # ---------------------------------------------------------------------------
-# I/O — readers and writers
+# I/O — readers and writers (molrs.io: one function per door; each format's
+# classes in its submodule)
 # ---------------------------------------------------------------------------
 
-def read_block_csv(
+def csv_block_from_text(
     text: str, delimiter: str = ",", header: list[str] | None = None
-) -> Block: ...
-def write_block_csv(block: Block, delimiter: str = ",", header: bool = True) -> str: ...
-def read_frame_bytes(
-    data: bytes, format: Literal["msgpack", "json"] = "msgpack"
-) -> Frame: ...
-def write_frame_bytes(
-    frame: Frame, format: Literal["msgpack", "json"] = "msgpack"
-) -> bytes: ...
+) -> Block:
+    """Native half of ``molrs.io.read_csv_block_str``."""
+def csv_block_to_text(block: Block, delimiter: str = ",", header: bool = True) -> str:
+    """Native half of ``molrs.io.write_csv_block_str``."""
+def read_msgpack_frame_bytes(data: bytes) -> Frame: ...
+def write_msgpack_frame_bytes(frame: Frame) -> bytes: ...
+def read_json_frame_str(text: str) -> Frame: ...
+def write_json_frame_str(frame: Frame) -> str: ...
 def read_pdb(path: PathInput) -> Frame: ...
-def read_pdb_trajectory(path: PathInput) -> list[Frame]:
-    """Read every MODEL of a PDB file as a trajectory (one Frame per MODEL)."""
-
 def read_xyz(path: PathInput) -> Frame: ...
+def read_sdf(path: PathInput) -> Frame:
+    """The first record of an MDL SDF / molfile (V2000)."""
+def read_cif(path: PathInput) -> Frame:
+    """The first ``data_`` block of a CIF file."""
+def write_cif(path: PathInput, frame: Frame) -> None: ...
+def read_vasp_poscar(path: PathInput) -> Frame: ...
+def write_vasp_poscar(path: PathInput, frame: Frame) -> None: ...
 def read_lammps_data(path: PathInput, atom_style: str | None = None) -> Frame:
     """Read a LAMMPS data file. Typed blocks carry ``type_id`` and the string
     ``type`` (the file's type label, or the id as a label); ``atom_style``
     fixes the ``Atoms`` layout as LAMMPS's ``atom_style`` does."""
-def read_frame(path: PathInput, format: str | None = None) -> Frame:
-    """Read one structure, picking the format from the file name (or
-    ``format``: a name or extension such as ``"xyz"`` / ``"lammpstrj"``).
-    A multi-structure file gives its first structure. Raises ``OSError``
-    when the format cannot be told or the file does not read."""
-
-def write_frame(path: PathInput, frame: Frame, format: str | None = None) -> None:
-    """Write ``frame``, picking the format from the file name (or
-    ``format``). ``sdf`` and ``inpcrd`` are read-only. Raises ``OSError``."""
 
 class BondReactTemplate:
     """One ``fix bond/react`` reaction: ``pre`` / ``post`` templates
@@ -2551,7 +2569,7 @@ class BondReactTemplate:
         """The map file's text. Raises ``ValueError`` for a malformed
         template."""
 
-def write_bond_react_map(template: BondReactTemplate, base_path: PathInput) -> None:
+def write_lammps_bond_react_map(template: BondReactTemplate, base_path: PathInput) -> None:
     """Write ``{base_path}.map``. Raises ``ValueError`` for a malformed
     template."""
 
@@ -2568,7 +2586,6 @@ def write_lammps_bond_react_system(
 
 def read_stl(path: PathInput) -> TriMesh: ...
 def read_gro(path: PathInput) -> Frame: ...
-def read_gro_trajectory(path: PathInput) -> list[Frame]: ...
 def read_xsf(path: PathInput) -> Frame: ...
 def read_amber_inpcrd(path: PathInput, frame: Frame | None = None) -> Frame:
     """Read an AMBER ASCII inpcrd / restart file. With ``frame``, its
@@ -2577,19 +2594,17 @@ def read_amber_inpcrd(path: PathInput, frame: Frame | None = None) -> Frame:
     Raises ``OSError`` on an atom-count mismatch (``frame`` unchanged)."""
 def read_amber_prmtop(path: PathInput) -> Frame: ...
 
-class LAMMPSTrajReader:
-    """Lazy, indexed reader for LAMMPS dump trajectory files.
+class PdbReader:
+    """Lazy, indexed reader of PDB files — ``molrs.io.pdb.PdbReader``.
 
-    Frames are parsed on demand via byte-offset seeks; the index of
-    ``ITEM: TIMESTEP`` markers is built on the first ``len()`` /
-    ``__getitem__`` / ``read_frame`` call (or eagerly via ``build_index()``).
-
-    Supports the molpy ``BaseTrajectoryReader`` surface: ``read_frame``,
-    ``read_frames``, ``read_range``, ``read_all``, ``n_frames``, slicing,
-    ``close()``, and use as a context manager.
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2605,24 +2620,25 @@ class LAMMPSTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> LAMMPSTrajReader: ...
+    def __iter__(self) -> PdbReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-class DCDTrajReader:
-    """Lazy, indexed reader for DCD trajectory files.
+def read_pdb_trajectory(paths: PathInput | Sequence[PathInput]) -> PdbReader:
+    """Open one PDB trajectory, or several whose frames are concatenated."""
 
-    Frames are parsed on demand via byte-offset seeks computed from the DCD
-    header; the header is parsed on the first ``len()`` / ``__getitem__`` /
-    ``read_step`` call (or eagerly via ``build_index()``).
+class XyzReader:
+    """Lazy, indexed reader of XYZ files — ``molrs.io.xyz.XyzReader``.
 
-    Supports the molpy ``BaseTrajectoryReader`` surface: ``read_frame``,
-    ``read_frames``, ``read_range``, ``read_all``, ``n_frames``, slicing,
-    ``close()``, and use as a context manager.
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2638,22 +2654,25 @@ class DCDTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> DCDTrajReader: ...
+    def __iter__(self) -> XyzReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-class XYZTrajReader:
-    """Lazy, indexed reader for multi-frame XYZ trajectory files.
+def read_xyz_trajectory(paths: PathInput | Sequence[PathInput]) -> XyzReader:
+    """Open one XYZ trajectory, or several whose frames are concatenated."""
 
-    The molrs-native counterpart to :func:`read_xyz_trajectory` (which eagerly
-    returns ``list[Frame]``). Exposes the same molpy ``BaseTrajectoryReader``
-    surface as :class:`DCDTrajReader`: ``read_frame``, ``read_frames``,
-    ``read_range``, ``read_all``, ``n_frames``, slicing, ``close()``, and use
-    as a context manager.
+class GroReader:
+    """Lazy, indexed reader of GRO files — ``molrs.io.gro.GroReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
     """
 
-    def __init__(self, path: PathInput) -> None: ...
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
     @property
     def n_frames(self) -> int: ...
     def build_index(self) -> None: ...
@@ -2669,12 +2688,151 @@ class XYZTrajReader:
     def __getitem__(self, key: int) -> Frame: ...
     @overload
     def __getitem__(self, key: slice) -> list[Frame]: ...
-    def __iter__(self) -> XYZTrajReader: ...
+    def __iter__(self) -> GroReader: ...
     def __next__(self) -> Frame: ...
     def __enter__(self) -> Self: ...
     def __exit__(self, *exc: object) -> bool: ...
 
-def read_chgcar(path: PathInput) -> Frame: ...
+def read_gro_trajectory(paths: PathInput | Sequence[PathInput]) -> GroReader:
+    """Open one GRO trajectory, or several whose frames are concatenated."""
+
+class LammpsDumpReader:
+    """Lazy, indexed reader of LAMMPS dump files — ``molrs.io.lammps.LammpsDumpReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> LammpsDumpReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_lammps_trajectory(paths: PathInput | Sequence[PathInput]) -> LammpsDumpReader:
+    """Open one LAMMPS dump trajectory, or several whose frames are concatenated."""
+
+class DcdReader:
+    """Lazy, indexed reader of DCD files — ``molrs.io.dcd.DcdReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> DcdReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_dcd_trajectory(paths: PathInput | Sequence[PathInput]) -> DcdReader:
+    """Open one DCD trajectory, or several whose frames are concatenated."""
+
+class TrrReader:
+    """Lazy, indexed reader of GROMACS TRR files — ``molrs.io.trr.TrrReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> TrrReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_trr_trajectory(paths: PathInput | Sequence[PathInput]) -> TrrReader:
+    """Open one GROMACS TRR trajectory, or several whose frames are concatenated."""
+
+class XtcReader:
+    """Lazy, indexed reader of GROMACS XTC files — ``molrs.io.xtc.XtcReader``.
+
+    One path, or several whose frames are concatenated. Frames are parsed on
+    demand; random access indexes a file once. Surface: ``read_frame``
+    (negative indexing), ``read_frames``, ``read_range``, ``read_all``,
+    ``n_frames``, integer and slice indexing, lazy iteration, ``close()``,
+    and use as a context manager.
+    """
+
+    def __init__(self, paths: PathInput | Sequence[PathInput]) -> None: ...
+    @property
+    def n_frames(self) -> int: ...
+    def build_index(self) -> None: ...
+    def read_frame(self, index: int) -> Frame: ...
+    def read_frames(self, indices: Sequence[int]) -> list[Frame]: ...
+    def read_range(
+        self, start: int = ..., stop: int | None = ..., step: int = ...
+    ) -> list[Frame]: ...
+    def read_all(self) -> list[Frame]: ...
+    def close(self) -> None: ...
+    def __len__(self) -> int: ...
+    @overload
+    def __getitem__(self, key: int) -> Frame: ...
+    @overload
+    def __getitem__(self, key: slice) -> list[Frame]: ...
+    def __iter__(self) -> XtcReader: ...
+    def __next__(self) -> Frame: ...
+    def __enter__(self) -> Self: ...
+    def __exit__(self, *exc: object) -> bool: ...
+
+def read_xtc_trajectory(paths: PathInput | Sequence[PathInput]) -> XtcReader:
+    """Open one GROMACS XTC trajectory, or several whose frames are concatenated."""
+
+def read_vasp_chgcar(path: PathInput) -> Frame: ...
 def read_cube(path: PathInput) -> Frame: ...
 def write_cube(path: PathInput, frame: Frame) -> None: ...
 def write_pdb(path: PathInput, frame: Frame) -> None: ...
@@ -2700,6 +2858,9 @@ def write_dcd_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_gro(path: PathInput, frame: Frame) -> None: ...
 def write_gro_trajectory(path: PathInput, frames: Sequence[Frame]) -> None: ...
 def write_xsf(path: PathInput, frame: Frame) -> None: ...
+def read_cgsmiles_str(text: str) -> Atomistic:
+    """The molecule a CGsmiles string states, its lowest level expanded into
+    atoms (topology only)."""
 
 # ---------------------------------------------------------------------------
 # Signal processing
@@ -2827,7 +2988,7 @@ class Assembler:
     Raises
     ------
     TypeError
-        If ``library`` is not a mapping of ``str`` to graphs, ``placer`` is
+        If ``source_forcefield`` is not a mapping of ``str`` to graphs, ``placer`` is
         not a :class:`SitePlacer` or :class:`GrowthPlacer`, or ``orienter``
         is not an :class:`AxisOrienter`.
     """
@@ -2942,10 +3103,10 @@ class ForceField:
 
         Raises
         ------
-        molrs.ff.ir.OutOfImage
+        molrs.ff.ir.OutOfImageError
             A row the canonical style cannot hold (charmm ``w ≠ 0``, class2
             ``k3 ≠ 0``), naming the type and the condition.
-        molrs.ff.ir.FormConflict
+        molrs.ff.ir.FormConflictError
             A form family without exactly one canonical style."""
     def to_form(self, category: str, style: str) -> ForceField:
         """Every style of ``category`` in ``style``'s form family converted
@@ -2953,9 +3114,9 @@ class ForceField:
 
         Raises
         ------
-        molrs.ff.ir.NoForm
+        molrs.ff.ir.NoFormError
             ``style`` has no form codec.
-        molrs.ff.ir.OutOfImage
+        molrs.ff.ir.OutOfImageError
             A row is outside its image (``sin(2φ) coefficient … ≠ 0``, ``the
             constant term …``)."""
     def fit_form(
@@ -3004,7 +3165,7 @@ class ForceField:
     def styles(self) -> list[Style]: ...
     def get_style(self, category: str, name: str) -> Style | None: ...
     def get_styles(self, category: str | type[Style]) -> list[Style]: ...
-    def get_types(self, category: str | type[Type]) -> list[Type]: ...
+    def get_types(self, category: str | type[ForceFieldType]) -> list[ForceFieldType]: ...
     def __reduce__(self) -> tuple[type, tuple[()], tuple[Any, ...]]: ...
     def __setstate__(self, state: tuple[Any, ...]) -> None: ...
 
@@ -3016,10 +3177,8 @@ class Style:
     def name(self) -> str: ...
     @property
     def category(self) -> str: ...
-    @property
-    def types(self) -> list[Type]: ...
-    def get_types(self, type_cls: type[Type] | None = None) -> list[Type]: ...
-    def get_type_by_name(self, name: str) -> Type | None: ...
+    def get_types(self, type_cls: type[ForceFieldType] | None = None) -> list[ForceFieldType]: ...
+    def get_type_by_name(self, name: str) -> ForceFieldType | None: ...
     @property
     def params(self) -> dict[str, ParamValue]: ...
     def __getitem__(self, key: str) -> ParamValue | None: ...
@@ -3099,7 +3258,7 @@ class RelationStyle(Style):
         """Define the type ``name`` on exactly ``arity`` endpoints, in
         order; another count raises ``ValueError``."""
 
-class Type:
+class ForceFieldType:
     """Handle of one type of a :class:`ForceField`; equal handles name the
     same category, style and type of one force field."""
 
@@ -3118,33 +3277,23 @@ class Type:
     @property
     def endpoints(self) -> tuple[AtomType, ...]: ...
 
-class AtomType(Type): ...
+class AtomType(ForceFieldType): ...
 
-class BondType(Type):
+class BondType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
 
-class AngleType(Type):
-    @property
-    def itom(self) -> AtomType: ...
-    @property
-    def jtom(self) -> AtomType: ...
-    @property
-    def ktom(self) -> AtomType: ...
-
-class DihedralType(Type):
+class AngleType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
     @property
     def ktom(self) -> AtomType: ...
-    @property
-    def ltom(self) -> AtomType: ...
 
-class ImproperType(Type):
+class DihedralType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
@@ -3154,13 +3303,23 @@ class ImproperType(Type):
     @property
     def ltom(self) -> AtomType: ...
 
-class PairType(Type):
+class ImproperType(ForceFieldType):
+    @property
+    def itom(self) -> AtomType: ...
+    @property
+    def jtom(self) -> AtomType: ...
+    @property
+    def ktom(self) -> AtomType: ...
+    @property
+    def ltom(self) -> AtomType: ...
+
+class PairType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
     def jtom(self) -> AtomType: ...
 
-class CmapType(Type):
+class CmapType(ForceFieldType):
     @property
     def itom(self) -> AtomType: ...
     @property
@@ -3172,7 +3331,7 @@ class CmapType(Type):
     @property
     def mtom(self) -> AtomType: ...
 
-class RelationType(Type):
+class RelationType(ForceFieldType):
     """A type of a category beyond the seven; ``endpoints`` holds as many
     atom types as the category's arity."""
 
@@ -3395,7 +3554,7 @@ class OptimizationReport:
     @property
     def final_grad_rms(self) -> float: ...
 
-class TypedPotentials:
+class WeightedTerms:
     """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
 
 
@@ -3412,15 +3571,15 @@ class TypedPotentials:
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
-    ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
-    another ``Potentials`` such as one ``kernel`` built, or an object with
+    ``Potentials()`` is empty; ``push`` **moves** members in (an ``PairLjCut``,
+    another ``Potentials`` such as one ``compile_explicit_terms`` built, or an object with
     ``calc_energy_forces``). The engine is unit-agnostic: nothing scales the
     energy or forces implicitly.
     """
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: LJCut | Potentials | Any) -> None: ...
+    def push(self, potential: PairLjCut | Potentials | Any) -> None: ...
     def calc_energy_forces(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]: ...
     def calc_energy(self, arg: Frame | ArrayF) -> float: ...
     def calc_forces(self, arg: Frame | ArrayF) -> ArrayF: ...
@@ -3439,7 +3598,7 @@ class PotentialCompiler:
     def __init__(self, forcefield: ForceField) -> None: ...
     def compile(self, frame: Frame) -> Potentials: ...
     def defer(self) -> Potentials: ...
-    def compile_typed(self, frame: Frame) -> TypedPotentials: ...
+    def compile_typed(self, frame: Frame) -> WeightedTerms: ...
 
 class Lbfgs:
     """L-BFGS geometry optimizer over a force-field Potential.
@@ -3468,18 +3627,18 @@ class Lbfgs:
 
 #: A param value of a type annotation or style: numbers to the numeric side,
 #: strings to the string side.
-type MatchParamValue = float | int | str
+type AssignmentParamValue = float | int | str
 
-#: What a ``Match`` writes under one key of one graph element: a scalar is
+#: What a ``TypeAssignment`` writes under one key of one graph element: a scalar is
 #: stamped and defines nothing; ``(style, name, endpoints, params)`` stamps
 #: ``name`` and every param and defines the type ``name`` on ``endpoints``
 #: (atom-type names; empty for an atom type) under the style.
 type Annotation = (
-    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, MatchParamValue]]
+    str | bool | int | float | tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]
 )
 
-class Match:
-    """What a typifier's ``match`` assigns to one graph.
+class TypeAssignment:
+    """What a typifier's ``assign`` assigns to one graph.
 
     ``nodes`` is positional against ``graph.atoms``; ``links`` maps a relation
     kind to rows positional against that kind's own rows, so an improper never
@@ -3499,25 +3658,25 @@ class Match:
         links: _AbcMapping[type | str, Sequence[_AbcMapping[str, Annotation]]]
         | None = None,
         *,
-        styles: Sequence[tuple[str, str, dict[str, MatchParamValue]]] = (),
-        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, MatchParamValue]]] = (),
+        styles: Sequence[tuple[str, str, dict[str, AssignmentParamValue]]] = (),
+        pairs: Sequence[tuple[str, str, Sequence[str], dict[str, AssignmentParamValue]]] = (),
     ) -> None: ...
 
 class Typifier[TGraph: MolGraph]:
-    """The base of every graph typifier: one ``match`` hook plus the output
+    """The base of every graph typifier: one ``assign`` hook plus the output
     force field its typing accumulates.
 
-    A subclass implements ``match`` (and optionally ``library``) and nothing
+    A subclass implements ``assign`` (and optionally ``source_forcefield``) and nothing
     else; defining ``typify`` on a subclass raises ``TypeError`` at class
     creation. The native classes extend this base and only construct; they
-    are subclassable, but a subclass of one that defines ``match`` or
-    ``library`` raises ``TypeError`` (they run in Rust)."""
+    are subclassable, but a subclass of one that defines ``assign`` or
+    ``source_forcefield`` raises ``TypeError`` (they run in Rust)."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-    def match(self, graph: _TGraph) -> Match:
-        """Match ``graph`` and return what it assigns.
+    def assign(self, graph: _TGraph) -> TypeAssignment:
+        """Type ``graph`` and return what it assigns.
 
-        ``match`` may write intermediate results (generated topology, perceived
+        ``assign`` may write intermediate results (generated topology, perceived
         bond types) onto the graph it is given; ``typify`` always gives it a
         private copy. The base raises ``NotImplementedError``; a native class
         runs its Rust matcher."""
@@ -3525,10 +3684,10 @@ class Typifier[TGraph: MolGraph]:
     def typify(self, mol: _TGraph) -> _TGraph:
         """Do not override; the only writer of ``forcefield()``.
 
-        Copies ``mol``, calls ``match`` on the copy, and writes the match onto
+        Copies ``mol``, calls ``assign`` on the copy, and writes the match onto
         the copy and the output. Returns the typed copy; ``mol`` is untouched.
         ``mol`` must be an ``Atomistic`` (anything else raises ``TypeError``).
-        Raises ``NotImplementedError`` without a ``match`` and ``ValueError``
+        Raises ``NotImplementedError`` without an ``assign`` and ``ValueError``
         when the match does not fit the graph or contradicts the output (which
         is then unchanged)."""
     def forcefield(self) -> ForceField:
@@ -3537,7 +3696,7 @@ class Typifier[TGraph: MolGraph]:
 
         Edits to the copy do not reach the typifier; ``typify`` is the only
         writer. Before the first ``typify`` it is the seeded empty output."""
-    def library(self) -> ForceField:
+    def source_forcefield(self) -> ForceField:
         """The force field this typifier matches against, returned as a copy.
 
         The output starts as its empty likeness (name, declared units and
@@ -3545,10 +3704,10 @@ class Typifier[TGraph: MolGraph]:
         ``NotImplementedError``, and its output starts as an empty force field
         named after the class."""
 
-class MMFF94Typifier(Typifier[Atomistic]):
+class Mmff94Typifier(Typifier[Atomistic]):
     """MMFF94 (Halgren 1996) atom types, charges and bonded parameters.
 
-    The variant is the class, never a flag. See ``MMFF94STypifier`` for the
+    The variant is the class, never a flag. See ``Mmff94sTypifier`` for the
     "static" parameter set.
 
     ``typify`` labels the graph; ``PotentialCompiler(forcefield()).compile(frame)``
@@ -3557,10 +3716,10 @@ class MMFF94Typifier(Typifier[Atomistic]):
 
     def __init__(self) -> None: ...
 
-class MMFF94STypifier(Typifier[Atomistic]):
+class Mmff94sTypifier(Typifier[Atomistic]):
     """MMFF94s (Halgren 1999) — the "static" set, for energy minimization.
 
-    Differs from ``MMFF94Typifier`` only on delocalised trivalent nitrogen (MMFF
+    Differs from ``Mmff94Typifier`` only on delocalised trivalent nitrogen (MMFF
     numeric types 10 ``NC=O`` / 40 ``NC=C``): 11 out-of-plane rows and 42 torsion
     rows are re-parameterised so the nitrogen minimizes planar. ``typify`` bakes
     ``koop = +0.015`` (type 10) / ``+0.030`` (type 40) md*A*rad^-2 on those
@@ -3571,7 +3730,7 @@ class MMFF94STypifier(Typifier[Atomistic]):
 
     def __init__(self) -> None: ...
 
-class OPLSAATypifier(Typifier[Atomistic]):
+class OplsAaTypifier(Typifier[Atomistic]):
     def __init__(self, source: Any = None, *, strict: bool = True) -> None: ...
 
 type AtdParameterSet = Literal["bcc", "abcg2", "gas", "gaff", "gaff2", "amber", "sybyl"]
@@ -3687,8 +3846,13 @@ class GasteigerModel:
     def needs_equivalencing(self) -> bool: ...
     def assign(self, mol: Atomistic, qm: ArrayF | None = None) -> ArrayF: ...
 
-def read_forcefield_xml(path: PathInput) -> ForceField: ...
-def read_opls_xml(path: PathInput) -> ForceField: ...
+def read_molrs_xml_forcefield(path: PathInput) -> ForceField:
+    """Read a molrs force-field XML file (one element per style)."""
+def write_molrs_xml_forcefield(path: PathInput, forcefield: ForceField) -> None:
+    """Write a force field as molrs force-field XML — the inverse of
+    :func:`read_molrs_xml_forcefield`."""
+def read_openmm_xml_forcefield(path: PathInput) -> ForceField:
+    """Read an OpenMM force-field XML file into the force-field IR."""
 def read_lammps_forcefield(path: PathInput) -> ForceField: ...
 def write_gromacs_system(
     path: PathInput, forcefield: ForceField, frame: Frame, *, precision: int = 6
@@ -3741,8 +3905,8 @@ def write_lammps_data_coeffs(
     units: str = "real",
 ) -> str: ...
 def assign_cmaps(frame: Frame, forcefield: ForceField) -> int: ...
-def read_lammps_cmap(path: PathInput) -> ForceField: ...
-def write_lammps_cmap(
+def read_lammps_cmap_forcefield(path: PathInput) -> ForceField: ...
+def write_lammps_cmap_forcefield(
     path: PathInput,
     forcefield: ForceField,
     frame: Frame,
@@ -3977,13 +4141,13 @@ class mrec:
         def __exit__(self, *exc: object) -> bool: ...
 
     @staticmethod
-    def pack(path: PathInput) -> str: ...
+    def pack_mrec_zip(path: PathInput) -> str: ...
 
     MOLREC_VERSION: int
     RESERVED_META_KEYS: tuple[str, ...]
 
-    class schema:
-        """``molrs.io.mrec.schema``: the record contract's runtime checks."""
+    class validation:
+        """``molrs.io.mrec.validation``: the record contract's runtime checks."""
 
         @staticmethod
         def validate_path(path: PathInput) -> None: ...
@@ -4004,7 +4168,7 @@ class mrec:
 
 # --- *.mrec whole-record doors (molrs.io) ---------------------------------
 
-def write_mrec(
+def write_mrec_frame(
     path: PathInput,
     frame: Frame,
     system: Frame | None = None,
@@ -4025,7 +4189,7 @@ def write_mrec_forcefield(
 def write_mrec_trajectory(
     path: PathInput, traj: Trajectory, meta: _AbcMapping[str, Any] | None = None
 ) -> None: ...
-def read_mrec(path: PathInput) -> Frame: ...
+def read_mrec_frame(path: PathInput) -> Frame: ...
 def read_mrec_system(path: PathInput) -> Frame: ...
 def read_mrec_trajectory(path: PathInput) -> Trajectory: ...
 def read_mrec_forcefield(path: PathInput) -> mrec.ForceFieldSection | None: ...
@@ -4621,7 +4785,7 @@ def polarizability_finite_field(
 # molrs.ff.potential — hand-built kernels (mirrors molrs-python/src/ff/potential.rs)
 # ---------------------------------------------------------------------------
 
-def kernel(
+def compile_explicit_terms(
     category: str,
     style: str,
     atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
@@ -4637,11 +4801,11 @@ def kernel(
     one type per term; works for every registered style, built-in or
     custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
 
-class LJCut:
+class PairLjCut:
     """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
     kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
     kernel). A pair list with a row per pair is
-    ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+    ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
 
     def __init__(
         self,
@@ -4672,15 +4836,15 @@ class LJCut:
     def pair_force(
         self, r2: float, disp: Sequence[float]
     ) -> list[float] | None: ...
-    def pair_eval(
+    def pair_energy_force(
         self, r2: float, disp: Sequence[float]
     ) -> tuple[float, list[float]] | None: ...
     def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval_table(
+    def energy_forces_skin(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+    def energy_forces_table(
         self, n_atoms: int, neighbors: Neighbors
     ) -> tuple[float, ArrayF]: ...
-    def eval_pairs(
+    def energy_forces_pairs(
         self,
         n_atoms: int,
         i: ArrayU32,
@@ -4696,7 +4860,7 @@ class LJCut:
 
 class md:
     """The ``_lib.md`` submodule (``molrs.md``): NVE/Langevin integrators.
-    MD defines no potential; it integrates an ``LJCut``, a ``Potentials``
+    MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
     collection, or any object with ``calc_energy_forces``.
 
     The engine is unit-agnostic — supply consistent units yourself; take
@@ -4745,17 +4909,17 @@ class md:
         def energy(self, value: float) -> None: ...
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``LJCut`` /
+        """NVE velocity-Verlet. ``potential`` (a ``PairLjCut`` /
         ``Potentials`` / an object with ``calc_energy_forces``) and
         ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
-        rebuild. ``LJCut`` requires ``neighbors=``."""
+        rebuild. ``PairLjCut`` requires ``neighbors=``."""
 
         def __init__(
             self,
             dt: float,
             *,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4787,7 +4951,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,
@@ -4850,42 +5014,42 @@ class ir:
         """A refusal of the force-field IR; the variant's fields are
         attributes (``category``, ``style``, ``param``, …)."""
 
-    class UnknownCategory(IrError): ...
-    class BadName(IrError): ...
-    class Arity(IrError): ...
-    class BlockName(IrError): ...
-    class ReservedParam(IrError): ...
-    class DuplicateParam(IrError): ...
-    class Dim(IrError): ...
-    class Parse(IrError): ...
-    class UnboundVariable(IrError): ...
-    class UnknownFunction(IrError): ...
-    class FunctionArity(IrError): ...
-    class Point(IrError): ...
-    class CoordinateMismatch(IrError): ...
-    class Derivative(IrError): ...
-    class Disagree(IrError): ...
-    class Asymmetric(IrError): ...
-    class Sealed(IrError): ...
-    class Conflict(IrError): ...
-    class NoKernel(IrError): ...
-    class NoMixing(IrError): ...
-    class MissingParam(IrError): ...
-    class BadValue(IrError): ...
-    class KernelShape(IrError):
+    class UnknownCategoryError(IrError): ...
+    class BadNameError(IrError): ...
+    class ArityError(IrError): ...
+    class BlockNameError(IrError): ...
+    class ReservedParamError(IrError): ...
+    class DuplicateParamError(IrError): ...
+    class DimensionError(IrError): ...
+    class ParseError(IrError): ...
+    class UnboundVariableError(IrError): ...
+    class UnknownFunctionError(IrError): ...
+    class FunctionArityError(IrError): ...
+    class PointError(IrError): ...
+    class CoordinateMismatchError(IrError): ...
+    class DerivativeError(IrError): ...
+    class DisagreeError(IrError): ...
+    class AsymmetricError(IrError): ...
+    class SealedError(IrError): ...
+    class ConflictError(IrError): ...
+    class NoKernelError(IrError): ...
+    class NoMixingError(IrError): ...
+    class MissingParamError(IrError): ...
+    class BadValueError(IrError): ...
+    class KernelShapeError(IrError):
         """A kernel output of the wrong shape or dtype, or a Python kernel
         that raised (the original exception is ``__cause__``)."""
 
-    class NoEngineForm(IrError): ...
-    class FormConflict(IrError): ...
-    class NoForm(IrError): ...
-    class OutOfImage(IrError):
+    class NoEngineFormError(IrError): ...
+    class FormConflictError(IrError): ...
+    class NoFormError(IrError): ...
+    class OutOfImageError(IrError):
         """An exact form conversion refused; ``from_``, ``to``, ``type`` and
         ``reason`` name the row and the condition."""
 
-    class Malformed(IrError): ...
+    class MalformedError(IrError): ...
 
-    class Param:
+    class ParamSpec:
         """One parameter of a style: name, dimension (``"E/L^2"``), kind,
         default, mixing rule (pair styles), indexed family."""
 
@@ -4918,7 +5082,7 @@ class ir:
         @property
         def indexed(self) -> bool: ...
 
-    class StyleInfo:
+    class StyleSpec:
         """A registered style, as ``styles()`` lists it."""
 
         @property
@@ -4926,9 +5090,9 @@ class ir:
         @property
         def name(self) -> str: ...
         @property
-        def params(self) -> list[ir.Param]: ...
+        def params(self) -> list[ir.ParamSpec]: ...
         @property
-        def style_params(self) -> list[ir.Param]: ...
+        def style_params(self) -> list[ir.ParamSpec]: ...
         @property
         def expression(self) -> str | None: ...
         @property
@@ -4944,7 +5108,7 @@ class ir:
         @property
         def lammps(self) -> str | None: ...
 
-    class CategoryInfo:
+    class CategorySpec:
         """A registered category, as ``categories()`` lists it."""
 
         @property
@@ -4977,8 +5141,8 @@ class ir:
         category: str,
         name: str,
         *,
-        params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
-        style_params: Sequence[ir.Param] | _AbcMapping[str, str] | None = None,
+        params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
+        style_params: Sequence[ir.ParamSpec] | _AbcMapping[str, str] | None = None,
         expression: str | None = None,
         kernel: Callable[..., tuple[ArrayF, ArrayF]] | None = None,
         compound: bool = False,
@@ -4990,11 +5154,11 @@ class ir:
     @staticmethod
     def register_engine_form(engine: str, category: str, name: str, form: str) -> None: ...
     @staticmethod
-    def unregister(category: str, name: str) -> None: ...
+    def unregister_style(category: str, name: str) -> None: ...
     @staticmethod
-    def styles(category: str | None = None) -> list[ir.StyleInfo]: ...
+    def styles(category: str | None = None) -> list[ir.StyleSpec]: ...
     @staticmethod
-    def categories() -> list[ir.CategoryInfo]: ...
+    def categories() -> list[ir.CategorySpec]: ...
     @staticmethod
     def evaluate(
         category: str,
@@ -5203,7 +5367,7 @@ class RingInfo:
 
     Examples
     --------
-    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIR("c1ccccc1").to_atomistic())
+    >>> rings = molrs.perceive.perceive_rings(molrs.io.smiles.SmilesIr("c1ccccc1").to_atomistic())
     >>> rings.num_rings()
     1
     >>> rings.ring_sizes()
@@ -5220,24 +5384,6 @@ class RingInfo:
     def rings(self, /): ...
     def smallest_ring_containing_atom(self, /, atom): ...
 
-class TRRTrajReader:
-    """
-    Lazy, indexed reader for GROMACS TRR trajectory files.
-
-    Builds a per-frame byte-offset index on first random access (or eagerly via
-    ``build_index()``); subsequent ``reader[i]`` / ``read_step(i)`` is an O(1)
-    seek plus one frame parse. Exposes the same surface as
-    :class:`DCDTrajReader`.
-    """
-    def __init__(self, path) -> None: ...
-    def build_index(self, /): ...
-    def close(self, /): ...
-    n_frames: Any
-    def read_all(self, /): ...
-    def read_frame(self, /, index): ...
-    def read_frames(self, /, indices): ...
-    def read_range(self, /, start=0, stop=None, step=1): ...
-
 class Vacf:
     """
     Raw unnormalized velocity autocorrelation function (the VDOS /
@@ -5247,23 +5393,6 @@ class Vacf:
     """
     def __init__(self) -> None: ...
     def compute(self, /, velocities, dt, resolution): ...
-
-class XTCTrajReader:
-    """
-    Lazy, indexed reader for GROMACS XTC trajectory files.
-
-    Like :class:`TRRTrajReader` but for the compressed XTC format. Frame sizes
-    vary (compression), so the byte-offset index is built by a single scan;
-    random access is O(1) thereafter.
-    """
-    def __init__(self, path) -> None: ...
-    def build_index(self, /): ...
-    def close(self, /): ...
-    n_frames: Any
-    def read_all(self, /): ...
-    def read_frame(self, /, index): ...
-    def read_frames(self, /, indices): ...
-    def read_range(self, /, start=0, stop=None, step=1): ...
 
 class ConductivitySumRule:
     """Conductivity sum rule check."""
@@ -5304,10 +5433,10 @@ def read_lammps_log_str(
 ) -> LammpsLog:
     """Parse a LAMMPS log from an in-memory string (no filesystem access)."""
 
-def read_ac(path: PathInput):
+def read_amber_ac(path: PathInput) -> Frame:
     """Read an Antechamber ``.ac`` file into a Frame."""
 
-def read_amber_prmtop_ff(path: PathInput) -> ForceField:
+def read_amber_prmtop_forcefield(path: PathInput) -> ForceField:
     """Read AMBER prmtop force-field parameter tables into a :class:`ForceField`."""
 
 def read_amber_prmtop_system(path: PathInput) -> tuple[ForceField, Frame]:
@@ -5319,7 +5448,7 @@ def read_amber_prmtop_system(path: PathInput) -> tuple[ForceField, Frame]:
     when every 1-4 pair agrees.
     """
 
-def read_gromacs_top_ff(
+def read_gromacs_top_forcefield(
     path: PathInput,
     include: bool = False,
     *,
@@ -5355,15 +5484,18 @@ def read_gromacs_system(
 def read_lammps_log(path: PathInput, style: str = "default") -> LammpsLog:
     """Read a LAMMPS log file into a structured ``LammpsLog``."""
 
-def read_lammps_molecule(path: PathInput):
-    """Read a LAMMPS molecule template (native ``.mol`` or JSON)."""
+def read_lammps_molecule(path: PathInput) -> Frame:
+    """Read a LAMMPS molecule template (the native text format)."""
+
+def read_lammps_molecule_json(path: PathInput) -> Frame:
+    """Read a LAMMPS molecule template in its JSON format."""
 
 def read_mol2(path: PathInput) -> Frame:
     """Read a Tripos MOL2 file and return the first molecule as a Frame, in
     canonical column names (``type``, ``res_id``, ``res_name`` on atoms; the
     SYBYL bond token as ``type`` on bonds)."""
 
-def read_prep(path: PathInput):
+def read_amber_prep(path: PathInput) -> dict[str, Any]:
     """Read an Amber prep file into a nested dict (serde JSON shape)."""
 
 class OnsagerCorrelation:
@@ -5387,10 +5519,11 @@ def pair_survival_tcf(
 ) -> dict[str, ArrayF]:
     """Pair-survival time-correlation function."""
 
-def write_forcefield_xml(
+def write_openmm_xml_forcefield(
     path: PathInput, forcefield: ForceField, precision: int | None = None
 ) -> None:
-    """Write a ForceField to OpenMM force-field XML."""
+    """Write a ForceField to OpenMM force-field XML — the inverse of
+    :func:`read_openmm_xml_forcefield`."""
 
 
 def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
@@ -5399,7 +5532,7 @@ def write_amber_frcmod(path: PathInput, forcefield: ForceField) -> None:
     A style or parameter a frcmod cannot express raises ``ValueError``.
     """
 
-def write_gromacs_top_ff(
+def write_gromacs_top_forcefield(
     path: PathInput, forcefield: ForceField, precision: int = 6
 ) -> None:
     """Write a ForceField as GROMACS force-field directives (no molecule sections).
@@ -5407,39 +5540,38 @@ def write_gromacs_top_ff(
     A style or parameter the directives cannot express raises ``ValueError``.
     """
 
-def write_lammps_molecule(path: PathInput, frame, format: str = "native"):
-    """Write a Frame as a LAMMPS molecule template."""
+def write_lammps_molecule(path: PathInput, frame: Frame) -> None:
+    """Write a Frame as a LAMMPS molecule template (the native text format)."""
+
+def write_lammps_molecule_json(path: PathInput, frame: Frame) -> None:
+    """Write a Frame as a LAMMPS molecule template in its JSON format."""
 
 def write_mol2(path: PathInput, frame: Frame) -> None:
     """Write a Frame to a Tripos MOL2 file, reading the canonical columns
     :func:`read_mol2` produces."""
 
-def write_prep(path: PathInput, residue: dict[str, Any]):
+def write_amber_prep(path: PathInput, residue: dict[str, Any]) -> None:
     """Write an Amber prep residue from a nested dict."""
 
-def read_smiles(smiles: str) -> Atomistic:
+def read_smiles_str(smiles: str) -> Atomistic:
     """One molecule from a SMILES string: connectivity only, no implicit H, no
     coordinates. A ``'.'``-separated set raises ``SmilesError`` (a
-    ``ValueError``) naming ``SmilesIR(s).components()``."""
+    ``ValueError``) naming ``SmilesIr(s).components()``."""
 
-def write_smarts(
-    mol,
-    center,
+def write_smiles_str(
+    mol: Atomistic,
     *,
-    reach=1,
-    atomic_number=True,
-    include_degree=True,
-    include_h_count=True,
-    include_charge=True,
-    include_aromatic=True,
-    include_ring_membership=False,
-    include_ring_size=False,
-    include_explicit_h_atoms=False,
-    include_bond_orders=True,
-    neighbor_style="chain",
-    canonical_neighbor_order=True,
-):
-    """Encode the local topology around ``center`` as a SMARTS string."""
+    canonical: bool = True,
+    root: int | None = None,
+    aromatic: Literal["as_marked", "kekule_only"] = "as_marked",
+    hydrogens: Literal["organic_subset", "explicit_all", "as_stored"] = "organic_subset",
+    include_stereo: bool = False,
+    multi_component: Literal[
+        "error_if_multiple", "join_dot", "first_only"
+    ] = "error_if_multiple",
+    organic_subset: bool = True,
+) -> str:
+    """A molecule as SMILES text — the inverse of :func:`read_smiles_str`."""
 
 def write_trr_trajectory(path: PathInput, frames: Sequence[Frame]) -> None:
     """Write Frames to a GROMACS TRR trajectory file (single precision)."""

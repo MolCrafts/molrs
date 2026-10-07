@@ -61,19 +61,21 @@ mod clpol;
 mod gaff;
 mod gaff2;
 mod gaff_empirical;
-mod gaff_equiv;
 mod gasparm;
 pub mod mmff;
 mod oplsaa;
 mod oplsaa_typing;
+mod parmchk;
 pub mod uff;
 
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
+pub use clpol::{
+    CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_fragment_scaling,
+    clpol_polarizability,
+};
 pub use gaff::GAFF;
 pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
-pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
 pub use oplsaa::{
@@ -81,6 +83,7 @@ pub use oplsaa::{
     OPLSAA_MIXING, OPLSAA_NAME,
 };
 pub use oplsaa_typing::OPLSAA_TYPING;
+pub use parmchk::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///
@@ -805,7 +808,7 @@ impl ParmTable {
 // The rows of [`oplsaa`], in **molrs's convention** (LAMMPS `real`: Å,
 // kcal/mol, degrees, e; un-halved `K`) — what the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
 // Ryckaert–Bellemans torsions; the conversion happens once, in the generator
-// (through `GromacsTopFfReader`), and its result is what is committed. The two
+// (through `GromacsTopForcefieldReader`), and its result is what is committed. The two
 // vocabularies of the source survive intact: bonded rows key on the GROMACS
 // `bond_type` (the **class**, `CT`, `HC`), atoms and pairs on the **type**
 // (`opls_NNN`). The typing rules are not GROMACS's and live apart, in

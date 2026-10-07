@@ -12,10 +12,10 @@ use std::io::BufWriter;
 use molrs::core::Element;
 use molrs::core::SimBox;
 use molrs::core::{Block, Frame, Trajectory};
-use molrs::io::data::xyz::write_xyz_frame;
-use molrs::io::mrec::{
-    MrecWriter, SequenceSchema, open_trajectory_sequence, write_trajectory_file,
-};
+use molrs::io::mrec::{MrecReader, MrecWriter, SequenceSchema};
+use molrs::io::write_mrec_trajectory;
+use molrs::io::writer::{FrameWriter, Writer};
+use molrs::io::xyz::XyzWriter;
 use ndarray::{Array1, Array2, ArrayD};
 
 use crate::bridge;
@@ -83,8 +83,9 @@ fn write_xyz_path(path: &str, frame: &Frame, append: bool) -> Result<(), String>
     } else {
         File::create(path).map_err(|err| format!("create {path}: {err}"))?
     };
-    let mut w = BufWriter::new(f);
-    write_xyz_frame(&mut w, frame).map_err(|err| err.to_string())
+    XyzWriter::new(BufWriter::new(f))
+        .write(frame)
+        .map_err(|err| err.to_string())
 }
 
 /// Write one frame with exact-dtype metadata.
@@ -111,7 +112,7 @@ pub(crate) fn write_frame_xyz_typed(
 ///
 /// Builds a transient `Frame` (element+x/y/z + simbox + one column per
 /// `field_names[i]` from `field_data` reshaped `[n_fields, n_atoms]`), wraps it
-/// as a single-frame `Trajectory`, and persists via `write_trajectory_file`.
+/// as a single-frame `Trajectory`, and persists via `write_mrec_trajectory`.
 /// Replaces the old per-record Zarr writer (Atomiverse's polyethylene checkpoint).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_frame(
@@ -140,7 +141,7 @@ pub(crate) fn write_frame(
         }
     }
     let traj = Trajectory::from_frames(vec![frame]);
-    write_trajectory_file(path, &traj, None).map_err(|e| format!("write_frame: {e}"))
+    write_mrec_trajectory(path, &traj, None).map_err(|e| format!("write_frame: {e}"))
 }
 
 /// Read the first frame of a store into a fresh `FrameRef`.
@@ -153,7 +154,7 @@ pub(crate) fn write_frame(
 /// (`frame_column_f64`, `frame_box`, etc.) see exactly the columns and simbox
 /// that were stored.
 pub(crate) fn read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let sequence = open_trajectory_sequence(path).map_err(|e| format!("read_first_frame: {e}"))?;
+    let sequence = MrecReader::open(path).map_err(|e| format!("read_first_frame: {e}"))?;
     let frame = sequence
         .frame(0)
         .map_err(|e| format!("read_first_frame: {e}"))?
@@ -199,8 +200,8 @@ pub(crate) fn trajectory_writer_create(
         .with(SequenceSchema::from_frame)
         .map_err(|e| format!("trajectory_writer_create: {e}"))?
         .map_err(|e| format!("trajectory_writer_create: {e}"))?;
-    let writer = MrecWriter::create_at(path, schema)
-        .map_err(|e| format!("trajectory_writer_create: {e}"))?;
+    let writer =
+        MrecWriter::create(path, schema).map_err(|e| format!("trajectory_writer_create: {e}"))?;
     Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
         writer,
         flush_every,
@@ -215,7 +216,7 @@ pub(crate) fn trajectory_writer_open(
     flush_every: u64,
     durable: bool,
 ) -> Result<Box<TrajectoryWriterRef>, String> {
-    let writer = MrecWriter::open_at(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
+    let writer = MrecWriter::open(path).map_err(|e| format!("trajectory_writer_open: {e}"))?;
     Ok(Box::new(TrajectoryWriterRef(Some(configure_writer(
         writer,
         flush_every,
@@ -290,8 +291,8 @@ fn z_for_symbol(sym: &str) -> Result<i32, String> {
 /// caller owns (a String), and the vocabulary binds a key's dtype wherever it
 /// appears — so writing Z there is refused outright.
 pub(crate) fn xyz_read_first_frame(path: &str) -> Result<Box<FrameRef>, String> {
-    let mut frame = molrs::io::data::xyz::read_xyz_frame(path)
-        .map_err(|e| format!("xyz_read_first_frame: read: {e}"))?;
+    let mut frame =
+        molrs::io::read_xyz(path).map_err(|e| format!("xyz_read_first_frame: read: {e}"))?;
     let atoms = frame
         .get_mut("atoms")
         .ok_or_else(|| "xyz_read_first_frame: frame has no atoms block".to_string())?;
@@ -448,7 +449,7 @@ mod tests {
         )
         .unwrap();
 
-        let frame = molrs::io::data::xyz::read_xyz_frame(&path).unwrap();
+        let frame = molrs::io::read_xyz(&path).unwrap();
         assert_eq!(
             frame.meta.get("step").unwrap().as_i64(),
             Some(9_007_199_254_740_993)

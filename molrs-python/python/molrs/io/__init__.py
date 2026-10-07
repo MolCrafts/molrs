@@ -1,22 +1,28 @@
-"""File I/O — ``molrs::io``. Every file reader and writer is here.
+"""File I/O — ``molrs::io``. Every file reader and writer is here, one
+module per file format.
 
-Structure, trajectory and force-field files, SMILES text, ``*.mrec`` records
-and frame bytes alike: a factory that reads or writes a format has exactly one
-shape —
+A factory that reads or writes a format has exactly one shape, the same name
+in Rust and Python:
 
 * a function at the top of this module, ``read_<fmt>[_<what>]`` /
-  ``write_<fmt>[_<what>]``; or
-* a class of the format's own submodule, ``molrs.io.<fmt>.<Fmt>Reader`` /
-  ``<Fmt>Writer`` (:class:`molrs.io.trajectory.TrajectoryReader`,
-  :class:`molrs.io.mrec.MrecReader` / :class:`~molrs.io.mrec.MrecWriter`).
+  ``write_<fmt>[_<what>]`` — a path; ``read_<fmt>_str`` / ``write_<fmt>_str``
+  for text in memory and ``read_<fmt>_bytes`` / ``write_<fmt>_bytes`` for
+  bytes; or
+* a class of the format's own submodule, ``molrs.io.<fmt>.<Fmt>Reader``
+  (:class:`molrs.io.pdb.PdbReader`, :class:`molrs.io.dcd.DcdReader`,
+  :class:`molrs.io.mrec.MrecReader`, …).
+
+No door picks a format for the caller: every door names its format.
 
 A class that belongs to one format lives in that format's submodule:
-:mod:`molrs.io.smiles` (:class:`~molrs.io.smiles.SmilesIR`, the CGsmiles
-records, :class:`~molrs.io.smiles.SmilesError`), :mod:`molrs.io.log` (the
-LAMMPS log records), :mod:`molrs.io.lammps_bond_react`
-(:class:`~molrs.io.lammps_bond_react.BondReactTemplate`), :mod:`molrs.io.mrec`
-(the record store's reader, writer, schema and force-field section) and
-:mod:`molrs.io.trajectory`.
+:mod:`molrs.io.smiles` (:class:`~molrs.io.smiles.SmilesIr`,
+:class:`~molrs.io.smiles.SmilesError`), :mod:`molrs.io.cgsmiles` (the CGsmiles
+records), :mod:`molrs.io.lammps` (the dump reader, the log records,
+:class:`~molrs.io.lammps.BondReactTemplate`), :mod:`molrs.io.mrec` (the
+record store's reader, writer, schema and force-field section), and the lazy
+trajectory readers of :mod:`molrs.io.pdb`, :mod:`~molrs.io.xyz`,
+:mod:`~molrs.io.gro`, :mod:`~molrs.io.dcd`, :mod:`~molrs.io.trr` and
+:mod:`~molrs.io.xtc`.
 
 Every structure reader emits the project-wide canonical column names
 (:mod:`molrs.core.keys`: ``element``, ``res_id``, ``charge``, ``mol_id``,
@@ -26,226 +32,248 @@ Every structure reader emits the project-wide canonical column names
 Names come in pairs. A format ``X`` that holds one frame is read by
 ``read_X`` and written by ``write_X``; a sequence of frames is read by
 ``read_X_trajectory`` and written by ``write_X_trajectory`` — ``lammps`` dumps,
-``xyz``, ``pdb``, ``gro``, ``dcd``, ``trr`` and ``xtc``. A format
-with one direction only (``read_chgcar``, ``write_lammps_dump_local``, …) has
-no partner by nature, not by omission. A reader of in-memory text rather than
-a path carries ``_str`` (``read_lammps_log_str``,
-``write_lammps_forcefield_str``).
-
-``read_lammps_trajectory``, ``read_xyz_trajectory``, ``read_dcd_trajectory``,
-``read_trr_trajectory`` and ``read_xtc_trajectory`` return a lazy
-:class:`~molrs.io.trajectory.TrajectoryReader` rather than a ``list[Frame]``;
-each accepts a single path or a list of paths (frames are concatenated) and
-yields canonical field names. ``read_pdb_trajectory`` and
-``read_gro_trajectory`` read the whole file into a ``list[Frame]`` (no seekable
-native reader backs them). Every path argument takes a ``str`` or any
+``xyz``, ``pdb``, ``gro``, ``dcd``, ``trr`` and ``xtc``. Each
+``read_X_trajectory`` returns that format's lazy reader,
+``molrs.io.X.<X>Reader`` (one path, or a list of paths whose frames are
+concatenated), not a ``list[Frame]``. A format with one direction only
+(``read_vasp_chgcar``, ``write_lammps_dump_local``, …) has no partner by
+nature, not by omission. Family formats carry the family's name:
+``read_lammps_data``, ``read_amber_prmtop``, ``read_vasp_poscar``,
+``read_gromacs_top_forcefield``. Every path argument takes a ``str`` or any
 ``os.PathLike``.
 
 Force-field files map onto :class:`molrs.ff.forcefield.ForceField`, the data
 model :mod:`molrs.ff.forcefield` owns:
 
 * readers — :func:`read_lammps_forcefield`, :func:`read_lammps_data_coeffs`,
-  :func:`read_lammps_cmap`, :func:`read_gromacs_top_ff`,
-  :func:`read_gromacs_system`, :func:`read_amber_prmtop_ff`,
-  :func:`read_amber_prmtop_system`, :func:`read_forcefield_xml`,
-  :func:`read_opls_xml`
+  :func:`read_lammps_cmap_forcefield`, :func:`read_gromacs_top_forcefield`,
+  :func:`read_gromacs_system`, :func:`read_amber_prmtop_forcefield`,
+  :func:`read_amber_prmtop_system`, :func:`read_openmm_xml_forcefield`,
+  :func:`read_molrs_xml_forcefield`
 * writers — :func:`write_lammps_forcefield`,
   :func:`write_lammps_forcefield_str`, :func:`write_lammps_data_coeffs`,
-  :func:`write_lammps_cmap`, :func:`write_gromacs_top_ff`,
+  :func:`write_lammps_cmap_forcefield`, :func:`write_gromacs_top_forcefield`,
   :func:`write_gromacs_system`, :func:`write_amber_frcmod`,
-  :func:`write_forcefield_xml`
+  :func:`write_openmm_xml_forcefield`, :func:`write_molrs_xml_forcefield`
 
-Each reader maps a format onto the force-field IR (adopts the LAMMPS
-standard), units and factors included; each writer is the inverse.
+Each reader maps a format onto the force-field IR (adopts the LAMMPS standard),
+units and factors included; each writer is the inverse.
 
 A ``*.mrec`` scientific record is read and written whole by
-:func:`read_mrec` / :func:`write_mrec` (Structure) and their ``_system`` /
-``_trajectory`` / ``_forcefield`` partners, plus :func:`read_mrec_meta`; a run
-too large for memory goes through :class:`molrs.io.mrec.MrecReader` /
-:class:`~molrs.io.mrec.MrecWriter`.
+:func:`read_mrec_frame` / :func:`write_mrec_frame` (Structure) and their
+``_system`` / ``_trajectory`` / ``_forcefield`` partners, plus
+:func:`read_mrec_meta`; a run too large for memory goes through
+:class:`molrs.io.mrec.MrecReader` / :class:`~molrs.io.mrec.MrecWriter`.
 
-:func:`read_frame_bytes` / :func:`write_frame_bytes` read and write a frame in
-the wire encoding :class:`molrs.stream.Publisher` streams (``"msgpack"`` or
-``"json"``).
+:func:`read_msgpack_frame_bytes` / :func:`write_msgpack_frame_bytes` and
+:func:`read_json_frame_str` / :func:`write_json_frame_str` read and write a
+frame in the wire encodings a :class:`molrs.stream.Publisher` streams.
 
-:func:`read_smiles` reads one molecule from a SMILES string — connectivity
+:func:`read_smiles_str` reads one molecule from SMILES text — connectivity
 only, no implicit hydrogens added, no coordinates; a ``'.'``-separated set is
-refused (take it apart with ``SmilesIR(s).components()``).
+refused (take it apart with ``SmilesIr(s).components()``) — and
+:func:`write_smiles_str` writes one. :func:`read_cgsmiles_str` reads the
+molecule a CGsmiles string states.
 """
 
 from .._lib import (
-    read_ac,
+    read_amber_ac,
     read_amber_inpcrd,
+    read_amber_prep,
     read_amber_prmtop,
-    read_amber_prmtop_ff,
+    read_amber_prmtop_forcefield,
     read_amber_prmtop_system,
-    read_chgcar,
+    read_cgsmiles_str,
+    read_cif,
     read_cube,
-    read_forcefield_xml,
-    read_frame,
-    read_frame_bytes,
+    read_dcd_trajectory,
     read_gro,
     read_gro_trajectory,
     read_gromacs_system,
-    read_gromacs_top_ff,
-    read_lammps_cmap,
+    read_gromacs_top_forcefield,
+    read_json_frame_str,
+    read_lammps_cmap_forcefield,
     read_lammps_data,
     read_lammps_data_coeffs,
     read_lammps_forcefield,
     read_lammps_log,
     read_lammps_log_str,
     read_lammps_molecule,
+    read_lammps_molecule_json,
+    read_lammps_trajectory,
     read_mol2,
-    read_mrec,
+    read_molrs_xml_forcefield,
     read_mrec_forcefield,
+    read_mrec_frame,
     read_mrec_meta,
     read_mrec_system,
     read_mrec_trajectory,
-    read_opls_xml,
+    read_msgpack_frame_bytes,
+    read_openmm_xml_forcefield,
     read_pdb,
     read_pdb_trajectory,
-    read_prep,
-    read_smiles,
+    read_sdf,
+    read_smiles_str,
     read_stl,
+    read_trr_trajectory,
+    read_vasp_chgcar,
+    read_vasp_poscar,
     read_xsf,
+    read_xtc_trajectory,
     read_xyz,
+    read_xyz_trajectory,
     write_amber_frcmod,
-    write_bond_react_map,
+    write_amber_prep,
+    write_cif,
     write_cube,
     write_dcd_trajectory,
-    write_forcefield_xml,
-    write_frame,
-    write_frame_bytes,
     write_gro,
     write_gro_trajectory,
     write_gromacs_system,
-    write_gromacs_top_ff,
+    write_gromacs_top_forcefield,
+    write_json_frame_str,
+    write_lammps_bond_react_map,
     write_lammps_bond_react_system,
-    write_lammps_cmap,
+    write_lammps_cmap_forcefield,
     write_lammps_data,
     write_lammps_data_coeffs,
     write_lammps_dump_local,
     write_lammps_forcefield,
     write_lammps_forcefield_str,
     write_lammps_molecule,
+    write_lammps_molecule_json,
     write_lammps_trajectory,
     write_mol2,
-    write_mrec,
+    write_molrs_xml_forcefield,
     write_mrec_forcefield,
+    write_mrec_frame,
     write_mrec_system,
     write_mrec_trajectory,
+    write_msgpack_frame_bytes,
+    write_openmm_xml_forcefield,
     write_pdb,
     write_pdb_trajectory,
-    write_prep,
-    write_smarts,
+    write_smiles_str,
     write_trr_trajectory,
+    write_vasp_poscar,
     write_xsf,
     write_xtc_trajectory,
     write_xyz,
     write_xyz_trajectory,
 )
-from . import lammps_bond_react, log, mrec, smiles, trajectory
-from ._csv import read_block_csv, write_block_csv
-from ._trajectory_doors import (
-    read_dcd_trajectory,
-    read_lammps_trajectory,
-    read_trr_trajectory,
-    read_xtc_trajectory,
-    read_xyz_trajectory,
+from . import cgsmiles, dcd, gro, lammps, mrec, pdb, smiles, trr, xtc, xyz
+from ._csv_block import (
+    read_csv_block,
+    read_csv_block_str,
+    write_csv_block,
+    write_csv_block_str,
 )
 
-# Defined in the private modules above; this module is their public path.
+# Defined in the private module above; this module is their public path.
 for _defined in (
-    read_block_csv,
-    read_dcd_trajectory,
-    read_lammps_trajectory,
-    read_trr_trajectory,
-    read_xtc_trajectory,
-    read_xyz_trajectory,
-    write_block_csv,
+    read_csv_block,
+    read_csv_block_str,
+    write_csv_block,
+    write_csv_block_str,
 ):
     _defined.__module__ = __name__
 
 __all__ = [
-    "lammps_bond_react",
-    "log",
+    "cgsmiles",
+    "dcd",
+    "gro",
+    "lammps",
     "mrec",
-    "read_ac",
+    "pdb",
+    "read_amber_ac",
     "read_amber_inpcrd",
+    "read_amber_prep",
     "read_amber_prmtop",
-    "read_amber_prmtop_ff",
+    "read_amber_prmtop_forcefield",
     "read_amber_prmtop_system",
-    "read_block_csv",
-    "read_chgcar",
+    "read_cgsmiles_str",
+    "read_cif",
+    "read_csv_block",
+    "read_csv_block_str",
     "read_cube",
     "read_dcd_trajectory",
-    "read_forcefield_xml",
-    "read_frame",
-    "read_frame_bytes",
     "read_gro",
     "read_gro_trajectory",
     "read_gromacs_system",
-    "read_gromacs_top_ff",
-    "read_lammps_cmap",
+    "read_gromacs_top_forcefield",
+    "read_json_frame_str",
+    "read_lammps_cmap_forcefield",
     "read_lammps_data",
     "read_lammps_data_coeffs",
     "read_lammps_forcefield",
     "read_lammps_log",
     "read_lammps_log_str",
     "read_lammps_molecule",
+    "read_lammps_molecule_json",
     "read_lammps_trajectory",
     "read_mol2",
-    "read_mrec",
+    "read_molrs_xml_forcefield",
     "read_mrec_forcefield",
+    "read_mrec_frame",
     "read_mrec_meta",
     "read_mrec_system",
     "read_mrec_trajectory",
-    "read_opls_xml",
+    "read_msgpack_frame_bytes",
+    "read_openmm_xml_forcefield",
     "read_pdb",
     "read_pdb_trajectory",
-    "read_prep",
-    "read_smiles",
+    "read_sdf",
+    "read_smiles_str",
     "read_stl",
     "read_trr_trajectory",
+    "read_vasp_chgcar",
+    "read_vasp_poscar",
     "read_xsf",
     "read_xtc_trajectory",
     "read_xyz",
     "read_xyz_trajectory",
     "smiles",
-    "trajectory",
+    "trr",
     "write_amber_frcmod",
-    "write_block_csv",
-    "write_bond_react_map",
+    "write_amber_prep",
+    "write_cif",
+    "write_csv_block",
+    "write_csv_block_str",
     "write_cube",
     "write_dcd_trajectory",
-    "write_forcefield_xml",
-    "write_frame",
-    "write_frame_bytes",
     "write_gro",
     "write_gro_trajectory",
     "write_gromacs_system",
-    "write_gromacs_top_ff",
+    "write_gromacs_top_forcefield",
+    "write_json_frame_str",
+    "write_lammps_bond_react_map",
     "write_lammps_bond_react_system",
-    "write_lammps_cmap",
+    "write_lammps_cmap_forcefield",
     "write_lammps_data",
     "write_lammps_data_coeffs",
     "write_lammps_dump_local",
     "write_lammps_forcefield",
     "write_lammps_forcefield_str",
     "write_lammps_molecule",
+    "write_lammps_molecule_json",
     "write_lammps_trajectory",
     "write_mol2",
-    "write_mrec",
+    "write_molrs_xml_forcefield",
     "write_mrec_forcefield",
+    "write_mrec_frame",
     "write_mrec_system",
     "write_mrec_trajectory",
+    "write_msgpack_frame_bytes",
+    "write_openmm_xml_forcefield",
     "write_pdb",
     "write_pdb_trajectory",
-    "write_prep",
-    "write_smarts",
+    "write_smiles_str",
     "write_trr_trajectory",
+    "write_vasp_poscar",
     "write_xsf",
     "write_xtc_trajectory",
     "write_xyz",
     "write_xyz_trajectory",
+    "xtc",
+    "xyz",
 ]

@@ -54,27 +54,35 @@ impl std::fmt::Display for StreamError {
 
 impl std::error::Error for StreamError {}
 
-/// Encode a [`Frame`] to bytes in `format`.
-pub fn frame_to_bytes(frame: &Frame, format: FrameEncoding) -> Result<Vec<u8>, StreamError> {
-    match format {
-        FrameEncoding::MessagePack => {
-            rmp_serde::to_vec_named(frame).map_err(|e| StreamError::Encode(e.to_string()))
-        }
-        FrameEncoding::Json => {
-            serde_json::to_vec(frame).map_err(|e| StreamError::Encode(e.to_string()))
-        }
-    }
+/// Encode a [`Frame`] as MessagePack bytes — the wire encoding a publisher
+/// sends by default.
+pub fn write_msgpack_frame_bytes(frame: &Frame) -> Result<Vec<u8>, StreamError> {
+    rmp_serde::to_vec_named(frame).map_err(|e| StreamError::Encode(e.to_string()))
 }
 
-/// Decode bytes in `format` back into a [`Frame`].
-pub fn bytes_to_frame(bytes: &[u8], format: FrameEncoding) -> Result<Frame, StreamError> {
+/// Decode a [`Frame`] from MessagePack bytes — the inverse of
+/// [`write_msgpack_frame_bytes`].
+pub fn read_msgpack_frame_bytes(bytes: &[u8]) -> Result<Frame, StreamError> {
+    rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
+}
+
+/// Encode a [`Frame`] as JSON text — the debugging / interop wire encoding.
+pub fn write_json_frame_str(frame: &Frame) -> Result<String, StreamError> {
+    serde_json::to_string(frame).map_err(|e| StreamError::Encode(e.to_string()))
+}
+
+/// Decode a [`Frame`] from JSON text — the inverse of
+/// [`write_json_frame_str`].
+pub fn read_json_frame_str(text: &str) -> Result<Frame, StreamError> {
+    serde_json::from_str(text).map_err(|e| StreamError::Decode(e.to_string()))
+}
+
+/// The bytes a publisher configured for `format` puts on the wire.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn encode_frame(frame: &Frame, format: FrameEncoding) -> Result<Vec<u8>, StreamError> {
     match format {
-        FrameEncoding::MessagePack => {
-            rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
-        }
-        FrameEncoding::Json => {
-            serde_json::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
-        }
+        FrameEncoding::MessagePack => write_msgpack_frame_bytes(frame),
+        FrameEncoding::Json => write_json_frame_str(frame).map(String::into_bytes),
     }
 }
 
@@ -190,16 +198,16 @@ mod tests {
     #[test]
     fn frame_messagepack_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, FrameEncoding::MessagePack).expect("encode");
-        let back = bytes_to_frame(&bytes, FrameEncoding::MessagePack).expect("decode");
+        let bytes = write_msgpack_frame_bytes(&frame).expect("encode");
+        let back = read_msgpack_frame_bytes(&bytes).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 
     #[test]
     fn frame_json_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, FrameEncoding::Json).expect("encode");
-        let back = bytes_to_frame(&bytes, FrameEncoding::Json).expect("decode");
+        let text = write_json_frame_str(&frame).expect("encode");
+        let back = read_json_frame_str(&text).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 }

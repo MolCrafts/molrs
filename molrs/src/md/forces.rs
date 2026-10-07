@@ -2,7 +2,7 @@ use ndarray::{Array2, ArrayView2};
 
 use molrs::core::VerletSkin;
 use molrs::core::Virial;
-use molrs::ff::potential::{Member, Potential};
+use molrs::ff::potential::{ForceTerm, Potential};
 use molrs::op::{F, FNx3, FNx3View, I};
 
 use super::error::MdError;
@@ -197,15 +197,15 @@ impl ForceProvider for SelfPairedForces {
 /// Such a kernel ignores the table it is handed and returns a frozen sum, so
 /// the run would maintain a neighbour list, rebuild it, and report its
 /// counters, while the answer depended on none of it. Only a
-/// [`Member::Pair`] can be bound this way — a bonded member is never handed
-/// the table — and [`Member::binds_a_fixed_pair_list`] already knows that, so
+/// [`ForceTerm::Pair`] can be bound this way — a bonded member is never handed
+/// the table — and [`ForceTerm::binds_a_fixed_pair_list`] already knows that, so
 /// this no longer has to ask each kernel twice.
 ///
 /// It stays a run-time check rather than a type: a kernel built from a pair
 /// list and the same kernel keyed on the atoms are one Rust type in molrs (the
-/// list is a private source variant), so `Member::Pair` cannot distinguish
+/// list is a private source variant), so `ForceTerm::Pair` cannot distinguish
 /// them and only the kernel can answer.
-fn reject_frozen_members(members: &[(Member, SpecialWeights)]) -> Result<(), MdError> {
+fn reject_frozen_members(members: &[(ForceTerm, SpecialWeights)]) -> Result<(), MdError> {
     for (m, (pot, _)) in members.iter().enumerate() {
         if pot.binds_a_fixed_pair_list() {
             return Err(MdError::Invalid(format!(
@@ -240,7 +240,7 @@ fn reject_frozen_members(members: &[(Member, SpecialWeights)]) -> Result<(), MdE
 pub struct MicPairs {
     /// The force evaluation's members, in the order the caller gave them,
     /// each carrying the part it plays.
-    members: Vec<Member>,
+    members: Vec<ForceTerm>,
     /// Per member, the weights on its close non-bonded neighbours.
     special: Vec<SpecialWeights>,
     skin: VerletSkin,
@@ -257,7 +257,7 @@ pub struct MicPairs {
 impl MicPairs {
     /// Evaluate one member over the pairs `skin` maintains, with no
     /// special-bonds weights.
-    pub fn new(member: Member, skin: VerletSkin) -> Result<Self, MdError> {
+    pub fn new(member: ForceTerm, skin: VerletSkin) -> Result<Self, MdError> {
         Self::from_members(vec![(member, SpecialWeights::default())], skin)
     }
 
@@ -267,11 +267,11 @@ impl MicPairs {
     /// Each member comes with the weights on its close non-bonded neighbours;
     /// a bonded member takes [`SpecialWeights::default`], which scales nothing.
     pub fn from_members(
-        members: Vec<(Member, SpecialWeights)>,
+        members: Vec<(ForceTerm, SpecialWeights)>,
         skin: VerletSkin,
     ) -> Result<Self, MdError> {
         reject_frozen_members(&members)?;
-        let (members, special): (Vec<Member>, Vec<_>) = members.into_iter().unzip();
+        let (members, special): (Vec<ForceTerm>, Vec<_>) = members.into_iter().unzip();
         Ok(Self {
             members,
             special,
@@ -324,7 +324,7 @@ impl ForceProvider for MicPairs {
             let (e, part) = match member {
                 // A pair member reads the table, weighted by the force field's
                 // exclusions. No copies here, so an index *is* its own owner.
-                Member::Pair(pot) => {
+                ForceTerm::Pair(pot) => {
                     let factors =
                         self.special[m].factors_for(pairs, n_atoms, &[], &mut self.factors);
                     pot.accumulate_pairs(flat, pairs, factors, acc)
@@ -334,7 +334,7 @@ impl ForceProvider for MicPairs {
                 // by term and no periodic image entered the geometry, so
                 // `Σ_a f_a ⊗ x_a` over the stored coordinates *is* its virial,
                 // and is independent of where the cell's origin falls.
-                Member::Indexed(pot) => {
+                ForceTerm::Indexed(pot) => {
                     self.term.clear();
                     self.term.resize(acc.len(), 0.0);
                     let e = pot.accumulate(flat, &mut self.term);
@@ -357,7 +357,7 @@ impl ForceProvider for MicPairs {
                 // makes the whole step's virial `None`, which is the honest
                 // answer: the pressure of a system being pushed on from outside
                 // is not the sum of its pair terms.
-                Member::Plain(pot) => (pot.accumulate(flat, acc), None),
+                ForceTerm::Plain(pot) => (pot.accumulate(flat, acc), None),
             };
             energy += e;
             match (virial.as_mut(), part) {
@@ -408,7 +408,7 @@ pub struct GhostPairs {
     halo: GhostHalo,
     /// The force evaluation's members, in the order the caller gave them,
     /// each carrying the part it plays.
-    members: Vec<Member>,
+    members: Vec<ForceTerm>,
     /// Per member, the weights on its close non-bonded neighbours.
     ///
     /// Per member and not one shared table, because a force field may scale
@@ -430,7 +430,7 @@ pub struct GhostPairs {
 impl GhostPairs {
     /// Evaluate one member over the copies `halo` maintains, with no
     /// special-bonds weights — right for a system with no bonded topology.
-    pub fn new(member: Member, halo: GhostHalo) -> Result<Self, MdError> {
+    pub fn new(member: ForceTerm, halo: GhostHalo) -> Result<Self, MdError> {
         Self::from_members(vec![(member, SpecialWeights::default())], halo)
     }
 
@@ -438,7 +438,7 @@ impl GhostPairs {
     /// copies `halo` maintains.
     ///
     /// This takes no force field and no frame: each member already says which
-    /// part it plays — [`Member::Indexed`] reads an index table, [`Member::Pair`]
+    /// part it plays — [`ForceTerm::Indexed`] reads an index table, [`ForceTerm::Pair`]
     /// reads the neighbour table — and that is the whole of what MD needs to
     /// know about a force field.
     ///
@@ -448,7 +448,7 @@ impl GhostPairs {
     /// term and once at full non-bonded strength. A bonded member takes
     /// [`SpecialWeights::default`], which scales nothing.
     pub fn from_members(
-        members: Vec<(Member, SpecialWeights)>,
+        members: Vec<(ForceTerm, SpecialWeights)>,
         halo: GhostHalo,
     ) -> Result<Self, MdError> {
         reject_frozen_members(&members)?;
@@ -526,15 +526,15 @@ impl ForceProvider for GhostPairs {
             let e = match member {
                 // A bonded term reads the indices resolved against the copies
                 // that exist now, not the pair table — so no weight applies to
-                // it. `lists` holds one entry per `Member::Indexed`, so this
+                // it. `lists` holds one entry per `ForceTerm::Indexed`, so this
                 // arm always finds its table.
-                Member::Indexed(pot) => {
+                ForceTerm::Indexed(pot) => {
                     let terms = self.lists.current(m).ok_or_else(|| {
                         MdError::Invalid(format!("member {m} holds indices but has no list"))
                     })?;
                     pot.accumulate_with_terms(flat, terms, acc)
                 }
-                Member::Pair(pot) => {
+                ForceTerm::Pair(pot) => {
                     let factors = self.special[m].factors_for(
                         pairs,
                         set.n_owned(),
@@ -546,7 +546,7 @@ impl ForceProvider for GhostPairs {
                 // Reads coordinates only — over `[owned | ghost]`, so its
                 // forces land on the copies and the reverse pass folds them
                 // back onto the owners like any other member's.
-                Member::Plain(pot) => pot.accumulate(flat, acc),
+                ForceTerm::Plain(pot) => pot.accumulate(flat, acc),
             };
             energy += e;
         }
@@ -604,7 +604,7 @@ mod tests {
 
     use molrs::core::SimBox;
     use molrs::core::{NeighborList, NeighborPolicy};
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::pair::PairLjCut;
     use molrs::ff::potential::{PotentialCompiler, Potentials};
 
     use super::*;
@@ -623,8 +623,8 @@ mod tests {
         ]
     }
 
-    fn lj() -> LJCut {
-        LJCut::new(0.3, 3.4, 5.0, 12, 6, false, false).unwrap()
+    fn lj() -> PairLjCut {
+        PairLjCut::new(0.3, 3.4, 5.0, 12, 6, false, false).unwrap()
     }
 
     fn skin(pos: ndarray::ArrayView2<'_, F>) -> molrs::core::VerletSkin {
@@ -663,7 +663,7 @@ mod tests {
             n
         );
 
-        let mut mic = MicPairs::new(Member::pair(lj()), skin(pos.view())).unwrap();
+        let mut mic = MicPairs::new(ForceTerm::pair(lj()), skin(pos.view())).unwrap();
         assert_eq!(
             mic.compute(pos.view(), no_fold.view())
                 .unwrap()
@@ -673,7 +673,7 @@ mod tests {
         );
 
         let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(Member::pair(lj()), halo).unwrap();
+        let mut ghosts = GhostPairs::new(ForceTerm::pair(lj()), halo).unwrap();
         let out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
         assert_eq!(out.forces.nrows(), n);
         assert!(
@@ -832,7 +832,7 @@ mod tests {
     /// Two unlike types, alternating, so picking up the wrong one is visible.
     #[test]
     fn a_typed_kernel_reads_the_same_types_through_copies_as_through_the_image() {
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::forcefield::combining_rule::CombiningRule;
 
         let l = 12.0_f64;
         let cutoff = 5.0;
@@ -853,10 +853,10 @@ mod tests {
         let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
         let type_id: Vec<u32> = (0..n).map(|i| (i % 2) as u32).collect();
         let lj = || {
-            LJCut::typed(
+            PairLjCut::typed(
                 type_id.clone(),
                 &per_type,
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 cutoff,
                 12,
                 6,
@@ -881,11 +881,11 @@ mod tests {
             bx.clone(),
         )
         .unwrap();
-        let mut mic = MicPairs::new(Member::pair(lj()), skin).unwrap();
+        let mut mic = MicPairs::new(ForceTerm::pair(lj()), skin).unwrap();
         let mic_out = mic.compute(pos.view(), no_fold.view()).unwrap();
 
         let halo = GhostHalo::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let mut ghosts = GhostPairs::new(Member::pair(lj()), halo).unwrap();
+        let mut ghosts = GhostPairs::new(ForceTerm::pair(lj()), halo).unwrap();
         let ghost_out = ghosts.compute(pos.view(), no_fold.view()).unwrap();
 
         assert!(
@@ -928,7 +928,7 @@ mod tests {
     fn a_fully_excluded_molecule_has_no_non_bonded_energy() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::forcefield::combining_rule::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // A bent chain, every atom well inside the 6 Å cutoff of the others.
@@ -943,10 +943,10 @@ mod tests {
         let weights = BondDistanceWeights::from_exclusion_depth(3);
         let special = SpecialWeights::new(&topo.special_weights(&weights));
 
-        let lj = LJCut::typed(
+        let lj = PairLjCut::typed(
             vec![0_u32; n],
             &[(0.3_f64, 3.4_f64)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             6.0,
             12,
             6,
@@ -957,7 +957,8 @@ mod tests {
 
         let halo = GhostHalo::new(bx.clone(), pos.view(), 6.0, 0.0).unwrap();
         let no_fold = Array2::<I>::zeros((n, 3));
-        let mut with = GhostPairs::from_members(vec![(Member::pair(lj), special)], halo).unwrap();
+        let mut with =
+            GhostPairs::from_members(vec![(ForceTerm::pair(lj), special)], halo).unwrap();
         let out = with.compute(pos.view(), no_fold.view()).unwrap();
 
         assert_eq!(
@@ -972,10 +973,10 @@ mod tests {
         // Without the weights the same configuration is enormous — which is
         // what the exclusion is preventing, and what a silent failure would
         // have contributed instead.
-        let lj = LJCut::typed(
+        let lj = PairLjCut::typed(
             vec![0_u32; n],
             &[(0.3_f64, 3.4_f64)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             6.0,
             12,
             6,
@@ -984,7 +985,7 @@ mod tests {
         )
         .unwrap();
         let halo = GhostHalo::new(bx, pos.view(), 6.0, 0.0).unwrap();
-        let mut without = GhostPairs::new(Member::pair(lj), halo).unwrap();
+        let mut without = GhostPairs::new(ForceTerm::pair(lj), halo).unwrap();
         let bare = without.compute(pos.view(), no_fold.view()).unwrap();
         assert!(
             bare.energy > 100.0,
@@ -1005,7 +1006,7 @@ mod tests {
     fn exclusions_follow_a_molecule_through_a_face() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::forcefield::combining_rule::CombiningRule;
 
         let l = 20.0_f64;
         let cutoff = 6.0;
@@ -1033,10 +1034,10 @@ mod tests {
                 pts[[i, 2]] += 10.0;
             }
             let (wrapped, _) = bx.wrap_shifts(pts.view());
-            let lj = LJCut::typed(
+            let lj = PairLjCut::typed(
                 vec![0_u32; n],
                 &[(0.3_f64, 3.4_f64)],
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 cutoff,
                 12,
                 6,
@@ -1046,7 +1047,8 @@ mod tests {
             .unwrap();
             let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut provider =
-                GhostPairs::from_members(vec![(Member::pair(lj), special.clone())], halo).unwrap();
+                GhostPairs::from_members(vec![(ForceTerm::pair(lj), special.clone())], halo)
+                    .unwrap();
             let no_fold = Array2::<I>::zeros((n, 3));
             let out = provider.compute(wrapped.view(), no_fold.view()).unwrap();
             (out.energy, out.forces)
@@ -1080,7 +1082,7 @@ mod tests {
     /// A term that pushes on the system from outside makes the step's virial
     /// `None`; a bonded term does not.
     ///
-    /// Both read coordinates only, so before [`Member`] told them apart they
+    /// Both read coordinates only, so before [`ForceTerm`] told them apart they
     /// were the same case to this loop — and the case it took was the bonded
     /// one, which tallies `Σ_a f_a ⊗ x_a`. That sum *is* a virial for a term
     /// whose forces cancel pairwise, and moves with the cell's origin for one
@@ -1106,14 +1108,14 @@ mod tests {
 
         let bond = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
         let mut bonded =
-            MicPairs::new(Member::indexed(bond), skin(pos.view())).expect("bonded provider");
+            MicPairs::new(ForceTerm::indexed(bond), skin(pos.view())).expect("bonded provider");
         let out = bonded.compute(pos.view(), no_fold.view()).unwrap();
         assert!(
             out.virial.is_some(),
             "a bonded term's forces cancel term by term, so its tally is a virial"
         );
 
-        let mut pushed = MicPairs::new(Member::plain(Push), skin(pos.view())).expect("plain");
+        let mut pushed = MicPairs::new(ForceTerm::plain(Push), skin(pos.view())).expect("plain");
         let out = pushed.compute(pos.view(), no_fold.view()).unwrap();
         assert!(
             out.virial.is_none(),
@@ -1214,7 +1216,7 @@ mod tests {
         assert!(a.energy.abs() > 1e-6, "the 1-3 pair must carry energy");
 
         // The neighbour-driven door, over a table holding *every* pair.
-        let members: Vec<(Member, SpecialWeights)> = PotentialCompiler::new(&field)
+        let members: Vec<(ForceTerm, SpecialWeights)> = PotentialCompiler::new(&field)
             .compile_typed(&frame)
             .unwrap()
             .into_iter()
@@ -1256,7 +1258,7 @@ mod tests {
     fn the_minimum_image_route_excludes_the_same_pairs() {
         use molrs::core::BondDistanceWeights;
         use molrs::core::Topology;
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::forcefield::combining_rule::CombiningRule;
 
         let bx = SimBox::cube(20.0, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let pos = array![
@@ -1269,10 +1271,10 @@ mod tests {
         let weights = BondDistanceWeights::from_exclusion_depth(3);
         let special = SpecialWeights::new(&topo.special_weights(&weights));
 
-        let lj = LJCut::typed(
+        let lj = PairLjCut::typed(
             vec![0_u32; n],
             &[(0.3_f64, 3.4_f64)],
-            Mixing::Arithmetic,
+            CombiningRule::Arithmetic,
             6.0,
             12,
             6,
@@ -1291,7 +1293,7 @@ mod tests {
             bx,
         )
         .unwrap();
-        let mut mic = MicPairs::from_members(vec![(Member::pair(lj), special)], skin).unwrap();
+        let mut mic = MicPairs::from_members(vec![(ForceTerm::pair(lj), special)], skin).unwrap();
         let out = mic
             .compute(pos.view(), Array2::<I>::zeros((n, 3)).view())
             .unwrap();
@@ -1323,14 +1325,14 @@ mod tests {
     #[test]
     fn a_kernel_bound_to_a_fixed_pair_list_is_refused() {
         let pos = four_atoms();
-        let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
+        let compiled = PairLjCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
         assert!(
-            Member::pair(LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]))
+            ForceTerm::pair(PairLjCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]))
                 .binds_a_fixed_pair_list(),
             "a compiled kernel must say so"
         );
 
-        let Err(err) = MicPairs::new(Member::pair(compiled), skin(pos.view())) else {
+        let Err(err) = MicPairs::new(ForceTerm::pair(compiled), skin(pos.view())) else {
             panic!("a compiled kernel cannot be evaluated over a neighbour table")
         };
         let msg = format!("{err}");
@@ -1338,15 +1340,15 @@ mod tests {
         assert!(msg.contains("PotentialCompiler::compile_typed"), "{msg}");
 
         let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let compiled = LJCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
+        let compiled = PairLjCut::compiled(vec![0], vec![1], vec![0.3], vec![3.4]);
         assert!(
-            GhostPairs::new(Member::pair(compiled), halo).is_err(),
+            GhostPairs::new(ForceTerm::pair(compiled), halo).is_err(),
             "and so does the halo"
         );
 
         // The typed form of the same style is accepted.
-        assert!(!Member::pair(lj()).binds_a_fixed_pair_list());
-        assert!(MicPairs::new(Member::pair(lj()), skin(pos.view())).is_ok());
+        assert!(!ForceTerm::pair(lj()).binds_a_fixed_pair_list());
+        assert!(MicPairs::new(ForceTerm::pair(lj()), skin(pos.view())).is_ok());
     }
 
     /// A provider that keeps no list reports no counters — not zeroes.
@@ -1363,14 +1365,14 @@ mod tests {
             NeighborStats::default()
         );
 
-        let mic = MicPairs::new(Member::pair(lj()), skin(pos.view())).unwrap();
+        let mic = MicPairs::new(ForceTerm::pair(lj()), skin(pos.view())).unwrap();
         let stats = mic.neighbor_stats();
         assert!(stats.edges.is_some());
         assert!(stats.rebuilds.is_some());
         assert!(stats.ago.is_some());
 
         let halo = GhostHalo::new(cell(), pos.view(), 5.0, 0.0).unwrap();
-        let stats = GhostPairs::new(Member::pair(lj()), halo)
+        let stats = GhostPairs::new(ForceTerm::pair(lj()), halo)
             .unwrap()
             .neighbor_stats();
         assert!(stats.rebuilds.is_some(), "a halo counts its rebuilds");

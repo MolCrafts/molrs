@@ -7,11 +7,11 @@
 //! `VerletSkin`). Science here:
 //!
 //! * [`crate::ff::potential::Potential`] produces energy and forces from flat
-//!   coordinates. [`crate::ff::potential::Member`] is one term of a force
+//!   coordinates. [`crate::ff::potential::ForceTerm`] is one term of a force
 //!   evaluation with the part it plays already chosen — `Indexed` for a bonded
 //!   term that takes an index table, `Pair` for one summed over a neighbour
 //!   table, `Plain` for an external field. The providers below hold a
-//!   `Vec<Member>` and match on it, so no step re-derives which is which.
+//!   `Vec<ForceTerm>` and match on it, so no step re-derives which is which.
 //!   [`crate::ff::potential::Potentials`] sums them as one potential.
 //! * Pair kernels implement [`crate::ff::potential::pair::PairPotential`];
 //!   the force provider supplies current neighbour pairs via
@@ -41,7 +41,7 @@ mod integrators;
 mod maxwell;
 mod state;
 
-// No re-exports of `ff` or `core` types here. `LJCut`, `PairPotential`,
+// No re-exports of `ff` or `core` types here. `PairLjCut`, `PairPotential`,
 // `Potential`, `Potentials` and `Virial` are owned by the modules that define
 // them, and a second public spelling is a second name to keep true — the
 // module doc above says where each lives, which is the pointer a reader needs.

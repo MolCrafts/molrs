@@ -1096,13 +1096,15 @@ mod tests {
 #[cfg(all(test, feature = "smiles"))]
 mod smiles_formula_tests {
     use super::*;
-    use crate::io::smiles::{parse_smiles, to_atomistic};
+    use crate::io::smiles::SmilesIr;
     use std::collections::BTreeMap;
 
     /// Element → count of the hydrogen-completed molecule.
     fn formula(smiles: &str) -> BTreeMap<String, usize> {
-        let ir = parse_smiles(smiles).unwrap_or_else(|e| panic!("parse {smiles:?}: {e}"));
-        let mol = to_atomistic(&ir).unwrap_or_else(|e| panic!("to_atomistic {smiles:?}: {e}"));
+        let ir = SmilesIr::parse(smiles).unwrap_or_else(|e| panic!("parse {smiles:?}: {e}"));
+        let mol = ir
+            .to_atomistic()
+            .unwrap_or_else(|e| panic!("to_atomistic {smiles:?}: {e}"));
         let with_h = add_hydrogens(&mol).expect("repletion succeeds on a well-formed graph");
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for (_, atom) in with_h.atoms() {
@@ -1204,8 +1206,10 @@ mod smiles_formula_tests {
     /// back bare. Ethanol is C2H6O either way.
     #[test]
     fn a_frame_round_trip_keeps_the_repletion_count_of_an_organic_subset_smiles() {
-        let ir = parse_smiles("CCO").expect("CCO parses");
-        let mol = to_atomistic(&ir).expect("CCO converts to an atomistic graph");
+        let ir = SmilesIr::parse("CCO").expect("CCO parses");
+        let mol = ir
+            .to_atomistic()
+            .expect("CCO converts to an atomistic graph");
         let direct = add_hydrogens(&mol).expect("repletion succeeds on a well-formed graph");
         assert_eq!(direct.n_atoms(), 9, "C2H6O is nine atoms");
 
@@ -1226,8 +1230,10 @@ mod smiles_formula_tests {
     /// plain carbon is already saturated, and ethane comes back as C2H3.
     #[test]
     fn a_frame_round_trip_keeps_an_undeclared_h_count_undeclared() {
-        let ir = parse_smiles("C[CH3]").expect("C[CH3] parses");
-        let mol = to_atomistic(&ir).expect("C[CH3] converts to an atomistic graph");
+        let ir = SmilesIr::parse("C[CH3]").expect("C[CH3] parses");
+        let mol = ir
+            .to_atomistic()
+            .expect("C[CH3] converts to an atomistic graph");
         let direct = add_hydrogens(&mol).expect("repletion succeeds on a well-formed graph");
         assert_eq!(direct.n_atoms(), 8, "ethane is 2 C + 6 H");
 

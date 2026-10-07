@@ -9,14 +9,15 @@
 //! Reference: Halgren, T. A. "MMFF.V", J. Comput. Chem. 1996, 17, 616-641.
 //! Eq. 15 (p. 622): `q = (1 - M*v)*q0 + v*sum(qF_nbr) + sum(bci)`.
 
-use super::topo::{BondOrder, Topo};
+use crate::core::BondOrder;
 use crate::ff::params::mmff::{mmff_chg, mmff_pbci, mmff_prop};
+use crate::perceive::mmff_aromaticity::MmffTopology;
 
 const EPS: f64 = 1.0e-8;
 
 /// RDKit `getMMFFBondType`: returns 1 when a single bond joins two atom
 /// types that are both `sbmb` or both `arom`, else 0.
-pub(crate) fn mmff_bond_type(topo: &Topo, types: &[u8], a: usize, b: usize) -> u8 {
+pub(crate) fn mmff_bond_type(topo: &MmffTopology, types: &[u8], a: usize, b: usize) -> u8 {
     let order = match topo.bond_order(a, b) {
         Some(o) => o,
         None => return 0,
@@ -55,7 +56,7 @@ fn chg_contribution(bond_type: u8, i_type: u8, j_type: u8) -> Option<f64> {
 /// Compute MMFF formal charges (the "q0" pre-distribution charges).
 ///
 /// Faithful port of the first loop of `computeMMFFCharges`.
-fn compute_formal_charges(topo: &Topo, types: &[u8]) -> Vec<f64> {
+fn compute_formal_charges(topo: &MmffTopology, types: &[u8]) -> Vec<f64> {
     let n = topo.n_atoms();
     let mut fchg = vec![0.0f64; n];
 
@@ -194,7 +195,7 @@ fn compute_formal_charges(topo: &Topo, types: &[u8]) -> Vec<f64> {
 
 /// Compute MMFF partial charges. Faithful port of the second loop of
 /// `computeMMFFCharges`.
-pub(crate) fn compute_partial_charges(topo: &Topo, types: &[u8]) -> Vec<f64> {
+pub(crate) fn compute_partial_charges(topo: &MmffTopology, types: &[u8]) -> Vec<f64> {
     let n = topo.n_atoms();
     let fchg = compute_formal_charges(topo, types);
     let mut pchg = vec![0.0f64; n];

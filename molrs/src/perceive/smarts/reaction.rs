@@ -40,9 +40,9 @@ use crate::core::{NodeId, RelationId};
 use molrs::core::Element;
 
 use super::SmartsPattern;
-use super::ast::MolContext;
-use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
 use super::compile::QueryGraph;
+use super::predicate::MolContext;
+use super::predicate::{AtomPredicate, AtomTest, BondPredicate, BondTest};
 
 type ReactionAtomSets = Vec<Vec<NodeId>>;
 type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
@@ -53,23 +53,23 @@ type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
 
 /// The concrete element symbol pinned by an atom query (`C`, `[N:1]`, `[#8]`,
 /// aromatic `c`, ...), or `None` for a wildcard / purely-logical query.
-fn query_element(q: &AtomQuery) -> Option<String> {
+fn query_element(q: &AtomTest) -> Option<String> {
     match q {
-        AtomQuery::Prim(AtomPrimitive::AliphaticElement(z))
-        | AtomQuery::Prim(AtomPrimitive::AromaticElement(z))
-        | AtomQuery::Prim(AtomPrimitive::AtomicNum(z)) => {
+        AtomTest::Prim(AtomPredicate::AliphaticElement(z))
+        | AtomTest::Prim(AtomPredicate::AromaticElement(z))
+        | AtomTest::Prim(AtomPredicate::AtomicNum(z)) => {
             Element::by_number(*z).map(|e| e.symbol().to_string())
         }
-        AtomQuery::And(items) | AtomQuery::Or(items) => items.iter().find_map(query_element),
+        AtomTest::And(items) | AtomTest::Or(items) => items.iter().find_map(query_element),
         _ => None,
     }
 }
 
 /// An explicit formal charge pinned by an atom query, or `None`.
-fn query_charge(q: &AtomQuery) -> Option<i32> {
+fn query_charge(q: &AtomTest) -> Option<i32> {
     match q {
-        AtomQuery::Prim(AtomPrimitive::Charge(c)) => Some(*c),
-        AtomQuery::And(items) | AtomQuery::Or(items) => items.iter().find_map(query_charge),
+        AtomTest::Prim(AtomPredicate::Charge(c)) => Some(*c),
+        AtomTest::And(items) | AtomTest::Or(items) => items.iter().find_map(query_charge),
         _ => None,
     }
 }
@@ -81,17 +81,17 @@ fn query_charge(q: &AtomQuery) -> Option<i32> {
 /// `:` yields `(Aromatic, Unknown)` on purpose — the query declares the product
 /// bond delocalized and says nothing about which Kekulé phase it takes.
 /// Perception on the product is what decides that.
-fn query_bond_class(q: &BondQuery) -> (BondOrder, BondNumber) {
+fn query_bond_class(q: &BondTest) -> (BondOrder, BondNumber) {
     match q {
-        BondQuery::Prim(BondPrimitive::Double) => (BondOrder::Double, BondNumber::Double),
-        BondQuery::Prim(BondPrimitive::Triple) => (BondOrder::Triple, BondNumber::Triple),
-        BondQuery::Prim(BondPrimitive::Aromatic) => (BondOrder::Aromatic, BondNumber::Unknown),
-        BondQuery::Prim(_) => (BondOrder::Single, BondNumber::Single),
-        BondQuery::And(items) | BondQuery::Or(items) => items
+        BondTest::Prim(BondPredicate::Double) => (BondOrder::Double, BondNumber::Double),
+        BondTest::Prim(BondPredicate::Triple) => (BondOrder::Triple, BondNumber::Triple),
+        BondTest::Prim(BondPredicate::Aromatic) => (BondOrder::Aromatic, BondNumber::Unknown),
+        BondTest::Prim(_) => (BondOrder::Single, BondNumber::Single),
+        BondTest::And(items) | BondTest::Or(items) => items
             .first()
             .map(query_bond_class)
             .unwrap_or((BondOrder::Single, BondNumber::Single)),
-        BondQuery::Not(_) => (BondOrder::Single, BondNumber::Single),
+        BondTest::Not(_) => (BondOrder::Single, BondNumber::Single),
     }
 }
 

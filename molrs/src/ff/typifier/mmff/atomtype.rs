@@ -15,13 +15,14 @@
 // atom index matches molecule iteration order, mirroring the C++ loop.
 #![allow(clippy::needless_range_loop)]
 
-use super::topo::{BondOrder, Topo};
+use crate::core::BondOrder;
+use crate::perceive::mmff_aromaticity::MmffTopology;
 
 /// Assign MMFF numeric atom types (1..=99) to every atom.
 ///
 /// `0` means "no MMFF type" (unsupported atom); the caller turns any zero
 /// into an error.
-pub(crate) fn assign_atom_types(topo: &Topo) -> Vec<u8> {
+pub(crate) fn assign_atom_types(topo: &MmffTopology) -> Vec<u8> {
     let n = topo.n_atoms();
     // Pass 1: heavy atoms. Pass 2: hydrogens (need heavy types first).
     let mut types = vec![0u8; n];
@@ -39,7 +40,7 @@ pub(crate) fn assign_atom_types(topo: &Topo) -> Vec<u8> {
 }
 
 /// RDKit `isAtomNOxide`.
-fn is_atom_n_oxide(topo: &Topo, i: usize) -> bool {
+fn is_atom_n_oxide(topo: &MmffTopology, i: usize) -> bool {
     if topo.atno[i] != 7 || topo.total_degree(i) < 3 {
         return false;
     }
@@ -49,7 +50,7 @@ fn is_atom_n_oxide(topo: &Topo, i: usize) -> bool {
 }
 
 #[allow(clippy::too_many_lines)]
-fn heavy_atom_type(topo: &Topo, i: usize) -> u8 {
+fn heavy_atom_type(topo: &MmffTopology, i: usize) -> u8 {
     let mut atom_type: u8 = 0;
     let atno = topo.atno[i];
 
@@ -222,7 +223,7 @@ fn heavy_atom_type(topo: &Topo, i: usize) -> u8 {
 }
 
 /// double-bonded element to atom `i` (atomic number), 0 if none.
-fn double_bonded_element(topo: &Topo, i: usize) -> u8 {
+fn double_bonded_element(topo: &MmffTopology, i: usize) -> u8 {
     for (p, &j) in topo.nbrs[i].iter().enumerate() {
         if topo.nbr_order[i][p] == BondOrder::Double {
             return topo.atno[j];
@@ -232,7 +233,7 @@ fn double_bonded_element(topo: &Topo, i: usize) -> u8 {
 }
 
 #[allow(clippy::too_many_lines)]
-fn aliphatic_heavy_type(topo: &Topo, i: usize) -> u8 {
+fn aliphatic_heavy_type(topo: &MmffTopology, i: usize) -> u8 {
     let atno = topo.atno[i];
     let td = topo.total_degree(i);
     let deg = topo.degree(i);
@@ -528,7 +529,7 @@ fn aliphatic_heavy_type(topo: &Topo, i: usize) -> u8 {
 /// amide, aniline, …). Mutates the sulfonamide/cyano flag like the source.
 #[allow(clippy::too_many_lines)]
 fn nitrogen_3nbr_deloc_type(
-    topo: &Topo,
+    topo: &MmffTopology,
     i: usize,
     is_nso2_or_nso3_or_ncn: &mut bool,
 ) -> Option<u8> {
@@ -676,7 +677,7 @@ fn nitrogen_3nbr_deloc_type(
 }
 
 #[allow(clippy::too_many_lines)]
-fn oxygen_type(topo: &Topo, i: usize) -> u8 {
+fn oxygen_type(topo: &MmffTopology, i: usize) -> u8 {
     let td = topo.total_degree(i);
     if td == 3 {
         return 49; // O+
@@ -782,7 +783,7 @@ fn oxygen_type(topo: &Topo, i: usize) -> u8 {
     0
 }
 
-fn sulfur_type(topo: &Topo, i: usize) -> u8 {
+fn sulfur_type(topo: &MmffTopology, i: usize) -> u8 {
     let td = topo.total_degree(i);
     if td == 3 || td == 4 {
         let mut n_o_or_n_bonded = 0;
@@ -842,7 +843,7 @@ fn sulfur_type(topo: &Topo, i: usize) -> u8 {
 }
 
 /// Port of `setMMFFHydrogenType`.
-fn hydrogen_type(topo: &Topo, i: usize, heavy: &[u8]) -> u8 {
+fn hydrogen_type(topo: &MmffTopology, i: usize, heavy: &[u8]) -> u8 {
     let mut atom_type: u8 = 0;
     for &nbr in &topo.nbrs[i] {
         match topo.atno[nbr] {
@@ -871,7 +872,7 @@ fn hydrogen_type(topo: &Topo, i: usize, heavy: &[u8]) -> u8 {
     atom_type
 }
 
-fn hydroxyl_on_o6(topo: &Topo, h: usize, o: usize) -> u8 {
+fn hydroxyl_on_o6(topo: &MmffTopology, h: usize, o: usize) -> u8 {
     let mut is_hocc_or_hocn = false;
     let mut is_hoco = false;
     let mut is_hop = false;

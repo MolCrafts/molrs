@@ -1,16 +1,17 @@
 //! SMILES string parsing for the WASM API.
 //!
-//! Provides [`parseSMILES`](parse_smiles) to convert a SMILES notation
-//! string into a [`SmilesIR`](SmilesIR) intermediate representation,
-//! which can then be converted to a [`Frame`] with atoms and bonds.
+//! [`readSmilesStr`](read_smiles_str) reads one molecule from a SMILES
+//! string into a [`Frame`] (`molrs::io::read_smiles_str`);
+//! [`SmilesIr.parse`](SmilesIr::parse) parses any SMILES string — a
+//! `.`-separated set included — into its intermediate representation
+//! (`molrs::io::smiles::SmilesIr::parse`), which `toFrame()` converts.
 //!
 //! # Typical workflow (JavaScript)
 //!
 //! ```js
-//! import { parseSMILES, generate3D } from "@molcrafts/molrs";
+//! import { readSmilesStr, generate3D } from "@molcrafts/molrs";
 //!
-//! const ir    = parseSMILES("c1ccccc1"); // benzene
-//! const frame = ir.toFrame();            // 2D graph (no coords)
+//! const frame = readSmilesStr("c1ccccc1"); // benzene, 2D graph (no coords)
 //! const mol3d = generate3D(frame, "fast"); // embed 3D coords
 //! ```
 //!
@@ -28,26 +29,40 @@ use wasm_bindgen::prelude::*;
 /// SMILES string can encode multiple disconnected molecules separated
 /// by `.` (e.g., `"[Na+].[Cl-]"`).
 ///
-/// Call [`toFrame()`](SmilesIR::to_frame) to convert to a [`Frame`]
+/// Call [`toFrame()`](SmilesIr::to_frame) to convert to a [`Frame`]
 /// with `"atoms"` and `"bonds"` blocks.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ir = parseSMILES("CCO");
+/// const ir = SmilesIr.parse("CCO");
 /// console.log(ir.nComponents); // 1
 ///
 /// const frame = ir.toFrame();
 /// const atoms = frame.get("atoms");
 /// console.log(atoms.copy("element")); // ["C", "C", "O", "H", ...], an owned copy
 /// ```
-#[wasm_bindgen(js_name = SmilesIR)]
-pub struct SmilesIR {
-    inner: molrs::io::smiles::SmilesIR,
+#[wasm_bindgen(js_name = SmilesIr)]
+pub struct SmilesIr {
+    inner: molrs::io::smiles::SmilesIr,
 }
 
-#[wasm_bindgen(js_class = SmilesIR)]
-impl SmilesIR {
+#[wasm_bindgen(js_class = SmilesIr)]
+impl SmilesIr {
+    /// Parse a SMILES string — a `.`-separated set of molecules included —
+    /// into its intermediate representation.
+    ///
+    /// # Errors
+    ///
+    /// Throws a `JsValue` string if the SMILES string is malformed
+    /// (e.g., unmatched ring closure digits, invalid atom symbols).
+    #[wasm_bindgen(js_name = parse)]
+    pub fn parse(smiles: &str) -> Result<SmilesIr, JsValue> {
+        let inner = molrs::io::smiles::SmilesIr::parse(smiles)
+            .map_err(|e| JsValue::from_str(&format!("SMILES parse error: {e}")))?;
+        Ok(SmilesIr { inner })
+    }
+
     /// Return the number of disconnected components in the SMILES.
     ///
     /// Components are separated by `.` in the SMILES string. For
@@ -56,7 +71,7 @@ impl SmilesIR {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const ir = parseSMILES("[Na+].[Cl-]");
+    /// const ir = SmilesIr.parse("[Na+].[Cl-]");
     /// console.log(ir.nComponents); // 2
     /// ```
     #[wasm_bindgen(getter, js_name = nComponents)]
@@ -97,7 +112,9 @@ impl SmilesIR {
     /// ```
     #[wasm_bindgen(js_name = toFrame)]
     pub fn to_frame(&self) -> Result<Frame, JsValue> {
-        let mol = molrs::io::smiles::to_atomistic(&self.inner)
+        let mol = self
+            .inner
+            .to_atomistic()
             .map_err(|e| JsValue::from_str(&format!("IR -> Atomistic: {e}")))?;
         Frame::from_rs(
             mol.to_frame()
@@ -106,36 +123,28 @@ impl SmilesIR {
     }
 }
 
-/// Parse a SMILES notation string into an intermediate representation.
-///
-/// Supports standard SMILES features including ring closures,
-/// branching, stereochemistry markers, and aromatic atoms.
-///
-/// # Arguments
-///
-/// * `smiles` - SMILES notation string (e.g., `"CCO"` for ethanol,
-///   `"c1ccccc1"` for benzene, `"[Na+].[Cl-]"` for NaCl)
-///
-/// # Returns
-///
-/// A [`SmilesIR`](SmilesIR) object. Call `.toFrame()` to convert
-/// to a [`Frame`] with atoms and bonds blocks.
+/// Read one molecule from a SMILES string into a [`Frame`] with `"atoms"`
+/// and `"bonds"` blocks — connectivity only, no implicit hydrogens added, no
+/// coordinates. A `.`-separated set is refused: parse it with
+/// `SmilesIr.parse` and convert its components.
 ///
 /// # Errors
 ///
-/// Throws a `JsValue` string if the SMILES string is malformed
-/// (e.g., unmatched ring closure digits, invalid atom symbols).
+/// Throws a `JsValue` string if the SMILES string is malformed or names more
+/// than one molecule.
 ///
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const ir = parseSMILES("CCO");
-/// const frame = ir.toFrame();
+/// const frame = readSmilesStr("CCO");
 /// const mol3d = generate3D(frame, "fast");
 /// ```
-#[wasm_bindgen(js_name = parseSMILES)]
-pub fn parse_smiles(smiles: &str) -> Result<SmilesIR, JsValue> {
-    let inner = molrs::io::smiles::parse_smiles(smiles)
-        .map_err(|e| JsValue::from_str(&format!("SMILES parse error: {e}")))?;
-    Ok(SmilesIR { inner })
+#[wasm_bindgen(js_name = readSmilesStr)]
+pub fn read_smiles_str(smiles: &str) -> Result<Frame, JsValue> {
+    let mol = molrs::io::read_smiles_str(smiles)
+        .map_err(|e| JsValue::from_str(&format!("SMILES read error: {e}")))?;
+    Frame::from_rs(
+        mol.to_frame()
+            .map_err(|e| JsValue::from_str(&format!("readSmilesStr: {e}")))?,
+    )
 }

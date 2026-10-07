@@ -11,10 +11,10 @@
 //! | `oplsaa` | OPLS-AA (RB, geometric mixing, funct-1 impropers), ACE-ALA-ALA-NME | GROMACS `.top` (GROMACS) |
 //!
 //! Each source is read into the IR (a [`ForceField`] and a typed [`Frame`]);
-//! the IR is written as a LAMMPS data file and include ([`LammpsFfWriter`]),
-//! an OpenMM `<ForceField>` XML ([`XmlForceFieldWriter`], with residue
+//! the IR is written as a LAMMPS data file and include ([`LammpsForcefieldWriter`]),
+//! an OpenMM `<ForceField>` XML ([`OpenmmXmlWriter`], with residue
 //! templates `scripts/ff_equivalence_check.py` builds from the frame) and a
-//! GROMACS topology ([`GromacsTopFfWriter::write_system_str`]); every file,
+//! GROMACS topology ([`GromacsTopForcefieldWriter::write_system_str`]); every file,
 //! and the source itself in its native engine, is priced at [`CONFIGS`]
 //! configurations — the source's coordinates plus a seeded 0.05 Å Gaussian,
 //! on the 0.01 Å grid a `.gro` file holds exactly.
@@ -64,17 +64,17 @@ use crate::core::constants::{GROMACS_COULOMB, OPENMM_COULOMB};
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds, Style};
 use crate::ff::potential::pair::exceptions;
 use crate::ff::potential::{PotentialCompiler, intramolecular_pairs};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::gromacs::GromacsTopFfReader;
-use crate::io::forcefield::readers::opls::OplsXmlReader;
-use crate::io::forcefield::readers::prmtop::AmberPrmtopFfReader;
-use crate::io::forcefield::writers::ForceFieldWriter;
-use crate::io::forcefield::writers::gromacs::GromacsTopFfWriter;
-use crate::io::forcefield::writers::xml::XmlForceFieldWriter;
+use crate::io::amber::prmtop_forcefield::AmberPrmtopForcefieldReader;
+use crate::io::gromacs::top_reader::GromacsTopForcefieldReader;
+use crate::io::gromacs::top_writer::GromacsTopForcefieldWriter;
 use crate::io::mrec::ForceFieldSection;
+use crate::io::openmm_xml::reader::OpenmmXmlReader;
+use crate::io::openmm_xml::writer::OpenmmXmlWriter;
+use crate::io::reader::ForceFieldReader;
+use crate::io::writer::ForceFieldWriter;
 use crate::io::{
-    forcefield::readers::lammps::LammpsFfReader, forcefield::writers::lammps::LammpsFfWriter,
-    forcefield::writers::lammps::LammpsWriteOptions,
+    lammps::LammpsForcefieldReader, lammps::LammpsForcefieldWriteOptions,
+    lammps::LammpsForcefieldWriter,
 };
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -82,9 +82,10 @@ use molrs::core::SimBox;
 use molrs::core::TypeLabels;
 use molrs::core::constants::COULOMB_REAL;
 use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
-use molrs::io::data::gro::read_gro_frame;
-use molrs::io::data::inpcrd::read_amber_inpcrd_from_reader;
-use molrs::io::data::lammps_data::{read_lammps_data, write_lammps_data};
+use molrs::io::gro::GroReader;
+use molrs::io::lammps::data::{read_lammps_data, write_lammps_data};
+use molrs::io::read_amber_inpcrd_str;
+use molrs::io::reader::FrameReader as _;
 use molrs::op::{F, Idx};
 
 /// The terms compared, in print order.
@@ -145,33 +146,33 @@ pub(crate) fn sources() -> Vec<Source> {
         Source {
             name: "ff14sb",
             native: Native::Sander,
-            file: "molrs/src/io/forcefield/readers/testdata/prmtop/ff14sb.parm7",
+            file: "molrs/src/io/amber/testdata/prmtop/ff14sb.parm7",
             load: || {
                 prmtop(
-                    include_str!("../io/forcefield/readers/testdata/prmtop/ff14sb.parm7"),
-                    include_str!("../io/forcefield/readers/testdata/prmtop/ff14sb.rst7"),
+                    include_str!("../io/amber/testdata/prmtop/ff14sb.parm7"),
+                    include_str!("../io/amber/testdata/prmtop/ff14sb.rst7"),
                 )
             },
         },
         Source {
             name: "gaff2",
             native: Native::Sander,
-            file: "molrs/src/io/forcefield/readers/testdata/prmtop/gaff2.parm7",
+            file: "molrs/src/io/amber/testdata/prmtop/gaff2.parm7",
             load: || {
                 prmtop(
-                    include_str!("../io/forcefield/readers/testdata/prmtop/gaff2.parm7"),
-                    include_str!("../io/forcefield/readers/testdata/prmtop/gaff2.rst7"),
+                    include_str!("../io/amber/testdata/prmtop/gaff2.parm7"),
+                    include_str!("../io/amber/testdata/prmtop/gaff2.rst7"),
                 )
             },
         },
         Source {
             name: "chamber",
             native: Native::Sander,
-            file: "molrs/src/io/forcefield/readers/testdata/prmtop/chamber.parm7",
+            file: "molrs/src/io/amber/testdata/prmtop/chamber.parm7",
             load: || {
                 prmtop(
-                    include_str!("../io/forcefield/readers/testdata/prmtop/chamber.parm7"),
-                    include_str!("../io/forcefield/readers/testdata/prmtop/chamber.rst7"),
+                    include_str!("../io/amber/testdata/prmtop/chamber.parm7"),
+                    include_str!("../io/amber/testdata/prmtop/chamber.rst7"),
                 )
             },
         },
@@ -184,11 +185,11 @@ pub(crate) fn sources() -> Vec<Source> {
         Source {
             name: "oplsaa",
             native: Native::Gromacs,
-            file: "molrs/src/io/forcefield/readers/gromacs/testdata/opls.top",
+            file: "molrs/src/io/gromacs/testdata/opls.top",
             load: || {
                 gromacs(
-                    include_str!("../io/forcefield/readers/gromacs/testdata/opls.top"),
-                    include_str!("../io/forcefield/readers/gromacs/testdata/opls.gro"),
+                    include_str!("../io/gromacs/testdata/opls.top"),
+                    include_str!("../io/gromacs/testdata/opls.gro"),
                 )
             },
         },
@@ -214,11 +215,13 @@ fn no_cutoff(ff: &mut ForceField) {
 }
 
 fn prmtop(parm: &str, rst: &str) -> System {
-    let (mut ff, mut frame) = AmberPrmtopFfReader::new().read_system_str(parm).unwrap();
+    let (mut ff, mut frame) = AmberPrmtopForcefieldReader::new()
+        .read_system_str(parm)
+        .unwrap();
     no_cutoff(&mut ff);
     let pairs = intramolecular_pairs(&frame, ff.special_bonds()).unwrap();
     frame.insert("pairs", pairs);
-    let xyz = read_amber_inpcrd_from_reader(Cursor::new(rst.as_bytes())).unwrap();
+    let xyz = read_amber_inpcrd_str(rst).unwrap();
     let atoms = xyz.get("atoms").unwrap();
     let col = |k: &str| atoms.get(k).unwrap().as_float().unwrap().to_owned();
     let (x, y, z) = (col("x"), col("y"), col("z"));
@@ -237,9 +240,11 @@ fn openmm_charmm36() -> System {
 }
 
 fn gromacs(top: &str, gro: &str) -> System {
-    let (mut ff, mut frame) = GromacsTopFfReader::new().read_system_str(top).unwrap();
+    let (mut ff, mut frame) = GromacsTopForcefieldReader::new()
+        .read_system_str(top)
+        .unwrap();
     no_cutoff(&mut ff);
-    let gro = read_gro_frame(&mut Cursor::new(gro)).unwrap().unwrap();
+    let gro = GroReader::new(Cursor::new(gro)).read().unwrap().unwrap();
     let g = gro.get("atoms").unwrap();
     let atoms = frame.get_mut("atoms").unwrap();
     for key in ["x", "y", "z"] {
@@ -846,12 +851,12 @@ pub(crate) fn lammps_include(ff: &ForceField, frame: &Frame) -> (String, String,
     let data = lammps_frame(frame);
     let labels = TypeLabels::from_frame(&data).unwrap();
     let has_cmap = data.get("cmaps").is_some();
-    let options = LammpsWriteOptions {
+    let options = LammpsForcefieldWriteOptions {
         precision: 17,
         cmap_file: has_cmap.then(|| "system.cmap".to_owned()),
-        ..LammpsWriteOptions::default()
+        ..LammpsForcefieldWriteOptions::default()
     };
-    let writer = LammpsFfWriter::with_options(&labels, options);
+    let writer = LammpsForcefieldWriter::with_options(&labels, options);
     let text = writer.write_str(ff).unwrap();
     let (pre, post): (Vec<&str>, Vec<&str>) = text.lines().partition(|l| {
         l.starts_with("units") || l.starts_with("fix ") || l.starts_with("fix_modify")
@@ -960,14 +965,14 @@ fn write_inputs(dir: &Path, source: &Source, tsv: &mut String) {
     let (off, oframe) = engine_form(&sys, "openmm");
     std::fs::write(
         root.join("openmm/ff.xml"),
-        XmlForceFieldWriter::new().write_str(&off).unwrap(),
+        OpenmmXmlWriter::new().write_str(&off).unwrap(),
     )
     .unwrap();
     // GROMACS.
     let (gff, gframe) = engine_form(&sys, "gromacs");
     std::fs::write(
         root.join("gromacs/topol.top"),
-        GromacsTopFfWriter::new()
+        GromacsTopForcefieldWriter::new()
             .with_precision(17)
             .write_system_str(&gff, &gframe)
             .unwrap(),
@@ -1060,7 +1065,7 @@ fn lammps_clamps(ff: &ForceField, frame: &Frame, x: &[F]) -> bool {
         .iter()
         .filter(|(_, t)| names.contains(t.as_str()))
         .any(|(a, _)| {
-            crate::ff::potential::geometry::compute_dihedral(x, a[0], a[1], a[2], a[3])
+            crate::ff::potential::flat_coords::compute_dihedral(x, a[0], a[1], a[2], a[3])
                 .sin()
                 .abs()
                 < 0.001
@@ -1188,7 +1193,7 @@ fn every_written_file_reads_back_as_written() {
             std::fs::write(dir.join("system.cmap"), cmap).unwrap();
         }
         write_lammps_data(dir.join("data.lmp"), &lammps_frame(&placed(&frame, &x))).unwrap();
-        let back = LammpsFfReader::new()
+        let back = LammpsForcefieldReader::new()
             .read(dir.join("system.ff").to_str().unwrap())
             .unwrap_or_else(|e| panic!("{} LAMMPS include: {e}", source.name));
         let mut back_frame = read_lammps_data(dir.join("data.lmp")).unwrap();
@@ -1227,18 +1232,18 @@ fn every_written_file_reads_back_as_written() {
 
         // OpenMM XML.
         let (ff, _) = engine_form(&sys, "openmm");
-        let xml = XmlForceFieldWriter::new().write_str(&ff).unwrap();
-        let back = OplsXmlReader::new()
+        let xml = OpenmmXmlWriter::new().write_str(&ff).unwrap();
+        let back = OpenmmXmlReader::new()
             .read_str(&xml)
             .unwrap_or_else(|e| panic!("{} OpenMM XML: {e}", source.name));
-        let xml2 = XmlForceFieldWriter::new().write_str(&back).unwrap();
+        let xml2 = OpenmmXmlWriter::new().write_str(&back).unwrap();
         same_text(&xml, &xml2, &format!("{}: OpenMM XML", source.name));
 
         // GROMACS topology.
         let (ff, frame) = engine_form(&sys, "gromacs");
-        let writer = GromacsTopFfWriter::new().with_precision(17);
+        let writer = GromacsTopForcefieldWriter::new().with_precision(17);
         let top = writer.write_system_str(&ff, &frame).unwrap();
-        let (back, mut back_frame) = GromacsTopFfReader::new()
+        let (back, mut back_frame) = GromacsTopForcefieldReader::new()
             .read_system_str(&top)
             .unwrap_or_else(|e| panic!("{} GROMACS: {e}\n{top}", source.name));
         let top2 = writer.write_system_str(&back, &back_frame).unwrap();

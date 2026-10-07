@@ -25,29 +25,29 @@
 use std::sync::Arc;
 
 use molrs::ff::ir::{
-    CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, LammpsForm, Mix, ParamSpec,
-    Registry, Sample, SpecialClass, StyleSpec, Value,
+    CategorySpec, ConformanceSample, Coordinate, EndpointOrder, IrError, Kernel, LammpsForm,
+    ParamCombination, ParamDimension, ParamSpec, ParamValue, Registry, SpecialClass, StyleSpec,
 };
-use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
+use molrs::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 
 /// The numeric column `name` of a batch; the registry checked at build
 /// that every column a form states in its `inputs` is there.
-fn col<'a>(p: &ParamCols<'a>, name: &str) -> &'a [f64] {
+fn col<'a>(p: &ParamColumns<'a>, name: &str) -> &'a [f64] {
     p.get(name).expect("the kernel supplies every stated input")
 }
 
-fn dim(spelling: &str) -> Dim {
+fn dim(spelling: &str) -> ParamDimension {
     spelling.parse().expect("a dimension spelling")
 }
 
 /// A sample point of the registration checks (16 seeded points each):
 /// these parameter values, the coordinate (or a compound term's bond
 /// lengths) drawn from `q`.
-fn sample(params: &[(&'static str, f64)], q: (f64, f64)) -> Sample {
-    Sample {
+fn sample(params: &[(&'static str, f64)], q: (f64, f64)) -> ConformanceSample {
+    ConformanceSample {
         params: params
             .iter()
-            .map(|&(name, v)| (name.into(), Value::Num(v)))
+            .map(|&(name, v)| (name.into(), ParamValue::Num(v)))
             .collect(),
         q,
     }
@@ -64,7 +64,7 @@ fn sample(params: &[(&'static str, f64)], q: (f64, f64)) -> Sample {
 pub struct LjSmoothLinear;
 
 impl ScalarForm for LjSmoothLinear {
-    fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de_dr: &mut [f64]) {
+    fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
         let (eps, sigma, rc) = (col(p, "epsilon"), col(p, "sigma"), col(p, "cutoff"));
         for t in 0..r.len() {
             // φ and φ′ of the 12-6 at x.
@@ -90,17 +90,17 @@ impl ScalarForm for LjSmoothLinear {
 pub fn lj_smooth_linear() -> StyleSpec {
     StyleSpec::new("pair", "lj/smooth/linear")
         .params(vec![
-            ParamSpec::new("epsilon", Dim::ENERGY).mix(Mix::LjEpsilon {
+            ParamSpec::new("epsilon", ParamDimension::ENERGY).mix(ParamCombination::LjEpsilon {
                 sigma: "sigma".into(),
             }),
-            ParamSpec::new("sigma", Dim::LENGTH).mix(Mix::LjSigma {
+            ParamSpec::new("sigma", ParamDimension::LENGTH).mix(ParamCombination::LjSigma {
                 epsilon: "epsilon".into(),
             }),
         ])
         .style_params(vec![
-            ParamSpec::new("cutoff", Dim::LENGTH),
+            ParamSpec::new("cutoff", ParamDimension::LENGTH),
             ParamSpec::text("mixing", &["arithmetic", "geometric", "sixthpower"])
-                .default_value(Value::Text("arithmetic".into())),
+                .default_value(ParamValue::Text("arithmetic".into())),
         ])
         .special(SpecialClass::Vdw)
         .lammps(LammpsForm::positional())
@@ -136,7 +136,7 @@ impl CompoundForm for UreyBradley {
         &self,
         x: &[[f64; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [f64],
         grad: &mut [[f64; 3]],
     ) {
@@ -164,7 +164,7 @@ pub fn urey_bradley_harmonic() -> StyleSpec {
     StyleSpec::new("urey_bradley", "harmonic")
         .params(vec![
             ParamSpec::new("k_ub", dim("E/L^2")),
-            ParamSpec::new("r_ub", Dim::LENGTH),
+            ParamSpec::new("r_ub", ParamDimension::LENGTH),
         ])
         .sample(sample(&[("k_ub", 20.0), ("r_ub", 2.4)], (1.0, 1.6)))
 }
@@ -183,9 +183,9 @@ pub fn fene() -> StyleSpec {
     StyleSpec::new("bond", "fene")
         .params(vec![
             ParamSpec::new("k", dim("E/L^2")),
-            ParamSpec::new("r0", Dim::LENGTH),
-            ParamSpec::new("epsilon", Dim::ENERGY),
-            ParamSpec::new("sigma", Dim::LENGTH),
+            ParamSpec::new("r0", ParamDimension::LENGTH),
+            ParamSpec::new("epsilon", ParamDimension::ENERGY),
+            ParamSpec::new("sigma", ParamDimension::LENGTH),
         ])
         .expression(FENE)
         .lammps(LammpsForm::positional())
@@ -218,7 +218,7 @@ impl CompoundForm for BondAngle {
         &self,
         x: &[[f64; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [f64],
         grad: &mut [[f64; 3]],
     ) {
@@ -267,9 +267,9 @@ pub fn bond_angle_class2() -> StyleSpec {
         .params(vec![
             ParamSpec::new("n1", per_length_radian),
             ParamSpec::new("n2", per_length_radian),
-            ParamSpec::new("r1", Dim::LENGTH),
-            ParamSpec::new("r2", Dim::LENGTH),
-            ParamSpec::new("theta0", Dim::ANGLE),
+            ParamSpec::new("r1", ParamDimension::LENGTH),
+            ParamSpec::new("r2", ParamDimension::LENGTH),
+            ParamSpec::new("theta0", ParamDimension::ANGLE),
         ])
         .expression(BOND_ANGLE)
         .sample(sample(

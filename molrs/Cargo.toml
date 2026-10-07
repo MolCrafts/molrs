@@ -13,7 +13,7 @@ keywords = ["molecular-modeling", "chemistry", "simulation", "molecular-dynamics
 categories = ["science"]
 # The generator example is a repository tool, not part of the published crate;
 # the molrs 0.15.0 records under testdata/ are read by unit tests only.
-exclude = ["examples/", "src/io/zarr/testdata/"]
+exclude = ["examples/", "src/io/mrec/zarr_storage/testdata/"]
 # No integration-test or bench targets: behaviour is tested in `#[cfg(test)]`
 # modules next to the code (`cargo test --lib`). One example target: the OPLS
 # parameter generator, a tool, not a test; excluded from the package.
@@ -68,7 +68,7 @@ compute   = ["signal"]
 # pure-Rust (WASM-clean); lives in the `compute` module.
 voronoi   = ["compute"]
 # `ff` types atoms with `perceive::smarts`, which compiles from `io::smiles`.
-# With `ff` on, `io::forcefield` (the force-field file formats, over
+# With `ff` on, the force-field file formats of `io` (over
 # `roxmltree` for XML) compiles too; `ff` itself reads no file.
 ff        = ["io", "smiles", "dep:rustfft", "dep:roxmltree"]
 # `conformer` depends on the `ff` module.
@@ -100,7 +100,7 @@ rayon      = ["dep:rayon"]
 #
 # `zstd` is in molrec's must-decode set, so the base tier decodes it too: a
 # pure-Rust decoder (`ruzstd`) registered with zarrs as the `zstd` codec
-# (`io/zarr/zstd_decode.rs`). It is registered only without `zarr-codecs`,
+# (`io/mrec/zarr_storage/zstd_decode.rs`). It is registered only without `zarr-codecs`,
 # whose C-backed codec owns the name and also encodes. `numcodecs.shuffle`
 # needs nothing: zarrs builds it on every target.
 #
@@ -144,9 +144,9 @@ ruzstd         = { version = "0.9", optional = true, default-features = false, f
 inventory      = { version = "0.3", optional = true }                                               # zarr: registers the ruzstd codec with zarrs
 flate2         = { version = "1.1", optional = true, features = ["rust_backend"] }                  # io (compressed formats)
 rustfft        = { version = "6", optional = true }                                                 # signal + ff + compute
-roxmltree      = { version = "0.21", optional = true }                                              # ff (io::forcefield's XML readers)
+roxmltree      = { version = "0.21", optional = true }                                              # ff (io's force-field XML readers)
 rmp-serde      = { version = "1", optional = true }                                                 # stream (MessagePack wire encoding)
-# `io/zarr/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
+# `io/mrec/zarr_storage/pack.rs` and nothing else: `zip` writes the `.zarr.zip` a closed
 # directory store packs into, `zarrs_zip` reads it back. Both hang on
 # `filesystem`, so a build without that feature compiles neither — which is
 # what keeps them out of the wasm graph. `zip` is built with default-features

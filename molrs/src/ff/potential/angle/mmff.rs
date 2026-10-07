@@ -13,15 +13,15 @@
 //! stretch-bend coupling entirely. The typifier bakes a `linear` flag on each
 //! angle row (from the *central* atom's `linh`) and both kernels below read it.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_angle_forces, compute_angle, sub3, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::F;
@@ -50,7 +50,7 @@ use crate::core::constants::KCAL_MOL_PER_MDYNE_ANGSTROM;
 const CB_RAD: f64 = -0.4;
 
 // ---------------------------------------------------------------------------
-// MMFFAngleBend
+// AngleMmff
 //   cubic:  E = (1/2)*143.9325*ka*dth^2*(1 + cb*dth)
 //   linear: E = 143.9325*ka*(1 + cos(theta))
 // ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ const CB_RAD: f64 = -0.4;
 /// `ka` is in md·Å·rad⁻² and `theta0` in radians (143.9325 converts md·Å →
 /// kcal·mol⁻¹). `linear[idx]` selects the cosine form for angles whose *central*
 /// atom is a linear centre.
-pub struct MMFFAngleBend {
+pub struct AngleMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -69,7 +69,7 @@ pub struct MMFFAngleBend {
     linear: Vec<bool>,
 }
 
-impl MMFFAngleBend {
+impl AngleMmff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -111,7 +111,7 @@ impl MMFFAngleBend {
     }
 }
 
-impl Potential for MMFFAngleBend {
+impl Potential for AngleMmff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -125,7 +125,7 @@ impl Potential for MMFFAngleBend {
     }
 }
 
-impl IndexedTerms for MMFFAngleBend {
+impl IndexedTerms for AngleMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
@@ -161,11 +161,11 @@ impl IndexedTerms for MMFFAngleBend {
 /// `"angles"` block. All three are per-instance: MMFF resolves them through
 /// table → equivalence → empirical rules that this kernel deliberately does not
 /// re-implement.
-pub fn mmff_angle_ctor(
+pub fn angle_mmff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked ka and theta0 (degrees)
     // onto each angle (table → equivalence → empirical). This kernel only reads
     // the columns and evaluates — no force-field-specific resolution lives here.
@@ -184,8 +184,8 @@ pub fn mmff_angle_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("missing atomk")?;
-    let kac = need::instance_col("mmff_angle", block, "ka")?;
-    let th0c = need::instance_col("mmff_angle", block, "theta0")?;
+    let kac = param_reads::instance_col("mmff_angle", block, "ka")?;
+    let th0c = param_reads::instance_col("mmff_angle", block, "theta0")?;
     let linc = linear_column(block, "mmff_angle")?;
 
     let n = ic.len();
@@ -206,7 +206,7 @@ pub fn mmff_angle_ctor(
         th0.push(th0c[idx].to_radians() as F); // degrees → radians
         lin.push(linc[idx] != 0);
     }
-    Ok(Member::indexed(MMFFAngleBend {
+    Ok(ForceTerm::indexed(AngleMmff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -236,14 +236,14 @@ fn linear_column<'a>(
     block
         .get("linear")
         .and_then(|c| c.as_int())
-        .ok_or_else(|| need::missing(style, "", "linear"))
+        .ok_or_else(|| param_reads::missing(style, "", "linear"))
 }
 
 // ---------------------------------------------------------------------------
-// MMFFStretchBend: E = 143.9325*(kba_ijk*dr_ij + kba_kji*dr_kj)*dth
+// AngleMmffStretchBend: E = 143.9325*(kba_ijk*dr_ij + kba_kji*dr_kj)*dth
 // ---------------------------------------------------------------------------
 
-pub struct MMFFStretchBend {
+pub struct AngleMmffStretchBend {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -254,7 +254,7 @@ pub struct MMFFStretchBend {
     theta0: Vec<F>,
 }
 
-impl MMFFStretchBend {
+impl AngleMmffStretchBend {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -308,7 +308,7 @@ impl MMFFStretchBend {
     }
 }
 
-impl Potential for MMFFStretchBend {
+impl Potential for AngleMmffStretchBend {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -322,7 +322,7 @@ impl Potential for MMFFStretchBend {
     }
 }
 
-impl IndexedTerms for MMFFStretchBend {
+impl IndexedTerms for AngleMmffStretchBend {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k])
     }
@@ -364,11 +364,11 @@ impl IndexedTerms for MMFFStretchBend {
 /// Only the linear centre is skipped, not the molecule: acetonitrile's three
 /// methyl angles (H-C-H, H-C-C) contribute stretch-bend like any sp3 centre
 /// (-0.010941 kcal/mol in total). "Nitriles have zero stretch-bend" is wrong.
-pub fn mmff_stbn_ctor(
+pub fn angle_mmff_stretch_bend_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked the stretch-bend force
     // constants (kba_ijk/kba_kji, via the dfsb period-row default-row fallback
     // that the shared-table path lacked) plus the two reference bond lengths and
@@ -386,15 +386,15 @@ pub fn mmff_stbn_ctor(
         .get("atomk")
         .and_then(|c| c.as_uint())
         .ok_or("missing atomk")?;
-    let kba_ijk_c = need::instance_col("mmff_stbn", block, "kba_ijk")?;
-    let kba_kji_c = need::instance_col("mmff_stbn", block, "kba_kji")?;
-    let r0ij = need::instance_col("mmff_stbn", block, "r0_ij")?;
-    let r0kj = need::instance_col("mmff_stbn", block, "r0_kj")?;
-    let th0 = need::instance_col("mmff_stbn", block, "theta0")?;
+    let kba_ijk_c = param_reads::instance_col("mmff_stbn", block, "kba_ijk")?;
+    let kba_kji_c = param_reads::instance_col("mmff_stbn", block, "kba_kji")?;
+    let r0ij = param_reads::instance_col("mmff_stbn", block, "r0_ij")?;
+    let r0kj = param_reads::instance_col("mmff_stbn", block, "r0_kj")?;
+    let th0 = param_reads::instance_col("mmff_stbn", block, "theta0")?;
     let linc = linear_column(block, "mmff_stbn")?;
 
     let n = ic.len();
-    let mut pot = MMFFStretchBend {
+    let mut pot = AngleMmffStretchBend {
         atom_i: Vec::with_capacity(n),
         atom_j: Vec::with_capacity(n),
         atom_k: Vec::with_capacity(n),
@@ -418,7 +418,7 @@ pub fn mmff_stbn_ctor(
         pot.r0_kj.push(r0kj[idx] as F);
         pot.theta0.push(th0[idx].to_radians() as F); // degrees → radians
     }
-    Ok(Member::indexed(pot))
+    Ok(ForceTerm::indexed(pot))
 }
 
 #[cfg(test)]
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_mmff_angle_at_equilibrium() {
         let theta0: F = (109.5 as F).to_radians();
-        let pot = MMFFAngleBend {
+        let pot = AngleMmff {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

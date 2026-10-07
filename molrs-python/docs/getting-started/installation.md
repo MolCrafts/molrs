@@ -41,7 +41,7 @@ for nightly testing.
     python - <<'PY'
     import molrs
 
-    ir = molrs.io.smiles.SmilesIR("O")
+    ir = molrs.io.smiles.SmilesIr("O")
     print("components:", ir.n_components)
     print("atoms:", ir.to_atomistic().n_atoms)
     PY
@@ -62,11 +62,10 @@ for nightly testing.
     In `src/main.rs`:
 
     ```rust
-    use molrs::io::smiles::{parse_smiles, to_atomistic};
+    use molrs::io::read_smiles_str;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = parse_smiles("O")?;
-        let mol = to_atomistic(&ir)?;
+        let mol = read_smiles_str("O")?;
         println!("atoms: {}", mol.n_atoms());
         Ok(())
     }
@@ -81,9 +80,9 @@ for nightly testing.
     In a bundler that loads WebAssembly modules (Vite, webpack, …):
 
     ```ts
-    import { parseSMILES } from "@molcrafts/molrs";
+    import { SmilesIr } from "@molcrafts/molrs";
 
-    console.log(parseSMILES("O").nComponents);
+    console.log(SmilesIr.parse("O").nComponents);
     ```
 
 ## Source Builds
@@ -124,7 +123,7 @@ crate and installs it into the active virtualenv as `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.smiles.SmilesIR('O').n_components)"
+python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
 ```
 
 ### WASM / npm

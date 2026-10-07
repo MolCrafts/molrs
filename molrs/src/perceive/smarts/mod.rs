@@ -1,7 +1,7 @@
 //! SMARTS substructure-matching engine.
 //!
-//! A compiler from the shared SMARTS syntax tree
-//! ([`crate::io::smiles::parse_smarts`] is the one SMARTS parser) plus a
+//! SMARTS, wholly: the pattern is parsed by the crate's one line-notation
+//! grammar (shared with SMILES), compiled into a query graph, matched by a
 //! backtracking subgraph-isomorphism matcher covering the SMARTS
 //! feature subset used by RDKit's ETKDGv3 experimental-torsion preference
 //! tables (`torsionPreferences_v2 / _smallrings / _macrocycles`), including
@@ -60,9 +60,10 @@
 //! assert_eq!(pat.map_label(0), Some(1));
 //! ```
 
-mod ast;
 mod compile;
+mod environment;
 mod matcher;
+mod predicate;
 mod reaction;
 
 use std::collections::HashMap;
@@ -73,6 +74,7 @@ use crate::core::NodeId;
 
 use compile::QueryGraph;
 
+pub use environment::{EnvironmentOptions, NeighborStyle};
 pub use reaction::Reaction;
 
 /// Ring-related SMARTS atom primitives found in a compiled pattern.
@@ -115,19 +117,57 @@ impl SmartsMatch {
 }
 
 /// A compiled SMARTS query.
+///
+/// Its [`Display`](std::fmt::Display) is the SMARTS text: what
+/// [`parse`](Self::parse) read, or what
+/// [`from_environment`](Self::from_environment) generated.
 #[derive(Debug, Clone)]
 pub struct SmartsPattern {
     graph: QueryGraph,
+    smarts: String,
+}
+
+impl std::fmt::Display for SmartsPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.smarts)
+    }
 }
 
 impl SmartsPattern {
-    /// Parse a SMARTS string with the one SMARTS parser
-    /// ([`crate::io::smiles::parse_smarts`]) and compile it for matching.
-    /// Returns `Err` on any syntax error, or on a construct the matcher does
-    /// not evaluate (never panics).
+    /// Parse a SMARTS string and compile it for matching. Returns `Err` on any
+    /// syntax error, or on a construct the matcher does not evaluate (never
+    /// panics).
     pub fn parse(smarts: &str) -> Result<SmartsPattern, MolRsError> {
         let graph = compile::compile(smarts)?;
-        Ok(SmartsPattern { graph })
+        Ok(SmartsPattern {
+            graph,
+            smarts: smarts.to_owned(),
+        })
+    }
+
+    /// The pattern that states the local environment of `center` in `mol` —
+    /// its element, and as many of degree, hydrogen count, charge,
+    /// aromaticity, ring membership and neighbours out to `options.reach`
+    /// bonds as `options` asks for.
+    ///
+    /// The pattern matches `mol` at `center` (as atom 0). With
+    /// [`NeighborStyle::Chain`] its
+    /// [`max_bond_depth`](Self::max_bond_depth) is at most `options.reach`.
+    ///
+    /// # Errors
+    ///
+    /// `options.reach` is 0, `center` is not an atom of `mol`, or an atom
+    /// carries no known `element`.
+    pub fn from_environment(
+        mol: &Atomistic,
+        center: NodeId,
+        options: &EnvironmentOptions,
+    ) -> Result<SmartsPattern, MolRsError> {
+        let ir = environment::environment_ir(mol, center, options)
+            .map_err(|e| MolRsError::parse(e.to_string()))?;
+        let smarts = crate::line_notation::writer::write_smarts(&ir)
+            .map_err(|e| MolRsError::parse(e.to_string()))?;
+        Self::parse(&smarts)
     }
 
     /// All matches (non-uniquified), controlled by [`MatchOptions`].
@@ -137,7 +177,7 @@ impl SmartsPattern {
 
     pub(crate) fn find_in_context(
         &self,
-        context: &ast::MolContext<'_>,
+        context: &predicate::MolContext<'_>,
         root: Option<NodeId>,
     ) -> Vec<SmartsMatch> {
         matcher::find_in_context(&self.graph, context, root, None)

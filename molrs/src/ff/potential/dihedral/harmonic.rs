@@ -5,24 +5,24 @@
 //! `k` is LAMMPS's `K` (energy), `sign` its `d` (±1 — a sign, not a phase) and
 //! `periodicity` its `n`. It is the same function of the dihedral as LAMMPS
 //! `improper_style cvff`, so it shares that kernel
-//! ([`signed_cosine_ctor`]),
+//! ([`signed_cosine_constructor`]),
 //! evaluated over the `"dihedrals"` block.
 
 use molrs::core::Frame;
 use molrs::core::schema::block_names::DIHEDRALS;
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::Member;
-use crate::ff::potential::improper::cvff::signed_cosine_ctor;
+use crate::ff::potential::ForceTerm;
+use crate::ff::potential::improper::cvff::signed_cosine_constructor;
 
 /// Construct a harmonic dihedral from per-type params (`k`, `sign`,
 /// `periodicity`) and a Frame's `"dihedrals"` block.
-pub fn dihedral_harmonic_ctor(
+pub fn dihedral_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
-    signed_cosine_ctor(DIHEDRALS, "harmonic", tp, frame)
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    signed_cosine_constructor(DIHEDRALS, "harmonic", tp, frame)
 }
 
 #[cfg(test)]

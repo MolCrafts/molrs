@@ -76,7 +76,7 @@ impl DensityGrid {
     }
 
     /// Extract a [`DensityGrid`] from a cube [`Frame`](molrs::core::Frame) (the output
-    /// of `io::data::cube::read_cube`): grid block `"grid"`, density column
+    /// of `io::cube::read_cube`): grid block `"grid"`, density column
     /// `"density"`. The cube reader leaves the density in its native `e/Bohr³`;
     /// this converts it to `e/Å³` (÷ `a³`) so downstream integration yields
     /// electrons / `e·Å`.

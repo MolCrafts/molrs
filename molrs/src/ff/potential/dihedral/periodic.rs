@@ -12,17 +12,17 @@
 //! canonical encoding the molpy → molrs ForceField bridge emits.
 
 use crate::ff::ir::IrError;
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -129,7 +129,7 @@ impl IndexedTerms for DihedralPeriodic {
 /// `k{m}`/`periodicity{m}`/`phase{m}` encoding (contiguous from 1), or the
 /// single-term `k`/`periodicity`/`phase` spelling.
 fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
-    let num = |key: &str| need::type_num("periodic", label, p, key);
+    let num = |key: &str| param_reads::type_num("periodic", label, p, key);
     let term = |m: &str| -> Result<Term, IrError> {
         Ok(Term {
             k: num(&format!("k{m}"))?,
@@ -146,12 +146,16 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
             .is_some_and(|i| i > m)
     });
     if beyond {
-        return Err(need::missing("periodic", label, &format!("k{}", m + 1)));
+        return Err(param_reads::missing(
+            "periodic",
+            label,
+            &format!("k{}", m + 1),
+        ));
     }
     match (m, p.get("k").is_some()) {
         (0, true) => Ok(vec![term("")?]),
-        (0, false) => Err(need::missing("periodic", label, "k1")),
-        (_, true) => Err(need::bad(
+        (0, false) => Err(param_reads::missing("periodic", label, "k1")),
+        (_, true) => Err(param_reads::bad(
             "periodic",
             label,
             "k",
@@ -163,11 +167,11 @@ fn collect_terms(p: &Params, label: &str) -> Result<Vec<Term>, IrError> {
 
 /// Construct a [`DihedralPeriodic`] from per-type params and a Frame's
 /// `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_periodic_ctor(
+pub fn dihedral_periodic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -212,7 +216,7 @@ pub fn dihedral_periodic_ctor(
         al.push(lc[idx] as usize);
         terms.push(collect_terms(p, tc[idx].as_str())?);
     }
-    Ok(Member::indexed(DihedralPeriodic {
+    Ok(ForceTerm::indexed(DihedralPeriodic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

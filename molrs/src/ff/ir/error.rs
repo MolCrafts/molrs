@@ -41,7 +41,7 @@ pub enum IrError {
         param: String,
     },
     /// An unparsable or forbidden dimension.
-    Dim {
+    Dimension {
         param: String,
         dim: String,
         reason: String,
@@ -199,7 +199,7 @@ impl fmt::Display for IrError {
             DuplicateParam { style, param } => {
                 write!(f, "style `{style}`: parameter `{param}` declared twice")
             }
-            Dim { param, dim, reason } => {
+            Dimension { param, dim, reason } => {
                 write!(f, "parameter `{param}`: dimension {dim:?}: {reason}")
             }
             Parse {

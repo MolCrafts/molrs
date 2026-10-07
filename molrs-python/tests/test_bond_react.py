@@ -1,5 +1,5 @@
 """LAMMPS ``fix bond/react`` file sets: ``BondReactTemplate``,
-``write_bond_react_map`` and ``write_lammps_bond_react_system``.
+``write_lammps_bond_react_map`` and ``write_lammps_bond_react_system``.
 
 The map-file format follows https://docs.lammps.org/fix_bond_react.html; when
 a LAMMPS binary is on PATH the system's data, force-field and molecule files
@@ -42,7 +42,7 @@ def _system() -> molrs.core.Frame:
     return frame
 
 
-def _template() -> molrs.io.lammps_bond_react.BondReactTemplate:
+def _template() -> molrs.io.lammps.BondReactTemplate:
     """c3 + oh → c3-oh: the new bond type exists only in the post template."""
     pre = molrs.core.Atomistic()
     c_pre = pre.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1)
@@ -51,14 +51,14 @@ def _template() -> molrs.io.lammps_bond_react.BondReactTemplate:
     c_post = post.def_atom(element="C", type="c3", x=0.0, y=0.0, z=0.0, charge=0.0, react_id=1)
     o_post = post.def_atom(element="O", type="oh", x=1.41, y=0.0, z=0.0, charge=0.0, react_id=2)
     post.def_bond(c_post, o_post, type="c3-oh")
-    return molrs.io.lammps_bond_react.BondReactTemplate(pre=pre, post=post, initiator_atoms=[c_pre, o_pre])
+    return molrs.io.lammps.BondReactTemplate(pre=pre, post=post, initiator_atoms=[c_pre, o_pre])
 
 
 def test_the_template_keeps_its_objects_and_writes_a_map(tmp_path):
     template = _template()
     assert len(template.initiator_atoms) == 2
     assert list(template.edge_atoms) == []
-    molrs.io.write_bond_react_map(template, tmp_path / "rxn1")
+    molrs.io.write_lammps_bond_react_map(template, tmp_path / "rxn1")
     lines = (tmp_path / "rxn1.map").read_text().splitlines()
     assert "2 equivalences" in lines
     assert "0 edgeIDs" in lines and "0 deleteIDs" in lines
@@ -73,11 +73,11 @@ def test_react_ids_may_be_given_directly_and_must_match():
     pre.def_atom(element="C", type="c3", react_id=2)
     post = molrs.core.Atomistic()
     post.def_atom(element="C", type="c3", react_id=1)
-    template = molrs.io.lammps_bond_react.BondReactTemplate(pre, post, [1, 2])
+    template = molrs.io.lammps.BondReactTemplate(pre, post, [1, 2])
     with pytest.raises(ValueError, match="different atoms"):
         template.map_text()
     with pytest.raises(ValueError, match="exactly 2"):
-        molrs.io.lammps_bond_react.BondReactTemplate(pre, pre, [1]).map_text()
+        molrs.io.lammps.BondReactTemplate(pre, pre, [1]).map_text()
 
 
 def test_the_system_covers_template_only_types(tmp_path):

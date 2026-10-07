@@ -10,12 +10,12 @@ from __future__ import annotations
 import molrs
 import numpy as np
 import pytest
-from molrs.ff.potential import kernel
+from molrs.ff.potential import compile_explicit_terms
 
 
 def _lj_dimer():
     # One LJ pair at 1.5 sigma: the minimum is at 2^(1/6) sigma.
-    return kernel("pair", "lj/cut", [[0, 1]], epsilon=1.0, sigma=1.0)
+    return compile_explicit_terms("pair", "lj/cut", [[0, 1]], epsilon=1.0, sigma=1.0)
 
 
 def test_names_are_the_rust_names():

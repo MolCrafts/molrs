@@ -6,15 +6,15 @@
 //! `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
 //! in energy/radianⁿ. The kernel converts `theta0` to radians once.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -139,11 +139,11 @@ impl IndexedTerms for AngleClass2 {
 }
 
 /// Construct an [`AngleClass2`] from style params, type params, and Frame topology.
-pub fn angle_class2_ctor(
+pub fn angle_class2_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -168,7 +168,7 @@ pub fn angle_class2_ctor(
 
     let (mut ai, mut aj, mut ak) = (Vec::new(), Vec::new(), Vec::new());
     let (mut t0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| need::type_num("class2", label, p, key);
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -183,7 +183,7 @@ pub fn angle_class2_ctor(
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Member::indexed(AngleClass2::new(
+    Ok(ForceTerm::indexed(AngleClass2::new(
         ai, aj, ak, t0, k2, k3, k4,
     )))
 }

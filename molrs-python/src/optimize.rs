@@ -87,7 +87,7 @@ impl From<OptimizationReport> for PyOptimizationReport {
 ///
 /// Examples
 /// --------
-/// >>> pots = molrs.ff.potential.PotentialCompiler(molrs.ff.typifier.MMFF94Typifier().forcefield()).compile(frame)
+/// >>> pots = molrs.ff.potential.PotentialCompiler(molrs.ff.typifier.Mmff94Typifier().forcefield()).compile(frame)
 /// >>> opt = molrs.optimize.Lbfgs(pots, fmax=0.05, max_steps=500)
 /// >>> frame, report = opt.minimize(frame)
 /// >>> coords, report = opt.minimize(coords)         # (N, 3)

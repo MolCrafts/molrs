@@ -19,13 +19,12 @@ npm install @molcrafts/molrs
 ## Quick start
 
 ```js
-import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
+import { readSmilesStr, generate3D, writeXyzStr } from "@molcrafts/molrs";
 
 // Parse SMILES → 3D coordinates → XYZ string
-const ir = parseSMILES("CCO");
-const frame = ir.toFrame();
+const frame = readSmilesStr("CCO");
 const mol3d = generate3D(frame, "fast");
-console.log(writeFrame(mol3d, "xyz"));
+console.log(writeXyzStr(mol3d));
 ```
 
 The published package uses wasm-pack's `bundler` target: configure your bundler
@@ -76,16 +75,23 @@ const withH = addHydrogens(frame);
 
 ### I/O
 
-- `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
-- `XYZStream`, `PDBStream`, `SDFStream`, `LAMMPSStream`, `LAMMPSTrajStream`,
-  `DCDStream`, `XTCStream`, `TRRStream` — chunk-fed readers, the one reader of
+- `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
+  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included)
+- `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
+  `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
   `parseRangeInInput` per frame)
-- `CIFReader`, `GROReader`, `MOL2Reader`, `POSCARReader`, `XSFReader`,
-  `CubeReader`, `CHGCARReader`, `AmberInpcrdReader`, `AcReader` — whole-content
-  readers of the formats with no stream
+- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`, `XsfReader`,
+  `CubeReader`, `VaspChgcarReader`, `AmberInpcrdReader`, `AmberAcReader` —
+  whole-content readers of the formats with no stream
+- `readStlBytes(bytes)` → `Mesh`
 - `covalentRadius(symbol)` — the element table's covalent radius (Å)
-- `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
+- one writer per format: `writeXyzStr`, `writePdbStr`, `writeCifStr`,
+  `writeGroStr`, `writeMol2Str`, `writeXsfStr`, `writeCubeStr`,
+  `writeVaspPoscarStr`, `writeLammpsDataStr`, `writeLammpsDumpStr` (text);
+  `writeDcdBytes`, `writeTrrBytes`, `writeXtcBytes` (binary)
+- `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` /
+  `writeJsonFrameStr` — the `molrs::stream` wire encodings
 
 ### 3D generation
 
@@ -94,7 +100,7 @@ const withH = addHydrogens(frame);
 ### Force fields + geometry optimization
 
 ```js
-const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
+const typifier = new UffTypifier();                 // or Mmff94Typifier / Mmff94sTypifier
 const typed    = typifier.typify(frame);
 const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
 const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
@@ -175,7 +181,7 @@ const reader = new MrecReader(files);            // Map<path, Uint8Array>
 // (b) a packed store
 const zipped = MrecReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
 // (c) served on demand — only touched chunks cross into wasm
-const lazy = MrecReader.fromStore({
+const lazy = MrecReader.fromStorage({
   get: (key) => ...,                                   // Uint8Array | null
   getRange: (key, offset, length) => ...,              // length -1 = to end
   size: (key) => ...,                                  // number | null
@@ -189,7 +195,7 @@ reader.blockUpdateAt("bonds", t);                      // same value ⇒ same ro
 reader.boxAt(t);
 ```
 
-The host callbacks of `fromStore` are synchronous: in a Worker that is
+The host callbacks of `fromStorage` are synchronous: in a Worker that is
 `FileReaderSync` over `File` handles or a synchronous range request; on the
 main thread hand the reader a `Map` instead.
 

@@ -5,7 +5,7 @@ name: CI Snapshot
 #
 #   tests         cargo test --lib, the same invocation as cargo mrs-test
 #   coverage      rustc -C instrument-coverage, then the toolchain's llvm-cov
-#   conformance   molrec's standard suite, through molrs.io.mrec
+#   conformance   molrec's standard suite, through molrs.io's *.mrec doors
 #
 # Rust core only. molrs-python's pytest suite, and the ffi / C / CXX / WASM
 # crates, are not measured here. Doctests stay in ci-rust.yml (`cargo mrs-doctest`).
@@ -117,7 +117,7 @@ jobs:
             "$exe" > .ci-out/lcov.info
 
       # molci and maturin. maturin is the build backend molrs-python already
-      # declares; the suite calls the Rust core through molrs.io.mrec.
+      # declares; the suite calls the Rust core through molrs.io's *.mrec doors.
       - name: Python tools
         if: ${{ !cancelled() }}
         run: |
@@ -150,8 +150,9 @@ jobs:
             "${args[@]}" \
             ${{ (github.event_name == 'push' && github.ref == 'refs/heads/master') && '--track' || '' }}
 
-      # molrs.io.mrec is the Rust core's path door. Building the extension
-      # is how the suite reaches that door. The Python test suite is not run.
+      # molrs.io's *.mrec doors (read_mrec, write_mrec, read_mrec_frame, …) and
+      # molrs.io.mrec's store classes are the Rust core's. Building the extension
+      # is how the suite reaches them. The Python test suite is not run.
       # A red suite fails this job; its record is still written and published.
       # `scripts/check.sh mrec` is this step as a local pre-push gate: keep
       # the two in step.

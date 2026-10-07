@@ -16,17 +16,17 @@
 //! and the first atom I is the centre (LAMMPS's "atom of symmetry" for this
 //! style; CHARMM writes its impropers this way).
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::F;
 
@@ -131,11 +131,11 @@ impl IndexedTerms for ImproperHarmonic {
 
 /// Construct an [`ImproperHarmonic`] from per-type params (`k`, `chi0` degrees)
 /// and a Frame's `"impropers"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn improper_harmonic_ctor(
+pub fn improper_harmonic_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(IMPROPERS)
@@ -178,11 +178,11 @@ pub fn improper_harmonic_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        kk.push(need::type_num("harmonic", &tc[idx], p, "k")?);
+        kk.push(param_reads::type_num("harmonic", &tc[idx], p, "k")?);
         // degrees → radians
-        cc.push(need::type_num("harmonic", &tc[idx], p, "chi0")?.to_radians());
+        cc.push(param_reads::type_num("harmonic", &tc[idx], p, "chi0")?.to_radians());
     }
-    Ok(Member::indexed(ImproperHarmonic {
+    Ok(ForceTerm::indexed(ImproperHarmonic {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

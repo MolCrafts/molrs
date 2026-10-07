@@ -20,7 +20,7 @@ new_key_type! {
 
 new_key_type! {
     /// Key for ForceField entries in the CStore.
-    pub struct FFKey;
+    pub struct ForceFieldKey;
 }
 
 new_key_type! {
@@ -187,9 +187,9 @@ pub(crate) fn handle_to_box_key(h: MolrsBoxHandle) -> BoxKey {
     BoxKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
-// --- Conversion: FFKey ↔ MolrsForceFieldHandle ---
+// --- Conversion: ForceFieldKey ↔ MolrsForceFieldHandle ---
 
-pub(crate) fn ff_key_to_handle(key: FFKey) -> MolrsForceFieldHandle {
+pub(crate) fn ff_key_to_handle(key: ForceFieldKey) -> MolrsForceFieldHandle {
     let ffi = key.data().as_ffi();
     MolrsForceFieldHandle {
         idx: ffi as u32,
@@ -197,9 +197,9 @@ pub(crate) fn ff_key_to_handle(key: FFKey) -> MolrsForceFieldHandle {
     }
 }
 
-pub(crate) fn handle_to_ff_key(h: MolrsForceFieldHandle) -> FFKey {
+pub(crate) fn handle_to_ff_key(h: MolrsForceFieldHandle) -> ForceFieldKey {
     let ffi = (h.version as u64) << 32 | h.idx as u64;
-    FFKey::from(slotmap::KeyData::from_ffi(ffi))
+    ForceFieldKey::from(slotmap::KeyData::from_ffi(ffi))
 }
 
 // --- Conversion: BlockHandle ↔ MolrsBlockHandle ---

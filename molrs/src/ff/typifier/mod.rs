@@ -3,10 +3,10 @@
 //! [`crate::ff::charge`]'s; kernels are [`crate::ff::potential`]'s.
 //!
 //! Typing is a template method. A [`Typifier`] implements only
-//! `r#match` ([`Typifier`]): it reads a molecular graph and produces a
-//! [`Match`] — positional per-atom / per-link [`Annotation`]s, the styles they
+//! `assign` ([`Typifier`]): it reads a molecular graph and produces a
+//! [`TypeAssignment`] — positional per-atom / per-link [`Annotation`]s, the styles they
 //! are defined under, and the pair rows among the atom types used. The base,
-//! [`Typing`], runs the match: [`Match::write_onto`] stamps the annotations onto
+//! [`Typing`], runs the match: [`TypeAssignment::write_onto`] stamps the annotations onto
 //! a private copy of the input and defines the matched types in the output
 //! force field the base owns. No implementor writes the output itself.
 //!
@@ -25,16 +25,16 @@ mod opls;
 pub(crate) mod topology;
 pub(crate) mod uff;
 
-pub use am1bcc::BCCAtomChargeTypifier;
+pub use am1bcc::BccAtomChargeTypifier;
 pub use atd::{AtdBondOrders, AtdParameterSet, AtdTypifier};
 pub use element::ElementTypifier;
 pub use estimate::{
-    BondedTerm, EmpiricalSet, Estimate, EstimateMethod, ParameterInterpolator, Parmchk2Estimator,
-    PenaltyTier, Provenance, TypifierParameterContext,
+    BondedTerm, EmpiricalSet, Estimate, EstimateMethod, EstimationInputs, ParameterInterpolator,
+    Parmchk2Estimator, PenaltyTier, Provenance,
 };
 pub use gaff::{GaffParameterSet, GaffTypifier};
-pub use opls::{OPLSAATypifier, OplsTypeRow, OplsTypingMeta};
-pub use uff::UFFTypifier;
+pub use opls::{OplsAaTypifier, OplsTypeRow, OplsTypingMetadata};
+pub use uff::UffTypifier;
 
 use std::collections::{HashMap, HashSet};
 
@@ -48,39 +48,37 @@ use estimate::candidate::is_wildcard;
 
 /// A graph typifier: what matching a molecule against a force field produces.
 ///
-/// An implementor provides `r#match` and
-/// [`library`](Self::library) and nothing else; it cannot type a molecule by
-/// itself. [`Typing`] owns the implementor and the output force field and is
-/// the only caller of `r#match`.
-///
-/// The raw identifier `r#match` gives the Rust and the Python hook one name,
-/// `match`.
+/// An implementor provides [`assign`](Self::assign) and
+/// [`source_forcefield`](Self::source_forcefield) and nothing else; it cannot
+/// type a molecule by itself. [`Typing`] owns the implementor and the output
+/// force field and is the only caller of `assign`. The Python hook has the
+/// same name.
 pub trait Typifier {
-    /// Match `graph` and return what it assigns.
+    /// Type `graph` and return what it assigns.
     ///
     /// `graph` is the base's private working copy of the input: an
     /// implementation may write intermediate results onto it (generated
     /// topology, perceived bond types), and those stay on the graph
     /// [`Typing::typify`] returns. Types and parameters are not stamped here;
-    /// they travel in the [`Match`], positional against this same graph.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String>;
+    /// they travel in the [`TypeAssignment`], positional against this same graph.
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String>;
 
     /// The force field this typifier matches against. [`Typing::new`] seeds
     /// its output from it with [`ForceField::empty_like`].
-    fn library(&self) -> &ForceField;
+    fn source_forcefield(&self) -> &ForceField;
 }
 
 impl Typifier for Box<dyn Typifier + Send + Sync> {
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
-        (**self).r#match(graph)
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        (**self).assign(graph)
     }
 
-    fn library(&self) -> &ForceField {
-        (**self).library()
+    fn source_forcefield(&self) -> &ForceField {
+        (**self).source_forcefield()
     }
 }
 
-/// The value a [`Match`] writes under one key of one graph element.
+/// The value a [`TypeAssignment`] writes under one key of one graph element.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Annotation {
     /// Stamp `key = value`; defines nothing.
@@ -88,7 +86,7 @@ pub enum Annotation {
     /// Stamp `key = name` and every param under its own key (numeric as
     /// [`PropValue::F64`], string as [`PropValue::Str`]), and define the type
     /// `(category, style, name)` with `params`. The category follows where
-    /// the annotation sits: `nodes` → `atom`, a [`Match::links`] kind → the
+    /// the annotation sits: `nodes` → `atom`, a [`TypeAssignment::links`] kind → the
     /// category whose Frame block that kind is ([`link_category`]: `bonds` →
     /// `bond`, `urey_bradleys` → `urey_bradley`). `endpoints` are the type's
     /// endpoint atom types, given to [`Style::def_type`] as they are (none
@@ -120,7 +118,7 @@ pub type Annotations = Vec<(String, Annotation)>;
 /// `styles` are `(category, style, style params)` to declare, in output
 /// order; `pairs` are `(style, name, endpoints, params)` pair rows.
 #[derive(Debug, Clone, Default)]
-pub struct Match {
+pub struct TypeAssignment {
     pub nodes: Vec<Annotations>,
     pub links: IndexMap<String, Vec<Annotations>>,
     pub styles: Vec<(String, String, Params)>,
@@ -140,7 +138,7 @@ pub struct Match {
 pub fn link_category(kind: &str) -> Option<(String, EndpointOrder)> {
     // `Some(_)` when registered categories own the block: the relation
     // among them, if any.
-    let owned = crate::ff::ir::with_global(|r| {
+    let owned = crate::ff::ir::with_global_registry(|r| {
         let owners: Vec<_> = r.categories().filter(|c| c.block == kind).collect();
         (!owners.is_empty()).then(|| {
             owners
@@ -200,14 +198,14 @@ fn endpoints_match(pattern: &[&str], atoms: &[&str], order: EndpointOrder) -> bo
     }
 }
 
-/// One graph element a [`Match`] writes to.
+/// One graph element a [`TypeAssignment`] writes to.
 #[derive(Debug, Clone, Copy)]
 enum Element {
     Node(NodeId),
     Link(KindId, RelationId),
 }
 
-/// One positional vector of a [`Match`], resolved against the graph.
+/// One positional vector of a [`TypeAssignment`], resolved against the graph.
 struct Vector {
     /// The category a type annotated here defines; `None` for a relation
     /// kind no category names ([`link_category`]).
@@ -255,14 +253,14 @@ impl Stamp {
     }
 }
 
-impl Match {
+impl TypeAssignment {
     /// Run this match: stamp it onto `graph` and define it in `forcefield`.
     ///
     /// The one execution path of typing, in three phases:
     ///
     /// 1. **Validate.** A non-empty positional vector whose length differs
     ///    from the graph's count of that kind is an error naming the kind and
-    ///    both counts (positions are the kind's own rows, see [`Match`]), as
+    ///    both counts (positions are the kind's own rows, see [`TypeAssignment`]), as
     ///    is a non-empty one for a relation kind the graph does not have, and
     ///    a type under a kind no category names ([`link_category`]).
     ///    Every style is checked against `forcefield` and the other styles,
@@ -288,7 +286,7 @@ impl Match {
         graph: &mut Atomistic,
         forcefield: &mut ForceField,
     ) -> Result<(), String> {
-        let Match {
+        let TypeAssignment {
             nodes,
             mut links,
             styles,
@@ -518,7 +516,7 @@ impl Match {
     /// ([`link_category`]): the one generic endpoint matcher, for a built-in
     /// kind and a registered one alike.
     ///
-    /// An atom's type is its `key` annotation in [`Match::nodes`] (a
+    /// An atom's type is its `key` annotation in [`TypeAssignment::nodes`] (a
     /// [`Annotation::Type`]'s name or a string [`Annotation::Value`]), else
     /// its string `key` property on `graph`. A type row matches a term when
     /// its endpoints equal the atoms' types slot by slot, a wildcard (`""`,
@@ -535,7 +533,7 @@ impl Match {
     /// The winner is added to the term's annotations as
     /// `key = (style, name, endpoints, params)` exactly as the library holds
     /// it, and its style, with the library's style params, is added to
-    /// [`Match::styles`] unless already there.
+    /// [`TypeAssignment::styles`] unless already there.
     ///
     /// Returns the positions (in the kind's own row order) no row matched;
     /// they gain nothing. A graph without the kind assigns nothing.
@@ -670,7 +668,7 @@ impl Match {
 /// its typing accumulates.
 ///
 /// A trait cannot hold the output, so the base is this struct. The output
-/// starts as `typifier.library().empty_like()` and [`typify`](Self::typify) is
+/// starts as `typifier.source_forcefield().empty_like()` and [`typify`](Self::typify) is
 /// its only writer; there is no mutable accessor.
 #[derive(Debug)]
 pub struct Typing<T: Typifier> {
@@ -680,20 +678,20 @@ pub struct Typing<T: Typifier> {
 
 impl<T: Typifier> Typing<T> {
     /// Wrap `typifier`, with an output seeded by
-    /// [`ForceField::empty_like`] of its library: the library's name and
+    /// [`ForceField::empty_like`] of its source force field: that force field's name and
     /// declared units and special_bonds, no styles or types.
     pub fn new(typifier: T) -> Self {
-        let output = typifier.library().empty_like();
+        let output = typifier.source_forcefield().empty_like();
         Self { typifier, output }
     }
 
     /// Type `mol`: copy it, match the copy and write the match onto the copy
-    /// and the output ([`Match::write_onto`]). Returns the typed copy.
+    /// and the output ([`TypeAssignment::write_onto`]). Returns the typed copy.
     ///
     /// `mol` is never touched. On `Err` the output is unchanged.
     pub fn typify(&mut self, mol: &Atomistic) -> Result<Atomistic, String> {
         let mut graph = mol.clone();
-        let m = self.typifier.r#match(&mut graph)?;
+        let m = self.typifier.assign(&mut graph)?;
         m.write_onto(&mut graph, &mut self.output)?;
         Ok(graph)
     }
@@ -701,11 +699,6 @@ impl<T: Typifier> Typing<T> {
     /// The accumulated output: exactly the definitions typing has assigned.
     pub fn forcefield(&self) -> &ForceField {
         &self.output
-    }
-
-    /// The wrapped typifier's library.
-    pub fn library(&self) -> &ForceField {
-        self.typifier.library()
     }
 
     /// The wrapped typifier.
@@ -716,7 +709,7 @@ impl<T: Typifier> Typing<T> {
 
 #[cfg(test)]
 mod tests {
-    //! `Match::write_onto` and `Typing<T>` against hand-written stub typifiers.
+    //! `TypeAssignment::write_onto` and `Typing<T>` against hand-written stub typifiers.
     //! Every expectation is written by hand; no native typifier runs here.
 
     use indexmap::IndexMap;
@@ -732,15 +725,15 @@ mod tests {
 
     // -- stubs and fixtures ----------------------------------------------------
 
-    /// Returns the next scripted `Match` on each call; `Err` once the script
+    /// Returns the next scripted `TypeAssignment` on each call; `Err` once the script
     /// is exhausted. The `Mutex` keeps the stub `Send + Sync`.
     struct ScriptedTypifier {
         library: ForceField,
-        script: Mutex<VecDeque<Match>>,
+        script: Mutex<VecDeque<TypeAssignment>>,
     }
 
     impl ScriptedTypifier {
-        fn new(library: ForceField, script: Vec<Match>) -> Self {
+        fn new(library: ForceField, script: Vec<TypeAssignment>) -> Self {
             Self {
                 library,
                 script: Mutex::new(script.into()),
@@ -749,7 +742,7 @@ mod tests {
     }
 
     impl Typifier for ScriptedTypifier {
-        fn r#match(&self, _graph: &mut Atomistic) -> Result<Match, String> {
+        fn assign(&self, _graph: &mut Atomistic) -> Result<TypeAssignment, String> {
             self.script
                 .lock()
                 .expect("script lock")
@@ -757,7 +750,7 @@ mod tests {
                 .ok_or_else(|| "script exhausted".to_owned())
         }
 
-        fn library(&self) -> &ForceField {
+        fn source_forcefield(&self) -> &ForceField {
             &self.library
         }
     }
@@ -769,17 +762,17 @@ mod tests {
     }
 
     impl Typifier for PerceivingTypifier {
-        fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+        fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
             let ids: Vec<_> = graph.atoms().map(|(id, _)| id).collect();
             for id in ids {
                 graph
                     .set_atom(id, "perceived", true)
                     .map_err(|e| e.to_string())?;
             }
-            Ok(Match::default())
+            Ok(TypeAssignment::default())
         }
 
-        fn library(&self) -> &ForceField {
+        fn source_forcefield(&self) -> &ForceField {
             &self.library
         }
     }
@@ -912,19 +905,19 @@ mod tests {
         (atoms, links)
     }
 
-    // -- Match::write_onto: stamps ---------------------------------------------
+    // -- TypeAssignment::write_onto: stamps ---------------------------------------------
 
     #[test]
     fn write_onto_stamps_a_value_on_the_atom_at_its_position_only() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![value("class", "CT")],
                 vec![],
                 vec![value("aromatic_flag", true), value("ring_count", 2)],
             ],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -950,10 +943,10 @@ mod tests {
         let mut ff = ForceField::new("out");
         let mut params = Params::from_pairs(&[("mass", 12.011), ("charge", -0.18)]);
         params.set_str("provenance", "hand");
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![ty("type", "full", "CT", &[], params)], vec![]],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -972,7 +965,7 @@ mod tests {
     fn write_onto_stamps_a_bond_type_on_the_bond_at_its_position_only() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             links: links([(
                 "bonds",
                 vec![
@@ -987,7 +980,7 @@ mod tests {
                 ],
             )]),
             styles: vec![style("bond", "harmonic", Params::new())],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1008,12 +1001,12 @@ mod tests {
         g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
         g.add_dihedral(ids[0], ids[1], ids[2], ids[3]).unwrap();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             links: links([
                 ("dihedrals", vec![vec![value("tag", "dihedral-0")]]),
                 ("impropers", vec![vec![value("tag", "improper-0")]]),
             ]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1035,16 +1028,16 @@ mod tests {
     fn write_onto_accepts_an_empty_vector_for_a_kind_the_graph_has() {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![], vec![], vec![]],
             links: links([("bonds", vec![]), ("angles", vec![])]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         assert_eq!(m.write_onto(&mut g, &mut ff), Ok(()));
     }
 
-    // -- Match::write_onto: definitions ------------------------------------------
+    // -- TypeAssignment::write_onto: definitions ------------------------------------------
 
     /// The output defines the match's `Type`s (one row per distinct
     /// definition) and pair rows, and nothing else.
@@ -1053,7 +1046,7 @@ mod tests {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let lj = |eps: f64, sigma: f64| Params::from_pairs(&[("epsilon", eps), ("sigma", sigma)]);
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![atom_full("CT", 12.011)],
                 vec![atom_full("CT", 12.011)],
@@ -1119,7 +1112,7 @@ mod tests {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let k = || Params::from_pairs(&[("kb", 4.2)]);
-        let m = Match {
+        let m = TypeAssignment {
             links: links([(
                 "bonds",
                 vec![
@@ -1128,7 +1121,7 @@ mod tests {
                 ],
             )]),
             styles: vec![style("bond", "mmff_bond", Params::new())],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1148,14 +1141,14 @@ mod tests {
     fn write_onto_declares_styles_in_the_order_of_styles() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             styles: vec![
                 style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 9.0)])),
                 style("dihedral", "opls", Params::new()),
                 atom_full_style(),
                 style("bond", "harmonic", Params::new()),
             ],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1179,9 +1172,9 @@ mod tests {
     fn write_onto_of_a_stamp_only_match_leaves_the_forcefield_empty() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![value("type", "c3")], vec![value("type", "hc")]],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1204,9 +1197,9 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         ff.def_style("atom", "full", Params::new()).unwrap();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![atom_full("CT", 12.011)], vec![]],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1225,10 +1218,10 @@ mod tests {
             .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![atom_full("CT", 12.011)], vec![]],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1236,7 +1229,7 @@ mod tests {
         assert_same_definitions(&ff, &before);
     }
 
-    // -- Match::write_onto: errors leave the force field unchanged ----------------
+    // -- TypeAssignment::write_onto: errors leave the force field unchanged ----------------
 
     /// A conflicting `Type` fails the whole match: the new style and the new
     /// type that precede it in the batch do not land either.
@@ -1249,7 +1242,7 @@ mod tests {
             .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
             .unwrap();
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![atom_full("OH", 15.999)],
                 vec![atom_full("CT", 12.0)],
@@ -1257,7 +1250,7 @@ mod tests {
             ],
             links: links([("bonds", vec![])]),
             styles: vec![style("bond", "harmonic", Params::new()), atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1273,10 +1266,10 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![atom_full("CT", 12.011)], vec![atom_full("CT", 12.0)]],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1292,12 +1285,12 @@ mod tests {
         ff.def_style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 10.0)]))
             .unwrap();
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             styles: vec![
                 atom_full_style(),
                 style("pair", "lj/cut", Params::from_pairs(&[("cutoff", 12.0)])),
             ],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1311,10 +1304,10 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![atom_full("CT", 12.011)], vec![]],
             styles: vec![style("pair", "lj/cut", Params::new())],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1328,7 +1321,7 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             styles: vec![atom_full_style()],
             pairs: vec![pair_row(
                 "lj/cut",
@@ -1336,7 +1329,7 @@ mod tests {
                 &["CT"],
                 Params::from_pairs(&[("epsilon", 0.066), ("sigma", 3.5)]),
             )],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1352,7 +1345,7 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![atom_full("CT", 12.011)],
                 vec![],
@@ -1361,7 +1354,7 @@ mod tests {
                 vec![],
             ],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let err = m.write_onto(&mut g, &mut ff).unwrap_err();
@@ -1375,9 +1368,9 @@ mod tests {
         let mut g = chain3();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             links: links([("bonds", vec![vec![], vec![], vec![], vec![]])]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let err = m.write_onto(&mut g, &mut ff).unwrap_err();
@@ -1394,7 +1387,7 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![
                     ty(
@@ -1409,7 +1402,7 @@ mod tests {
                 vec![],
             ],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1424,7 +1417,7 @@ mod tests {
     fn write_onto_one_key_written_twice_with_the_same_value_is_accepted() {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![
                 vec![
                     ty(
@@ -1439,7 +1432,7 @@ mod tests {
                 vec![],
             ],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         m.write_onto(&mut g, &mut ff).unwrap();
@@ -1456,10 +1449,10 @@ mod tests {
         let mut g = pair2();
         let mut ff = ForceField::new("out");
         let before = ff.clone();
-        let m = Match {
+        let m = TypeAssignment {
             nodes: vec![vec![atom_full("CT", 12.011)], vec![value("mass", "heavy")]],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
 
         let result = m.write_onto(&mut g, &mut ff);
@@ -1484,11 +1477,11 @@ mod tests {
     }
 
     /// `CT` on atom 0, nothing on atom 1, under the declared `atom/full`.
-    fn ct_match(mass: f64) -> Match {
-        Match {
+    fn ct_match(mass: f64) -> TypeAssignment {
+        TypeAssignment {
             nodes: vec![vec![atom_full("CT", mass)], vec![]],
             styles: vec![atom_full_style()],
-            ..Match::default()
+            ..TypeAssignment::default()
         }
     }
 
@@ -1505,11 +1498,10 @@ mod tests {
     }
 
     #[test]
-    fn typing_library_and_typifier_return_the_wrapped_typifier_and_its_library() {
+    fn typing_typifier_returns_the_wrapped_typifier_and_its_source_forcefield() {
         let typing = Typing::new(ScriptedTypifier::new(library(), vec![]));
 
-        assert_same_definitions(typing.library(), &library());
-        assert!(std::ptr::eq(typing.library(), typing.typifier().library()));
+        assert_same_definitions(typing.typifier().source_forcefield(), &library());
     }
 
     #[test]
@@ -1531,8 +1523,8 @@ mod tests {
         );
     }
 
-    /// `match` receives the private working copy, and that copy is what
-    /// `typify` returns: an intermediate result written by `match` is on the
+    /// `assign` receives the private working copy, and that copy is what
+    /// `typify` returns: an intermediate result written by `assign` is on the
     /// returned graph and not on the input.
     #[test]
     fn typify_hands_match_the_working_copy_it_returns() {
@@ -1563,9 +1555,9 @@ mod tests {
 
     #[test]
     fn typify_of_a_stamp_only_match_leaves_the_output_empty() {
-        let stamp_only = Match {
+        let stamp_only = TypeAssignment {
             nodes: vec![vec![value("type", "c3")], vec![value("type", "hc")]],
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         let mut typing = Typing::new(ScriptedTypifier::new(library(), vec![stamp_only]));
 
@@ -1631,7 +1623,7 @@ mod tests {
 
         typing.typify(&pair2()).unwrap();
 
-        assert_eq!(typing.library().name, "lib");
+        assert_eq!(typing.typifier().source_forcefield().name, "lib");
         assert_eq!(type_names(typing.forcefield(), "atom", "full"), vec!["CT"]);
     }
 
@@ -1713,8 +1705,8 @@ mod tests {
     }
 
     impl Typifier for ChainTypifier {
-        fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
-            let mut m = Match {
+        fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+            let mut m = TypeAssignment {
                 nodes: ["A", "B", "C", "D"]
                     .iter()
                     .map(|t| {
@@ -1728,14 +1720,14 @@ mod tests {
                     })
                     .collect(),
                 styles: vec![atom_full_style()],
-                ..Match::default()
+                ..TypeAssignment::default()
             };
             let missing = m.assign_terms(graph.as_molgraph(), self.kind, &self.library, "type")?;
             assert!(missing.is_empty(), "{missing:?}");
             Ok(m)
         }
 
-        fn library(&self) -> &ForceField {
+        fn source_forcefield(&self) -> &ForceField {
             &self.library
         }
     }
@@ -1823,18 +1815,18 @@ mod tests {
         register_urey_bradley();
         let mut g = ub_chain("urey_bradleys");
         let mut ff = ForceField::new("out");
-        let m = Match {
+        let m = TypeAssignment {
             links: links([("urey_bradleys", vec![vec![value("tag", "first")], vec![]])]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         m.write_onto(&mut g, &mut ff).unwrap();
         let kid = g.as_molgraph().kind_id("urey_bradleys").unwrap();
         let first = g.as_molgraph().relations(kid).next().unwrap().1.props;
         assert_eq!(first.get("tag"), Some(&PropValue::Str("first".into())));
 
-        let m = Match {
+        let m = TypeAssignment {
             links: links([("cross_terms", vec![vec![]])]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         let err = m.write_onto(&mut g, &mut ff).unwrap_err();
         assert!(
@@ -1845,17 +1837,17 @@ mod tests {
         let kid = g.as_molgraph_mut().register_kind("link", 2);
         let ids: Vec<_> = g.node_ids().take(2).collect();
         g.as_molgraph_mut().add_relation(kid, &ids).unwrap();
-        let m = Match {
+        let m = TypeAssignment {
             links: links([("link", vec![vec![value("tag", "x")]])]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         m.write_onto(&mut g, &mut ff).unwrap();
-        let m = Match {
+        let m = TypeAssignment {
             links: links([(
                 "link",
                 vec![vec![ty("type", "s", "t", &["A", "B"], Params::new())]],
             )]),
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         let err = m.write_onto(&mut g, &mut ff).unwrap_err();
         assert!(
@@ -1920,7 +1912,7 @@ mod tests {
         g.add_improper(ids[0], ids[1], ids[2], ids[3]).unwrap();
         g.add_improper(ids[1], ids[0], ids[2], ids[3]).unwrap();
 
-        let mut m = Match::default();
+        let mut m = TypeAssignment::default();
         let graph = g.as_molgraph();
         assert_eq!(m.assign_terms(graph, "bonds", &lib, "type"), Ok(vec![]));
         assert_eq!(m.assign_terms(graph, "dihedrals", &lib, "type"), Ok(vec![]));
@@ -2001,7 +1993,7 @@ mod tests {
         let graph = g.as_molgraph_mut();
         let cmaps = graph.register_kind("cmaps", 5);
         graph.add_relation(cmaps, &ids).unwrap();
-        let mut m = Match::default();
+        let mut m = TypeAssignment::default();
         // The only row reads E-D-C-B-A; the term is A-B-C-D-E.
         assert_eq!(
             m.assign_terms(g.as_molgraph(), "cmaps", &lib, "type"),

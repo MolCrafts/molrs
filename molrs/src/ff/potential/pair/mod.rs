@@ -11,14 +11,14 @@ use molrs::op::F;
 pub trait PairPotential: Send + Sync {
     fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F>;
     fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]>;
-    fn pair_eval(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
+    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
         match (self.pair_energy(r2, disp), self.pair_force(r2, disp)) {
             (Some(e), Some(f)) => Some((e, f)),
             _ => None,
         }
     }
 
-    fn eval_pairs(
+    fn energy_forces_pairs(
         &self,
         n_atoms: usize,
         i: &[u32],
@@ -55,7 +55,7 @@ pub trait PairPotential: Send + Sync {
                 Some(col) => col[p],
                 None => d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
             };
-            let Some((e, f)) = self.pair_eval(r2, d) else {
+            let Some((e, f)) = self.pair_energy_force(r2, d) else {
                 continue;
             };
             energy += e;
@@ -69,11 +69,15 @@ pub trait PairPotential: Send + Sync {
         Ok((energy, forces))
     }
 
-    fn eval_table(&self, n_atoms: usize, neighbors: &Neighbors) -> Result<(F, Array2<F>), String> {
+    fn energy_forces_table(
+        &self,
+        n_atoms: usize,
+        neighbors: &Neighbors,
+    ) -> Result<(F, Array2<F>), String> {
         let disp = neighbors
             .disp()
-            .ok_or_else(|| "eval_table needs the Neighbors disp column".to_owned())?;
-        self.eval_pairs(
+            .ok_or_else(|| "energy_forces_table needs the Neighbors disp column".to_owned())?;
+        self.energy_forces_pairs(
             n_atoms,
             neighbors.query_point_indices(),
             neighbors.point_indices(),
@@ -236,20 +240,24 @@ pub(crate) mod tang_toennies;
 pub(crate) mod thole;
 pub(crate) mod uff;
 
-pub use buck::{PairBuck, pair_buck_ctor};
-pub use charmm::{PairCoulCharmm, PairLJCharmm, pair_coul_charmm_ctor, pair_lj_charmm_ctor};
-pub use coul_cut::{PairCoulCut, pair_coul_cut_ctor};
+pub use buck::{PairBuck, pair_buck_constructor};
+pub use charmm::{
+    PairCoulCharmm, PairLjCharmm, pair_coul_charmm_constructor, pair_lj_charmm_constructor,
+};
+pub use coul_cut::{PairCoulCut, pair_coul_cut_constructor};
 pub use exceptions::PairExceptions;
-pub use lj_class2::{PairLJClass2, pair_lj_class2_ctor};
-pub use lj_cut::{LJCut, lj_ab_to_sigma_epsilon, pair_lj_cut_ctor};
-pub use mmff::{MMFFVdW, VdwAtomParams, VdwStyleParams, mmff_vdw_ctor};
-pub use morse::{PairMorse, pair_morse_ctor};
-pub use tang_toennies::{PairTangToennies, pair_tang_toennies_ctor};
-pub use thole::{PairThole, pair_thole_ctor};
-pub use uff::{UffVdW, uff_lj_ctor};
+pub use lj_class2::{PairLjClass2, pair_lj_class2_constructor};
+pub use lj_cut::{PairLjCut, lj_ab_to_sigma_epsilon, pair_lj_cut_constructor};
+pub use mmff::{
+    PairMmffVdw, PairMmffVdwAtomParams, PairMmffVdwStyleParams, pair_mmff_vdw_constructor,
+};
+pub use morse::{PairMorse, pair_morse_constructor};
+pub use tang_toennies::{PairTangToennies, pair_tang_toennies_constructor};
+pub use thole::{PairThole, pair_thole_constructor};
+pub use uff::{PairUffVdw, pair_uff_vdw_constructor};
 
 #[cfg(test)]
-pub(crate) mod testing {
+pub(crate) mod fixtures {
     use molrs::core::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
     use molrs::op::F;
 

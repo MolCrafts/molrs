@@ -31,11 +31,11 @@
 //! charge products `qᵢqⱼ` already include any exclusion / 1-4 scaling.
 
 use crate::ff::forcefield::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::need;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::param_reads;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -323,7 +323,7 @@ impl PairDriven for PairCoulCut {
 
 /// `(coulomb, dielectric, delta)` of a gathered `coul/cut` style.
 fn coul_style(style_params: &Params) -> Result<(F, F, F), crate::ff::ir::IrError> {
-    let get = |key: &str| need::style_num("coul/cut", style_params, key);
+    let get = |key: &str| param_reads::style_num("coul/cut", style_params, key);
     Ok((get("coulomb")?, get("dielectric")?, get("delta")?))
 }
 
@@ -353,14 +353,14 @@ fn coul_style(style_params: &Params) -> Result<(F, F, F), crate::ff::ir::IrError
 /// from `intramolecular_pairs`; 1-2/1-3 are already excluded. Charge-free pair types
 /// are not consulted — this kernel is per-atom
 /// ([`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance)).
-pub fn pair_coul_cut_ctor(
+pub fn pair_coul_cut_constructor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let (coulomb, dielectric, delta) = coul_style(style_params)?;
-    let cutoff = need::pair_cutoff("coul/cut", style_params)?;
-    let scale_14 = need::style_num("coul/cut", style_params, "coulomb14scale")?;
+    let cutoff = param_reads::pair_cutoff("coul/cut", style_params)?;
+    let scale_14 = param_reads::style_num("coul/cut", style_params, "coulomb14scale")?;
 
     let atoms = frame
         .get(ATOMS)
@@ -399,24 +399,24 @@ pub fn pair_coul_cut_ctor(
         qiqj.push(qq);
     }
 
-    Ok(Member::pair(PairCoulCut::new(
+    Ok(ForceTerm::pair(PairCoulCut::new(
         atom_i, atom_j, qiqj, coulomb, dielectric, delta, cutoff,
     )))
 }
 
 /// Construct a neighbour-driven [`PairCoulCut`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_coul_cut_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_coul_cut_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_coul_cut_typed_ctor(
+pub fn pair_coul_cut_typed_constructor(
     style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let (coulomb, dielectric, delta) = coul_style(style_params)?;
-    let cutoff = need::neighbour_cutoff("coul/cut", style_params)?;
+    let cutoff = param_reads::neighbour_cutoff("coul/cut", style_params)?;
     // `coulomb14scale` is deliberately not read here. On this path the 1-4
     // weight is applied to the pair table, not baked into a charge product, so
     // requiring the kernel to know it would be asking it a question it no
@@ -429,14 +429,14 @@ pub fn pair_coul_cut_typed_ctor(
         .and_then(|c| c.as_float())
         .ok_or_else(|| "PairCoulCut: atoms block missing \"charge\" column".to_string())?;
     let q: Vec<F> = charge.iter().map(|&c| c as F).collect();
-    Ok(Member::pair(PairCoulCut::typed(
+    Ok(ForceTerm::pair(PairCoulCut::typed(
         q, coulomb, dielectric, delta, cutoff,
     )))
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ff::potential::pair::testing::{
+    use crate::ff::potential::pair::fixtures::{
         assert_same, assert_virial_matches_forces, table_over,
     };
 
@@ -574,9 +574,9 @@ mod tests {
     #[test]
     fn coulomb_is_required_and_the_spec_defaults_apply() {
         use crate::ff::ir::IrError;
-        use crate::ff::potential::Instances;
+        use crate::ff::potential::ExplicitTerms;
         let terms = |style: &[(&str, f64)]| {
-            Instances::new("pair", "coul/cut")
+            ExplicitTerms::new("pair", "coul/cut")
                 .style_params(Params::from_pairs(style))
                 .atoms([vec![0, 1]])
                 .charges(vec![0.5, -0.4])

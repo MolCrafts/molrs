@@ -6,7 +6,6 @@ no third-party scientific software.
 
 from __future__ import annotations
 
-from io import StringIO
 
 import molrs
 import numpy as np
@@ -165,8 +164,9 @@ def test_read_stl_gives_a_watertight_mesh(tmp_path) -> None:
     assert not tet.contains(np.array([[3.0, 3.0, 3.0]]))[0]
 
 
-class TestBlockCsv:
-    """``molrs.io.read_block_csv`` / ``write_block_csv`` — CSV for one Block."""
+class TestCsvBlock:
+    """``molrs.io.read_csv_block[_str]`` / ``write_csv_block[_str]`` — CSV for
+    one Block."""
 
     def test_headered_round_trip(self):
         src = molrs.core.Block(
@@ -176,35 +176,35 @@ class TestBlockCsv:
                 "name": ["p", "q"],
             }
         )
-        rt = molrs.io.read_block_csv(StringIO(molrs.io.write_block_csv(src)))
+        rt = molrs.io.read_csv_block_str(molrs.io.write_csv_block_str(src))
         np.testing.assert_allclose(rt["x"], [1.0, 2.0])
         np.testing.assert_array_equal(rt["id"], [10, 20])
         assert list(rt["name"]) == ["p", "q"]
 
     def test_dtype_inference(self):
-        rt = molrs.io.read_block_csv(StringIO("a,b,c\n1,1.5,x\n2,2.5,y\n"))
+        rt = molrs.io.read_csv_block_str("a,b,c\n1,1.5,x\n2,2.5,y\n")
         assert str(rt["a"].dtype).startswith("int")
         assert str(rt["b"].dtype).startswith("float")
         assert list(rt["c"]) == ["x", "y"]
 
     def test_headerless_with_names(self):
-        rt = molrs.io.read_block_csv(StringIO("1,2\n3,4\n"), header=["a", "b"])
+        rt = molrs.io.read_csv_block_str("1,2\n3,4\n", header=["a", "b"])
         np.testing.assert_array_equal(rt["a"], [1, 3])
         np.testing.assert_array_equal(rt["b"], [2, 4])
 
     def test_empty_csv_raises_value_error(self):
         with pytest.raises(ValueError):
-            molrs.io.read_block_csv(StringIO(""))
+            molrs.io.read_csv_block_str("")
 
     def test_no_header(self):
         b = molrs.core.Block({"count": np.array([1, 2], dtype=np.int64)})
-        text = molrs.io.write_block_csv(b, header=False)
+        text = molrs.io.write_csv_block_str(b, header=False)
         assert "count" not in text.splitlines()[0]
 
-    def test_writes_a_file(self, tmp_path):
+    def test_writes_and_reads_a_file(self, tmp_path):
         path = tmp_path / "out.csv"
-        assert molrs.io.write_block_csv(molrs.core.Block({"x": [1.0, 2.0]}), path) is None
-        np.testing.assert_allclose(molrs.io.read_block_csv(path)["x"], [1.0, 2.0])
+        assert molrs.io.write_csv_block(path, molrs.core.Block({"x": [1.0, 2.0]})) is None
+        np.testing.assert_allclose(molrs.io.read_csv_block(path)["x"], [1.0, 2.0])
 
 
 class TestCanonicalNativeColumns:

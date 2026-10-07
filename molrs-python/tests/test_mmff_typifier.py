@@ -23,7 +23,7 @@ def _ethane() -> "molrs.core.Atomistic":
 
 
 def test_mmff_typify_returns_typed_atomistic_topology():
-    typifier = molrs.ff.typifier.MMFF94Typifier()
+    typifier = molrs.ff.typifier.Mmff94Typifier()
     typed = typifier.typify(_ethane())
     assert isinstance(typed, molrs.core.Atomistic)
 

@@ -15,7 +15,9 @@ use ndarray::Array1;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::TypeParams;
 use crate::ff::ir::form::{Converted, convert_rows, declared, named, rewrite};
-use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, ParamKind, Registry, StyleSpec};
+use crate::ff::ir::{
+    CategorySpec, Coordinate, IrError, ParamDimension, ParamKind, Registry, StyleSpec,
+};
 use crate::ff::potential::PotentialCompiler;
 
 /// The metric a fit minimises under: sample points of the category's
@@ -27,7 +29,7 @@ use crate::ff::potential::PotentialCompiler;
 /// category's: `r` (length, > 0) for a bond, `θ` (radians, in [0, π]) for an
 /// angle, the signed dihedral `φ` (radians) for a dihedral or an improper.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Metric {
+pub struct FitMetric {
     /// The sample points.
     pub q: Vec<F>,
     /// One weight `≥ 0` per point.
@@ -41,7 +43,7 @@ pub struct Metric {
     pub offset: bool,
 }
 
-impl Metric {
+impl FitMetric {
     /// The points `q`, each of weight 1, no offset.
     pub fn new(q: Vec<F>) -> Self {
         let w = vec![1.0; q.len()];
@@ -155,11 +157,11 @@ impl TypeResidual {
 
 /// The residual of a fit: one entry per fitted row, in order.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Residual {
+pub struct FitResidual {
     pub types: Vec<TypeResidual>,
 }
 
-impl Residual {
+impl FitResidual {
     /// `Σ` of the rows' [`sum_sq`](TypeResidual::sum_sq).
     pub fn sum_sq(&self) -> F {
         self.types.iter().map(|t| t.sum_sq).sum()
@@ -208,7 +210,7 @@ const CONVERGED: F = 1e-14;
 impl Registry {
     /// Fit every other style of `category` that holds rows to `style`, row
     /// by row, by least squares under `metric`; return the force field with
-    /// those styles replaced by `style` and the [`Residual`] of each row.
+    /// those styles replaced by `style` and the [`FitResidual`] of each row.
     ///
     /// Per row: the source's energies at the metric's points come from its
     /// kernel. When source and target are of one form family and the row is
@@ -234,8 +236,8 @@ impl Registry {
         ff: &ForceField,
         category: &str,
         style: &str,
-        metric: &Metric,
-    ) -> Result<(ForceField, Residual), IrError> {
+        metric: &FitMetric,
+    ) -> Result<(ForceField, FitResidual), IrError> {
         let cat = self
             .category(category)
             .ok_or_else(|| IrError::UnknownCategory {
@@ -274,7 +276,7 @@ impl Registry {
             .filter(|s| s.name() != style && !s.type_rows().is_empty())
             .map(|s| s.name().to_owned())
             .collect();
-        let mut residual = Residual::default();
+        let mut residual = FitResidual::default();
         let mut rows: Vec<Converted> = Vec::new();
         for source in &sources {
             let from = named(category, source);
@@ -545,7 +547,7 @@ fn fitted_param(spec: &StyleSpec, key: &str) -> bool {
         let stem = key.trim_end_matches(|c: char| c.is_ascii_digit());
         spec.param(stem)
     });
-    decl.is_some_and(|p| p.kind == ParamKind::Scalar && p.dim != Dim::NONE)
+    decl.is_some_and(|p| p.kind == ParamKind::Scalar && p.dim != ParamDimension::NONE)
 }
 
 /// The start of a fit without a codec seed: every declared scalar parameter

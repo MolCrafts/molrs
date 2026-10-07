@@ -22,7 +22,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use molrs::core::GhostHalo;
-use molrs::ff::potential::Member;
+use molrs::ff::potential::ForceTerm;
 use molrs::op::{F, FNx3View, I};
 
 use super::error::MdError;
@@ -98,12 +98,12 @@ struct TermList {
 impl BondedLists {
     /// Record each member's index table.
     ///
-    /// Only a [`Member::Indexed`] has one; every other member keeps no indices
+    /// Only a [`ForceTerm::Indexed`] has one; every other member keeps no indices
     /// and is left alone.
     ///
     /// Nothing is resolved here: resolution needs the owned coordinates, and
     /// the first [`refresh`](Self::refresh) has them.
-    pub fn new(members: &[Member]) -> Self {
+    pub fn new(members: &[ForceTerm]) -> Self {
         let entries = members
             .iter()
             .map(|m| {
@@ -166,7 +166,7 @@ impl BondedLists {
         Ok(())
     }
 
-    /// Member `m`'s indices as they stand, or `None` if it keeps none.
+    /// ForceTerm `m`'s indices as they stand, or `None` if it keeps none.
     pub fn current(&self, m: usize) -> Option<ArrayView2<'_, u32>> {
         self.entries.get(m)?.as_ref().map(|e| e.current.view())
     }
@@ -289,7 +289,7 @@ mod remap_tests {
     /// production does not is a door that can be right while production is
     /// wrong.
     fn resolve_one(
-        pot: Member,
+        pot: ForceTerm,
         owned: FNx3View<'_>,
         halo: &GhostHalo,
     ) -> Result<Array2<u32>, MdError> {
@@ -320,7 +320,7 @@ mod remap_tests {
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        let terms = resolve_one(Member::indexed(pot), owned.view(), &halo).unwrap();
+        let terms = resolve_one(ForceTerm::indexed(pot), owned.view(), &halo).unwrap();
 
         let j = terms[[0, 1]] as usize;
         assert!(j >= 2, "atomj must now name a copy, not atom 1; got {j}");
@@ -349,7 +349,7 @@ mod remap_tests {
         let halo = GhostHalo::new(bx, owned.view(), 3.0, 0.0).unwrap();
 
         let pot = AngleHarmonic::new(vec![0], vec![1], vec![2], vec![50.0], vec![2.9]);
-        let terms = resolve_one(Member::indexed(pot), owned.view(), &halo).unwrap();
+        let terms = resolve_one(ForceTerm::indexed(pot), owned.view(), &halo).unwrap();
         let (i, j, k) = (
             terms[[0, 0]] as usize,
             terms[[0, 1]] as usize,
@@ -381,7 +381,7 @@ mod remap_tests {
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
         let pot = BondHarmonic::new(vec![0], vec![1], vec![100.0], vec![1.0]);
-        let err = resolve_one(Member::indexed(pot), owned.view(), &halo).unwrap_err();
+        let err = resolve_one(ForceTerm::indexed(pot), owned.view(), &halo).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("still spans"), "{msg}");
         assert!(msg.contains("does not reach"), "{msg}");
@@ -395,7 +395,8 @@ mod remap_tests {
         let owned = array![[1.0_f64, 1.0, 1.0], [2.0, 2.0, 2.0]];
         let halo = GhostHalo::new(bx, owned.view(), 2.0, 0.0).unwrap();
 
-        let members: Vec<Member> = vec![Member::plain(molrs::ff::potential::Potentials::new())];
+        let members: Vec<ForceTerm> =
+            vec![ForceTerm::plain(molrs::ff::potential::Potentials::new())];
         let mut lists = BondedLists::new(&members);
         assert_eq!(lists.bound(), 0, "an aggregate keeps no atom indices");
         let no_fold = Array2::<I>::zeros((owned.nrows(), 3));
@@ -503,7 +504,7 @@ mod owned_potential_tests {
             let mut e = 0.0;
             for (mi, member) in members.iter().enumerate() {
                 let terms = lists.current(mi).expect("a bond style keeps indices");
-                let Member::Indexed(pot) = member else {
+                let ForceTerm::Indexed(pot) = member else {
                     unreachable!("a bond style is an indexed member")
                 };
                 e += pot.calc_energy_forces_with_terms(&flat, terms).0;
@@ -753,7 +754,7 @@ mod force_path_tests {
     use molrs::core::GhostSet;
     use molrs::core::SimBox;
     use molrs::ff::potential::Potential;
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::pair::PairLjCut;
     use molrs::op::F;
     use ndarray::Array2;
     use ndarray::array;
@@ -790,7 +791,7 @@ mod force_path_tests {
         let n = owned.nrows();
         let flat_owned: Vec<F> = owned.iter().copied().collect();
 
-        let lj = || LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).expect("lj");
+        let lj = || PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).expect("lj");
 
         // --- route A: minimum image, through the existing skin ---
         let mut skin = VerletSkin::new(
@@ -853,12 +854,12 @@ mod virial_tests {
     use super::*;
     use molrs::core::{SimBox, Virial};
     use molrs::ff::potential::Potential;
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::pair::PairLjCut;
     use molrs::op::F;
     use ndarray::{Array2, array};
 
-    fn lj(cutoff: F) -> LJCut {
-        LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()
+    fn lj(cutoff: F) -> PairLjCut {
+        PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()
     }
 
     /// Two atoms, one pair, a virial that can be written down by hand.

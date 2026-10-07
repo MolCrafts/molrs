@@ -9,7 +9,7 @@
 //!   `DrudeParticle`, `MasslessSite`, `Bead`: one node. The class follows the
 //!   graph type and, for an atom, its stored ``vsite``.
 //! - [`PyRelationRef`] (`molrs.core.RelationRef`) and `Bond`, `Angle`, `Dihedral`,
-//!   `Improper`, `Port`, `CGBond`: one relation, with its interned endpoints.
+//!   `Improper`, `Port`, `CgBond`: one relation, with its interned endpoints.
 //!   The class follows the graph type and the relation kind.
 //! - [`PyRefs`] (`molrs.core.Refs`): an ordered handle list of one kind, read as a
 //!   sequence of views or, by field name, as a column.
@@ -451,7 +451,7 @@ pub(crate) enum RelationClass {
     Dihedral,
     Improper,
     Port,
-    CGBond,
+    CgBond,
 }
 
 impl RelationClass {
@@ -462,7 +462,7 @@ impl RelationClass {
             (Leaf::Atomistic(_), "dihedrals") => Self::Dihedral,
             (Leaf::Atomistic(_), "impropers") => Self::Improper,
             (Leaf::Atomistic(_), "ports") => Self::Port,
-            (Leaf::CoarseGrain(_), "bonds") => Self::CGBond,
+            (Leaf::CoarseGrain(_), "bonds") => Self::CgBond,
             _ => Self::Generic,
         }
     }
@@ -491,7 +491,7 @@ impl RelationClass {
             Self::Dihedral => py.get_type::<PyDihedral>(),
             Self::Improper => py.get_type::<PyImproper>(),
             Self::Port => py.get_type::<PyPort>(),
-            Self::CGBond => py.get_type::<PyCGBond>(),
+            Self::CgBond => py.get_type::<PyCgBond>(),
         }
     }
 
@@ -507,7 +507,7 @@ impl RelationClass {
                 Py::new(py, init)?.into_any()
             }
             Self::Port => Py::new(py, init.add_subclass(PyPort {}))?.into_any(),
-            Self::CGBond => Py::new(py, init.add_subclass(PyCGBond {}))?.into_any(),
+            Self::CgBond => Py::new(py, init.add_subclass(PyCgBond {}))?.into_any(),
         })
     }
 }
@@ -1079,8 +1079,8 @@ pub struct PyDihedral {}
 pub struct PyImproper {}
 
 /// A bond of a :class:`CoarseGrain`.
-#[pyclass(module = "molrs.core", name = "CGBond", extends = PyRelationRef, frozen, subclass)]
-pub struct PyCGBond {}
+#[pyclass(module = "molrs.core", name = "CgBond", extends = PyRelationRef, frozen, subclass)]
+pub struct PyCgBond {}
 
 /// One unsatisfied valence (a port) of an :class:`Atomistic`.
 ///
@@ -1419,7 +1419,7 @@ impl PyRelationBuckets {
             // the kind the class stands for, which reads as empty columns.
             (None, _) => {
                 let kind = RelationClass::atomistic_kind(cls.as_any())
-                    .or_else(|| cls.is(py.get_type::<PyCGBond>()).then_some("bonds"))
+                    .or_else(|| cls.is(py.get_type::<PyCgBond>()).then_some("bonds"))
                     .unwrap_or("relations");
                 Ok(PyRefs {
                     world: world.clone().unbind(),

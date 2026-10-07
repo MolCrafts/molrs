@@ -21,7 +21,7 @@ Requires Python 3.12+.
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
-mol = molrs.io.smiles.SmilesIR("CCO").to_atomistic()
+mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
 
 # 3D coordinates
 from molrs.conformer import Conformer
@@ -29,10 +29,10 @@ from molrs.conformer import Conformer
 mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
-from molrs.ff.typifier import MMFF94Typifier
+from molrs.ff.typifier import Mmff94Typifier
 from molrs.ff.potential import PotentialCompiler, intramolecular_pairs
 
-typifier = MMFF94Typifier()
+typifier = Mmff94Typifier()
 typed = typifier.typify(mol)
 frame = typed.to_frame()
 ff = typifier.forcefield()  # a copy of exactly the types typify assigned
@@ -52,9 +52,9 @@ symbol has one path, named after its Rust owner (`molrs.core.Frame` is
 |--------|------|
 | `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
 | `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
-| `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_*` / `write_*`; per-format classes in `io.trajectory`, `io.smiles`, `io.log`, `io.lammps_bond_react`, `io.mrec` |
-| `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack` (whole records: `molrs.io.read_mrec` / `write_mrec` and partners) |
-| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `scale_lj` |
+| `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory); each format's classes in its own submodule: `io.pdb`, `io.xyz`, `io.gro`, `io.dcd`, `io.trr`, `io.xtc`, `io.lammps`, `io.smiles`, `io.cgsmiles`, `io.mrec` |
+| `molrs.io.mrec` | `*.mrec` store pieces: `MOLREC_VERSION`, streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` (whole records: `molrs.io.read_mrec_frame` / `write_mrec_frame` and partners) |
+| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
 | `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
 | `molrs.md` | Integrators and the `MD` driver |
 | `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |

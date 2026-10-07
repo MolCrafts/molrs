@@ -2,12 +2,12 @@
 
 :class:`ForceField` holds styles (one per category and style name, in the
 force-field IR, which adopts the LAMMPS standard) and the types defined under
-them; :class:`Style` / :class:`Type` and their per-category subclasses are
+them; :class:`Style` / :class:`ForceFieldType` and their per-category subclasses are
 live handles onto it.
 
 No file format is here. Every force-field file reader and writer —
-``read_lammps_forcefield``, ``read_gromacs_top_ff``, ``write_amber_frcmod``,
-``write_forcefield_xml`` and the rest — is a function at the top of
+``read_lammps_forcefield``, ``read_gromacs_top_forcefield``,
+``write_amber_frcmod``, ``write_openmm_xml_forcefield`` and the rest — is a function at the top of
 :mod:`molrs.io`, as every other file reader and writer is.
 """
 
@@ -30,7 +30,7 @@ from .._lib import (
     RelationStyle,
     RelationType,
     Style,
-    Type,
+    ForceFieldType,
 )
 
 __all__ = [
@@ -52,5 +52,5 @@ __all__ = [
     "RelationStyle",
     "RelationType",
     "Style",
-    "Type",
+    "ForceFieldType",
 ]

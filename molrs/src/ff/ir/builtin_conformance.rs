@@ -4,7 +4,7 @@
 //! * [`every_appendix_a_expression_agrees_with_its_kernel`] — every built-in
 //!   with an Appendix-A expression prices identically by its native kernel
 //!   and by the expression (registered as a style of its own and built into
-//!   the generic kernels), on 64 seeded configurations × parameter sets per
+//!   the form kernels), on 64 seeded configurations × parameter sets per
 //!   style: energy to 1e-10 relative, forces too unless the style's force is
 //!   not the gradient (`coul/charmm`); a pair style at both compile doors,
 //!   its cutoff straddling the pairs, and `compile` = `compile_typed` to
@@ -31,13 +31,11 @@ use ndarray::Array1;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::ir::conformance::{Rng, SEED};
 use crate::ff::ir::{Kernel, LammpsForm, ParamKind, ParamSource, Registry, StyleSpec};
-use crate::ff::potential::{Member, PotentialCompiler};
-use crate::io::forcefield::readers::ForceFieldReader;
-use crate::io::forcefield::readers::lammps::LammpsFfReader;
-use crate::io::forcefield::writers::ForceFieldWriter;
-use crate::io::{
-    forcefield::writers::lammps::LammpsFfWriter, forcefield::writers::lammps::LammpsWriteOptions,
-};
+use crate::ff::potential::{ForceTerm, PotentialCompiler};
+use crate::io::lammps::forcefield_reader::LammpsForcefieldReader;
+use crate::io::reader::ForceFieldReader;
+use crate::io::writer::ForceFieldWriter;
+use crate::io::{lammps::LammpsForcefieldWriteOptions, lammps::LammpsForcefieldWriter};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::core::SimBox;
@@ -134,7 +132,7 @@ fn price(ff: &ForceField, r: &Registry, frame: &Frame, x: &[F], typed: bool) -> 
         .unwrap_or_else(|e| panic!("{} (typed): {e}", ff.name))
     {
         e += match &member {
-            Member::Pair(p) => p.accumulate_pairs(x, &table(x), &[], &mut out).0,
+            ForceTerm::Pair(p) => p.accumulate_pairs(x, &table(x), &[], &mut out).0,
             other => other.as_potential().accumulate(x, &mut out),
         };
     }
@@ -641,7 +639,7 @@ fn every_param_source_is_what_its_constructor_reads() {
     let mut rng = Rng(SEED);
     let mut checked = Vec::new();
     for (spec, kernel) in builtin.styles(None) {
-        let Some(Kernel::Ctor { .. }) = kernel else {
+        let Some(Kernel::Constructor { .. }) = kernel else {
             continue;
         };
         if spec.params.iter().any(|d| d.kind != ParamKind::Scalar) {
@@ -859,12 +857,12 @@ fn style_cases() -> Vec<(String, String)> {
                 frame.insert(format!("{category}s"), b);
             }
             let labels = TypeLabels::from_frame(&frame).unwrap();
-            let options = LammpsWriteOptions {
+            let options = LammpsForcefieldWriteOptions {
                 precision: 17,
                 units,
-                ..LammpsWriteOptions::default()
+                ..LammpsForcefieldWriteOptions::default()
             };
-            let text = LammpsFfWriter::with_options(&labels, options)
+            let text = LammpsForcefieldWriter::with_options(&labels, options)
                 .write_str(&ff)
                 .unwrap_or_else(|e| panic!("{category} {name} in {units}: {e}"));
             let case = format!("style_{category}_{}_{units}", name.replace('/', "_"));
@@ -883,16 +881,16 @@ fn positional_cases() -> Vec<(String, String)> {
     let mut out = Vec::new();
     let hand = [(
         "hand_lammps",
-        LammpsFfReader::new().read_str(LAMMPS_FF).unwrap(),
+        LammpsForcefieldReader::new().read_str(LAMMPS_FF).unwrap(),
     )];
     for (name, ff) in hand {
         let frame = hand_frame(&ff);
         let labels = TypeLabels::from_frame(&frame).unwrap();
-        let options = LammpsWriteOptions {
+        let options = LammpsForcefieldWriteOptions {
             precision: 17,
-            ..LammpsWriteOptions::default()
+            ..LammpsForcefieldWriteOptions::default()
         };
-        let text = LammpsFfWriter::with_options(&labels, options)
+        let text = LammpsForcefieldWriter::with_options(&labels, options)
             .write_str(&ff)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         out.push((name.to_owned(), text.to_string()));

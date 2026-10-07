@@ -4,7 +4,7 @@ End to end (Ar-like LJ dimer)::
 
     import numpy as np
     from molrs import md
-    from molrs.ff.potential import LJCut
+    from molrs.ff.potential import PairLjCut
     from molrs.core import Box, NeighborList, VerletSkin
 
     pos = np.array([[0.0, 0.0, 0.0], [3.8, 0.0, 0.0]])
@@ -13,7 +13,7 @@ End to end (Ar-like LJ dimer)::
     # force cutoff = rc (what the potential sees); skin is the rebuild buffer.
     nl = VerletSkin(NeighborList(rc + skin), rc, pos, Box.cube(20.0), skin=skin)
     eps = 0.238  # caller units; MD does not convert
-    vv = md.VelocityVerlet(1.0, potential=LJCut(eps, 3.405, rc),
+    vv = md.VelocityVerlet(1.0, potential=PairLjCut(eps, 3.405, rc),
                            neighbors=nl, mass=np.full(2, 39.948))
     state = vv.initial(pos, np.zeros_like(pos))
     state = vv.advance_n(state, 100)
@@ -29,8 +29,8 @@ Units contract — the engine is **unit-agnostic**. Take constants from
     md.MaxwellBoltzmann(kb * 300.0, seed=0)
     md.MD().run(frame, n, dt=dt, kb=kb, thermo=100)
 
-MD defines no potential: it integrates a :class:`molrs.ff.potential.LJCut`,
-a ``Potentials`` collection (e.g. from :func:`molrs.ff.potential.kernel`), or
+MD defines no potential: it integrates a :class:`molrs.ff.potential.PairLjCut`,
+a ``Potentials`` collection (e.g. from :func:`molrs.ff.potential.compile_explicit_terms`), or
 any object with ``calc_energy_forces``. External forces (the NN/Torch seam)
 subclass :class:`molrs.ff.potential.Potential`::
 

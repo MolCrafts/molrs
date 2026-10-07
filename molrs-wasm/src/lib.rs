@@ -26,7 +26,7 @@
 //! | Module      | molrs owner | Exports |
 //! |-------------|-------------|---------|
 //! | `core`      | `core` | Frame, Block, Box, NDArray, schema, Topology, `covalentRadius`, regions, Mesh, NeighborList / NeighborQuery / Neighbors |
-//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `parseSMILES` |
+//! | `io`        | `io` | File readers/writers (XYZ, PDB, LAMMPS, `*.mrec` records, …), `readSmilesStr` |
 //! | `perceive`  | `perceive` | Chemical perception, Frame in / Frame out (`assignRings`, `assignAromaticity`, `addHydrogens`, …) |
 //! | `compute`   | `compute` | Analysis: RDF, MSD, Cluster, … and the compute catalog |
 //! | `conformer` | `conformer` | 3D conformer generation (`generate3D`) |
@@ -39,12 +39,11 @@
 //! The npm package is a `bundler` build: importing it loads the module.
 //!
 //! ```js
-//! import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
+//! import { readSmilesStr, generate3D, writeXyzStr } from "@molcrafts/molrs";
 //!
-//! const ir    = parseSMILES("CCO");
-//! const frame = ir.toFrame();
+//! const frame = readSmilesStr("CCO");
 //! const mol3d = generate3D(frame, "fast");
-//! const xyz   = writeFrame(mol3d, "xyz");
+//! const xyz   = writeXyzStr(mol3d);
 //! console.log(xyz);
 //! ```
 

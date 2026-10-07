@@ -56,6 +56,44 @@ pub enum BccParameterSet {
 }
 
 impl BccParameterSet {
+    /// Every correction family. Two, not seven: `BCCPARM.DAT` and
+    /// `BCCPARM_ABCG2.DAT` are the only ones that exist. `ATOMTYPE_GAS.DEF`
+    /// is a set of atom *types* with no correction table, and `gaff` is an
+    /// atom-type table too — naming either would be naming a table that
+    /// cannot correct a bond.
+    pub const ALL: [BccParameterSet; 2] = [Self::Bcc, Self::Abcg2];
+
+    /// The antechamber `-c` flag naming this family: `"bcc"` or `"abcg2"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bcc => "bcc",
+            Self::Abcg2 => "abcg2",
+        }
+    }
+
+    /// The family an antechamber `-c` flag names — the inverse of
+    /// [`name`](Self::name).
+    ///
+    /// # Errors
+    ///
+    /// An unknown name, including the atom-type table names (`"gaff"`) a
+    /// caller might reasonably confuse for one. Never a fallback: a correction
+    /// row is keyed on atom types, so the wrong family silently looks up the
+    /// wrong rows, which is indistinguishable from correct output.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|set| set.name() == name)
+            .ok_or_else(|| {
+                let known: Vec<&str> = Self::ALL.iter().map(|set| set.name()).collect();
+                format!(
+                    "unknown BCC correction family {name:?}; expected one of {} \
+                 (BCCPARM.DAT, BCCPARM_ABCG2.DAT)",
+                    known.join(", ")
+                )
+            })
+    }
+
     /// The set's bond charge corrections, as compile-time table data.
     fn corrections(self) -> &'static [BccCorrectionRow] {
         match self {
@@ -403,7 +441,18 @@ fn bcc_increments(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use molrs::core::keys;
+
+    #[test]
+    fn a_family_name_round_trips_and_an_atom_type_table_is_refused() {
+        for set in BccParameterSet::ALL {
+            assert_eq!(BccParameterSet::from_name(set.name()), Ok(set));
+        }
+        for wrong in ["gaff", "gas", "BCC", ""] {
+            assert!(BccParameterSet::from_name(wrong).is_err(), "{wrong:?}");
+        }
+    }
 
     /// Methane, untyped — the molecule a user has.
     fn methane() -> Atomistic {

@@ -27,7 +27,7 @@ def registered() -> Iterator[list[tuple[str, str]]]:
     yield names
     for category, name in names:
         try:
-            ir.unregister(category, name)
+            ir.unregister_style(category, name)
         except ir.IrError:
             pass
 
@@ -99,18 +99,18 @@ def test_without_a_lammps_form_lammps_refuses_by_name(registered) -> None:
 def test_register_engine_form_refuses_by_variant(registered) -> None:
     ir.register_style("bond", "fene/x", params=FENE_PARAMS, expression=FENE)
     registered.append(("bond", "fene/x"))
-    with pytest.raises(ir.NoEngineForm) as e:
+    with pytest.raises(ir.NoEngineFormError) as e:
         ir.register_engine_form("gromacs", "bond", "fene/x", "positional")
     assert e.value.engine == "GROMACS"
-    with pytest.raises(ir.Sealed):
+    with pytest.raises(ir.SealedError):
         ir.register_engine_form("lammps", "bond", "harmonic", "positional:other")
-    with pytest.raises(ir.NoKernel):
+    with pytest.raises(ir.NoKernelError):
         ir.register_engine_form("lammps", "bond", "nothing/here", "positional")
     with pytest.raises(ValueError, match="positional"):
         ir.register_engine_form("lammps", "bond", "fene/x", "lepton")
     # A positional form the spec cannot have: a style parameter LAMMPS's
     # line has no place for.
-    with pytest.raises(ir.NoEngineForm, match="style parameter `width`"):
+    with pytest.raises(ir.NoEngineFormError, match="style parameter `width`"):
         ir.register_style(
             "pair",
             "soft/x",
@@ -122,7 +122,7 @@ def test_register_engine_form_refuses_by_variant(registered) -> None:
 
 
 def test_a_style_spec_class_takes_its_lammps_form(registered) -> None:
-    class Fene(ir.StyleSpec):
+    class Fene(ir.StyleDeclaration):
         category = "bond"
         name = "fene/cls"
         params = FENE_PARAMS

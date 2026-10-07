@@ -3,7 +3,7 @@
 //! Minimizing with those potentials is `optimize`'s job (`Lbfgs`).
 //!
 //! ```js
-//! const typifier = new UFFTypifier();
+//! const typifier = new UffTypifier();
 //! const typed    = typifier.typify(frame);
 //! const pots     = typifier.toPotentials(typed);   // no .forcefield()
 //! ```
@@ -21,8 +21,8 @@ use molrs::core::Atomistic;
 use molrs::ff::forcefield::ForceField as RsForceField;
 use molrs::ff::potential::{PotentialCompiler, Potentials as RsPotentials};
 use molrs::ff::typifier::Typing;
-use molrs::ff::typifier::UFFTypifier as RsUFF;
-use molrs::ff::typifier::mmff::{MMFF94STypifier as RsMMFF94S, MMFF94Typifier as RsMMFF94};
+use molrs::ff::typifier::UffTypifier as RsUff;
+use molrs::ff::typifier::mmff::{Mmff94Typifier as RsMmff94, Mmff94sTypifier as RsMmff94s};
 
 use crate::core::frame::Frame;
 
@@ -108,23 +108,23 @@ macro_rules! wasm_typifier {
 
 wasm_typifier!(
     /// Universal Force Field typifier (full RDKit default table).
-    UFFTypifier,
-    RsUFF,
-    RsUFF::new()
+    UffTypifier,
+    RsUff,
+    RsUff::new()
 );
 
 wasm_typifier!(
     /// MMFF94 typifier.
-    MMFF94Typifier,
-    RsMMFF94,
-    RsMMFF94::new()
+    Mmff94Typifier,
+    RsMmff94,
+    RsMmff94::new()
 );
 
 wasm_typifier!(
     /// MMFF94s typifier (static / planar amide N).
-    MMFF94STypifier,
-    RsMMFF94S,
-    RsMMFF94S::new()
+    Mmff94sTypifier,
+    RsMmff94s,
+    RsMmff94s::new()
 );
 
 // ── Potentials ──────────────────────────────────────────────────────────────

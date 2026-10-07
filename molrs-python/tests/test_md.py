@@ -7,7 +7,7 @@ import warnings
 import molrs
 import numpy as np
 import pytest
-from molrs.ff.potential import LJCut, Potential
+from molrs.ff.potential import PairLjCut, Potential
 from molrs.md import MD, MaxwellBoltzmann, VelocityVerlet
 
 
@@ -28,13 +28,13 @@ class TestPotentialProtocol:
         assert isinstance(Harmonic(), Potential)
 
     def test_ljcut_is_potential(self) -> None:
-        assert isinstance(LJCut(1.0, 1.0, 2.5), Potential)
+        assert isinstance(PairLjCut(1.0, 1.0, 2.5), Potential)
 
     def test_md_defines_no_potential(self) -> None:
         """MD integrates potentials; it does not define or re-export one."""
         from molrs import md
 
-        for name in ("Potential", "Potentials", "LJCut"):
+        for name in ("Potential", "Potentials", "PairLjCut"):
             assert not hasattr(md, name)
             assert not hasattr(molrs._lib.md, name)
 

@@ -65,7 +65,7 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   writes a field's 1-4 pairs as override rows.
 - **Torsions**: `dihedral nharmonic`, a `dihedral harmonic` kernel, and the
   exact algebra between every torsion form and a Fourier series
-  (`molrs::ff::forcefield::torsion`).
+  (`molrs::ff::ir::torsion`).
 - **Array parameters**: any type parameter may be an `f64` array, stored in
   a record as a `f64[T, S…]` column.
 
@@ -118,14 +118,15 @@ C and C++ consumers download `molrs-capi-0.16.0-<platform>.tar.gz` from the
   are data — a category's arity, block and coordinate; a style's ordered
   parameters, each with a dimension, and its energy. Built-ins are sealed
   registrations of the same form. `register_style`, `register_category`,
-  `styles`, `categories`, `evaluate`, `unregister`.
+  `styles`, `categories`, `evaluate`, `unregister_style`.
 - **Three kernel tiers**: an energy expression (a Lepton-style grammar with
   `distance`, `angle` and `dihedral` over points), a native scalar or
-  compound form, or a Python callable; the generic
-  `molrs.ff.potential.kernel(category, style, atoms, **params)` builds the
-  kernel of any registered style over explicit instances.
+  compound form, or a Python callable;
+  `molrs.ff.potential.compile_explicit_terms(category, style, atoms, **params)`
+  (Rust `ff::potential::ExplicitTerms`) builds the kernel of any registered
+  style over explicit terms.
 - **Custom categories** beyond the seven built-in ones are relation styles
-  over a `<category>s` block; a typifier's `Match.links` types any relation
+  over a `<category>s` block; a typifier's `TypeAssignment.links` types any relation
   kind (`{Bond: rows, "urey_bradleys": rows}`).
 - **Persistence**: a custom style is stored in a `*.mrec` record with its
   expression, so a process that registered nothing reads and prices it.
@@ -193,24 +194,82 @@ a class's does. The [migration guide](migration.md#python-paths) lists every
 old → new path.
 
 Every file-format factory has one shape: a function at the top of
-`molrs.io` (`read_<fmt>[_<what>]` / `write_<fmt>[_<what>]`) or a class
-`molrs.io.<fmt>.<Fmt>Reader` / `<Fmt>Writer`. Every file reader and writer
-is therefore `molrs.io`'s — force-field files included
-(`molrs.io.read_lammps_forcefield`, `molrs.io.write_gromacs_top_ff`, …;
-`molrs.ff.forcefield` is the `ForceField` data model only, and in Rust the
-formats are `molrs::io::forcefield`, which `ff` never depends on), the
-`*.mrec` doors (`molrs.io.read_mrec`, `write_mrec_trajectory`, …) and the
-frame-bytes codec (`molrs.io.read_frame_bytes`; `molrs.stream` is the
-transport). The record store's reader and writer are
-`molrs.io.mrec.MrecReader` / `MrecWriter` (Rust `molrs::io::mrec`'s, WASM
-`MrecReader`), the dump concatenator is
-`molrs.io.trajectory.TrajectoryReader`, and a class of one format lives in
-that format's submodule: `molrs.io.smiles` (`SmilesIR`, the CGsmiles
-records, `SmilesError`), `molrs.io.log` (the LAMMPS log records),
-`molrs.io.lammps_bond_react`. New: `molrs.io.read_smiles` (Rust
-`molrs::io::smiles::read_smiles`) reads one molecule — connectivity only —
-and refuses a `'.'`-separated set, and `read_lammps_log_str` reads a log
-from text.
+`molrs.io` or a class of the format's own submodule — see
+[io, one module per format](#io-one-module-per-format).
+
+### io, one module per format
+
+- **One module per format.** `molrs::io` is organized by file format, not by
+  content kind: `io::{pdb, xyz, gro, sdf, mol2, cif, vasp, dcd, trr, xtc,
+  lammps, amber, gromacs, openmm_xml, clpol, smiles, cgsmiles, mrec}` hold
+  each format's classes (`PdbReader`, `LammpsDumpReader`, `OpenmmXmlWriter`,
+  …, acronyms cased as words), and Python mirrors them (`molrs.io.pdb`,
+  `molrs.io.lammps`, …).
+- **Every door names its format**, in Rust and Python alike:
+  `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` at the top of `io`, with
+  `_str` / `_bytes` for memory and `_trajectory` for every frame. No door
+  picks the format for the caller: `read_frame` / `write_frame` /
+  `FrameFormat` and the `format=`-taking frame-bytes doors are gone; the wire
+  encodings are `read_msgpack_frame_bytes` / `write_msgpack_frame_bytes` and
+  `read_json_frame_str` / `write_json_frame_str`.
+- **Lazy readers per format.** Each `read_<fmt>_trajectory` returns that
+  format's reader (`molrs.io.dcd.DcdReader`, …; PDB and GRO now too), over
+  one path or a list of paths; Rust readers open with `<Fmt>Reader::open`.
+- **Honest XML doors.** `read_openmm_xml_forcefield` /
+  `write_openmm_xml_forcefield` are inverses, the molrs-native layout has its
+  own pair (`read_molrs_xml_forcefield` / `write_molrs_xml_forcefield`, the
+  writer new), and an MMFF parameter set is `read_mmff_xml_forcefield`; the
+  old reader's layout sniffing is gone.
+- **New doors**: `read_sdf`, `read_cif` / `write_cif`, `read_vasp_poscar` /
+  `write_vasp_poscar`, `read_smiles_str` / `write_smiles_str`,
+  `read_cgsmiles_str`, `read_lammps_molecule_json` /
+  `write_lammps_molecule_json`, `read_csv_block[_str]` /
+  `write_csv_block[_str]`.
+- **SMARTS is perception's, wholly.** `SmartsPattern.from_environment(mol,
+  center, …)` (Rust `SmartsPattern::from_environment`) and `str(pattern)`
+  replace `write_smarts` / `write_local_smarts`; SMILES and SMARTS share one
+  crate-private grammar, so `io` and `perceive` depend on neither.
+- **Line-notation IRs cased as words.** `SmilesIr`, `CgSmilesIr`, `CgGraph`,
+  `CgNode`, `CgEdge`, `CgFragmentDef`, `CgBondOrder` and `molrs.core.CgBond`
+  (were `SmilesIR`, `CGSmilesIR`, `CG*`).
+- **`fix cmap` doors say what they return.** Python
+  `read_lammps_cmap_forcefield` / `write_lammps_cmap_forcefield` (were
+  `read_lammps_cmap` / `write_lammps_cmap`) read and write a `ForceField`;
+  Rust `read_lammps_cmap_str` / `write_lammps_cmap_str` stay the raw grids
+  (`LammpsCmapFile`).
+- The [migration guide](migration.md#wave-s2-io-per-format) lists every old →
+  new name.
+
+### Force-field names
+
+Every `ff` name states what it is, in Rust and Python alike, with acronyms
+cased as words; the [migration guide](migration.md#wave-s3-force-field)
+lists each one.
+
+- **Kernels are `<Category><Style>`**: `BondHarmonic`, `PairLjCut`,
+  `BondMmff`, `AngleMmffStretchBend`, `PairUffVdw`, …; constructors are
+  `<category>_<style>_constructor`. Python `molrs.ff.potential.PairLjCut`
+  evaluates with `energy_forces_skin` / `_table` / `_pairs`, and
+  `compile_explicit_terms` (Rust `ExplicitTerms`) builds any style's kernel
+  over explicit terms.
+- **The force-field IR** names its items for what they are: `ParamSpec`,
+  `CategorySpec`, `StyleSpec` (Python too), `ParamDimension`,
+  `ParamCombination`, `CombiningRule`, `ParamValue`, `ConformanceSample`,
+  `FitMetric` / `FitResidual`, `FormRefusal`; one registry
+  (`ff::ir::Registry`), one expression module (`ff::ir::expression`), the
+  torsion algebra at `ff::ir::torsion`. Python refusals are
+  `<Variant>Error` (`SealedError`, `DimensionError`, …) under `IrError`, and
+  a style declared as a class subclasses `molrs.ff.ir.StyleDeclaration`.
+- **Typifiers**: `assign(graph) -> TypeAssignment` is the one hook and
+  `source_forcefield()` the force field typed against (`forcefield()` stays
+  the typed output); `OplsAaTypifier`, `Mmff94Typifier`, `Mmff94sTypifier`,
+  `UffTypifier`, `BccAtomChargeTypifier`. MMFF aromaticity is perception's.
+- **Tables**: CL&Pol scaling is `molrs.ff.clpol_scaling`
+  (`scale_lj(..., fragment_table=)`), its shipped table
+  `molrs.ff.params.clpol_fragment_scaling()`; parmchk2's table is
+  `ff::params`' `parmchk`; the BCC correction families are named by
+  `BccParameterSet::from_name` everywhere. The force-field model's type
+  handle is `ForceFieldType`, and `Style.get_types()` its one accessor.
 
 ### Analysis, perception, geometry and dynamics
 
@@ -331,8 +390,8 @@ refuse what they used to drop or mistranslate; the
   `ForceFieldSection`, the typifiers, units, neighbour lists, meshes,
   trajectory observables, views and more. A subclass instance pickles as
   its own class and keeps its instance attributes.
-- The native typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
-  subclassed too. Their `match` and `library` run in Rust, so a subclass that
+- The native typifiers (`OplsAaTypifier`, `Mmff94Typifier`, …) can be
+  subclassed too. Their `assign` and `source_forcefield` run in Rust, so a subclass that
   defines either raises `TypeError`; subclass `Typifier` to supply your own.
 - `ForceField.special_bonds` reads the `(lj, coul)` weights back.
 

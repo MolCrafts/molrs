@@ -1,4 +1,4 @@
-//! The AM1-BCC atom *typifier*: [`BCCAtomChargeTypifier`] labels every atom with
+//! The AM1-BCC atom *typifier*: [`BccAtomChargeTypifier`] labels every atom with
 //! the BCC (or ABCG2) atom type of the table a
 //! [`crate::ff::charge::BccParameterSet`] names.
 //!
@@ -14,13 +14,13 @@ use molrs::core::Atomistic;
 use std::sync::OnceLock;
 
 use super::atd::AtdTypifier;
-use super::{Match, Typifier};
+use super::{TypeAssignment, Typifier};
 use crate::ff::charge::BccParameterSet;
 use crate::ff::forcefield::ForceField;
 
 /// Graph-based BCC atom typifier: the [`AtdTypifier`] bound to a BCC table.
 ///
-/// This is a named shorthand, not a second engine — `BCCAtomChargeTypifier::bcc()` and
+/// This is a named shorthand, not a second engine — `BccAtomChargeTypifier::bcc()` and
 /// `AtdTypifier::new(AtdParameterSet::Bcc)` label every atom identically because
 /// the former *is* the latter. It exists because the AM1-BCC pipeline needs the
 /// atom-type table and the correction family chosen together, and
@@ -32,17 +32,17 @@ use crate::ff::forcefield::ForceField;
 /// can carry GAFF types and BCC charges at the same time, which is what the standard
 /// AM1-BCC workflow is.
 #[derive(Debug, Clone)]
-pub struct BCCAtomChargeTypifier {
+pub struct BccAtomChargeTypifier {
     model: BccParameterSet,
 }
 
-impl Default for BCCAtomChargeTypifier {
+impl Default for BccAtomChargeTypifier {
     fn default() -> Self {
         Self::bcc()
     }
 }
 
-impl BCCAtomChargeTypifier {
+impl BccAtomChargeTypifier {
     /// A typifier for the atom-type table `model` names.
     ///
     /// # Arguments
@@ -75,7 +75,7 @@ impl BCCAtomChargeTypifier {
     }
 }
 
-impl Typifier for BCCAtomChargeTypifier {
+impl Typifier for BccAtomChargeTypifier {
     /// Perceive BCC bond types, then label every atom from the set's
     /// `ATOMTYPE_*.DEF` rules.
     ///
@@ -97,13 +97,13 @@ impl Typifier for BCCAtomChargeTypifier {
     /// # Errors
     ///
     /// A message naming the atom no rule of the table matched.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
-        AtdTypifier::new(self.model.atd_set()).r#match(graph)
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
+        AtdTypifier::new(self.model.atd_set()).assign(graph)
     }
 
     /// An empty force field named `BCC`: the atom-type table assigns labels,
     /// not parameters. Built once.
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         static LIBRARY: OnceLock<ForceField> = OnceLock::new();
         LIBRARY.get_or_init(|| ForceField::new("BCC"))
     }
@@ -130,7 +130,7 @@ mod tests {
     /// defines nothing: the match is stamp-only, so the output holds no type.
     #[test]
     fn typing_stamps_every_atom_and_defines_no_type() {
-        let mut typing = Typing::new(BCCAtomChargeTypifier::bcc());
+        let mut typing = Typing::new(BccAtomChargeTypifier::bcc());
         let typed = typing.typify(&methane()).expect("methane types");
 
         assert_eq!(typed.atoms().count(), 5);
@@ -152,7 +152,7 @@ mod tests {
     /// The library a BCC atom typer matches against is empty: no styles.
     #[test]
     fn library_is_an_empty_forcefield() {
-        let typing = Typing::new(BCCAtomChargeTypifier::bcc());
-        assert!(typing.library().styles().is_empty());
+        let typing = Typing::new(BccAtomChargeTypifier::bcc());
+        assert!(typing.typifier().source_forcefield().styles().is_empty());
     }
 }

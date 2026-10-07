@@ -36,7 +36,7 @@ impl Arity {
 
 /// The coordinate a category's energy is a function of.
 ///
-/// A [`ScalarForm`](crate::ff::potential::generic::ScalarForm) is priced in
+/// A [`ScalarForm`](crate::ff::potential::form_kernel::ScalarForm) is priced in
 /// it, so it is also the name a Lepton expression reads (`r`, `theta`, `phi`,
 /// `chi`), always in radians for an angle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -56,7 +56,7 @@ pub enum Coordinate {
     /// `chi = abs(phi)` (LAMMPS `improper harmonic` prices χ = |φ|).
     Improper,
     /// The atoms' positions: an N-body term priced by a
-    /// [`CompoundForm`](crate::ff::potential::generic::CompoundForm).
+    /// [`CompoundForm`](crate::ff::potential::form_kernel::CompoundForm).
     Compound,
 }
 
