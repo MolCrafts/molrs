@@ -6,7 +6,7 @@
 //! The table in `molrs-python/docs/guides/forcefield-ir.md` ("Completeness")
 //! is rendered from [`MATRIX`] and checked against it, so it cannot go stale:
 //!
-//! - every kernel [`KernelRegistry::builtin`] registers has a row, and every
+//! - every kernel [`BuiltinKernels::builtin`] registers has a row, and every
 //!   style row is a registered kernel;
 //! - every test a cell cites exists (`fn <name>(` in the named file);
 //! - every Class-I style of molrec's registry is a registered kernel or a
@@ -19,7 +19,7 @@
 use std::path::Path;
 
 use crate::ff::forcefield::{ForceField, Params};
-use crate::ff::potential::KernelRegistry;
+use crate::ff::potential::BuiltinKernels;
 use crate::ff::potential::PotentialCompiler;
 
 /// The columns, in order.
@@ -1298,7 +1298,7 @@ const END: &str = "<!-- completeness:end -->";
 
 #[test]
 fn every_registered_kernel_has_a_row_and_every_style_row_a_kernel() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     let styles: Vec<String> = registry
         .styles()
         .into_iter()
@@ -1361,7 +1361,7 @@ fn every_cited_test_exists() {
 /// same name, or refused by name when compiled.
 #[test]
 fn every_molrec_class_i_style_is_priced_or_refused_by_name() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     let known: Vec<(&str, &str)> = registry.styles();
     for &item in MOLREC_CLASS_I {
         let (category, style) = item.split_once(' ').unwrap();
@@ -1428,7 +1428,7 @@ fn probe_frame(category: &str, arity: usize) -> molrs::core::Frame {
 /// back unchanged.
 #[test]
 fn every_registered_style_persists_through_a_record() {
-    let registry = KernelRegistry::builtin();
+    let registry = BuiltinKernels::builtin();
     for (category, style) in registry.styles() {
         let mut ff = ForceField::new("persist");
         ff.def_style("atom", "full", Params::new())

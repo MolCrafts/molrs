@@ -24,9 +24,9 @@ use crate::ff::ir::FormCodec;
 use crate::ff::ir::conformance::{self, PROBE_TERMS, Probe, form_id};
 use crate::ff::ir::{CategorySpec, IrError, StyleSpec, builtin_categories, builtin_styles};
 use crate::ff::ir::{Engine, LammpsCodec, LammpsForm};
-use crate::ff::potential::KernelRegistry;
-use crate::ff::potential::Member;
-use crate::ff::potential::generic::{
+use crate::ff::potential::BuiltinKernels;
+use crate::ff::potential::ForceTerm;
+use crate::ff::potential::form_kernel::{
     CompoundForm, CompoundTerms, ScalarBonded, ScalarForm, ScalarPair,
 };
 use molrs::core::Frame;
@@ -36,11 +36,14 @@ use molrs::op::types::F;
 // Registration vocabulary
 // ---------------------------------------------------------------------------
 
-/// Builds a molecule-bound [`Member`] from a style's params, its per-type
+/// Builds a molecule-bound [`ForceTerm`] from a style's params, its per-type
 /// params (`(type_label, params)`), and a typed [`Frame`]. Every kernel
 /// constructor in the crate matches this signature.
-pub type KernelConstructor =
-    fn(&Params, &[(&str, &Params)], &Frame) -> Result<Member, crate::ff::potential::CompileError>;
+pub type KernelConstructor = fn(
+    &Params,
+    &[(&str, &Params)],
+    &Frame,
+) -> Result<ForceTerm, crate::ff::potential::CompileError>;
 
 /// Which `Frame` block decides whether a style has any rows to act on.
 ///
@@ -155,9 +158,9 @@ pub enum Kernel {
     /// Tier 2: a batch N-body function of positions, built into
     /// [`CompoundTerms`].
     Compound(Arc<dyn CompoundForm>),
-    /// Tier 3: a constructor that builds the whole [`Member`] itself — every
+    /// Tier 3: a constructor that builds the whole [`ForceTerm`] itself — every
     /// built-in kernel.
-    Ctor {
+    Constructor {
         compiled: KernelConstructor,
         /// The neighbour-driven form of a pair style, and the special-bonds
         /// weights that scale it.
@@ -170,8 +173,8 @@ pub enum Kernel {
 impl Kernel {
     /// A Tier-3 constructor with no neighbour-driven form, gated on its
     /// category's block.
-    pub fn ctor(compiled: KernelConstructor) -> Self {
-        Kernel::Ctor {
+    pub fn constructor(compiled: KernelConstructor) -> Self {
+        Kernel::Constructor {
             compiled,
             typed: None,
             rows: RowSource::CategoryBlock,
@@ -184,7 +187,7 @@ impl Kernel {
             Kernel::Expression(_) => "expression",
             Kernel::Scalar(_) => "scalar form",
             Kernel::Compound(_) => "compound form",
-            Kernel::Ctor { .. } => "constructor",
+            Kernel::Constructor { .. } => "constructor",
         }
     }
 
@@ -199,12 +202,12 @@ impl Kernel {
             (Kernel::Scalar(a), Kernel::Scalar(b)) => thin(a) == thin(b),
             (Kernel::Compound(a), Kernel::Compound(b)) => thin(a) == thin(b),
             (
-                Kernel::Ctor {
+                Kernel::Constructor {
                     compiled: a,
                     typed: ta,
                     rows: ra,
                 },
-                Kernel::Ctor {
+                Kernel::Constructor {
                     compiled: b,
                     typed: tb,
                     rows: rb,
@@ -315,7 +318,7 @@ impl StyleEntry {
             Some(h.finish() as usize)
         };
         let (kernel, probe_id) = match (&self.kernel, &self.spec.expression) {
-            (Some(Kernel::Ctor { .. }), _) => return Ok(Cow::Borrowed(self)),
+            (Some(Kernel::Constructor { .. }), _) => return Ok(Cow::Borrowed(self)),
             (Some(k @ (Kernel::Scalar(_) | Kernel::Compound(_))), _) => (Some(k.clone()), None),
             (Some(Kernel::Expression(x)), _) => (Some(native(x.form())), keyed(x.source())),
             (None, Some(registered)) => match expressions {
@@ -341,7 +344,7 @@ impl StyleEntry {
     /// Where the style's rows come from.
     pub fn row_source(&self) -> RowSource {
         match self.kernel {
-            Some(Kernel::Ctor { rows, .. }) => rows,
+            Some(Kernel::Constructor { rows, .. }) => rows,
             _ => RowSource::CategoryBlock,
         }
     }
@@ -366,7 +369,7 @@ impl StyleEntry {
                 form: ExpressionForm::Compound(f.clone()),
                 native: true,
             }),
-            Some(Kernel::Ctor { .. }) => unreachable!("a constructor is no form"),
+            Some(Kernel::Constructor { .. }) => unreachable!("a constructor is no form"),
             None => match (expressions, &self.spec.expression) {
                 (Some(compile), Some(_)) => Ok(Form {
                     form: compile(category, &self.spec)?.form(),
@@ -408,10 +411,10 @@ impl StyleEntry {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
-    ) -> Result<Member, crate::ff::potential::CompileError> {
+    ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
         let (params, rows) = self.spec.gather(params, tp)?;
         let (params, tp) = (&params, &borrowed(&rows));
-        if let Some(Kernel::Ctor { compiled, .. }) = &self.kernel {
+        if let Some(Kernel::Constructor { compiled, .. }) = &self.kernel {
             return compiled(params, tp, frame);
         }
         let form = self.form(category, expressions)?;
@@ -423,21 +426,21 @@ impl StyleEntry {
                 self.first_compile(category, &form, expressions, || {
                     probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
-                Member::pair(k)
+                ForceTerm::pair(k)
             }
             ExpressionForm::Scalar(f) => {
                 let k = ScalarBonded::build(f.clone(), category, spec, params, tp, frame)?;
                 self.first_compile(category, &form, expressions, || {
                     probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
-                Member::indexed(k)
+                ForceTerm::indexed(k)
             }
             ExpressionForm::Compound(f) => {
                 let k = CompoundTerms::build(f.clone(), category, spec, params, tp, frame)?;
                 self.first_compile(category, &form, expressions, || {
                     probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
                 })?;
-                Member::indexed(k)
+                ForceTerm::indexed(k)
             }
         })
     }
@@ -452,15 +455,15 @@ impl StyleEntry {
         tp: &[(&str, &Params)],
         frame: &Frame,
         expressions: Option<ExpressionCompiler>,
-    ) -> Result<Option<(Member, SpecialClass)>, crate::ff::potential::CompileError> {
+    ) -> Result<Option<(ForceTerm, SpecialClass)>, crate::ff::potential::CompileError> {
         let (params, rows) = self.spec.gather(params, tp)?;
         let (params, tp) = (&params, &borrowed(&rows));
         match &self.kernel {
-            Some(Kernel::Ctor { typed: None, .. }) => return Ok(None),
-            Some(Kernel::Ctor {
-                typed: Some((ctor, class)),
+            Some(Kernel::Constructor { typed: None, .. }) => return Ok(None),
+            Some(Kernel::Constructor {
+                typed: Some((constructor, class)),
                 ..
-            }) => return Ok(Some((ctor(params, tp, frame)?, *class))),
+            }) => return Ok(Some((constructor(params, tp, frame)?, *class))),
             _ => {}
         }
         let form = self.form(category, expressions)?;
@@ -472,7 +475,7 @@ impl StyleEntry {
         self.first_compile(category, &form, expressions, || {
             probe_on(&coords, |c| k.probe(c, PROBE_TERMS))
         })?;
-        Ok(Some((Member::pair(k), self.spec.special_class())))
+        Ok(Some((ForceTerm::pair(k), self.spec.special_class())))
     }
 }
 
@@ -549,7 +552,7 @@ impl Registry {
 
     /// Every built-in category and style, sealed.
     ///
-    /// The kernels are [`KernelRegistry::builtin`]'s constructors, each with
+    /// The kernels are [`BuiltinKernels::builtin`]'s constructors, each with
     /// its spec from [`builtin_styles`]; a spec without a constructor is
     /// priced by its expression or prices nothing (`dihedral rb`, `drude
     /// harmonic`, `atom full`, …). A test holds the two tables to one set of
@@ -569,9 +572,9 @@ impl Registry {
                 },
             );
         }
-        let ctors = KernelRegistry::builtin();
+        let builtin_kernels = BuiltinKernels::builtin();
         for spec in builtin_styles() {
-            let kernel = ctors.kernel(&spec.category, &spec.name);
+            let kernel = builtin_kernels.kernel(&spec.category, &spec.name);
             let (category, name) = (spec.category.clone(), spec.name.clone());
             r.register_style(spec, kernel)
                 .unwrap_or_else(|e| panic!("built-in {category} `{name}`: {e}"));

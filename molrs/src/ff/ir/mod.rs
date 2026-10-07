@@ -12,9 +12,9 @@
 //!   with a [`Dim`], its style parameters, where its numbers come from — and
 //!   a [`Kernel`] in one of three tiers: an expression
 //!   ([`ExpressionKernel`]), a batch form of one coordinate or of the atoms'
-//!   positions ([`ScalarForm`](crate::ff::potential::generic::ScalarForm),
-//!   [`CompoundForm`](crate::ff::potential::generic::CompoundForm), built into
-//!   the generic kernels of [`crate::ff::potential::generic`]), or a constructor that
+//!   positions ([`ScalarForm`](crate::ff::potential::form_kernel::ScalarForm),
+//!   [`CompoundForm`](crate::ff::potential::form_kernel::CompoundForm), built into
+//!   the form kernels of [`crate::ff::potential::form_kernel`]), or a constructor that
 //!   builds a whole kernel (every built-in kernel; `dihedral rb` is a
 //!   built-in priced by its expression alone);
 //! * the [`Registry`] refuses anything that does not conform
@@ -36,12 +36,12 @@
 //! ```
 //! use std::sync::Arc;
 //! use molrs::ff::ir::{Dim, Kernel, ParamSpec, Registry, StyleSpec};
-//! use molrs::ff::potential::generic::{ParamCols, ScalarForm};
+//! use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
 //!
 //! /// LAMMPS `bond_style harmonic`, as a third party would write it.
 //! struct Harmonic;
 //! impl ScalarForm for Harmonic {
-//!     fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de_dr: &mut [f64]) {
+//!     fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
 //!         let (k, r0) = (p.get("k").unwrap(), p.get("r0").unwrap());
 //!         for t in 0..r.len() {
 //!             e[t] = k[t] * (r[t] - r0[t]).powi(2);

@@ -9,19 +9,19 @@
 //! shared dihedral routines.
 //!
 //! The same function of the dihedral is LAMMPS's `dihedral_style harmonic`
-//! (`K[1 + d cos(nφ)]`); [`signed_cosine_ctor`] builds either from its block.
+//! (`K[1 + d cos(nφ)]`); [`signed_cosine_constructor`] builds either from its block.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
@@ -118,23 +118,23 @@ impl IndexedTerms for ImproperCvff {
 /// Construct an [`ImproperCvff`] from per-type params (`k`, `sign`,
 /// `periodicity`) and a Frame's `"impropers"` block
 /// (`atomi/atomj/atomk/atoml/type`).
-pub fn improper_cvff_ctor(
+pub fn improper_cvff_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
-    signed_cosine_ctor(IMPROPERS, "cvff", tp, frame)
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+    signed_cosine_constructor(IMPROPERS, "cvff", tp, frame)
 }
 
 /// `k·[1 + sign·cos(periodicity·φ)]` over the quadruples of `block_name`
 /// (`"impropers"` for `improper cvff`, `"dihedrals"` for `dihedral
 /// harmonic`); `style` is the style's name (`cvff`, `harmonic`).
-pub fn signed_cosine_ctor(
+pub fn signed_cosine_constructor(
     block_name: &str,
     style: &str,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(block_name)
@@ -181,12 +181,12 @@ pub fn signed_cosine_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        let need = |key: &str| need::type_num(style, &tc[idx], p, key);
+        let need = |key: &str| param_reads::type_num(style, &tc[idx], p, key);
         kk.push(need("k")?);
         dd.push(need("sign")?);
         nn.push(need("periodicity")?);
     }
-    Ok(Member::indexed(ImproperCvff {
+    Ok(ForceTerm::indexed(ImproperCvff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

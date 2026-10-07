@@ -3392,7 +3392,7 @@ class OptReport:
     @property
     def final_fmax(self) -> float: ...
 
-class TypedPotentials:
+class WeightedTerms:
     """Kernels for a neighbour-driven evaluation, each with its special-bonds weights.
 
 
@@ -3409,7 +3409,7 @@ class TypedPotentials:
 class Potentials:
     """Composite of the one ``Potential`` concept — itself a potential.
 
-    ``Potentials()`` is empty; ``push`` **moves** members in (an ``LJCut``,
+    ``Potentials()`` is empty; ``push`` **moves** members in (an ``PairLjCut``,
     another ``Potentials`` such as one ``kernel`` built, or an object with
     ``calc_energy_forces``). The engine is unit-agnostic: nothing scales the
     energy or forces implicitly.
@@ -3417,7 +3417,7 @@ class Potentials:
 
     def __init__(self) -> None: ...
     def __len__(self) -> int: ...
-    def push(self, potential: LJCut | Potentials | Any) -> None: ...
+    def push(self, potential: PairLjCut | Potentials | Any) -> None: ...
     def calc_energy_forces(self, arg: Frame | ArrayF) -> tuple[float, ArrayF]: ...
     def calc_energy(self, arg: Frame | ArrayF) -> float: ...
     def calc_forces(self, arg: Frame | ArrayF) -> ArrayF: ...
@@ -3436,7 +3436,7 @@ class PotentialCompiler:
     def __init__(self, forcefield: ForceField) -> None: ...
     def compile(self, frame: Frame) -> Potentials: ...
     def defer(self) -> Potentials: ...
-    def compile_typed(self, frame: Frame) -> TypedPotentials: ...
+    def compile_typed(self, frame: Frame) -> WeightedTerms: ...
 
 class LBFGS:
     """L-BFGS geometry optimizer over a force-field Potential.
@@ -4626,7 +4626,7 @@ def polarizability_finite_field(
 # molrs.ff.potential — hand-built kernels (mirrors molrs-python/src/ff/potential.rs)
 # ---------------------------------------------------------------------------
 
-def kernel(
+def compile_explicit_terms(
     category: str,
     style: str,
     atoms: Sequence[Sequence[int]] | ArrayI64 | ArrayU32,
@@ -4642,11 +4642,11 @@ def kernel(
     one type per term; works for every registered style, built-in or
     custom. Refusals raise their ``molrs.ff.ir.IrError`` subclass."""
 
-class LJCut:
+class PairLjCut:
     """LAMMPS ``pair_style lj/cut``: the one-type cut Lennard-Jones / Mie
     kernel (``n``/``m`` exponents) a neighbour loop feeds (MD's nonbond
     kernel). A pair list with a row per pair is
-    ``kernel("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
+    ``compile_explicit_terms("pair", "lj/cut", pairs, epsilon=..., sigma=...)``."""
 
     def __init__(
         self,
@@ -4677,15 +4677,15 @@ class LJCut:
     def pair_force(
         self, r2: float, disp: Sequence[float]
     ) -> list[float] | None: ...
-    def pair_eval(
+    def pair_energy_force(
         self, r2: float, disp: Sequence[float]
     ) -> tuple[float, list[float]] | None: ...
     def calc_energy_forces(self, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
-    def eval_table(
+    def energy_forces_skin(self, neighbors: VerletSkin, pos: ArrayF) -> tuple[float, ArrayF]: ...
+    def energy_forces_table(
         self, n_atoms: int, neighbors: Neighbors
     ) -> tuple[float, ArrayF]: ...
-    def eval_pairs(
+    def energy_forces_pairs(
         self,
         n_atoms: int,
         i: ArrayU32,
@@ -4701,7 +4701,7 @@ class LJCut:
 
 class md:
     """The ``_lib.md`` submodule (``molrs.md``): NVE/Langevin integrators.
-    MD defines no potential; it integrates an ``LJCut``, a ``Potentials``
+    MD defines no potential; it integrates an ``PairLjCut``, a ``Potentials``
     collection, or any object with ``calc_energy_forces``.
 
     The engine is unit-agnostic — supply consistent units yourself; take
@@ -4750,17 +4750,17 @@ class md:
         def energy(self, value: float) -> None: ...
 
     class VelocityVerlet:
-        """NVE velocity-Verlet. ``potential`` (a ``LJCut`` /
+        """NVE velocity-Verlet. ``potential`` (a ``PairLjCut`` /
         ``Potentials`` / an object with ``calc_energy_forces``) and
         ``neighbors`` (a ``VerletSkin``) are
         moved in; the loop feeds fresh pairs to the potential after each
-        rebuild. ``LJCut`` requires ``neighbors=``."""
+        rebuild. ``PairLjCut`` requires ``neighbors=``."""
 
         def __init__(
             self,
             dt: float,
             *,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             simbox: Box | None = None,
@@ -4792,7 +4792,7 @@ class md:
             *,
             gamma: float,
             kbt: float,
-            potential: LJCut | Potentials | TypedPotentials | Any,
+            potential: PairLjCut | Potentials | WeightedTerms | Any,
             neighbors: VerletSkin | None = None,
             mass: float | ArrayF,
             seed: int = 0,

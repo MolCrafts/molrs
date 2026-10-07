@@ -105,7 +105,7 @@ pub struct ParamSpec { name, dim: Dim, kind: ParamKind, default: Option<Value>, 
 |---|---|---|---|
 | 1 | `Kernel::Expression`, or `register_style(spec, None)` with `spec.expression` | `expression=` | the expression, compiled with exact (dual-number) derivatives |
 | 2 | `Kernel::Scalar(Arc<dyn ScalarForm>)`, `Kernel::Compound(Arc<dyn CompoundForm>)` | `kernel=` (a numpy callable; `compound=True` for positions) | a batch function of the coordinate, or of the atoms' positions |
-| 3 | `Kernel::Ctor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (every native built-in) |
+| 3 | `Kernel::Constructor { compiled, typed, rows }` | – | a constructor that builds the whole kernel (every native built-in) |
 
 The kernel contract, every tier:
 
@@ -115,13 +115,13 @@ The kernel contract, every tier:
   minimum-imaged relative to each term's first atom.
 - Parameters arrive **exactly as stored**: IR units, angle values in
   degrees. A Tier-2 form reads each per-type parameter as an `n_terms`
-  column (`ParamCols::get`), arrays with a leading `n_terms` axis, text per
+  column (`ParamColumns::get`), arrays with a leading `n_terms` axis, text per
   term, numeric style parameters broadcast to a column; a pair form reads
   the resolved pair value of each parameter (cross row, else its mixing
   rule), and `q1`, `q2` when the frame has `atoms.charge`.
 - A form **writes** the **unweighted** energy of each term and its
   derivative `de_dq` (a compound form: `∂E/∂x`, not the force). The generic
-  kernels (`ff::potential::generic`: `ScalarBonded`, `ScalarPair`,
+  kernels (`ff::potential::form_kernel`: `ScalarBonded`, `ScalarPair`,
   `CompoundTerms`) apply the pair special-bonds weight, `r < cutoff` at
   both compile doors (the style's `cutoff`, ∞ when it states none — LAMMPS
   truncates every pair style, 1-4 pairs included, and so does every
@@ -135,7 +135,7 @@ LAMMPS's `pair_style lj/smooth/linear` as a Tier-2 form, from
 pub struct LjSmoothLinear;
 
 impl ScalarForm for LjSmoothLinear {
-    fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de_dr: &mut [f64]) {
+    fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
         let (eps, sigma, rc) = (col(p, "epsilon"), col(p, "sigma"), col(p, "cutoff"));
         for t in 0..r.len() {
             let lj = |x: f64| {
@@ -192,7 +192,7 @@ evaluation that met it.
 registry of one's own; `PotentialCompiler::new` reads the process-wide one
 (`molrs::ff::ir::register_style`, Python `ir.register_style`).
 
-Without a force field, `molrs.ff.potential.kernel(category, style, atoms, *,
+Without a force field, `molrs.ff.potential.compile_explicit_terms(category, style, atoms, *,
 charges=None, **params)` builds the kernel of any style the IR prices — a
 built-in, a registered one, a custom category's — over explicit terms: an
 `(n, arity)` array of atom indices and each parameter as stored, one number
@@ -253,7 +253,7 @@ a Lepton subset:
   numeric parameter by name, **as stored** — an angle value in degrees,
   which the expression converts (`theta0*0.017453292519943295`).
 - The expression is the unweighted energy of one term, inside the cutoff
-  (the generic pair kernel truncates at `r < cutoff`; a shift or switch to
+  (the form pair kernel truncates at `r < cutoff`; a shift or switch to
   zero there is the expression's own, as `lj/cut`'s `shift` and the CHARMM
   switch are); a pair expression must be symmetric under exchanging the
   atoms.

@@ -7,18 +7,18 @@
 //! and so is its atom order: the centre is **first** (`atomi`). RDKit lists the
 //! centre second; the UFF typifier writes it first.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::IMPROPERS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::{cross, dot, norm};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
-pub struct UffInversion {
+pub struct ImproperUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -29,7 +29,7 @@ pub struct UffInversion {
     c2: Vec<F>,
 }
 
-impl UffInversion {
+impl ImproperUff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -108,7 +108,7 @@ impl UffInversion {
     }
 }
 
-impl Potential for UffInversion {
+impl Potential for ImproperUff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -127,7 +127,7 @@ impl Potential for UffInversion {
     }
 }
 
-impl IndexedTerms for UffInversion {
+impl IndexedTerms for ImproperUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -158,13 +158,13 @@ impl IndexedTerms for UffInversion {
     }
 }
 
-pub fn uff_inversion_ctor(
+pub fn improper_uff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let Some(block) = frame.get(IMPROPERS) else {
-        return Ok(Member::indexed(UffInversion {
+        return Ok(ForceTerm::indexed(ImproperUff {
             atom_i: vec![],
             atom_j: vec![],
             atom_k: vec![],
@@ -176,7 +176,7 @@ pub fn uff_inversion_ctor(
         }));
     };
     if block.nrows().unwrap_or(0) == 0 {
-        return Ok(Member::indexed(UffInversion {
+        return Ok(ForceTerm::indexed(ImproperUff {
             atom_i: vec![],
             atom_j: vec![],
             atom_k: vec![],
@@ -203,12 +203,12 @@ pub fn uff_inversion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("uff_inversion: missing atoml")?;
-    let kk = need::instance_col("uff_inversion", block, "K")?;
-    let c0 = need::instance_col("uff_inversion", block, "c0")?;
-    let c1 = need::instance_col("uff_inversion", block, "c1")?;
-    let c2 = need::instance_col("uff_inversion", block, "c2")?;
+    let kk = param_reads::instance_col("uff_inversion", block, "K")?;
+    let c0 = param_reads::instance_col("uff_inversion", block, "c0")?;
+    let c1 = param_reads::instance_col("uff_inversion", block, "c1")?;
+    let c2 = param_reads::instance_col("uff_inversion", block, "c2")?;
     let n = i.len();
-    Ok(Member::indexed(UffInversion {
+    Ok(ForceTerm::indexed(ImproperUff {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         atom_k: (0..n).map(|t| k[t] as usize).collect(),
@@ -223,10 +223,10 @@ pub fn uff_inversion_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+    use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
-    fn inversion(c: [F; 3]) -> UffInversion {
-        UffInversion {
+    fn inversion(c: [F; 3]) -> ImproperUff {
+        ImproperUff {
             atom_i: vec![1],
             atom_j: vec![0],
             atom_k: vec![2],

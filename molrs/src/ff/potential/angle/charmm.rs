@@ -11,15 +11,15 @@
 //! no exclusion and changes no pair list (which 1-3 pairs a non-bonded style
 //! sees is `special_bonds`'s answer, as for any angle).
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{compute_angle, sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
 use molrs::core::Frame;
 use molrs::op::types::F;
@@ -27,7 +27,7 @@ use molrs::op::types::F;
 /// One `angle charmm` type's numbers as the kernel holds them (`theta0` in
 /// radians).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CharmmAngleParams {
+pub struct AngleCharmmParams {
     /// Bending constant, energy/rad².
     pub k: F,
     /// Equilibrium angle, **radians**.
@@ -43,7 +43,7 @@ pub struct AngleCharmm {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
-    params: Vec<CharmmAngleParams>,
+    params: Vec<AngleCharmmParams>,
 }
 
 impl AngleCharmm {
@@ -51,7 +51,7 @@ impl AngleCharmm {
         atom_i: Vec<usize>,
         atom_j: Vec<usize>,
         atom_k: Vec<usize>,
-        params: Vec<CharmmAngleParams>,
+        params: Vec<AngleCharmmParams>,
     ) -> Self {
         let n = atom_i.len();
         assert_eq!(atom_j.len(), n);
@@ -152,11 +152,11 @@ impl IndexedTerms for AngleCharmm {
 
 /// Construct an [`AngleCharmm`] from style params, type params, and Frame
 /// topology. Every type needs all four of `k`, `theta0` (deg), `k_ub`, `r_ub`.
-pub fn angle_charmm_ctor(
+pub fn angle_charmm_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -186,11 +186,11 @@ pub fn angle_charmm_ctor(
         let p = type_map
             .get(label.as_str())
             .ok_or_else(|| format!("AngleCharmm: unknown angle type '{label}'"))?;
-        let need = |key: &str| need::type_num("charmm", label, p, key);
+        let need = |key: &str| param_reads::type_num("charmm", label, p, key);
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         ak.push(k_col[idx] as usize);
-        params.push(CharmmAngleParams {
+        params.push(AngleCharmmParams {
             k: need("k")?,
             // A parameter in degrees (LAMMPS); the kernel works in radians.
             theta0: need("theta0")?.to_radians(),
@@ -199,7 +199,7 @@ pub fn angle_charmm_ctor(
         });
     }
 
-    Ok(Member::indexed(AngleCharmm::new(ai, aj, ak, params)))
+    Ok(ForceTerm::indexed(AngleCharmm::new(ai, aj, ak, params)))
 }
 
 #[cfg(test)]
@@ -221,7 +221,7 @@ mod tests {
             vec![0],
             vec![1],
             vec![2],
-            vec![CharmmAngleParams {
+            vec![AngleCharmmParams {
                 k: K,
                 theta0: theta0_deg.to_radians(),
                 k_ub: K_UB,
@@ -312,7 +312,7 @@ mod tests {
             vec![0],
             vec![1],
             vec![2],
-            vec![CharmmAngleParams {
+            vec![AngleCharmmParams {
                 k: 0.0,
                 theta0: 0.0,
                 k_ub: K_UB,

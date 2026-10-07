@@ -17,17 +17,17 @@
 //! checks (`0 ≤ w ≤ 1`, `special_bonds` 1-4 = 0, a `lj/charmm` pair style).
 //! `w = 0` (or absent) is the AMBER use of the style.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
@@ -127,11 +127,11 @@ impl IndexedTerms for DihedralCharmm {
 /// `phase` in degrees) and a Frame's `"dihedrals"` block
 /// (`atomi/atomj/atomk/atoml/type`). `w` is the compiler's (see the module
 /// docs).
-pub fn dihedral_charmm_ctor(
+pub fn dihedral_charmm_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -179,12 +179,12 @@ pub fn dihedral_charmm_ctor(
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
         let label = tc[idx].as_str();
-        kk.push(need::type_num("charmm", label, p, "k")?);
-        nn.push(need::type_num("charmm", label, p, "periodicity")?);
+        kk.push(param_reads::type_num("charmm", label, p, "k")?);
+        nn.push(param_reads::type_num("charmm", label, p, "periodicity")?);
         // degrees → radians
-        dd.push(need::type_num("charmm", label, p, "phase")?.to_radians());
+        dd.push(param_reads::type_num("charmm", label, p, "phase")?.to_radians());
     }
-    Ok(Member::indexed(DihedralCharmm {
+    Ok(ForceTerm::indexed(DihedralCharmm {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

@@ -24,14 +24,14 @@ use molrs::op::types::F;
 /// * [`text`](Self::text): a text per-type parameter, one string per term;
 /// * [`style_text`](Self::style_text): a text style parameter.
 #[derive(Clone, Debug, Default)]
-pub struct ParamCols<'a> {
+pub struct ParamColumns<'a> {
     scalars: Vec<(&'a str, &'a [F])>,
     arrays: Vec<(&'a str, ArrayViewD<'a, F>)>,
     texts: Vec<(&'a str, &'a [&'a str])>,
     style_texts: Vec<(&'a str, &'a str)>,
 }
 
-impl<'a> ParamCols<'a> {
+impl<'a> ParamColumns<'a> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -101,7 +101,7 @@ impl<'a> ParamCols<'a> {
 /// The derivative is checked against a central difference of `e`, at
 /// registration on the style's samples or at its first compile.
 pub trait ScalarForm: Send + Sync + 'static {
-    fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de_dq: &mut [F]);
+    fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de_dq: &mut [F]);
 
     /// The numeric columns the form reads, by name, when it states them; a
     /// kernel refuses at build a form whose input it cannot supply
@@ -122,7 +122,14 @@ pub trait ScalarForm: Send + Sync + 'static {
 /// form **writes** `e[t]` and the gradient `grad` (`∂E/∂x`, not the force,
 /// laid out as `x`).
 pub trait CompoundForm: Send + Sync + 'static {
-    fn eval(&self, x: &[[F; 3]], arity: usize, p: &ParamCols<'_>, e: &mut [F], grad: &mut [[F; 3]]);
+    fn eval(
+        &self,
+        x: &[[F; 3]],
+        arity: usize,
+        p: &ParamColumns<'_>,
+        e: &mut [F],
+        grad: &mut [[F; 3]],
+    );
 
     /// The numeric columns the form reads; see [`ScalarForm::inputs`].
     fn inputs(&self) -> Vec<String> {

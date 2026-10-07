@@ -35,7 +35,7 @@ and the docs build.
 | `molrs.io.lammps_bond_react` | `molrs::io::data::lammps_bond_react` | `BondReactTemplate` |
 | `molrs.io.mrec` | `molrs::io::mrec` | `MOLREC_VERSION`, `RESERVED_META_KEYS`, `MrecReader`, `MrecWriter`, `SequenceSchema`, `ForceFieldSection`, `section_names`, `pack`, `schema` |
 | `molrs.ff.forcefield` | `molrs::ff::forcefield` | `ForceField`, the `Style` / `Type` handles (the data model; its files are `molrs.io`'s) |
-| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `TypedPotentials`, `kernel`, `LJCut`, `intramolecular_pairs`, `Potential` |
+| `molrs.ff.potential` | `molrs::ff::potential` | `PotentialCompiler`, `Potentials`, `WeightedTerms`, `kernel`, `PairLjCut`, `intramolecular_pairs`, `Potential` |
 | `molrs.ff.typifier` | `molrs::ff::typifier` | `Typifier`, `Match`, the built-in typifiers, `assign_cmaps` |
 | `molrs.ff.charge` | `molrs::ff::charge` | `BccModel`, `MullikenModel`, `GasteigerModel` |
 | `molrs.ff.ir` | `molrs::ff::ir` | the force-field IR registry and its `IrError` family |

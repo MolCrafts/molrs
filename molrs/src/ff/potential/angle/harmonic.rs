@@ -4,20 +4,20 @@
 //! **degrees**, as in an `angle_coeff t K theta0` line; the kernel converts it
 //! to radians once, at construction.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::flat_coords::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
 /// Harmonic angle potential with pre-resolved flat arrays. Its own `theta0`
-/// array is in radians (the parameter is degrees; see [`angle_harmonic_ctor`]).
+/// array is in radians (the parameter is degrees; see [`angle_harmonic_constructor`]).
 pub struct AngleHarmonic {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -127,11 +127,11 @@ impl IndexedTerms for AngleHarmonic {
 }
 
 /// Construct an [`AngleHarmonic`] from style params, type params, and Frame topology.
-pub fn angle_harmonic_ctor(
+pub fn angle_harmonic_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -166,9 +166,9 @@ pub fn angle_harmonic_ctor(
             .get(label.as_str())
             .ok_or_else(|| format!("AngleHarmonic: unknown angle type '{}'", label))?;
         // `k` is LAMMPS's `K`: E = k(θ − θ0)², no ½.
-        let k = need::type_num("harmonic", label, params, "k")?;
+        let k = param_reads::type_num("harmonic", label, params, "k")?;
         // theta0 is a parameter in degrees (LAMMPS); the kernel works in radians.
-        let theta0_rad = need::type_num("harmonic", label, params, "theta0")?.to_radians();
+        let theta0_rad = param_reads::type_num("harmonic", label, params, "theta0")?.to_radians();
 
         atom_i.push(i_col[idx] as usize);
         atom_j.push(j_col[idx] as usize);
@@ -177,7 +177,7 @@ pub fn angle_harmonic_ctor(
         theta0_vec.push(theta0_rad);
     }
 
-    Ok(Member::indexed(AngleHarmonic::new(
+    Ok(ForceTerm::indexed(AngleHarmonic::new(
         atom_i, atom_j, atom_k, k_vec, theta0_vec,
     )))
 }

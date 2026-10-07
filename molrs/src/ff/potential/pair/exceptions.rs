@@ -55,10 +55,10 @@ use crate::ff::forcefield::one_four::check_materialized;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::compile::gathered;
 use crate::ff::potential::end_pairs;
-use crate::ff::potential::geometry::{term_table, validate_coords};
-use crate::ff::potential::need;
+use crate::ff::potential::flat_coords::{term_table, validate_coords};
 use crate::ff::potential::pair::charmm::{charmm_mixing, charmm_pair_params, lj_coeffs};
 use crate::ff::potential::pair::lj_cut::{lj_pair_params, mixing_of};
+use crate::ff::potential::param_reads;
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::core::keys::{ATOMI, ATOMJ, ATOML};
@@ -417,7 +417,7 @@ pub(crate) fn dihedral_weights(
         let mut by_type: HashMap<String, F> = HashMap::new();
         let (_, rows) = gathered(style).map_err(|e| e.to_string())?;
         for (name, p) in rows {
-            let w = need::type_num("charmm", &name, &p, "w").map_err(|e| e.to_string())?;
+            let w = param_reads::type_num("charmm", &name, &p, "w").map_err(|e| e.to_string())?;
             // LAMMPS: "Incorrect weight arg for dihedral coefficients".
             if !(0.0..=1.0).contains(&w) {
                 return Err(format!(
@@ -573,7 +573,7 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
         let found = match name {
             "lj/cut" => {
                 let (p, rows) = gathered(style).map_err(|e| e.to_string())?;
-                let num = |k: &str| need::style_num(name, &p, k).map_err(|e| e.to_string());
+                let num = |k: &str| param_reads::style_num(name, &p, k).map_err(|e| e.to_string());
                 if num("n")? == 12.0 && num("m")? == 6.0 {
                     let mixing = mixing_of(name, &p).map_err(|e| e.to_string())?;
                     Some(Vdw::LjCut(rows.into_iter().collect(), mixing))
@@ -597,7 +597,7 @@ fn pair_styles(ff: &ForceField) -> Result<(Vdw<'_>, Option<F>), String> {
                 if coul.is_some() {
                     return Err("1-4 exceptions: the force field has two Coulomb styles".into());
                 }
-                let num = |k: &str| need::style_num(name, &p, k).map_err(|e| e.to_string());
+                let num = |k: &str| param_reads::style_num(name, &p, k).map_err(|e| e.to_string());
                 coul = Some(num("coulomb")? / num("dielectric")?);
                 None
             }

@@ -11,7 +11,7 @@ use crate::ff::ir::expr::{self, Binding, Compiled, ExprError, Geometry};
 use crate::ff::ir::{CategorySpec, Coordinate, Dim, IrError, Mix, ParamKind, ParamSpec, StyleSpec};
 use crate::ff::ir::{ExpressionForm, ExpressionKernel};
 use crate::ff::ir::{ParamSource, SpecialClass};
-use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
+use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use molrs::op::types::F;
 
 /// Members an indexed family binds in an expression: `k1 … k16`. A table
@@ -50,7 +50,7 @@ fn spellings(c: &Compiled) -> Vec<String> {
 struct ScalarProgram(Arc<Compiled>);
 
 impl ScalarForm for ScalarProgram {
-    fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de_dq: &mut [F]) {
+    fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de_dq: &mut [F]) {
         // The kernels refuse, at build, a form whose inputs they cannot
         // supply (`inputs`), so a missing column here is a kernel's bug.
         self.0
@@ -71,7 +71,7 @@ impl CompoundForm for CompoundProgram {
         &self,
         x: &[[F; 3]],
         _arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [F],
         grad: &mut [[F; 3]],
     ) {

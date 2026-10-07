@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::*;
 use crate::ff::forcefield::{ForceField, Params};
 use crate::ff::potential::PotentialCompiler;
-use crate::ff::potential::geometry::{compute_angle, compute_dihedral};
+use crate::ff::potential::flat_coords::{compute_angle, compute_dihedral};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::types::{F, Idx};

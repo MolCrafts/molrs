@@ -8,9 +8,11 @@ use crate::ff::forcefield::{Params, pair_key};
 use crate::ff::ir::SpecialClass;
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{IrError, Mix, ParamKind, StyleSpec};
-use crate::ff::potential::generic::{Column, ScalarForm, TermParams, columns, read_by, row_num};
-use crate::ff::potential::need::{neighbour_cutoff, pair_cutoff};
+use crate::ff::potential::form_kernel::{
+    ScalarForm, StyleParamColumn, TermParams, columns, read_by, row_num,
+};
 use crate::ff::potential::pair::{atom_type_index, fold_chunks, type_pair};
+use crate::ff::potential::param_reads::{neighbour_cutoff, pair_cutoff};
 use crate::ff::potential::{PairDriven, Potential, gather_copies};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
@@ -93,7 +95,7 @@ pub struct ScalarPair {
 /// A style's per-type rows, and how they make a pair's values.
 struct PairRows<'a> {
     spec: &'a StyleSpec,
-    cols: Vec<Column>,
+    cols: Vec<StyleParamColumn>,
     rows: HashMap<&'a str, &'a Params>,
     mixing: Mixing,
 }
@@ -173,7 +175,7 @@ impl<'a> PairRows<'a> {
             .collect()
     }
 
-    /// Column `c` of the unlike pair `{a, b}` by its mixing rule.
+    /// StyleParamColumn `c` of the unlike pair `{a, b}` by its mixing rule.
     fn mixed(&self, a: &str, b: &str, c: usize) -> Result<F, IrError> {
         Ok(match &self.spec.params[self.cols[c].param].mix {
             Mix::Arithmetic => 0.5 * (self.own(a, c)? + self.own(b, c)?),
@@ -209,7 +211,7 @@ impl<'a> PairRows<'a> {
 }
 
 /// The self-row inputs `form` asks for: `(spelling, atom 0|1, column)`.
-fn self_rows(form: &dyn ScalarForm, cols: &[Column]) -> Vec<(String, usize, usize)> {
+fn self_rows(form: &dyn ScalarForm, cols: &[StyleParamColumn]) -> Vec<(String, usize, usize)> {
     form.inputs()
         .into_iter()
         .filter(|i| !cols.iter().any(|c| &c.name == i))

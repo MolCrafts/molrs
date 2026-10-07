@@ -1,4 +1,4 @@
-"""``molrs.ff.potential.kernel``: any style's kernel over explicit instances.
+"""``molrs.ff.potential.compile_explicit_terms``: any style's kernel over explicit instances.
 
 One builder for every style the force-field IR prices — the built-ins, a
 style registered from Python by expression or by a numpy kernel, a style of a
@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 from molrs.ff.potential import Potentials
 from molrs.ff import ir
-from molrs.ff.potential import kernel
+from molrs.ff.potential import compile_explicit_terms
 
 # A non-planar four-atom chain: every angle and the dihedral are generic.
 XYZ = np.array(
@@ -76,7 +76,7 @@ def _fd_forces(make, h: float = 1e-6) -> np.ndarray:
 class TestBuiltins:
     def test_bond_harmonic_prices_one_row_per_term(self) -> None:
         def make() -> Potentials:
-            return kernel("bond", "harmonic", [[0, 1], [1, 2]], k=[300.0, 200.0], r0=1.4)
+            return compile_explicit_terms("bond", "harmonic", [[0, 1], [1, 2]], k=[300.0, 200.0], r0=1.4)
 
         want = 300.0 * (_dist(0, 1) - 1.4) ** 2 + 200.0 * (_dist(1, 2) - 1.4) ** 2
         e, f = make().calc_energy_forces(FLAT)
@@ -84,7 +84,7 @@ class TestBuiltins:
         np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
 
     def test_angle_harmonic_takes_theta0_in_degrees(self) -> None:
-        pots = kernel("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5)
+        pots = compile_explicit_terms("angle", "harmonic", [[0, 1, 2]], k=50.0, theta0=109.5)
         want = 50.0 * (_angle(0, 1, 2) - math.radians(109.5)) ** 2
         assert math.isclose(_energy(pots), want, rel_tol=1e-12)
 
@@ -92,7 +92,7 @@ class TestBuiltins:
         k, n, phase = (1.3, 0.4), (1.0, 2.0), (0.0, 180.0)
 
         def make() -> Potentials:
-            return kernel(
+            return compile_explicit_terms(
                 "dihedral",
                 "periodic",
                 [[0, 1, 2, 3]],
@@ -113,17 +113,17 @@ class TestBuiltins:
         np.testing.assert_allclose(f, _fd_forces(make), atol=1e-5)
 
     def test_improper_cvff_prices_the_dihedral_of_the_listed_order(self) -> None:
-        pots = kernel("improper", "cvff", [[1, 0, 2, 3]], k=2.0, sign=-1.0, periodicity=2.0)
+        pots = compile_explicit_terms("improper", "cvff", [[1, 0, 2, 3]], k=2.0, sign=-1.0, periodicity=2.0)
         phi = _dihedral(1, 0, 2, 3)
         assert math.isclose(_energy(pots), 2.0 * (1 - math.cos(2 * phi)), rel_tol=1e-12)
 
     def test_improper_periodic_takes_its_phase_in_degrees(self) -> None:
-        pots = kernel("improper", "periodic", [[0, 2, 1, 3]], k=1.1, periodicity=2.0, phase=180.0)
+        pots = compile_explicit_terms("improper", "periodic", [[0, 2, 1, 3]], k=1.1, periodicity=2.0, phase=180.0)
         phi = _dihedral(0, 2, 1, 3)
         assert math.isclose(_energy(pots), 1.1 * (1 + math.cos(2 * phi - math.pi)), rel_tol=1e-12)
 
     def test_a_pair_term_is_priced_with_its_own_row(self) -> None:
-        pots = kernel("pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1)
+        pots = compile_explicit_terms("pair", "lj/cut", [[0, 3], [1, 3]], epsilon=[0.2, 0.1], sigma=3.1)
         want = sum(
             4 * eps * ((3.1 / _dist(i, 3)) ** 12 - (3.1 / _dist(i, 3)) ** 6)
             for i, eps in ((0, 0.2), (1, 0.1))
@@ -132,7 +132,7 @@ class TestBuiltins:
 
     def test_coul_cut_reads_per_atom_charges(self) -> None:
         q = [0.3, 0.0, 0.0, -0.4]
-        pots = kernel("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0)
+        pots = compile_explicit_terms("pair", "coul/cut", [[0, 3]], charges=q, coulomb=332.06371, dielectric=1.0)
         want = 332.06371 * 0.3 * -0.4 / _dist(0, 3)
         assert math.isclose(_energy(pots), want, rel_tol=1e-12)
 
@@ -146,7 +146,7 @@ class TestCustomStyles:
             expression = "k*(r-r0)^4"
 
         registered.append(("bond", Quartic.name))
-        pots = kernel("bond", Quartic.name, [[0, 1]], k=2.0, r0=1.0)
+        pots = compile_explicit_terms("bond", Quartic.name, [[0, 1]], k=2.0, r0=1.0)
         assert math.isclose(_energy(pots), 2.0 * (_dist(0, 1) - 1.0) ** 4, rel_tol=1e-12)
 
     def test_a_style_priced_by_a_numpy_kernel(self, registered) -> None:
@@ -158,7 +158,7 @@ class TestCustomStyles:
             "bond", "cubic/kernel-test", params={"k": "E/L^3", "r0": "L"}, kernel=cubic
         )
         registered.append(("bond", "cubic/kernel-test"))
-        pots = kernel("bond", "cubic/kernel-test", [[0, 1]], k=3.0, r0=0.5)
+        pots = compile_explicit_terms("bond", "cubic/kernel-test", [[0, 1]], k=3.0, r0=0.5)
         assert math.isclose(_energy(pots), 3.0 * (_dist(0, 1) - 0.5) ** 3, rel_tol=1e-12)
 
     def test_a_style_of_a_custom_category(self, registered) -> None:
@@ -170,30 +170,30 @@ class TestCustomStyles:
             expression="k_ub*(distance(p1,p3)-r_ub)^2",
         )
         registered.append(("urey_bradley", "kernel-test"))
-        pots = kernel("urey_bradley", "kernel-test", [[0, 1, 2]], k_ub=20.0, r_ub=2.4)
+        pots = compile_explicit_terms("urey_bradley", "kernel-test", [[0, 1, 2]], k_ub=20.0, r_ub=2.4)
         assert math.isclose(_energy(pots), 20.0 * (_dist(0, 2) - 2.4) ** 2, rel_tol=1e-12)
 
     def test_an_unregistered_style_by_its_expression(self) -> None:
-        pots = kernel("bond", "unregistered/kernel-test", [[0, 1]], expression="k*r^2", k=0.5)
+        pots = compile_explicit_terms("bond", "unregistered/kernel-test", [[0, 1]], expression="k*r^2", k=0.5)
         assert math.isclose(_energy(pots), 0.5 * _dist(0, 1) ** 2, rel_tol=1e-12)
 
 
 class TestRefusals:
     def test_unknown_category(self) -> None:
         with pytest.raises(ir.UnknownCategory):
-            kernel("nope", "x", [[0, 1]])
+            compile_explicit_terms("nope", "x", [[0, 1]])
 
     def test_a_term_of_the_wrong_arity(self) -> None:
         with pytest.raises(ir.Arity):
-            kernel("bond", "harmonic", [[0, 1, 2]], k=1.0, r0=1.0)
+            compile_explicit_terms("bond", "harmonic", [[0, 1, 2]], k=1.0, r0=1.0)
 
     def test_an_undeclared_parameter(self) -> None:
         with pytest.raises(TypeError, match="no parameter `kb`"):
-            kernel("bond", "harmonic", [[0, 1]], kb=1.0, r0=1.0)
+            compile_explicit_terms("bond", "harmonic", [[0, 1]], kb=1.0, r0=1.0)
 
     def test_a_missing_parameter(self) -> None:
         with pytest.raises(ir.MissingParam) as err:
-            kernel("bond", "harmonic", [[0, 1]], k=1.0)
+            compile_explicit_terms("bond", "harmonic", [[0, 1]], k=1.0)
         assert (err.value.style, err.value.type, err.value.param) == ("harmonic", "0", "r0")
 
     @pytest.mark.parametrize(
@@ -214,26 +214,26 @@ class TestRefusals:
         if style == "lj/charmm":
             params = {**params, "epsilon": 0.1, "sigma": 3.0}
         with pytest.raises(ir.MissingParam) as err:
-            kernel(category, style, atoms, charges=charges, **params)
+            compile_explicit_terms(category, style, atoms, charges=charges, **params)
         assert (err.value.style, err.value.param) == (style, param)
 
     def test_a_value_outside_its_choices(self) -> None:
         with pytest.raises(ir.BadValue) as err:
-            kernel("pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0)
+            compile_explicit_terms("pair", "lj/cut", [[0, 1]], mixing="lorentz", epsilon=0.1, sigma=3.0)
         assert (err.value.style, err.value.param) == ("lj/cut", "mixing")
 
     def test_an_unregistered_style_without_expression(self) -> None:
         with pytest.raises(ir.NoKernel):
-            kernel("bond", "nothing/kernel-test", [[0, 1]], k=1.0)
+            compile_explicit_terms("bond", "nothing/kernel-test", [[0, 1]], k=1.0)
 
     def test_mismatched_lengths(self) -> None:
         with pytest.raises(ValueError, match="2 terms"):
-            kernel("bond", "harmonic", [[0, 1], [1, 2]], k=[1.0, 2.0, 3.0], r0=1.0)
+            compile_explicit_terms("bond", "harmonic", [[0, 1], [1, 2]], k=[1.0, 2.0, 3.0], r0=1.0)
 
 
 class TestPotentialsAssembly:
     def test_push_moves_the_kernel(self) -> None:
-        bond = kernel("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4)
+        bond = compile_explicit_terms("bond", "harmonic", [[0, 1]], k=300.0, r0=1.4)
         pots = Potentials()
         pots.push(bond)
         assert len(pots) == 1
@@ -268,9 +268,9 @@ class TestPotentialsAssembly:
         compiled = molrs.ff.potential.PotentialCompiler(ff).compile(frame).calc_energy_forces(FLAT)
 
         pots = Potentials()
-        pots.push(kernel("bond", "harmonic", bonds, k=300.0, r0=1.4))
-        pots.push(kernel("angle", "harmonic", angles, k=50.0, theta0=109.5))
-        pots.push(kernel("dihedral", "periodic", dihedrals, **torsion))
+        pots.push(compile_explicit_terms("bond", "harmonic", bonds, k=300.0, r0=1.4))
+        pots.push(compile_explicit_terms("angle", "harmonic", angles, k=50.0, theta0=109.5))
+        pots.push(compile_explicit_terms("dihedral", "periodic", dihedrals, **torsion))
         by_hand = pots.calc_energy_forces(FLAT)
         assert math.isclose(by_hand[0], compiled[0], rel_tol=1e-12)
         np.testing.assert_allclose(by_hand[1], compiled[1], rtol=1e-12, atol=1e-12)
@@ -282,8 +282,8 @@ class TestDefaults:
 
     def test_coul_cut_dielectric_defaults_to_1(self) -> None:
         coords = np.array([0.0, 0.0, 0.0, 2.5, 0.0, 0.0])
-        bare = kernel("pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371)
-        stated = kernel(
+        bare = compile_explicit_terms("pair", "coul/cut", [[0, 1]], charges=[0.5, -0.4], coulomb=332.06371)
+        stated = compile_explicit_terms(
             "pair",
             "coul/cut",
             [[0, 1]],
@@ -297,8 +297,8 @@ class TestDefaults:
         assert e == stated.calc_energy_forces(coords)[0]
 
     def test_a_phase_defaults_to_0(self) -> None:
-        bare = kernel("dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0)
-        stated = kernel(
+        bare = compile_explicit_terms("dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0)
+        stated = compile_explicit_terms(
             "dihedral", "charmm", [[0, 1, 2, 3]], k=1.3, periodicity=3.0, phase=0.0, w=0.0
         )
         assert _energy(bare) == _energy(stated)
@@ -306,6 +306,6 @@ class TestDefaults:
 
     def test_lj_cut_exponents_and_shift_default_to_12_6_no(self) -> None:
         params = {"epsilon": 0.2, "sigma": 1.1}
-        bare = kernel("pair", "lj/cut", [[0, 1]], **params)
-        stated = kernel("pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params)
+        bare = compile_explicit_terms("pair", "lj/cut", [[0, 1]], **params)
+        stated = compile_explicit_terms("pair", "lj/cut", [[0, 1]], n=12.0, m=6.0, shift=0.0, **params)
         assert _energy(bare) == _energy(stated)

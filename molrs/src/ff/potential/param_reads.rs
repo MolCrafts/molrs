@@ -2,7 +2,7 @@
 //!
 //! Every built-in constructor reads its numbers through these, so a
 //! parameter it needs and does not find is [`IrError::MissingParam`] naming
-//! the style, the type and the parameter — the refusal a generic kernel or
+//! the style, the type and the parameter — the refusal a form kernel or
 //! an expression makes of the same row — and never a message. The values
 //! arrive gathered ([`StyleSpec::gather`](crate::ff::ir::StyleSpec::gather)):
 //! a declared default is already in place, so none is stated here.
@@ -133,7 +133,7 @@ pub(crate) fn neighbour_cutoff(style: &str, params: &Params) -> Result<F, IrErro
 mod tests {
     use crate::ff::forcefield::Params;
     use crate::ff::ir::IrError;
-    use crate::ff::potential::{CompileError, Instances, Potentials};
+    use crate::ff::potential::{CompileError, ExplicitTerms, Potentials};
     use molrs::op::types::F;
 
     const XYZ: [F; 12] = [
@@ -146,7 +146,9 @@ mod tests {
         atoms: &[usize],
         row: Params,
     ) -> Result<Potentials, CompileError> {
-        Instances::new(category, style).term(atoms, row).compile()
+        ExplicitTerms::new(category, style)
+            .term(atoms, row)
+            .compile()
     }
 
     fn missing(err: CompileError) -> (String, String) {
@@ -250,14 +252,14 @@ mod tests {
             );
         }
         // A per-instance style: the column its typifier bakes.
-        let err = Instances::new("bond", "mmff_bond")
+        let err = ExplicitTerms::new("bond", "mmff_bond")
             .atoms([vec![0, 1]])
             .compile()
             .map(|_| ())
             .unwrap_err();
         assert_eq!(missing(err).1, "kb");
         // A style parameter.
-        let err = Instances::new("pair", "lj/charmm")
+        let err = ExplicitTerms::new("pair", "lj/charmm")
             .style_params(Params::from_pairs(&[("cutoff", 10.0)]))
             .term(&[0, 1], p(&[("epsilon", 0.1), ("sigma", 3.0)]))
             .compile()
@@ -278,7 +280,7 @@ mod tests {
 
         let mut style = Params::from_pairs(&[("cutoff", 10.0)]);
         style.set_str("mixing", "lorentz");
-        let err = Instances::new("pair", "lj/cut")
+        let err = ExplicitTerms::new("pair", "lj/cut")
             .style_params(style)
             .term(
                 &[0, 1],
@@ -361,7 +363,7 @@ mod tests {
         }
         // A style default on the pair kernels: lj/cut's n, m, shift.
         let lj = |style: Params| {
-            Instances::new("pair", "lj/cut")
+            ExplicitTerms::new("pair", "lj/cut")
                 .style_params(style)
                 .term(
                     &[0, 1],

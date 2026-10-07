@@ -39,7 +39,7 @@ use crate::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, IrError, Kernel, Mix, ParamKind, Sample, StyleSpec,
 };
 use crate::ff::ir::{ExpressionCompiler, ExpressionForm};
-use crate::ff::potential::generic::{CompoundForm, ScalarForm, TermParams, columns};
+use crate::ff::potential::form_kernel::{CompoundForm, ScalarForm, TermParams, columns};
 use molrs::op::types::F;
 
 /// `dE/dq` against a central difference.
@@ -233,7 +233,7 @@ pub(crate) fn check_style(
                 None => return Ok(()),
             }
         }
-        Some(Kernel::Ctor { typed, .. }) => {
+        Some(Kernel::Constructor { typed, .. }) => {
             return match typed {
                 Some(_) if !pair => Err(mismatch("neighbour-driven constructor")),
                 Some((_, class)) if *class != spec.special_class() => Err(malformed(format!(
@@ -438,7 +438,7 @@ impl Probe {
             let decl = &spec.params[col.param];
             match &decl.kind {
                 ParamKind::Scalar => {
-                    let v = crate::ff::potential::generic::row_num(spec, &col, row)
+                    let v = crate::ff::potential::form_kernel::row_num(spec, &col, row)
                         .ok_or_else(|| missing(&col.name))?;
                     params.nums.push((col.name, vec![v; n]));
                 }

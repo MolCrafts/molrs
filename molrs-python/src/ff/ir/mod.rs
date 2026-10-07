@@ -39,7 +39,7 @@ use molrs::ff::ir::{
     ParamKind, ParamSource, ParamSpec, Registry, Sample, SpecialClass, StyleSpec, Value,
 };
 use molrs::ff::potential::CompileError;
-use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
+use molrs::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 use molrs::op::types::F;
 
 use crate::ff::potential::ErrSlot;
@@ -392,7 +392,7 @@ fn park(err: PyErr) {
 
 /// The non-numeric inputs a Python kernel receives by name: array and text
 /// per-type parameters, text style parameters. (Numeric ones are every
-/// column the generic kernel supplies.)
+/// column the form kernel supplies.)
 #[derive(Clone, Debug, Default)]
 struct Extras {
     arrays: Vec<String>,
@@ -420,7 +420,7 @@ impl Extras {
 
     /// The keyword arguments of one call: numeric columns as `ndarray[n]`,
     /// arrays `[n, S…]`, text per-type `list[str]`, text style `str`.
-    fn kwargs<'py>(&self, py: Python<'py>, p: &ParamCols<'_>) -> PyResult<Bound<'py, PyDict>> {
+    fn kwargs<'py>(&self, py: Python<'py>, p: &ParamColumns<'_>) -> PyResult<Bound<'py, PyDict>> {
         let kw = PyDict::new(py);
         for name in p.names() {
             if let Some(col) = p.get(name) {
@@ -549,7 +549,7 @@ struct PyScalarKernel {
 }
 
 impl PyScalarKernel {
-    fn call(&self, py: Python<'_>, q: &[F], p: &ParamCols<'_>) -> PyResult<(Vec<F>, Vec<F>)> {
+    fn call(&self, py: Python<'_>, q: &[F], p: &ParamColumns<'_>) -> PyResult<(Vec<F>, Vec<F>)> {
         let n = q.len();
         let kw = self.extras.kwargs(py, p)?;
         let out = self
@@ -566,7 +566,7 @@ impl PyScalarKernel {
 }
 
 impl ScalarForm for PyScalarKernel {
-    fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de_dq: &mut [F]) {
+    fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de_dq: &mut [F]) {
         Python::attach(|py| match self.call(py, q, p) {
             Ok((ev, dv)) => {
                 e.copy_from_slice(&ev);
@@ -595,7 +595,7 @@ impl PyCompoundKernel {
         py: Python<'_>,
         x: &[[F; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
     ) -> PyResult<(Vec<F>, Vec<F>)> {
         let n = x.len() / arity.max(1);
         let flat: Vec<F> = x.iter().flatten().copied().collect();
@@ -621,7 +621,7 @@ impl CompoundForm for PyCompoundKernel {
         &self,
         x: &[[F; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [F],
         grad: &mut [[F; 3]],
     ) {
@@ -1398,7 +1398,7 @@ impl PyStyleInfo {
             Some(Kernel::Expression(_)) => Some("expression"),
             Some(Kernel::Scalar(_)) => Some("scalar"),
             Some(Kernel::Compound(_)) => Some("compound"),
-            Some(Kernel::Ctor { .. }) => Some("constructor"),
+            Some(Kernel::Constructor { .. }) => Some("constructor"),
             None => spec.expression.as_ref().map(|_| "expression"),
         };
         Self {
@@ -1554,14 +1554,14 @@ impl Inputs {
         self.nums.iter().find(|(n, _)| n == name).map(|(_, c)| c)
     }
 
-    /// `f` over the inputs as one batch's [`ParamCols`].
-    fn with_cols<R>(&self, f: impl FnOnce(&ParamCols<'_>) -> R) -> R {
+    /// `f` over the inputs as one batch's [`ParamColumns`].
+    fn with_cols<R>(&self, f: impl FnOnce(&ParamColumns<'_>) -> R) -> R {
         let texts: Vec<Vec<&str>> = self
             .texts
             .iter()
             .map(|(_, t)| t.iter().map(String::as_str).collect())
             .collect();
-        let mut cols = ParamCols::new();
+        let mut cols = ParamColumns::new();
         for (name, col) in &self.nums {
             cols.push(name, col);
         }
@@ -1777,7 +1777,7 @@ fn evaluate<'py>(
         Some(Kernel::Compound(f)) => ExpressionForm::Compound(f),
         // A native constructor builds a whole kernel from a frame; its
         // expression is what evaluates on a batch.
-        Some(Kernel::Ctor { .. }) | None => match (compiler, &spec.expression) {
+        Some(Kernel::Constructor { .. }) | None => match (compiler, &spec.expression) {
             (Some(compile), Some(_)) => compile(&cat, &spec).map_err(refuse)?.form(),
             _ => {
                 return Err(PyValueError::new_err(format!(

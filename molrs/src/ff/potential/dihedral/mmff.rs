@@ -1,18 +1,18 @@
 //! MMFF94 torsional rotation: E = 0.5*(V1*(1+cos phi) + V2*(1-cos 2phi) + V3*(1+cos 3phi))
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::DIHEDRALS;
 use ndarray::{Array2, ArrayView2};
 
 use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
 
-pub struct MMFFTorsion {
+pub struct DihedralMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -22,7 +22,7 @@ pub struct MMFFTorsion {
     v3: Vec<F>,
 }
 
-impl MMFFTorsion {
+impl DihedralMmff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -59,7 +59,7 @@ impl MMFFTorsion {
     }
 }
 
-impl Potential for MMFFTorsion {
+impl Potential for DihedralMmff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -78,7 +78,7 @@ impl Potential for MMFFTorsion {
     }
 }
 
-impl IndexedTerms for MMFFTorsion {
+impl IndexedTerms for DihedralMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -109,11 +109,11 @@ impl IndexedTerms for MMFFTorsion {
     }
 }
 
-pub fn mmff_torsion_ctor(
+pub fn dihedral_mmff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked v1/v2/v3 onto each
     // dihedral (table → empirical). This kernel only reads the columns and
     // evaluates — no force-field-specific resolution lives here.
@@ -136,9 +136,9 @@ pub fn mmff_torsion_ctor(
         .get("atoml")
         .and_then(|c| c.as_uint())
         .ok_or("missing atoml")?;
-    let v1c = need::instance_col("mmff_torsion", block, "v1")?;
-    let v2c = need::instance_col("mmff_torsion", block, "v2")?;
-    let v3c = need::instance_col("mmff_torsion", block, "v3")?;
+    let v1c = param_reads::instance_col("mmff_torsion", block, "v1")?;
+    let v2c = param_reads::instance_col("mmff_torsion", block, "v2")?;
+    let v3c = param_reads::instance_col("mmff_torsion", block, "v3")?;
 
     let n = ic.len();
     let (mut ai, mut aj, mut ak, mut al) = (
@@ -162,7 +162,7 @@ pub fn mmff_torsion_ctor(
         v2.push(v2c[idx] as F);
         v3.push(v3c[idx] as F);
     }
-    Ok(Member::indexed(MMFFTorsion {
+    Ok(ForceTerm::indexed(DihedralMmff {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_mmff_torsion() {
-        let pot = MMFFTorsion {
+        let pot = DihedralMmff {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

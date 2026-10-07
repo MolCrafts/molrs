@@ -7,11 +7,11 @@ use ndarray::{Array2, ArrayView2};
 use crate::ff::forcefield::Params;
 use crate::ff::ir::conformance::Probe;
 use crate::ff::ir::{CategorySpec, Coordinate, StyleSpec};
-use crate::ff::potential::generic::{ScalarForm, TermParams, resolve_terms};
-use crate::ff::potential::geometry::{
+use crate::ff::potential::flat_coords::{
     accumulate_angle_forces, accumulate_dihedral_forces, compute_angle, compute_dihedral,
     term_table, validate_coords,
 };
+use crate::ff::potential::form_kernel::{ScalarForm, TermParams, resolve_terms};
 use crate::ff::potential::{IndexedTerms, Potential};
 use molrs::core::Frame;
 use molrs::op::types::F;
@@ -21,7 +21,7 @@ use molrs::op::types::F;
 ///
 /// Per evaluation it computes every term's coordinate, makes **one** call to
 /// the form, and projects each `dE/dq` onto the term's atoms with the chain
-/// rule of [`geometry`](crate::ff::potential::geometry): along the bond for
+/// rule of [`geometry`](crate::ff::potential::flat_coords): along the bond for
 /// `r`, `accumulate_angle_forces` for `theta`, `accumulate_dihedral_forces`
 /// for `phi`.
 pub struct ScalarBonded {
@@ -35,7 +35,7 @@ pub struct ScalarBonded {
 impl ScalarBonded {
     /// The kernel of `spec` over `category`'s block in `frame`, its terms'
     /// parameters resolved from `style` and `tp` (see
-    /// [`generic`](crate::ff::potential::generic)'s resolution order).
+    /// [`generic`](crate::ff::potential::form_kernel)'s resolution order).
     pub fn build(
         form: Arc<dyn ScalarForm>,
         category: &CategorySpec,

@@ -51570,7 +51570,7 @@ pub fn mmff_is_arom(atom_type: u8) -> bool {
 pub struct MmffStyle {
     /// `bond` / `angle` / `dihedral` / `improper` / `pair`.
     pub category: &'static str,
-    /// Style name — the key the `KernelRegistry` is looked up with.
+    /// Style name — the key the `BuiltinKernels` is looked up with.
     pub name: &'static str,
 }
 

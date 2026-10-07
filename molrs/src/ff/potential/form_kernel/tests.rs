@@ -1,4 +1,4 @@
-//! Every generic kernel against a built-in re-expressed as a form.
+//! Every form kernel against a built-in re-expressed as a form.
 //!
 //! Each built-in below is written as the [`ScalarForm`] / [`CompoundForm`] a
 //! third party would register, compiled through the same
@@ -14,10 +14,10 @@ use ndarray::Array1;
 
 use crate::ff::forcefield::{ForceField, Params, SpecialBonds};
 use crate::ff::ir::{Dim, Kernel, Mix, ParamSource, ParamSpec, Registry, SpecialClass, StyleSpec};
-use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use crate::ff::potential::geometry::{accumulate_angle_forces, compute_angle};
-use crate::ff::potential::pair::testing::{assert_virial_matches_forces, table_over};
-use crate::ff::potential::{Member, Potential, PotentialCompiler, Potentials};
+use crate::ff::potential::flat_coords::{accumulate_angle_forces, compute_angle};
+use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
+use crate::ff::potential::pair::fixtures::{assert_virial_matches_forces, table_over};
+use crate::ff::potential::{ForceTerm, Potential, PotentialCompiler, Potentials};
 use molrs::core::Block;
 use molrs::core::Frame;
 use molrs::op::types::{F, Idx};
@@ -36,7 +36,7 @@ struct Harmonic {
 }
 
 impl ScalarForm for Harmonic {
-    fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let (k, q0) = (p.get("k").unwrap(), p.get(self.q0).unwrap());
         for t in 0..q.len() {
             let d = q[t] - q0[t] * self.unit;
@@ -51,7 +51,7 @@ impl ScalarForm for Harmonic {
 struct Periodic2;
 
 impl ScalarForm for Periodic2 {
-    fn eval(&self, phi: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, phi: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let col = |name: String| p.get(&name).unwrap();
         for t in 0..phi.len() {
             e[t] = 0.0;
@@ -74,7 +74,7 @@ impl ScalarForm for Periodic2 {
 struct Lj;
 
 impl ScalarForm for Lj {
-    fn eval(&self, r: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, r: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let (eps, sig) = (p.get("epsilon").unwrap(), p.get("sigma").unwrap());
         for t in 0..r.len() {
             let sr6 = (sig[t] / r[t]).powi(6);
@@ -89,7 +89,7 @@ impl ScalarForm for Lj {
 struct Coulomb;
 
 impl ScalarForm for Coulomb {
-    fn eval(&self, r: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, r: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let (c, q1, q2) = (
             p.get("coulomb").unwrap(),
             p.get("q1").unwrap(),
@@ -110,7 +110,7 @@ impl CompoundForm for CharmmAngle {
         &self,
         x: &[[F; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [F],
         grad: &mut [[F; 3]],
     ) {
@@ -275,7 +275,7 @@ fn assert_close(label: &str, a: (F, Vec<F>), b: (F, Vec<F>), rtol: F) {
 
 /// The one member a compile produced, and its rows under a rebound table
 /// (the same table here: rebinding must not change the answer).
-fn one_member(pots: Potentials) -> Member {
+fn one_member(pots: Potentials) -> ForceTerm {
     let mut members = pots.into_members();
     assert_eq!(members.len(), 1);
     members.pop().unwrap()
@@ -297,7 +297,7 @@ fn compare_bonded(label: &str, builtin: &ForceField, generic: &ForceField, reg: 
         b.calc_energy_forces(&COORDS),
         1e-12,
     );
-    let (Member::Indexed(ia), Member::Indexed(ib)) = (&a, &b) else {
+    let (ForceTerm::Indexed(ia), ForceTerm::Indexed(ib)) = (&a, &b) else {
         panic!("{label}: a bonded member is indexed");
     };
     assert_eq!(ia.terms(), ib.terms(), "{label}: the same rows");
@@ -493,7 +493,7 @@ fn scalar_pair_equals_lj_cut_at_both_doors() {
         .compile_typed(&frame)
         .unwrap();
     assert_eq!(ta[0].1, tb[0].1, "the same special-bonds weights");
-    let (Member::Pair(pa), Member::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
+    let (ForceTerm::Pair(pa), ForceTerm::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
         panic!("a pair member");
     };
     assert!(!pb.binds_a_fixed_pair_list());
@@ -558,7 +558,7 @@ fn scalar_pair_binds_charges_and_follows_copies() {
     coords.extend([0.3, -2.0, 1.1]);
     ta[0].0.gather_onto_copies(&[0]);
     tb[0].0.gather_onto_copies(&[0]);
-    let (Member::Pair(pa), Member::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
+    let (ForceTerm::Pair(pa), ForceTerm::Pair(pb)) = (&ta[0].0, &tb[0].0) else {
         panic!("a pair member");
     };
     let table = table_over(&coords, &[(0, 3), (1, 4), (2, 5), (4, 5)]);

@@ -40,7 +40,7 @@ arrive **as stored** (angle values in degrees, the expression converts with
 ``0.017453292519943295``); a kernel returns the **unweighted** energy per term
 and its derivative (or ``∂E/∂x`` for a compound kernel, not the force). The
 pair weight, the cutoff and the chain rule onto Cartesian forces are the
-generic kernels'.
+form kernels'.
 
 Refusals are :class:`IrError` (a ``ValueError``) subclasses of the same names
 as the Rust variants: :class:`Sealed`, :class:`Conflict`,

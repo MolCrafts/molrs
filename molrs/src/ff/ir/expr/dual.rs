@@ -254,7 +254,7 @@ pub(crate) fn angle<const N: usize>(a: P3<N>, b: P3<N>, c: P3<N>) -> Dual<N> {
 }
 
 /// `dihedral(p1, p2, p3, p4)`: the signed dihedral in molrs's convention
-/// ([`compute_dihedral`](crate::ff::potential::geometry::compute_dihedral)):
+/// ([`compute_dihedral`](crate::ff::potential::flat_coords::compute_dihedral)):
 /// φ = atan2(|b2|·(b1·n2), n1·n2), b1 = p2 − p1, b2 = p3 − p2, b3 = p4 − p3,
 /// n1 = b1×b2, n2 = b2×b3 (IUPAC: trans = ±π).
 ///

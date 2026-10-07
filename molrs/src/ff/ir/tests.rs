@@ -10,9 +10,9 @@ use crate::ff::ir::{
     Kernel, Mix, ParamKind, ParamSpec, Registry, RowSource, Sample, SpecialClass, StyleSpec, Value,
     builtin_categories, builtin_styles, register_style,
 };
-use crate::ff::potential::bond::bond_harmonic_ctor;
-use crate::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
-use crate::ff::potential::{CompileError, KernelRegistry, PotentialCompiler};
+use crate::ff::potential::bond::bond_harmonic_constructor;
+use crate::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
+use crate::ff::potential::{BuiltinKernels, CompileError, PotentialCompiler};
 use crate::io::mrec::ForceFieldSection;
 use molrs::core::Block;
 use molrs::core::Frame;
@@ -31,7 +31,7 @@ const RIGHT: Harmonic = Harmonic {
 };
 
 impl ScalarForm for Harmonic {
-    fn eval(&self, q: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, q: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let (k, q0) = (p.get("k").unwrap(), p.get("r0").unwrap());
         for t in 0..q.len() {
             let d = q[t] - q0[t];
@@ -47,7 +47,7 @@ struct Charges {
 }
 
 impl ScalarForm for Charges {
-    fn eval(&self, r: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, r: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let (k, q1, q2) = (
             p.get("k").unwrap(),
             p.get("q1").unwrap(),
@@ -116,8 +116,9 @@ fn expression(variables: &[&str], form: Harmonic) -> Option<Kernel> {
 
 #[test]
 fn every_builtin_kernel_has_its_spec() {
-    let kernels: BTreeSet<(String, String)> = KernelRegistry::builtin()
-        .names()
+    let kernels: BTreeSet<(String, String)> = BuiltinKernels::builtin()
+        .styles()
+        .into_iter()
         .map(|(c, n)| (c.to_owned(), n.to_owned()))
         .collect();
     let specs: BTreeSet<(String, String)> = builtin_styles()
@@ -216,7 +217,7 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
     let err = r
         .register_style(
             StyleSpec::new("bond", "harmonic"),
-            Some(Kernel::ctor(bond_harmonic_ctor)),
+            Some(Kernel::constructor(bond_harmonic_constructor)),
         )
         .unwrap_err();
     assert!(matches!(err, IrError::Sealed { .. }), "{err}");
@@ -228,7 +229,7 @@ fn a_builtin_is_sealed_and_an_identical_restatement_is_a_no_op() {
     assert!(matches!(
         register_style(
             StyleSpec::new("bond", "harmonic"),
-            Some(Kernel::ctor(bond_harmonic_ctor))
+            Some(Kernel::constructor(bond_harmonic_constructor))
         ),
         Err(IrError::Sealed { .. })
     ));
@@ -341,7 +342,7 @@ fn nonconforming_styles_are_refused_by_name() {
     ] {
         let spec = StyleSpec::new("bond", "x").params(vec![ParamSpec::new(reserved, Dim::NONE)]);
         assert_eq!(
-            r.register_style(spec, Some(Kernel::ctor(bond_harmonic_ctor))),
+            r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor))),
             Err(IrError::ReservedParam {
                 style: "x".into(),
                 param: reserved.into()
@@ -357,7 +358,7 @@ fn nonconforming_styles_are_refused_by_name() {
         ]);
         assert!(
             matches!(
-                r.register_style(spec, Some(Kernel::ctor(bond_harmonic_ctor))),
+                r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor))),
                 Err(IrError::ReservedParam { .. })
             ),
             "{reserved}"
@@ -367,13 +368,13 @@ fn nonconforming_styles_are_refused_by_name() {
     for function in ["exp", "delta", "select"] {
         let spec =
             StyleSpec::new("bond", function).params(vec![ParamSpec::new(function, Dim::NONE)]);
-        r.register_style(spec, Some(Kernel::ctor(bond_harmonic_ctor)))
+        r.register_style(spec, Some(Kernel::constructor(bond_harmonic_constructor)))
             .unwrap();
     }
     assert!(matches!(
         r.register_style(
             StyleSpec::new("bond", "x").params(vec![ParamSpec::new("2k", Dim::NONE)]),
-            Some(Kernel::ctor(bond_harmonic_ctor))
+            Some(Kernel::constructor(bond_harmonic_constructor))
         ),
         Err(IrError::BadName { .. })
     ));
@@ -382,14 +383,17 @@ fn nonconforming_styles_are_refused_by_name() {
         .params(vec![ParamSpec::new("k", Dim::ENERGY)])
         .style_params(vec![ParamSpec::new("k", Dim::ENERGY)]);
     assert!(matches!(
-        r.register_style(twice, Some(Kernel::ctor(bond_harmonic_ctor))),
+        r.register_style(twice, Some(Kernel::constructor(bond_harmonic_constructor))),
         Err(IrError::DuplicateParam { .. })
     ));
 
     let per_degree =
         StyleSpec::new("bond", "x").params(vec![ParamSpec::new("k", "E*A".parse().unwrap())]);
     assert!(matches!(
-        r.register_style(per_degree, Some(Kernel::ctor(bond_harmonic_ctor))),
+        r.register_style(
+            per_degree,
+            Some(Kernel::constructor(bond_harmonic_constructor))
+        ),
         Err(IrError::Dim { .. })
     ));
 
@@ -421,9 +425,9 @@ fn nonconforming_styles_are_refused_by_name() {
     ));
 
     // A neighbour-driven form on a bonded category.
-    let typed = Kernel::Ctor {
-        compiled: bond_harmonic_ctor,
-        typed: Some((bond_harmonic_ctor, SpecialClass::Vdw)),
+    let typed = Kernel::Constructor {
+        compiled: bond_harmonic_constructor,
+        typed: Some((bond_harmonic_constructor, SpecialClass::Vdw)),
         rows: RowSource::CategoryBlock,
     };
     assert!(matches!(
@@ -435,7 +439,7 @@ fn nonconforming_styles_are_refused_by_name() {
     let mixing = StyleSpec::new("bond", "x")
         .params(vec![ParamSpec::new("k", Dim::ENERGY).mix(Mix::Geometric)]);
     assert!(matches!(
-        r.register_style(mixing, Some(Kernel::ctor(bond_harmonic_ctor))),
+        r.register_style(mixing, Some(Kernel::constructor(bond_harmonic_constructor))),
         Err(IrError::Malformed { .. })
     ));
 
@@ -685,7 +689,7 @@ fn a_registry_of_ones_own_is_seen_by_its_compile_only() {
 }
 
 /// A text style parameter is checked to be text, and an array parameter is
-/// accepted by a bonded form (it reads it through `ParamCols::array`).
+/// accepted by a bonded form (it reads it through `ParamColumns::array`).
 #[test]
 fn text_and_array_params_are_declared_by_kind() {
     let mut r = Registry::builtin();
@@ -884,7 +888,7 @@ impl CompoundForm for UreyBradley {
         &self,
         x: &[[F; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [F],
         grad: &mut [[F; 3]],
     ) {
@@ -1237,7 +1241,7 @@ impl TableLinear {
 }
 
 impl ScalarForm for TableLinear {
-    fn eval(&self, phi: &[F], p: &ParamCols<'_>, e: &mut [F], de: &mut [F]) {
+    fn eval(&self, phi: &[F], p: &ParamColumns<'_>, e: &mut [F], de: &mut [F]) {
         let table = p.array("table").unwrap();
         for t in 0..phi.len() {
             let row: Vec<F> = table
@@ -1558,7 +1562,7 @@ fn an_array_param_style_prices_its_table_and_round_trips() {
             .calc_energy_forces(&COORDS)
     };
     let (e, f) = price(&ff);
-    let phi = crate::ff::potential::geometry::compute_dihedral(&COORDS, 0, 1, 2, 3);
+    let phi = crate::ff::potential::flat_coords::compute_dihedral(&COORDS, 0, 1, 2, 3);
     let table: Vec<F> = torsion_table().iter().copied().collect();
     let (hand, _) = TableLinear::at(&table, phi);
     assert!((e - hand).abs() <= 1e-12 * hand.abs(), "{e} vs {hand}");

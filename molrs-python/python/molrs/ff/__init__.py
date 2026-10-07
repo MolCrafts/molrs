@@ -8,7 +8,7 @@ same words; this package itself holds nothing but them:
   readers and writers (LAMMPS, GROMACS, AMBER, OpenMM XML, CMAP)
 * :mod:`~molrs.ff.potential` — evaluable force terms: the
   ``PotentialCompiler``, the ``Potentials`` it builds, ``kernel`` for any
-  style over explicit instances, ``LJCut``, and the ``Potential`` protocol
+  style over explicit instances, ``PairLjCut``, and the ``Potential`` protocol
 * :mod:`~molrs.ff.typifier` — the subclassable ``Typifier`` base and its
   ``Match``, the built-in atom typers, and ``assign_cmaps``
 * :mod:`~molrs.ff.charge` — partial-charge models (AM1-BCC / ABCG2,

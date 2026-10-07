@@ -738,8 +738,8 @@ fn forces_are_the_gradient_inside_the_switches() {
 /// The neighbour-driven door over a table of every pair, each weighted as
 /// MD weights it.
 fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
-    use crate::ff::potential::Member;
-    use crate::ff::potential::pair::testing::table_over;
+    use crate::ff::potential::ForceTerm;
+    use crate::ff::potential::pair::fixtures::table_over;
     let topo = molrs::core::Topology::from_frame(frame).unwrap();
     let x = coords();
     let links: Vec<(usize, usize)> = (0..7)
@@ -750,7 +750,7 @@ fn typed_energy(ff: &ForceField, frame: &Frame) -> (F, Vec<F>) {
     let mut e = 0.0;
     for (member, weights) in PotentialCompiler::new(ff).compile_typed(frame).unwrap() {
         match (&member, weights) {
-            (Member::Pair(p), Some(w)) => {
+            (ForceTerm::Pair(p), Some(w)) => {
                 let special = w.special_weights(&topo);
                 let factor: Vec<F> = links.iter().map(|&(i, j)| special.weight(i, j)).collect();
                 e += p.accumulate_pairs(&x, &table, &factor, &mut out).0;

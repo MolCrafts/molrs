@@ -1,7 +1,7 @@
 //! One style's kernel over **explicit instances**: the terms and their
 //! parameters given by hand, no typifier and no type table.
 //!
-//! [`Instances::compile`] is the generic way to build the kernel of *any*
+//! [`ExplicitTerms::compile`] is the generic way to build the kernel of *any*
 //! registered `(category, style)` — a built-in, a custom style priced by its
 //! expression or a Python callable, a style of a custom category — from
 //! atom indices and one parameter row per term. It goes through
@@ -11,10 +11,10 @@
 //!
 //! ```
 //! use molrs::ff::forcefield::Params;
-//! use molrs::ff::potential::Instances;
+//! use molrs::ff::potential::ExplicitTerms;
 //!
 //! // LAMMPS `bond_style harmonic`, one bond: k (r − r0)².
-//! let pots = Instances::new("bond", "harmonic")
+//! let pots = ExplicitTerms::new("bond", "harmonic")
 //!     .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.5)]))
 //!     .compile()
 //!     .unwrap();
@@ -42,7 +42,7 @@ use crate::ff::potential::{CompileError, PotentialCompiler, Potentials};
 /// that reads its numbers per instance (`coul/cut`, MMFF) may have terms
 /// without rows ([`atoms`](Self::atoms)).
 #[derive(Debug, Clone)]
-pub struct Instances {
+pub struct ExplicitTerms {
     category: String,
     style: String,
     style_params: Params,
@@ -51,7 +51,7 @@ pub struct Instances {
     charges: Option<Vec<F>>,
 }
 
-impl Instances {
+impl ExplicitTerms {
     /// No terms yet, of `style` in `category`.
     pub fn new(category: &str, style: &str) -> Self {
         Self {
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn a_bonded_style_prices_one_row_per_term() {
-        let pots = Instances::new("bond", "harmonic")
+        let pots = ExplicitTerms::new("bond", "harmonic")
             .term(&[0, 1], Params::from_pairs(&[("k", 300.0), ("r0", 1.4)]))
             .term(&[1, 2], Params::from_pairs(&[("k", 200.0), ("r0", 1.5)]))
             .compile()
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn angle_values_are_degrees_as_stored() {
-        let pots = Instances::new("angle", "harmonic")
+        let pots = ExplicitTerms::new("angle", "harmonic")
             .term(
                 &[0, 1, 2],
                 Params::from_pairs(&[("k", 50.0), ("theta0", 109.5)]),
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn a_pair_term_is_priced_with_its_own_row_and_charges_per_atom() {
-        let lj = Instances::new("pair", "lj/cut")
+        let lj = ExplicitTerms::new("pair", "lj/cut")
             .term(
                 &[0, 3],
                 Params::from_pairs(&[("epsilon", 0.2), ("sigma", 3.1)]),
@@ -272,7 +272,7 @@ mod tests {
         let s = 3.1 / dist(0, 3);
         close(lj.calc_energy(&XYZ), 4.0 * 0.2 * (s.powi(12) - s.powi(6)));
 
-        let coul = Instances::new("pair", "coul/cut")
+        let coul = ExplicitTerms::new("pair", "coul/cut")
             .style_params(Params::from_pairs(&[
                 ("coulomb", 332.06371),
                 ("dielectric", 1.0),
@@ -297,7 +297,7 @@ mod tests {
             None::<Kernel>,
         )
         .unwrap();
-        let terms = Instances::new("bond", "quartic")
+        let terms = ExplicitTerms::new("bond", "quartic")
             .term(&[0, 1], Params::from_pairs(&[("k", 2.0), ("r0", 1.0)]));
         close(
             terms.compile_in(&reg).unwrap().calc_energy(&XYZ),
@@ -310,9 +310,9 @@ mod tests {
 
     #[test]
     fn refusals_are_typed() {
-        let err = Instances::new("nope", "x").compile().unwrap_err();
+        let err = ExplicitTerms::new("nope", "x").compile().unwrap_err();
         assert!(matches!(err.ir(), Some(IrError::UnknownCategory { .. })));
-        let err = Instances::new("bond", "harmonic")
+        let err = ExplicitTerms::new("bond", "harmonic")
             .term(&[0, 1, 2], Params::from_pairs(&[("k", 1.0), ("r0", 1.0)]))
             .compile()
             .unwrap_err();

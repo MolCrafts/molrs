@@ -257,7 +257,7 @@ impl StyleSpec {
     ///
     /// The one place a [`ParamSpec::default`] takes effect.
     /// [`PotentialCompiler`](crate::ff::potential::PotentialCompiler) gathers
-    /// through it before any kernel — a Tier-3 constructor, a generic kernel
+    /// through it before any kernel — a Tier-3 constructor, a form kernel
     /// or an expression — sees a parameter, so no kernel states a default of
     /// its own and every tier prices an absent parameter alike. A row is
     /// filled whatever it is: a pair style's cross row lacking a parameter
@@ -457,7 +457,7 @@ fn charmm_switch() -> String {
 }
 
 /// The spec of every style molrs registers: each kernel of
-/// [`KernelRegistry::builtin`], `dihedral rb` (expression only), and the
+/// [`BuiltinKernels::builtin`], `dihedral rb` (expression only), and the
 /// styles of the categories that price no energy.
 ///
 /// Names, order and dimensions are the force-field IR's
@@ -468,7 +468,7 @@ fn charmm_switch() -> String {
 /// The per-instance styles (MMFF, UFF, the per-atom-charge Coulomb styles)
 /// list the Frame columns their kernels read.
 ///
-/// [`KernelRegistry::builtin`]: crate::ff::potential::KernelRegistry::builtin
+/// [`BuiltinKernels::builtin`]: crate::ff::potential::BuiltinKernels::builtin
 pub fn builtin_styles() -> Vec<StyleSpec> {
     use crate::ff::forcefield::lammps_codecs::{self as lc, custom};
     use ParamSource::PerInstance;

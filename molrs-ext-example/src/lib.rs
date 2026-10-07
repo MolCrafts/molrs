@@ -28,11 +28,11 @@ use molrs::ff::ir::{
     CategorySpec, Coordinate, Dim, EndpointOrder, IrError, Kernel, LammpsForm, Mix, ParamSpec,
     Registry, Sample, SpecialClass, StyleSpec, Value,
 };
-use molrs::ff::potential::generic::{CompoundForm, ParamCols, ScalarForm};
+use molrs::ff::potential::form_kernel::{CompoundForm, ParamColumns, ScalarForm};
 
 /// The numeric column `name` of a batch; the registry checked at build
 /// that every column a form states in its `inputs` is there.
-fn col<'a>(p: &ParamCols<'a>, name: &str) -> &'a [f64] {
+fn col<'a>(p: &ParamColumns<'a>, name: &str) -> &'a [f64] {
     p.get(name).expect("the kernel supplies every stated input")
 }
 
@@ -64,7 +64,7 @@ fn sample(params: &[(&'static str, f64)], q: (f64, f64)) -> Sample {
 pub struct LjSmoothLinear;
 
 impl ScalarForm for LjSmoothLinear {
-    fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de_dr: &mut [f64]) {
+    fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de_dr: &mut [f64]) {
         let (eps, sigma, rc) = (col(p, "epsilon"), col(p, "sigma"), col(p, "cutoff"));
         for t in 0..r.len() {
             // φ and φ′ of the 12-6 at x.
@@ -136,7 +136,7 @@ impl CompoundForm for UreyBradley {
         &self,
         x: &[[f64; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [f64],
         grad: &mut [[f64; 3]],
     ) {
@@ -218,7 +218,7 @@ impl CompoundForm for BondAngle {
         &self,
         x: &[[f64; 3]],
         arity: usize,
-        p: &ParamCols<'_>,
+        p: &ParamColumns<'_>,
         e: &mut [f64],
         grad: &mut [[f64; 3]],
     ) {

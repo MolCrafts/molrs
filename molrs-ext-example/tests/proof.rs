@@ -37,8 +37,8 @@ use molrs::ff::ir::{
     Arity, CategorySpec, Coordinate, Dim, EndpointOrder, Engine, FormCodec, IrError, Kernel,
     LammpsForm, ParamSpec, Refusal, Registry, Sample, StyleSpec, Value,
 };
-use molrs::ff::potential::generic::{ParamCols, ScalarForm};
-use molrs::ff::potential::{CompileError, Member, PotentialCompiler, intramolecular_pairs};
+use molrs::ff::potential::form_kernel::{ParamColumns, ScalarForm};
+use molrs::ff::potential::{CompileError, ForceTerm, PotentialCompiler, intramolecular_pairs};
 use molrs::io::data::lammps_data::write_lammps_data;
 use molrs::io::forcefield::writers::ForceFieldWriter;
 use molrs::io::forcefield::writers::gromacs::GromacsTopFfWriter;
@@ -560,7 +560,7 @@ fn pair_style_matches_lammps() {
             .unwrap();
         assert_eq!(members.len(), 1, "one pair member");
         for (member, weights) in members {
-            let (Member::Pair(p), Some(w)) = (&member, weights) else {
+            let (ForceTerm::Pair(p), Some(w)) = (&member, weights) else {
                 panic!("a weighted pair member");
             };
             let special = w.special_weights(&topo);
@@ -758,7 +758,7 @@ struct Bent {
 }
 
 impl ScalarForm for Bent {
-    fn eval(&self, r: &[f64], p: &ParamCols<'_>, e: &mut [f64], de: &mut [f64]) {
+    fn eval(&self, r: &[f64], p: &ParamColumns<'_>, e: &mut [f64], de: &mut [f64]) {
         let (k, r0) = (p.get("k").unwrap(), p.get("r0").unwrap());
         for t in 0..r.len() {
             e[t] = self.scale * k[t] * (r[t] - r0[t]).powi(2);

@@ -489,7 +489,7 @@ fn an_openmm_improper_prices_as_gromacs_and_openmm_do() {
     let e_omm = per_style(&omm, &hand_frame(&omm))["improper/periodic"];
     let coords: Vec<F> = XYZ.iter().flatten().copied().collect();
     let [c, h, n, ct] = IMPROPER_N;
-    let phi = crate::ff::potential::geometry::compute_dihedral(&coords, c, h, n, ct);
+    let phi = crate::ff::potential::flat_coords::compute_dihedral(&coords, c, h, n, ct);
     let k = 4.6024 / 4.184;
     let hand = k * (1.0 + (2.0 * phi - std::f64::consts::PI).cos());
     assert!(

@@ -1,4 +1,4 @@
-//! Generic kernels: everything a kernel does besides the force law, written
+//! Form kernels: everything a kernel does besides the force law, written
 //! once over a [`ScalarForm`] or a [`CompoundForm`].
 //!
 //! A style registered with a form
@@ -26,7 +26,7 @@ mod tests;
 
 pub use bonded::ScalarBonded;
 pub use compound::CompoundTerms;
-pub use form::{CompoundForm, ParamCols, ScalarForm};
+pub use form::{CompoundForm, ParamColumns, ScalarForm};
 pub use pair::ScalarPair;
 
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ use molrs::op::types::F;
 /// One concrete column of a style: a declared parameter, or one member
 /// `<name><m>` of an indexed family.
 #[derive(Clone, Debug)]
-pub(crate) struct Column {
+pub(crate) struct StyleParamColumn {
     pub name: String,
     /// The declared parameter it comes from.
     pub param: usize,
@@ -74,7 +74,7 @@ pub(crate) fn columns(
     spec: &StyleSpec,
     params: &[ParamSpec],
     rows: &[(&str, &Params)],
-) -> Result<Vec<Column>, IrError> {
+) -> Result<Vec<StyleParamColumn>, IrError> {
     let mut m_table = 0;
     for p in params.iter().filter(|p| p.indexed) {
         for (label, row) in rows {
@@ -93,13 +93,13 @@ pub(crate) fn columns(
     let mut out = Vec::new();
     for (c, p) in params.iter().enumerate() {
         if p.indexed {
-            out.extend((1..=m_table).map(|m| Column {
+            out.extend((1..=m_table).map(|m| StyleParamColumn {
                 name: format!("{}{m}", p.name),
                 param: c,
                 index: Some(m),
             }));
         } else {
-            out.push(Column {
+            out.push(StyleParamColumn {
                 name: p.name.to_string(),
                 param: c,
                 index: None,
@@ -113,16 +113,20 @@ pub(crate) fn columns(
 /// ([`ScalarForm::inputs`]): a parameter it does not read is not required.
 /// A column is read by its name, or on a pair by its self-row spelling
 /// (`<x>1`, `<x>2`) or as the mixing partner of a column that is.
-pub(crate) fn read_by(spec: &StyleSpec, cols: Vec<Column>, reads: &[String]) -> Vec<Column> {
+pub(crate) fn read_by(
+    spec: &StyleSpec,
+    cols: Vec<StyleParamColumn>,
+    reads: &[String],
+) -> Vec<StyleParamColumn> {
     if reads.is_empty() {
         return cols;
     }
-    let read = |c: &Column| {
+    let read = |c: &StyleParamColumn| {
         reads
             .iter()
             .any(|r| r == &c.name || r.strip_suffix(['1', '2']) == Some(c.name.as_str()))
     };
-    let partner = |c: &Column| match &spec.params[c.param].mix {
+    let partner = |c: &StyleParamColumn| match &spec.params[c.param].mix {
         crate::ff::ir::Mix::LjEpsilon { sigma: p } | crate::ff::ir::Mix::LjSigma { epsilon: p } => {
             Some(p.clone())
         }
@@ -143,7 +147,7 @@ pub(crate) fn read_by(spec: &StyleSpec, cols: Vec<Column>, reads: &[String]) -> 
 
 /// `column`'s numeric value in `row`, by its own name or — term 1 of a style
 /// that accepts it — the bare name of its family.
-pub(crate) fn row_num(spec: &StyleSpec, col: &Column, row: &Params) -> Option<F> {
+pub(crate) fn row_num(spec: &StyleSpec, col: &StyleParamColumn, row: &Params) -> Option<F> {
     row.get(&col.name).or_else(|| {
         (col.index == Some(1) && spec.unindexed_one_term)
             .then(|| row.get(&spec.params[col.param].name))
@@ -151,7 +155,7 @@ pub(crate) fn row_num(spec: &StyleSpec, col: &Column, row: &Params) -> Option<F>
     })
 }
 
-/// The per-term inputs of a kernel's terms, owned; [`ParamCols`] borrows
+/// The per-term inputs of a kernel's terms, owned; [`ParamColumns`] borrows
 /// them a batch at a time.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TermParams {
@@ -163,14 +167,14 @@ pub(crate) struct TermParams {
 }
 
 impl TermParams {
-    /// The inputs of terms `range` as a [`ParamCols`], for `f`.
-    pub fn with_cols<R>(&self, range: Range<usize>, f: impl FnOnce(&ParamCols<'_>) -> R) -> R {
+    /// The inputs of terms `range` as a [`ParamColumns`], for `f`.
+    pub fn with_cols<R>(&self, range: Range<usize>, f: impl FnOnce(&ParamColumns<'_>) -> R) -> R {
         let texts: Vec<Vec<&str>> = self
             .texts
             .iter()
             .map(|(_, t)| t[range.clone()].iter().map(String::as_str).collect())
             .collect();
-        let mut cols = ParamCols::new();
+        let mut cols = ParamColumns::new();
         for (name, col) in &self.nums {
             cols.push(name, &col[range.clone()]);
         }

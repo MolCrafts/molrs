@@ -1,55 +1,36 @@
-//! The table of molrs's own Tier-3 kernel constructors: `(category,
-//! style_name)` → [`KernelConstructor`], plus the [`ParamSource`] that says
-//! **where that kernel's parameters come from**.
+//! molrs's own Tier-3 kernel constructors: `(category, style_name)` →
+//! [`KernelConstructor`], with the neighbour-driven form and the row source
+//! of the styles that have one.
 //!
-//! This is a table, not a registry anyone extends: the force-field IR
-//! registry ([`crate::ff::ir::Registry`]) seeds its sealed built-ins from
-//! [`KernelRegistry::builtin`], each beside its spec, and `PotentialCompiler`
-//! resolves every style through that registry. A third party registers
-//! through [`ir::register_style`](crate::ff::ir::register_style); the
-//! registration vocabulary ([`ParamSource`], [`RowSource`], [`SpecialClass`],
-//! [`KernelConstructor`]) is the IR's.
+//! A crate-private table, not a registry anyone extends: the force-field IR
+//! registry ([`crate::ff::ir::Registry`], the one registry) seeds its sealed
+//! built-ins from [`BuiltinKernels::builtin`], each beside its spec, and
+//! `PotentialCompiler` resolves every style through that registry. A third
+//! party registers through
+//! [`ir::register_style`](crate::ff::ir::register_style).
 //!
-//! # Why a registration carries a `ParamSource`
-//!
-//! Most kernels resolve their numbers from the style's per-type rows (`tp`):
-//! `bond/harmonic` looks up `k` / `r0` by the bond's type label, `pair/lj/cut`
-//! looks up `sigma` / `epsilon` by the atom's. Some cannot. MMFF's bond, angle,
-//! stretch-bend, torsion and out-of-plane parameters depend on aromaticity, ring
-//! size, four-level equivalence degradation, and — on a table miss — empirical
-//! rules invented from covalent radii; the typifier resolves them **per instance**
-//! and bakes them into Frame columns, and the kernels read those columns and
-//! ignore `tp` entirely. The same is true of `pair/coul/cut` and `pair/coul/long/pme`,
-//! whose charges are per-atom Frame data by construction.
-//!
-//! That is correct — but until [`ParamSource`] existed there was no way to *say*
-//! it, so those styles registered as table-driven anyway and
-//! [`PotentialCompiler`](crate::ff::potential::PotentialCompiler)'s
-//! "has type definitions" guard had to be bribed with 4,065 rows of MMFF XML that
-//! no code reads. Naming the distinction is what lets the guard ask the right
-//! question. The invariant is **a ctor ignores `tp` if and only if it is
-//! registered [`ParamSource::PerInstance`]** — and no test checks it: the
-//! bidirectional gate that would hold the two halves together does not exist
-//! yet (there is no `param_source_gate` test anywhere in the tree), so today it
-//! is kept by review alone.
+//! Where a kernel's numbers come from ([`ParamSource`](crate::ff::ir::ParamSource))
+//! is its spec's declaration ([`StyleSpec::source`](crate::ff::ir::StyleSpec::source)),
+//! not this table's: MMFF's and UFF's bonded styles, `pair/coul/cut`,
+//! `coul/charmm` and `coul/long/pme` read per-instance Frame columns the
+//! typifier bakes (or per-atom charges) and ignore the type rows, and their
+//! specs say [`ParamSource::PerInstance`](crate::ff::ir::ParamSource::PerInstance).
 
 use std::collections::HashMap;
 
-use crate::ff::ir::{KernelConstructor, ParamSource, RowSource, SpecialClass};
+use crate::ff::ir::{KernelConstructor, RowSource, SpecialClass};
 
 use super::{angle, bond, cmap, dihedral, improper, kspace, pair};
 
-/// Maps `(category, style_name)` to the constructor that builds its potential
-/// and the [`ParamSource`] it resolves parameters from.
+/// Maps `(category, style_name)` to the constructor that builds its kernel.
 #[derive(Default)]
-pub struct KernelRegistry {
-    ctors: HashMap<(String, String), Registration>,
+pub(crate) struct BuiltinKernels {
+    constructors: HashMap<(String, String), Registration>,
 }
 
 /// What is known about one `(category, style_name)`.
 struct Registration {
-    ctor: KernelConstructor,
-    source: ParamSource,
+    constructor: KernelConstructor,
     /// Which block's emptiness means this style contributes nothing. Reset to
     /// the default by an override, for the reason `typed` is — a re-registered
     /// style is a different force law and inherits none of the old one's
@@ -67,16 +48,12 @@ struct Registration {
     typed: Option<(KernelConstructor, SpecialClass)>,
 }
 
-impl KernelRegistry {
-    /// An empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl BuiltinKernels {
     /// Every registered `(category, style)`, sorted.
-    pub fn styles(&self) -> Vec<(&str, &str)> {
+    #[cfg(test)]
+    pub(crate) fn styles(&self) -> Vec<(&str, &str)> {
         let mut out: Vec<(&str, &str)> = self
-            .ctors
+            .constructors
             .keys()
             .map(|(c, s)| (c.as_str(), s.as_str()))
             .collect();
@@ -84,35 +61,17 @@ impl KernelRegistry {
         out
     }
 
-    /// Register (or override) a table-driven ([`ParamSource::TypeRows`]) kernel
-    /// for `(category, name)`.
-    ///
-    /// The thin wrapper over [`register_with`](Self::register_with): table-driven
-    /// is what every kernel outside MMFF / `coul/cut` / `pme` is, so it stays the
-    /// short form.
-    pub fn register(&mut self, category: &str, name: &str, ctor: KernelConstructor) {
-        self.register_with(category, name, ctor, ParamSource::TypeRows);
-    }
-
-    /// Register (or override) the kernel for `(category, name)`, declaring where
-    /// it resolves its parameters from.
-    pub fn register_with(
-        &mut self,
-        category: &str,
-        name: &str,
-        ctor: KernelConstructor,
-        source: ParamSource,
-    ) {
+    /// Register (or override) the kernel for `(category, name)`.
+    fn register(&mut self, category: &str, name: &str, constructor: KernelConstructor) {
         // A registration is one unit. Keeping the previous `typed` across an
         // override would leave `compile` and `compile_typed`
         // evaluating *different force fields* for the same style name, with
         // nothing to say so — so an override clears it and the caller
         // re-registers both.
-        self.ctors.insert(
+        self.constructors.insert(
             (category.to_owned(), name.to_owned()),
             Registration {
-                ctor,
-                source,
+                constructor,
                 rows: RowSource::CategoryBlock,
                 typed: None,
             },
@@ -129,9 +88,9 @@ impl KernelRegistry {
     /// # Panics
     ///
     /// If `(category, name)` has no compiled registration.
-    pub fn declare_rows(&mut self, category: &str, name: &str, rows: RowSource) {
+    fn declare_rows(&mut self, category: &str, name: &str, rows: RowSource) {
         let r = self
-            .ctors
+            .constructors
             .get_mut(&(category.to_owned(), name.to_owned()))
             .unwrap_or_else(|| {
                 panic!(
@@ -143,8 +102,9 @@ impl KernelRegistry {
     }
 
     /// Where this style's rows come from, or `None` if it is not registered.
-    pub fn row_source(&self, category: &str, name: &str) -> Option<RowSource> {
-        self.ctors
+    #[cfg(test)]
+    fn row_source(&self, category: &str, name: &str) -> Option<RowSource> {
+        self.constructors
             .get(&(category.to_owned(), name.to_owned()))
             .map(|r| r.rows)
     }
@@ -162,15 +122,15 @@ impl KernelRegistry {
     /// form is an *alternative* way to build a style that already exists, so a
     /// silent no-op here would leave the caller believing their style works
     /// under MD when `PotentialCompiler::compile_typed` will refuse it.
-    pub fn register_typed(
+    fn register_typed(
         &mut self,
         category: &str,
         name: &str,
-        ctor: KernelConstructor,
+        constructor: KernelConstructor,
         special: SpecialClass,
     ) {
         let r = self
-            .ctors
+            .constructors
             .get_mut(&(category.to_owned(), name.to_owned()))
             .unwrap_or_else(|| {
                 panic!(
@@ -179,105 +139,104 @@ impl KernelRegistry {
                      registration of its own"
                 )
             });
-        r.typed = Some((ctor, special));
+        r.typed = Some((constructor, special));
     }
 
     /// The constructor registered for `(category, name)`, if any.
-    pub fn get(&self, category: &str, name: &str) -> Option<KernelConstructor> {
-        self.ctors
+    #[cfg(test)]
+    fn get(&self, category: &str, name: &str) -> Option<KernelConstructor> {
+        self.constructors
             .get(&(category.to_owned(), name.to_owned()))
-            .map(|r| r.ctor)
+            .map(|r| r.constructor)
     }
 
     /// The neighbour-driven constructor for `(category, name)` and the weight
     /// set that scales it, if it has one.
-    pub fn get_typed(
-        &self,
-        category: &str,
-        name: &str,
-    ) -> Option<(KernelConstructor, SpecialClass)> {
-        self.ctors
+    #[cfg(test)]
+    fn get_typed(&self, category: &str, name: &str) -> Option<(KernelConstructor, SpecialClass)> {
+        self.constructors
             .get(&(category.to_owned(), name.to_owned()))
             .and_then(|r| r.typed)
-    }
-
-    /// The [`ParamSource`] declared for `(category, name)`, if it is registered.
-    pub fn param_source(&self, category: &str, name: &str) -> Option<ParamSource> {
-        self.ctors
-            .get(&(category.to_owned(), name.to_owned()))
-            .map(|r| r.source)
-    }
-
-    /// Number of registered kernels.
-    pub fn len(&self) -> usize {
-        self.ctors.len()
-    }
-
-    /// Whether the registry has no kernels.
-    pub fn is_empty(&self) -> bool {
-        self.ctors.is_empty()
-    }
-
-    /// Every registered `(category, name)`.
-    #[cfg(test)]
-    pub(crate) fn names(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
-        self.ctors.keys().map(|(c, n)| (c.as_str(), n.as_str()))
     }
 
     /// `(category, name)` as a Tier-3 [`Kernel`](crate::ff::ir::Kernel) of
     /// the force-field IR registry, which seeds its built-ins from here.
     pub(crate) fn kernel(&self, category: &str, name: &str) -> Option<crate::ff::ir::Kernel> {
-        self.ctors
+        self.constructors
             .get(&(category.to_owned(), name.to_owned()))
-            .map(|r| crate::ff::ir::Kernel::Ctor {
-                compiled: r.ctor,
+            .map(|r| crate::ff::ir::Kernel::Constructor {
+                compiled: r.constructor,
                 typed: r.typed,
                 rows: r.rows,
             })
     }
 
     /// A registry seeded with every built-in kernel.
-    pub fn builtin() -> Self {
-        let mut r = Self::new();
+    pub(crate) fn builtin() -> Self {
+        let mut r = Self::default();
         // bonded
-        r.register("bond", "harmonic", bond::harmonic::bond_harmonic_ctor);
-        r.register("bond", "class2", bond::class2::bond_class2_ctor);
-        r.register("bond", "morse", bond::morse::bond_morse_ctor);
-        r.register("angle", "harmonic", angle::harmonic::angle_harmonic_ctor);
-        r.register("angle", "class2", angle::class2::angle_class2_ctor);
-        r.register("dihedral", "opls", dihedral::opls::dihedral_opls_ctor);
-        r.register("dihedral", "charmm", dihedral::charmm::dihedral_charmm_ctor);
+        r.register(
+            "bond",
+            "harmonic",
+            bond::harmonic::bond_harmonic_constructor,
+        );
+        r.register("bond", "class2", bond::class2::bond_class2_constructor);
+        r.register("bond", "morse", bond::morse::bond_morse_constructor);
+        r.register(
+            "angle",
+            "harmonic",
+            angle::harmonic::angle_harmonic_constructor,
+        );
+        r.register("angle", "class2", angle::class2::angle_class2_constructor);
+        r.register(
+            "dihedral",
+            "opls",
+            dihedral::opls::dihedral_opls_constructor,
+        );
+        r.register(
+            "dihedral",
+            "charmm",
+            dihedral::charmm::dihedral_charmm_constructor,
+        );
         r.register(
             "dihedral",
             "multi/harmonic",
-            dihedral::multi_harmonic::dihedral_multi_harmonic_ctor,
+            dihedral::multi_harmonic::dihedral_multi_harmonic_constructor,
         );
         r.register(
             "dihedral",
             "periodic",
-            dihedral::periodic::dihedral_periodic_ctor,
+            dihedral::periodic::dihedral_periodic_constructor,
         );
         r.register(
             "dihedral",
             "harmonic",
-            dihedral::harmonic::dihedral_harmonic_ctor,
+            dihedral::harmonic::dihedral_harmonic_constructor,
         );
-        r.register("dihedral", "class2", dihedral::class2::dihedral_class2_ctor);
+        r.register(
+            "dihedral",
+            "class2",
+            dihedral::class2::dihedral_class2_constructor,
+        );
         r.register(
             "dihedral",
             "nharmonic",
-            dihedral::multi_harmonic::dihedral_nharmonic_ctor,
+            dihedral::multi_harmonic::dihedral_nharmonic_constructor,
         );
         // pair / nonbonded
-        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_ctor);
-        r.register("pair", "lj/class2", pair::lj_class2::pair_lj_class2_ctor);
-        r.register("pair", "buck", pair::buck::pair_buck_ctor);
-        r.register("pair", "morse", pair::morse::pair_morse_ctor);
-        r.register("pair", "thole", pair::thole::pair_thole_ctor);
+        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_constructor);
+        r.register(
+            "pair",
+            "lj/class2",
+            pair::lj_class2::pair_lj_class2_constructor,
+        );
+        r.register("pair", "buck", pair::buck::pair_buck_constructor);
+        r.register("pair", "morse", pair::morse::pair_morse_constructor);
+        r.register("pair", "thole", pair::thole::pair_thole_constructor);
         r.register(
             "pair",
             "coul/tt",
-            pair::tang_toennies::pair_tang_toennies_ctor,
+            pair::tang_toennies::pair_tang_toennies_constructor,
         );
         // `coul/cut` reads per-atom `charge` off the Frame — there is no charge
         // type-row to read, and its ctor binds `_type_params`.
@@ -286,97 +245,69 @@ impl KernelRegistry {
         // read from the style. `δ = 0` is the textbook Coulomb (OPLS, LAMMPS);
         // `k = 332.0716, D = 1.0, δ = 0.05` is MMFF's electrostatics. MMFF owns no
         // electrostatic kernel of its own — it configures this one.
-        r.register_with(
+        r.register(
             "pair",
             "coul/cut",
-            pair::coul_cut::pair_coul_cut_ctor,
-            ParamSource::PerInstance,
+            pair::coul_cut::pair_coul_cut_constructor,
         );
         // MMFF94 — five per-instance BONDED styles. Their kernels read the columns
         // the typifier bakes (`kb`/`r0`, `ka`/`theta0`, `kba_*`, `v1`/`v2`/`v3`,
         // `koop`), never a type row: MMFF's context rules (aromaticity, ring size,
         // equivalence degradation, empirical fallbacks) are not a
         // `(type_i, type_j, …) → params` table and cannot be made into one.
-        r.register_with(
-            "bond",
-            "mmff_bond",
-            bond::mmff::mmff_bond_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
-            "angle",
-            "mmff_angle",
-            angle::mmff::mmff_angle_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
+        r.register("bond", "mmff_bond", bond::mmff::bond_mmff_constructor);
+        r.register("angle", "mmff_angle", angle::mmff::angle_mmff_constructor);
+        r.register(
             "angle",
             "mmff_stbn",
-            angle::mmff::mmff_stbn_ctor,
-            ParamSource::PerInstance,
+            angle::mmff::angle_mmff_stretch_bend_constructor,
         );
-        r.register_with(
+        r.register(
             "dihedral",
             "mmff_torsion",
-            dihedral::mmff::mmff_torsion_ctor,
-            ParamSource::PerInstance,
+            dihedral::mmff::dihedral_mmff_constructor,
         );
-        r.register_with(
+        r.register(
             "improper",
             "mmff_oop",
-            improper::mmff::mmff_oop_ctor,
-            ParamSource::PerInstance,
+            improper::mmff::improper_mmff_constructor,
         );
         // UFF — per-instance bonded + LJ (typifier bakes kb/r0, ka/order/c*, V/order)
-        r.register_with(
-            "bond",
-            "uff_bond",
-            bond::uff::uff_bond_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
-            "angle",
-            "uff_angle",
-            angle::uff::uff_angle_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
+        r.register("bond", "uff_bond", bond::uff::bond_uff_constructor);
+        r.register("angle", "uff_angle", angle::uff::angle_uff_constructor);
+        r.register(
             "dihedral",
             "uff_torsion",
-            dihedral::uff::uff_torsion_ctor,
-            ParamSource::PerInstance,
+            dihedral::uff::dihedral_uff_constructor,
         );
-        r.register_with(
-            "pair",
-            "uff_lj",
-            pair::uff::uff_lj_ctor,
-            ParamSource::PerInstance,
-        );
-        r.register_with(
+        r.register("pair", "uff_lj", pair::uff::pair_uff_vdw_constructor);
+        r.register(
             "improper",
             "uff_inversion",
-            improper::uff::uff_inversion_ctor,
-            ParamSource::PerInstance,
+            improper::uff::improper_uff_constructor,
         );
         r.register(
             "improper",
             "harmonic",
-            improper::harmonic::improper_harmonic_ctor,
+            improper::harmonic::improper_harmonic_constructor,
         );
-        r.register("improper", "cvff", improper::cvff::improper_cvff_ctor);
+        r.register(
+            "improper",
+            "cvff",
+            improper::cvff::improper_cvff_constructor,
+        );
         r.register(
             "improper",
             "periodic",
-            improper::periodic::improper_periodic_ctor,
+            improper::periodic::improper_periodic_constructor,
         );
         // vdW is the one MMFF style that genuinely IS a per-atom-type table:
-        // 95 types, 95 rows, and `mmff_vdw_ctor` opens by indexing `tp`.
-        r.register("pair", "mmff_vdw", pair::mmff::mmff_vdw_ctor);
-        r.register_with(
+        // 95 types, 95 rows, and `pair_mmff_vdw_constructor` opens by indexing `tp`.
+        r.register("pair", "mmff_vdw", pair::mmff::pair_mmff_vdw_constructor);
+        r.register(
             "pair",
             "coul/long/pme",
-            kspace::pme::pme_ctor,
-            ParamSource::PerInstance,
+            kspace::pme::pair_coul_long_pme_constructor,
         );
         // PME sums in reciprocal space over the atoms' charges and subtracts
         // `exclusions`; it reads no `pairs` block, so the pair category's gate
@@ -388,80 +319,83 @@ impl KernelRegistry {
         r.register_typed(
             "pair",
             "lj/cut",
-            pair::lj_cut::pair_lj_cut_typed_ctor,
+            pair::lj_cut::pair_lj_cut_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "lj/class2",
-            pair::lj_class2::pair_lj_class2_typed_ctor,
+            pair::lj_class2::pair_lj_class2_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "buck",
-            pair::buck::pair_buck_typed_ctor,
+            pair::buck::pair_buck_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "morse",
-            pair::morse::pair_morse_typed_ctor,
+            pair::morse::pair_morse_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "uff_lj",
-            pair::uff::uff_lj_typed_ctor,
+            pair::uff::pair_uff_vdw_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "mmff_vdw",
-            pair::mmff::mmff_vdw_typed_ctor,
+            pair::mmff::pair_mmff_vdw_typed_constructor,
             SpecialClass::Vdw,
         );
         r.register_typed(
             "pair",
             "coul/cut",
-            pair::coul_cut::pair_coul_cut_typed_ctor,
+            pair::coul_cut::pair_coul_cut_typed_constructor,
             SpecialClass::Coulomb,
         );
         r.register_typed(
             "pair",
             "coul/tt",
-            pair::tang_toennies::pair_tang_toennies_typed_ctor,
+            pair::tang_toennies::pair_tang_toennies_typed_constructor,
             SpecialClass::Coulomb,
         );
         r.register_typed(
             "pair",
             "thole",
-            pair::thole::pair_thole_typed_ctor,
+            pair::thole::pair_thole_typed_constructor,
             SpecialClass::Coulomb,
         );
         // CHARMM angle + Urey–Bradley (LAMMPS `angle_style charmm`).
-        r.register("angle", "charmm", angle::charmm::angle_charmm_ctor);
+        r.register("angle", "charmm", angle::charmm::angle_charmm_constructor);
         // CMAP: a five-atom crossterm over the `cmaps` block (LAMMPS `fix cmap`).
-        r.register("cmap", "charmm", cmap::charmm::cmap_charmm_ctor);
+        r.register("cmap", "charmm", cmap::charmm::cmap_charmm_constructor);
         // LAMMPS `lj/charmm/coul/charmm`, as its two halves. `coul/charmm`
         // reads per-atom charges, like `coul/cut`.
-        r.register("pair", "lj/charmm", pair::charmm::pair_lj_charmm_ctor);
+        r.register(
+            "pair",
+            "lj/charmm",
+            pair::charmm::pair_lj_charmm_constructor,
+        );
         r.register_typed(
             "pair",
             "lj/charmm",
-            pair::charmm::pair_lj_charmm_typed_ctor,
+            pair::charmm::pair_lj_charmm_typed_constructor,
             SpecialClass::Vdw,
         );
-        r.register_with(
+        r.register(
             "pair",
             "coul/charmm",
-            pair::charmm::pair_coul_charmm_ctor,
-            ParamSource::PerInstance,
+            pair::charmm::pair_coul_charmm_constructor,
         );
         r.register_typed(
             "pair",
             "coul/charmm",
-            pair::charmm::pair_coul_charmm_typed_ctor,
+            pair::charmm::pair_coul_charmm_typed_constructor,
             SpecialClass::Coulomb,
         );
 
@@ -475,7 +409,7 @@ mod tests {
 
     #[test]
     fn builtin_has_core_kernels() {
-        let r = KernelRegistry::builtin();
+        let r = BuiltinKernels::builtin();
         assert!(r.get("bond", "harmonic").is_some());
         assert!(r.get("pair", "lj/cut").is_some());
         assert!(r.get("pair", "buck").is_some());
@@ -486,17 +420,17 @@ mod tests {
 
     #[test]
     fn register_overrides_and_adds() {
-        let mut r = KernelRegistry::new();
-        assert!(r.is_empty());
-        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_ctor);
-        assert_eq!(r.len(), 1);
+        let mut r = BuiltinKernels::default();
+        assert!(r.constructors.is_empty());
+        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_constructor);
+        assert_eq!(r.constructors.len(), 1);
         assert!(r.get("pair", "lj/cut").is_some());
         // re-registering the same key overrides, not duplicates
-        r.register("pair", "lj/cut", pair::buck::pair_buck_ctor);
-        assert_eq!(r.len(), 1);
+        r.register("pair", "lj/cut", pair::buck::pair_buck_constructor);
+        assert_eq!(r.constructors.len(), 1);
     }
 
-    /// Every neighbour-driven form registered by [`KernelRegistry::builtin`] is
+    /// Every neighbour-driven form registered by [`BuiltinKernels::builtin`] is
     /// still there when `builtin` returns.
     ///
     /// Re-registering a style clears its typed entry on purpose — an override
@@ -508,7 +442,7 @@ mod tests {
     /// reporting a style it was told about as unknown. This pins the order.
     #[test]
     fn every_typed_registration_survives_builtin() {
-        let r = KernelRegistry::builtin();
+        let r = BuiltinKernels::builtin();
         for name in [
             "lj/cut",
             "lj/class2",
@@ -525,7 +459,7 @@ mod tests {
             assert!(
                 r.get_typed("pair", name).is_some(),
                 "pair '{name}' lost its neighbour-driven form: a later \
-                 register/register_with for the same key must come *before* \
+                 register for the same key must come *before* \
                  its register_typed"
             );
         }
@@ -533,7 +467,7 @@ mod tests {
         assert_eq!(
             r.row_source("pair", "coul/long/pme"),
             Some(RowSource::Atoms),
-            "PME lost its row-source declaration: a later register/register_with \
+            "PME lost its row-source declaration: a later register \
              for the same key must come *before* its declare_rows"
         );
     }
@@ -548,7 +482,7 @@ mod tests {
     /// accepted, and dropped.
     #[test]
     fn pme_is_not_gated_on_a_pairs_block() {
-        let r = KernelRegistry::builtin();
+        let r = BuiltinKernels::builtin();
         assert_eq!(
             r.row_source("pair", "coul/long/pme"),
             Some(RowSource::Atoms),
@@ -567,16 +501,16 @@ mod tests {
     /// built for the force law that was just replaced.
     #[test]
     fn re_registering_a_style_clears_its_typed_form() {
-        let mut r = KernelRegistry::new();
-        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_ctor);
+        let mut r = BuiltinKernels::default();
+        r.register("pair", "lj/cut", pair::lj_cut::pair_lj_cut_constructor);
         r.register_typed(
             "pair",
             "lj/cut",
-            pair::lj_cut::pair_lj_cut_typed_ctor,
+            pair::lj_cut::pair_lj_cut_typed_constructor,
             SpecialClass::Vdw,
         );
         assert!(r.get_typed("pair", "lj/cut").is_some());
-        r.register("pair", "lj/cut", pair::buck::pair_buck_ctor);
+        r.register("pair", "lj/cut", pair::buck::pair_buck_constructor);
         assert!(
             r.get_typed("pair", "lj/cut").is_none(),
             "the typed form was built for lj/cut's parameters, not buck's"

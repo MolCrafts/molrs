@@ -439,10 +439,10 @@ def test_defer_returns_empty_potentials_that_bind_on_evaluation():
 
 
 def test_compile_typed_returns_typed_potentials():
-    from molrs._lib import TypedPotentials
+    from molrs._lib import WeightedTerms
 
     typed = molrs.ff.potential.PotentialCompiler(_bond_ff()).compile_typed(_bonded_pair())
-    assert isinstance(typed, TypedPotentials)
+    assert isinstance(typed, WeightedTerms)
     assert len(typed) == 1
 
 

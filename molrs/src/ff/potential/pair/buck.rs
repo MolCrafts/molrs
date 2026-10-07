@@ -5,18 +5,18 @@
 //! Lowercase is the canonical spelling (spec ff-params-01) and matches molpy;
 //! GROMACS spells the middle one `B = 1/rho`, normalized at that reader.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -324,14 +324,14 @@ impl PairDriven for PairBuck {
 ///
 /// A pair's row is found from its two atoms' types — the self row, else the
 /// cross row (`buck` does not mix: neither is [`IrError::NoMixing`]) — as
-/// `pair_buck_typed_ctor` finds it and LAMMPS's `pair_coeff i j` states it.
+/// `pair_buck_typed_constructor` finds it and LAMMPS's `pair_coeff i j` states it.
 ///
 /// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
-pub fn pair_buck_ctor(
+pub fn pair_buck_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = A·exp(-r/rho) - C/r⁶` is linear in **both** `A` and
@@ -368,11 +368,11 @@ pub fn pair_buck_ctor(
             atom_types[i_col[idx] as usize].as_str(),
             atom_types[j_col[idx] as usize].as_str(),
         );
-        let params = need::unmixed_row("buck", "a", &type_map, ta, tb)?;
+        let params = param_reads::unmixed_row("buck", "a", &type_map, ta, tb)?;
         let label = pair_key(ta, tb)?;
-        let a = need::type_num("buck", &label, params, "a")?;
-        let rho = need::type_num("buck", &label, params, "rho")?;
-        let c = need::type_num("buck", &label, params, "c")?;
+        let a = param_reads::type_num("buck", &label, params, "a")?;
+        let rho = param_reads::type_num("buck", &label, params, "rho")?;
+        let c = param_reads::type_num("buck", &label, params, "c")?;
 
         let w = if is_14.is_some_and(|b| b[idx]) {
             scale_14
@@ -388,23 +388,23 @@ pub fn pair_buck_ctor(
 
     // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
     // 1-4 ones included; ∞ when it states none).
-    let cutoff = need::pair_cutoff("buck", style_params)?;
-    Ok(Member::pair(
+    let cutoff = param_reads::pair_cutoff("buck", style_params)?;
+    Ok(ForceTerm::pair(
         PairBuck::new(atom_i, atom_j, a_vec, rho_vec, c_vec).with_cutoff(cutoff),
     ))
 }
 
 /// Construct a neighbour-driven [`PairBuck`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_buck_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_buck_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_buck_typed_ctor(
+pub fn pair_buck_typed_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -415,19 +415,19 @@ pub fn pair_buck_typed_ctor(
         for tj in 0..ntypes {
             // Keyed in either order alike; a self-pair by the atom type alone.
             let (ta, tb) = (labels[ti].as_str(), labels[tj].as_str());
-            let p = need::unmixed_row("buck", "a", &type_map, ta, tb)?;
+            let p = param_reads::unmixed_row("buck", "a", &type_map, ta, tb)?;
             let key = pair_key(ta, tb)?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            a[t] = need::type_num("buck", &key, p, "a")?;
-            rho[t] = need::type_num("buck", &key, p, "rho")?;
-            c[t] = need::type_num("buck", &key, p, "c")?;
+            a[t] = param_reads::type_num("buck", &key, p, "a")?;
+            rho[t] = param_reads::type_num("buck", &key, p, "rho")?;
+            c[t] = param_reads::type_num("buck", &key, p, "c")?;
         }
     }
     let kernel = PairBuck::typed(type_id, ntypes, a, rho, c);
     // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
     // neighbour sum is not finite without one.
-    let cutoff = need::neighbour_cutoff("buck", style_params)?;
-    Ok(Member::pair(kernel.with_cutoff(cutoff)))
+    let cutoff = param_reads::neighbour_cutoff("buck", style_params)?;
+    Ok(ForceTerm::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]
@@ -477,7 +477,7 @@ mod tests {
             tp.set("a", 12000.0);
             tp.set("rho", 0.31);
             tp.set("c", 280.0);
-            pair_buck_ctor(&sp, &[("a", &tp)], &frame).expect("buck kernel")
+            pair_buck_constructor(&sp, &[("a", &tp)], &frame).expect("buck kernel")
         };
 
         // Two separations: one where repulsion dominates, one where dispersion
@@ -515,7 +515,7 @@ mod tests {
     /// scratch; the atoms' types survive it. That is the whole difference.
     #[test]
     fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 

@@ -15,17 +15,17 @@
 //! Reference: Tang & Toennies, J. Chem. Phys. 80 (1984) 3726,
 //! DOI 10.1063/1.447150; as emitted by paduagroup/clandpol `coul_tt`.
 
-use crate::ff::potential::need;
+use crate::ff::potential::param_reads;
 use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
 use crate::ff::forcefield::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
 use molrs::core::Frame;
 use molrs::core::Neighbors;
 use molrs::core::Virial;
@@ -275,10 +275,10 @@ impl PairDriven for PairTangToennies {
 /// The damping `b`, the order `n` (a non-negative integer) and the scale `c`
 /// of a gathered `coul/tt` style.
 fn tt_style(style_params: &Params) -> Result<(F, usize, F), crate::ff::ir::IrError> {
-    let get = |key: &str| need::style_num("coul/tt", style_params, key);
+    let get = |key: &str| param_reads::style_num("coul/tt", style_params, key);
     let order = get("order")?;
     if order < 0.0 || order.fract() != 0.0 {
-        return Err(need::bad(
+        return Err(param_reads::bad(
             "coul/tt",
             "",
             "order",
@@ -293,11 +293,11 @@ fn tt_style(style_params: &Params) -> Result<(F, usize, F), crate::ff::ir::IrErr
 /// Style params: `b` (default 4.5), `order` (the damping order n, default 4),
 /// `c` (default 1.0). The
 /// thole-like per-atom-type `charge` is read from the atoms block.
-pub fn pair_tang_toennies_ctor(
+pub fn pair_tang_toennies_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (b, n, c) = tt_style(style_params)?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
@@ -329,7 +329,7 @@ pub fn pair_tang_toennies_ctor(
         let p = type_map
             .get(type_name)
             .ok_or_else(|| format!("PairTangToennies: unknown atom type '{type_name}'"))?;
-        Ok(need::type_num("coul/tt", type_name, p, "charge")?)
+        Ok(param_reads::type_num("coul/tt", type_name, p, "charge")?)
     };
 
     let mut atom_i = Vec::with_capacity(i_col.len());
@@ -350,22 +350,22 @@ pub fn pair_tang_toennies_ctor(
         });
     }
 
-    Ok(Member::pair(PairTangToennies::new(
+    Ok(ForceTerm::pair(PairTangToennies::new(
         atom_i, atom_j, qq, b, n, c,
     )))
 }
 
 /// Construct a neighbour-driven [`PairTangToennies`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_tang_toennies_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_tang_toennies_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_tang_toennies_typed_ctor(
+pub fn pair_tang_toennies_typed_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, crate::ff::potential::CompileError> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (b, n, c) = tt_style(style_params)?;
 
@@ -375,10 +375,10 @@ pub fn pair_tang_toennies_typed_ctor(
         let p = type_map
             .get(l.as_str())
             .ok_or_else(|| format!("PairTangToennies: unknown atom type '{l}'"))?;
-        per_type.push(need::type_num("coul/tt", l, p, "charge")?);
+        per_type.push(param_reads::type_num("coul/tt", l, p, "charge")?);
     }
     let q: Vec<F> = type_id.iter().map(|&t| per_type[t as usize]).collect();
-    Ok(Member::pair(PairTangToennies::typed(q, b, n, c)))
+    Ok(ForceTerm::pair(PairTangToennies::typed(q, b, n, c)))
 }
 
 #[cfg(test)]
@@ -388,7 +388,7 @@ mod tests {
     /// earlier against a fixed list — bit for bit, on the same pairs.
     #[test]
     fn per_atom_charges_score_a_pair_exactly_as_compiled_products() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 
