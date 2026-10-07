@@ -18,7 +18,8 @@
 //! | [`xtc`] | `XtcStream`, `readXtcBytes`, `writeXtcBytes` | GROMACS XTC |
 //! | [`lammps`] | `LammpsDataStream`, `LammpsDumpStream`, `readLammpsDataStr`, `readLammpsDataBytes`, `writeLammpsDataStr`, `readLammpsDumpStr`, `readLammpsDumpBytes`, `writeLammpsDumpStr`; `readLammpsLogStr`, `isLammpsLog` ([`lammps::log`]) | LAMMPS data, dump, run log |
 //! | [`amber`] | `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr` | AMBER inpcrd / restrt, Antechamber AC, prmtop structure |
-//! | `smiles` | `readSmilesStr`, `SmilesIr.parse` | SMILES strings (`smiles` feature) |
+//! | `smiles` | `readSmilesStr`, `writeSmilesStr`, `readCgsmilesStr`, `SmilesIr.parse` | SMILES and CGsmiles strings (`smiles` feature) |
+//! | [`csv`] | `readCsvBlockStr`, `writeCsvBlockStr` | CSV tables as a `Block` |
 //! | [`mrec`] | `MrecReader`, `readMrecFrame`, `sectionNames` | `*.mrec` scientific records (Zarr V3) |
 //! | [`cube`] | `readCubeStr`, `writeCubeStr` | Gaussian Cube |
 //! | [`xsf`] | `readXsfStr`, `writeXsfStr` | XCrySDen XSF |
@@ -69,6 +70,7 @@ pub mod frame_index;
 
 pub mod amber;
 pub mod cif;
+pub mod csv;
 pub mod cube;
 pub mod dcd;
 #[cfg(feature = "stream")]
@@ -90,6 +92,7 @@ pub mod xyz;
 
 pub use amber::*;
 pub use cif::*;
+pub use csv::*;
 pub use cube::*;
 pub use dcd::*;
 #[cfg(feature = "stream")]

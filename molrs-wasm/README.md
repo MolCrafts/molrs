@@ -95,7 +95,11 @@ The binding's `io` sources mirror `molrs::io`: one module per format, holding
 that format's reader (or stream) and writer.
 
 - `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
-  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included)
+  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included);
+  `writeSmilesStr(frame)` → SMILES (molrs's default emit options);
+  `readCgsmilesStr(text)` → `Frame`
+- `readCsvBlockStr(text, delimiter?, header?)` → `Block`,
+  `writeCsvBlockStr(block, delimiter?, header?)` → CSV text
 - `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
   `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
   their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
