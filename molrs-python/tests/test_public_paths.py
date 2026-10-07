@@ -387,7 +387,8 @@ def test_find_matches_has_no_mapped_shortcut():
 def test_core_constants_mirror_rust_in_full():
     """``molrs.core.constants`` is ``molrs::core::constants``, name for name."""
     rust = Path(__file__).parents[2] / "molrs" / "src" / "core" / "constants.rs"
-    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", rust.read_text(), re.MULTILINE)) - {"ALL"}
+    source = rust.read_text(encoding="utf-8")
+    names = set(re.findall(r"^pub const ([A-Z0-9_]+):", source, re.MULTILINE)) - {"ALL"}
     assert names
     assert set(molrs.core.constants.__all__) == names
 
@@ -423,7 +424,7 @@ def test_scripts_convert_units_through_the_registry():
     for path in sorted(root.iterdir()):
         if path.suffix not in {".py", ".sh"}:
             continue
-        for n, line in enumerate(path.read_text().splitlines(), 1):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             code = line.split("#", 1)[0]
             if factor.search(code):
                 offenders.append(f"{path.name}:{n}: {line.strip()}")
