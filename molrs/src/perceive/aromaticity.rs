@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::kekule::assign_kekule_numbers;
+use super::valence::{default_valence, n_implicit_hydrogens};
 use crate::core::Atomistic;
 use crate::core::PropValue;
 use crate::core::keys;
@@ -51,15 +52,6 @@ impl ElectronDonor {
 // ---------------------------------------------------------------------------
 // Element helpers (RDKit PeriodicTable subset for in-scope elements)
 // ---------------------------------------------------------------------------
-
-/// RDKit `getDefaultValence` for the elements that can be aromatic.
-/// Returns the first standard valence, or `-1` for univalent / unknown.
-fn default_valence(z: u8) -> i32 {
-    match Element::by_number(z).map(|e| e.default_valences()) {
-        Some(vals) if !vals.is_empty() => vals[0] as i32,
-        _ => -1,
-    }
-}
 
 /// Number of outer-shell (valence) electrons (RDKit `getNouterElecs`).
 /// Defined for the elements that participate in aromaticity perception.
@@ -161,23 +153,17 @@ fn atomic_num(mol: &Atomistic, id: NodeId) -> u8 {
         .unwrap_or(0)
 }
 
-/// Formal charge (`"formal_charge"` prop, default 0).
-fn formal_charge(mol: &Atomistic, id: NodeId) -> i32 {
-    match mol
-        .get_atom(id)
-        .ok()
-        .and_then(|a| a.get("formal_charge").cloned())
-    {
-        Some(PropValue::Int(v)) => v,
-        Some(PropValue::F64(v)) => v as i32,
-        _ => 0,
-    }
-}
-
-/// Heavy-atom + H degree (RDKit `getDegree() + getTotalNumHs()`); here all H
-/// are explicit so this is simply the neighbour count.
+/// Heavy-atom + H degree (RDKit `getDegree() + getTotalNumHs()`): the drawn
+/// neighbours plus the hydrogens the graph implies but does not draw.
+///
+/// A SMILES graph is heavy-atom only, so a benzene carbon arrives with two
+/// neighbours and a valence of three: the missing bond is a hydrogen, not a
+/// radical. Counting it here is what makes perception independent of whether
+/// hydrogens were made explicit — `add_hydrogens` stays a separate, optional
+/// operation, and running it changes no answer here (an explicit H raises the
+/// valence and drives [`n_implicit_hydrogens`] to zero).
 fn total_degree(mol: &Atomistic, id: NodeId) -> i32 {
-    explicit_degree(mol, id) + implicit_h_count(mol, id)
+    explicit_degree(mol, id) + n_implicit_hydrogens(mol, id).map_or(0, |n| n as i32)
 }
 
 /// Neighbours actually drawn in the graph — RDKit `getDegree()`.
@@ -189,34 +175,6 @@ fn total_degree(mol: &Atomistic, id: NodeId) -> i32 {
 /// saturated.
 fn explicit_degree(mol: &Atomistic, id: NodeId) -> i32 {
     mol.neighbor_bonds(id).count() as i32
-}
-
-/// Hydrogens the graph implies but does not draw (RDKit `getNumImplicitHs`).
-///
-/// A SMILES graph is heavy-atom only, so a benzene carbon arrives with two
-/// neighbours and a valence of three: the missing bond is a hydrogen, not a
-/// radical. Deriving it here is what makes perception independent of whether
-/// hydrogens were made explicit — `add_hydrogens` stays a separate, optional
-/// operation, and running it changes no answer here (an explicit H raises the
-/// valence and drives this to zero).
-fn implicit_h_count(mol: &Atomistic, id: NodeId) -> i32 {
-    let z = atomic_num(mol, id);
-    let dv = default_valence(z);
-    if dv <= 0 {
-        return 0;
-    }
-    // A formal charge changes how many bonds the atom can carry, and the
-    // capacity is the *isoelectronic* element's — RDKit's
-    // `getDefaultValence(Z - charge)`, the same rule the candidacy test below
-    // applies. A carbocation holds three like boron; a protonated nitrogen
-    // holds four like carbon. Naively subtracting the charge would give N+ a
-    // capacity of two and lose its hydrogen.
-    let charge = formal_charge(mol, id);
-    let capacity = default_valence((i32::from(z) - charge).clamp(1, 118) as u8);
-    if capacity <= 0 {
-        return 0;
-    }
-    (capacity - explicit_valence(mol, id)).max(0)
 }
 
 /// Iterate incident `(RelationId, other_atom, localized bond number)` for an atom.
@@ -294,7 +252,7 @@ fn count_atom_elec(mol: &Atomistic, id: NodeId) -> i32 {
 
     // lone-pair electrons = outer electrons - default valence, minus charge
     let nlp_raw = n_outer_elecs(z) - dv;
-    let nlp = (nlp_raw - formal_charge(mol, id)).max(0);
+    let nlp = (nlp_raw - mol.get_atom(id).map_or(0, |a| a.formal_charge())).max(0);
 
     let n_radicals = 0; // radicals not modelled in MolGraph; assume none
 
@@ -351,7 +309,7 @@ fn atom_donor_type(
             }
         } else if incident_multiple_bond(mol, id) {
             ElectronDonor::One
-        } else if formal_charge(mol, id) == 1 {
+        } else if mol.get_atom(id).map_or(0, |a| a.formal_charge()) == 1 {
             ElectronDonor::Vacant
         } else {
             ElectronDonor::NoDonor
@@ -393,7 +351,7 @@ fn is_atom_candidate(mol: &Atomistic, id: NodeId, edon: ElectronDonor) -> bool {
     let dv = default_valence(z);
     if dv > 0 {
         let total_valence = explicit_valence(mol, id);
-        let charge = formal_charge(mol, id);
+        let charge = mol.get_atom(id).map_or(0, |a| a.formal_charge());
         let adj_dv = default_valence((z as i32 - charge).clamp(1, 118) as u8);
         if total_valence > adj_dv {
             return false;

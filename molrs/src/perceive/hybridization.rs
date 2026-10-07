@@ -4,7 +4,8 @@ use molrs::core::Atomistic;
 use molrs::core::BondNumber;
 use molrs::core::Element;
 use molrs::core::NodeId;
-use molrs::core::PropValue;
+
+use super::valence::default_valence;
 
 /// An atom's hybridization — RDKit's `Atom::HybridizationType`, less its
 /// `UNSPECIFIED` / `SP2D` (which `setHybridization` never assigns).
@@ -40,7 +41,7 @@ pub enum Hybridization {
 /// labels and the ETKDG bounds builder all read it.
 ///
 /// Hydrogens the graph implies but does not draw count
-/// ([`implicit_h_count`](crate::perceive::implicit_h_count)), so the answer
+/// ([`n_implicit_hydrogens`](crate::perceive::n_implicit_hydrogens)), so the answer
 /// does not depend on whether hydrogens were made explicit. Bond orders are the
 /// localized (Kekulé) numbers; a bond whose class is aromatic is also
 /// conjugated, as in RDKit.
@@ -84,11 +85,7 @@ impl Snapshot {
                     .and_then(Element::by_symbol)
                     .map_or(0, |e| e.z()),
             );
-            formal_charge.push(match atom.as_ref().and_then(|a| a.get("formal_charge")) {
-                Some(PropValue::F64(v)) => v.round() as i32,
-                Some(PropValue::Int(v)) => *v,
-                _ => 0,
-            });
+            formal_charge.push(atom.as_ref().map_or(0, |a| a.formal_charge()));
             nbrs.push(
                 mol.neighbor_bonds(id)
                     .filter_map(|(other, bid)| {
@@ -101,7 +98,7 @@ impl Snapshot {
                     })
                     .collect(),
             );
-            implicit_h.push(super::hydrogens::implicit_h_count(mol, id).unwrap_or(0));
+            implicit_h.push(super::valence::n_implicit_hydrogens(mol, id).unwrap_or(0));
         }
         Self {
             atno,
@@ -254,15 +251,6 @@ fn nouter_elecs(atno: u8) -> Option<i32> {
         10 | 18 | 36 | 54 => 8,
         _ => return None,
     })
-}
-
-/// The first standard valence (RDKit `getValenceList().front()`, which is
-/// also its `getDefaultValence`) from the one valence table,
-/// [`Element::default_valences`]; `-1` when the element has none.
-fn default_valence(atno: u8) -> i32 {
-    Element::by_number(atno)
-        .and_then(|e| e.default_valences().first())
-        .map_or(-1, |&v| i32::from(v))
 }
 
 #[cfg(test)]

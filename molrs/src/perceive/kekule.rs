@@ -260,18 +260,14 @@ impl BondGraph {
         // the shortest correct step, not the final shape.
         let implicit_h: Vec<u32> = atom_ids
             .iter()
-            .map(|aid| crate::perceive::implicit_h_count(mol, *aid).unwrap_or(0))
+            .map(|aid| crate::perceive::n_implicit_hydrogens(mol, *aid).unwrap_or(0))
             .collect();
 
         let scored_as_z: Vec<u8> = atom_ids
             .iter()
             .zip(&z)
             .map(|(aid, &zi)| {
-                let charge = mol
-                    .get_atom(*aid)
-                    .ok()
-                    .and_then(|atom| atom.get("formal_charge").and_then(PropValue::as_f64))
-                    .map_or(0i32, |c| c.round() as i32);
+                let charge = mol.get_atom(*aid).map_or(0, |atom| atom.formal_charge());
                 let shifted = i32::from(zi) - charge;
                 if zi == 0 || shifted <= 0 {
                     zi
@@ -612,7 +608,7 @@ mod tests {
         assert_eq!(mol.n_atoms(), 5, "hydrogens must not be drawn");
         let implicit: Vec<u32> = mol
             .atoms()
-            .map(|(id, _)| crate::perceive::implicit_h_count(&mol, id).unwrap_or(0))
+            .map(|(id, _)| crate::perceive::n_implicit_hydrogens(&mol, id).unwrap_or(0))
             .collect();
         assert_eq!(
             implicit,

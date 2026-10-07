@@ -128,7 +128,7 @@ fn center_query(
     }
 
     if opts.include_charge
-        && let Some(c) = formal_charge(&atom)
+        && let Ok(c) = i8::try_from(atom.formal_charge())
         && c != 0
     {
         prims.push(AtomQuery::Primitive(AtomPrimitive::Charge(c)));
@@ -165,13 +165,6 @@ fn is_aromatic_atom(atom: &molrs::core::Atom) -> bool {
         Some(PropValue::Bool(true)) => true,
         _ => false,
     }
-}
-
-fn formal_charge(atom: &molrs::core::Atom) -> Option<i8> {
-    atom.get("formal_charge")
-        .and_then(PropValue::as_f64)
-        .or_else(|| atom.get_f64("charge"))
-        .map(|v| v as i8)
 }
 
 fn count_h(mol: &Atomistic, id: NodeId) -> u8 {

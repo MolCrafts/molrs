@@ -454,6 +454,19 @@ impl Atom {
         Some([x?, y?, z?])
     }
 
+    /// The atom's formal charge, in units of the elementary charge: its
+    /// [`keys::FORMAL_CHARGE`] prop, rounded to the nearest integer, or `0`
+    /// when the prop is absent or not a number.
+    ///
+    /// The prop is an `I64` column in a frame and an integral `f64` when the
+    /// SMILES reader writes it; both read the same here. The partial charge
+    /// ([`keys::CHARGE`]) is a different quantity and is never consulted.
+    pub fn formal_charge(&self) -> i32 {
+        self.get(keys::FORMAL_CHARGE)
+            .and_then(PropValue::as_f64)
+            .map_or(0, |q| q.round() as i32)
+    }
+
     /// Check whether a key exists.
     pub fn contains_key(&self, key: &str) -> bool {
         self.props.contains_key(key)
@@ -1724,6 +1737,18 @@ mod tests {
     use super::*;
 
     // ----- PropValue & Atom dict-like API -----
+
+    #[test]
+    fn formal_charge_reads_int_and_integral_float_and_never_the_partial_charge() {
+        let mut a = Atom::new();
+        assert_eq!(a.formal_charge(), 0);
+        a.set(keys::CHARGE, -0.8);
+        assert_eq!(a.formal_charge(), 0);
+        a.set(keys::FORMAL_CHARGE, -1.0);
+        assert_eq!(a.formal_charge(), -1);
+        a.set(keys::FORMAL_CHARGE, 2 as I);
+        assert_eq!(a.formal_charge(), 2);
+    }
 
     #[test]
     fn test_propvalue_from() {

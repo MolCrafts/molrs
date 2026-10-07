@@ -41,6 +41,8 @@
 //!
 //! [`add_hydrogens`] / [`remove_hydrogens`] are edits of the graph, not
 //! perceptions, and keep their verbs.
+//! [`n_implicit_hydrogens`] is the per-atom count of the valence model they
+//! and every other perception here share.
 //!
 //! | Function | Atom props | Bond props |
 //! |---|---|---|
@@ -78,6 +80,7 @@ mod rotatable;
 pub mod smarts;
 mod stereo;
 mod subgraph;
+mod valence;
 
 pub use aromaticity::assign_aromaticity;
 // The in-place marker, for SMARTS reactions and the conformer pipeline.
@@ -90,7 +93,7 @@ pub use equivalence::{
     perceive_equivalence_classes,
 };
 pub use hybridization::{Hybridization, perceive_conjugated_atoms, perceive_hybridizations};
-pub use hydrogens::{add_hydrogens, implicit_h_count, remove_hydrogens};
+pub use hydrogens::{add_hydrogens, remove_hydrogens};
 pub use kekule::assign_kekule_bond_orders;
 pub use ring_class::{
     AntechamberRingMembership, AntechamberRingSummary, RingClasses, perceive_ring_classes,
@@ -105,3 +108,4 @@ pub use stereo::{
     perceive_chiral_centers, perceive_tetrahedral_stereo,
 };
 pub use subgraph::SubgraphMatcher;
+pub use valence::n_implicit_hydrogens;

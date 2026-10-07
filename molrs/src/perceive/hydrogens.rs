@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
+use super::valence::n_implicit_hydrogens;
 use crate::core::Atom;
 use crate::core::Atomistic;
-use crate::core::BondOrder;
 use crate::core::NodeId;
 use crate::op::vec3::{cross, norm};
 use molrs::core::Element;
@@ -24,7 +24,7 @@ const PORTS_KIND: &str = "ports";
 /// Return a new [`Atomistic`] with explicit hydrogen atoms added to every
 /// heavy atom that has unfilled valence.
 ///
-/// Each heavy atom gets [`implicit_h_count`] hydrogens: its element's default
+/// Each heavy atom gets [`n_implicit_hydrogens`] hydrogens: its element's default
 /// valences against the sum of its current bond orders, with the formal
 /// charge folded into the element. Hydrogen atoms already present
 /// (symbol == "H") are not modified.
@@ -62,7 +62,7 @@ pub fn add_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
             if sym.eq_ignore_ascii_case("H") {
                 return None; // skip existing hydrogens
             }
-            let n = implicit_h_count(&new_mol, id)?;
+            let n = n_implicit_hydrogens(&new_mol, id)?;
             if n == 0 { None } else { Some((id, n)) }
         })
         .collect();
@@ -315,163 +315,13 @@ pub fn remove_hydrogens(mol: &Atomistic) -> Result<Atomistic, MolRsError> {
 }
 
 // ---------------------------------------------------------------------------
-// Implicit-H calculation
-// ---------------------------------------------------------------------------
-
-/// Compute the number of hydrogens to add to `atom_id`.
-///
-/// Returns `None` if the atom has no recognisable element symbol or if its
-/// element has no defined default valences (e.g. noble gases).
-///
-/// # Bond-order convention
-///
-/// Localized bond counts are read from the bond's `bond_number`, and
-/// aromaticity from its `bond_type` — the two are separate questions.
-/// If the property is absent the bond is assumed to be a single bond (1.0).
-/// Aromatic bonds should be stored as 1.5.
-///
-/// # Formal-charge correction
-///
-/// A formal charge is folded into the element identity, not into the bond
-/// demand: the valence list of `Z − formal_charge` is used. This is RDKit's
-/// `getEffectiveAtomicNum` rule and gets the group-13/14 cation case right
-/// (e.g. `[CH3+]` → C(Z=6) − (+1) = B(Z=5), valence 3 → 3 H, rather than the
-/// naive `bond_order_sum − formal_charge` which over-counts to 5 H). For the
-/// late atoms N/O/F the two formulations happen to agree, but for early atoms
-/// (B, C, Si, …) they diverge, which is exactly the bug this rule fixes.
-pub fn implicit_h_count(mol: &Atomistic, atom_id: NodeId) -> Option<u32> {
-    let atom = mol.get_atom(atom_id).ok()?;
-
-    // A declared hydrogen count (SMILES bracket atom) is exact: `[nH]` has one
-    // hydrogen and `[C]` has none, whatever the valence model would prefer.
-    if let Some(h) = atom.get("h_count").and_then(|v| v.as_f64()) {
-        return Some(h.max(0.0).round() as u32);
-    }
-
-    let sym = atom.get_str("element")?;
-    let element = Element::by_symbol(sym)?;
-
-    // RDKit charged-atom valence rule (`getEffectiveAtomicNum` +
-    // `calculateImplicitValence` in `Code/GraphMol/Atom.cpp`):
-    //
-    //   1. Z_eff = Z − formal_charge  (cation → element one place earlier;
-    //      anion → one place later). The valence list is taken from Z_eff,
-    //      NOT from the bare element with a charge-adjusted demand.
-    //   2. demand = sum of incident bond orders (no charge term here).
-    //   3. target = smallest Z_eff valence ≥ demand.
-    //   4. implicit_h = target − demand.
-    //
-    // This is what makes early atoms (B, C, Si, …) and late atoms (N, O, F)
-    // behave asymmetrically under charge:
-    //   [CH3+]  Z 6−(+1)=5 (B), valences [3], demand 0 → 3 H
-    //   [CH3-]  Z 6−(−1)=7 (N), valences [3,5], demand 0 → 3 H
-    //   [NH4+]  Z 7−(+1)=6 (C), valences [4], demand 0 → 4 H
-    //   [BH4-]  Z 5−(−1)=6 (C), valences [4], demand 0 → 4 H
-    //   [OH-]   Z 8−(−1)=9 (F), valences [1], demand 0 → 1 H
-    //   [NH2-]  Z 7−(−1)=8 (O), valences [2], demand 0 → 2 H
-    // `formal_charge` is stored as an i32-typed column, so read it through the
-    // coercing `as_f64` (matching `bond_order_sum`'s order read); the strict
-    // `get_f64` only matches `PropValue::F64` and would silently miss the Int
-    // variant, treating every charged atom as neutral (e.g. protonating [N-]).
-    let formal_charge = atom
-        .get("formal_charge")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0)
-        .round() as i32;
-
-    // Fold the charge into the element identity, then read that element's
-    // valence list. An out-of-range shift (or an element with no valence
-    // model) means we add no hydrogens.
-    let effective = element.effective_atomic_number(formal_charge)?;
-    let valences = effective.default_valences();
-    if valences.is_empty() {
-        return None; // noble gas / effective element with no valence model
-    }
-
-    // Sum of bond orders connected to this atom (the explicit valence).
-    let demand: f64 = valence_demand(mol, atom_id, valences[0]);
-
-    // Select the smallest allowed valence ≥ the (un-charge-adjusted) demand.
-    let target = valences
-        .iter()
-        .copied()
-        .find(|&v| v as f64 >= demand - 1e-6);
-
-    let target = target?; // if demand exceeds all valences, add nothing
-    let n = target as f64 - demand;
-    if n <= 0.5 {
-        Some(0)
-    } else {
-        Some(n.round() as u32)
-    }
-}
-
-/// Explicit valence of `atom_id` — the demand its existing bonds already place
-/// on `lowest_valence`, the smallest valence its (charge-adjusted) element has.
-///
-/// # Aromatic bonds
-///
-/// An aromatic bond is stored with order `1.5`, but that number is a *bond*
-/// property and summing it does not give an atom's valence: in every Kekulé
-/// structure an aromatic atom has one σ bond per aromatic neighbour, plus at
-/// most one π bond. Summing 1.5 per bond bills a ring atom with two aromatic
-/// neighbours for two half-π bonds it does not both have, and bills a
-/// lone-pair donor for a π bond it does not have at all — which is how
-/// thiophene's S reaches 3.0, takes the S valence of 4, and grows a spurious
-/// S–H.
-///
-/// So aromatic bonds are counted as the σ frame, and the π bond is added back
-/// exactly once — only when the σ frame leaves room for it. That single test
-/// separates the two donor classes without an element table:
-///
-/// | atom | σ | lowest valence | π? | demand | H |
-/// |---|---|---|---|---|---|
-/// | benzene C–H     | 2 | 4 | yes | 3 | 1 |
-/// | substituted C   | 3 | 4 | yes | 4 | 0 |
-/// | pyridine N      | 2 | 3 | yes | 3 | 0 |
-/// | furan O         | 2 | 2 | no  | 2 | 0 |
-/// | thiophene S     | 2 | 2 | no  | 2 | 0 |
-/// | aromatic C=O    | 4 | 4 | no  | 4 | 0 |
-///
-/// (Pyrrole-type N reaches this path only when its H was *not* declared; a
-/// declared `h_count` short-circuits in [`implicit_h_count`].)
-///
-/// A graph with integral Kekulé orders has no aromatic bonds and is summed
-/// unchanged.
-fn valence_demand(mol: &Atomistic, atom_id: NodeId, lowest_valence: u8) -> f64 {
-    // The two facts are read from their own places: how many bonds this is
-    // (the localized number) and whether it is delocalized (the class).
-    let bonds: Vec<(BondOrder, f64)> = mol
-        .incident_bond_ids(atom_id)
-        .map(|(bid, _)| {
-            let number = mol.bond_number(bid).count().max(1) as f64;
-            (mol.bond_type(bid), number)
-        })
-        .collect();
-
-    let n_aromatic = bonds.iter().filter(|(t, _)| t.is_aromatic()).count();
-    // An aromatic bond contributes its sigma bond here; the extra pi bond is
-    // added once below if the atom is still short of its lowest valence.
-    let sigma: f64 = bonds
-        .iter()
-        .map(|(t, n)| if t.is_aromatic() { 1.0 } else { *n })
-        .sum();
-
-    if n_aromatic > 0 && sigma < lowest_valence as f64 - 1e-6 {
-        sigma + 1.0
-    } else {
-        sigma
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::BondNumber;
+    use crate::core::{BondNumber, BondOrder};
 
     fn atom(sym: &str) -> Atom {
         let mut a = Atom::new();
@@ -618,7 +468,7 @@ mod tests {
         n_atom.set("element", "N");
         n_atom.set("formal_charge", 1.0_f64);
         let n = g.add_atom(n_atom);
-        let count = implicit_h_count(&g, n).unwrap();
+        let count = n_implicit_hydrogens(&g, n).unwrap();
         assert_eq!(count, 4);
     }
 
@@ -630,7 +480,7 @@ mod tests {
         a.set("element", sym);
         a.set("formal_charge", fc);
         let id = g.add_atom(a);
-        implicit_h_count(&g, id).unwrap_or(0)
+        n_implicit_hydrogens(&g, id).unwrap_or(0)
     }
 
     #[test]
@@ -652,7 +502,7 @@ mod tests {
 
     /// Like `charged_atom_h` but stores `formal_charge` as the canonical
     /// **integer** column (`PropValue::Int`) — what the parsers and the i32-typed
-    /// graph schema actually emit. Guards the regression where `implicit_h_count`
+    /// graph schema actually emit. Guards the regression where `n_implicit_hydrogens`
     /// read the charge via the strict `get_f64` (F64-only) and silently treated
     /// every charged atom as neutral — e.g. protonating the sulfonimide [N-] in
     /// TFSI/ANI and breaking antechamber's charge balance.
@@ -662,7 +512,7 @@ mod tests {
         a.set("element", sym);
         a.set("formal_charge", fc); // i32 == type alias `I` → PropValue::Int
         let id = g.add_atom(a);
-        implicit_h_count(&g, id).unwrap_or(0)
+        n_implicit_hydrogens(&g, id).unwrap_or(0)
     }
 
     #[test]
@@ -695,7 +545,7 @@ mod tests {
 
     /// Helper: implicit-H on `atom_id` of a built graph.
     fn h_at(g: &Atomistic, id: NodeId) -> u32 {
-        implicit_h_count(g, id).unwrap_or(0)
+        n_implicit_hydrogens(g, id).unwrap_or(0)
     }
 
     #[test]
@@ -888,7 +738,7 @@ mod tests {
         c.set("element", "C");
         c.set("h_count", 2.0_f64);
         let id = g.add_atom(c);
-        assert_eq!(implicit_h_count(&g, id), Some(2));
+        assert_eq!(n_implicit_hydrogens(&g, id), Some(2));
     }
 
     /// An added hydrogen's mass is the element's mass, read from the periodic
@@ -1061,7 +911,7 @@ mod tests {
     }
 
     #[test]
-    fn implicit_h_count_on_a_long_alkane_reads_only_incident_bonds() {
+    fn n_implicit_hydrogens_on_a_long_alkane_reads_only_incident_bonds() {
         // Guards the O(degree) incident-bond read in `valence_demand`: on a
         // 2000-carbon chain the middle carbon has exactly two C-C bonds out of
         // 1999, so it must see a bond-order sum of 2 and take 2 H; each end
@@ -1074,9 +924,9 @@ mod tests {
         }
         assert_eq!(g.n_bonds(), N - 1);
 
-        assert_eq!(implicit_h_count(&g, ids[N / 2]), Some(2));
-        assert_eq!(implicit_h_count(&g, ids[0]), Some(3));
-        assert_eq!(implicit_h_count(&g, ids[N - 1]), Some(3));
+        assert_eq!(n_implicit_hydrogens(&g, ids[N / 2]), Some(2));
+        assert_eq!(n_implicit_hydrogens(&g, ids[0]), Some(3));
+        assert_eq!(n_implicit_hydrogens(&g, ids[N - 1]), Some(3));
     }
 }
 
