@@ -1,7 +1,8 @@
 name: lint
 
 # Format, linters and static checks: every scripts/check.sh gate that runs
-# no test. Same jobs in every context (feature branch or dev/master, fork or
+# no test, and the workflows against the CI scheme (check-workflows). Same
+# jobs in every context (feature branch or dev/master, fork or
 # upstream); see "CI" in molrs-python/docs/contributing.md.
 on:
   push:
@@ -31,7 +32,7 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
         uses: MolCrafts/molcrafts-ci/actions/ci-context@master
@@ -62,3 +63,13 @@ jobs:
         with:
           cache: lint
       - run: scripts/check.sh clippy doc
+
+  workflows:
+    name: lint / workflows
+    needs: context
+    # Every workflow against the CI scheme: MolCrafts/molcrafts-ci/actions/check-workflows.
+    if: needs.context.outputs.skip-pr != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/check-workflows@master

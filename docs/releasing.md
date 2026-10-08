@@ -63,8 +63,12 @@ the Pyodide wheel), and the GitHub Release with the C API archives.
 
 | run | what it does |
 | --- | --- |
-| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`), `lint.yml` and the full `test.yml` tier, the builds, then every upload |
-| dispatch (any branch, fork or upstream) | the dry run: the same guard, gates and builds, `cargo publish --dry-run`, no upload and no Release |
+| `v*` tag on MolCrafts | `release / guard` (tag = `v` + the workspace version, on `master`), `lint.yml` and the full `test.yml` tier, the builds and dry runs, then every upload (`release / crate`, `npm`, `pypi`, `github`) |
+| dispatch (any branch, fork or upstream) | the dry run: the same guard, gates and builds, `release / crate (dry run)` (`cargo publish --dry-run`) and `release / npm (dry run)` (`npm pack --dry-run`); the upload jobs are skipped, so no upload and no Release |
+
+The upload jobs run only when `release / context` reports `publish` (a `v*`
+tag pushed to MolCrafts, from `MolCrafts/molcrafts-ci/actions/ci-context`);
+`lint / workflows` fails any upload job that tests the event or ref itself.
 
 1. Finish the checks and review the release diff.
 2. Dispatch **release** on the branch for a rehearsal (a fork is fine).
@@ -75,8 +79,8 @@ the Pyodide wheel), and the GitHub Release with the C API archives.
 
 Every upload skips a version the registry already has: retry a partial
 release by re-running the tag's run. Trusted publishing on crates.io, PyPI
-and npm names the workflow file, `release.yml`, and the environments
-`release` (crates.io, npm) and `pypi`.
+and npm names the workflow file, `release.yml`, and one environment per registry:
+`crates-io`, `npm` and `pypi`.
 
 Nightly wheels (`molcrafts-molrs-nightly` on PyPI) come from `nightly.yml`
 on a push to the `nightly` branch; see "CI" in

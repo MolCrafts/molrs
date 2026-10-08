@@ -6,10 +6,12 @@ name: release
 # archives (lib + header + LICENSE + sha256).
 #
 # A dispatch is the dry run, on any branch, fork or upstream: the same guard,
-# gates and builds, `cargo publish --dry-run`, and no upload anywhere. Only
-# a tag push on MolCrafts uploads (PUBLISH, from `release / context`). Every
-# upload skips a version the registry already has, so a partial release is
-# retried by re-running the tag's run.
+# gates and builds, `cargo publish --dry-run` and `npm pack --dry-run`, and no
+# upload anywhere. Building and uploading are separate jobs: every upload job
+# (release / crate, npm, pypi, github) runs only when `release / context`
+# says `publish` (a `v*` tag pushed to MolCrafts), and tests no raw event or
+# ref. Every upload skips a version the registry already has, so a partial
+# release is retried by re-running the tag's run.
 #
 # Trusted publishing names this file, release.yml, and one environment per
 # registry: crates-io, npm, pypi. A dispatch never enters an environment.
@@ -21,9 +23,7 @@ on:
 permissions:
   contents: read
 
-# One group per file, workflow, event and ref. Under workflow_call (release.yml
-# running lint/test) github.workflow and github.event_name are the caller's, so
-# a called run never shares, and so never cancels, a direct run's group.
+# One group per file, workflow, event and ref; a run is never cancelled.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
@@ -42,7 +42,7 @@ jobs:
       upstream: ${{ steps.context.outputs.upstream }}
       integration: ${{ steps.context.outputs.integration }}
       skip-pr: ${{ steps.context.outputs.skip-pr }}
-      cancel: ${{ steps.context.outputs.cancel }}
+      publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
         uses: MolCrafts/molcrafts-ci/actions/ci-context@master
@@ -57,7 +57,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: The tag is the package version, on master
-        if: github.event_name == 'push'
+        if: needs.context.outputs.publish == 'true'
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           [ "$GITHUB_REF_NAME" = "v$version" ] || { echo "::error::tag $GITHUB_REF_NAME is not v$version"; exit 1; }
@@ -71,28 +71,32 @@ jobs:
     needs: guard
     uses: ./.github/workflows/test.yml
 
+  # The crate as crates.io would take it: package and verify, upload nothing.
+  crate-check:
+    name: release / crate (dry run)
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - run: cargo publish --dry-run --locked --manifest-path molrs/Cargo.toml
+
   crate:
     name: release / crate
-    needs: [context, lint, test]
+    needs: [context, lint, test, crate-check]
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    env:
-      PUBLISH: ${{ github.event_name == 'push' && needs.context.outputs.upstream == 'true' }}
-    environment: ${{ github.event_name == 'push' && 'crates-io' || '' }}
+    environment: crates-io
     permissions:
       id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
-      - if: env.PUBLISH == 'true'
-        id: auth
+      - id: auth
         uses: rust-lang/crates-io-auth-action@v1
       - env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          if [ "$PUBLISH" != true ]; then
-            cargo publish --dry-run --locked --manifest-path molrs/Cargo.toml
-            exit
-          fi
           VERSION=$(cargo metadata --no-deps --format-version 1 --manifest-path molrs/Cargo.toml | jq -r '.packages[0].version')
           # crates.io rejects a request without a User-Agent.
           if curl -sfL -A "molrs-release/1.0" "https://crates.io/api/v1/crates/molcrafts-molrs/$VERSION" >/dev/null; then
@@ -100,36 +104,54 @@ jobs:
             exit 0
           fi
           set +e
-          OUT=$(cargo publish --manifest-path molrs/Cargo.toml 2>&1)
+          OUT=$(cargo publish --locked --manifest-path molrs/Cargo.toml 2>&1)
           CODE=$?
           set -e
           printf '%s\n' "$OUT"
           # Index lag after a successful earlier publish.
           [ "$CODE" -eq 0 ] || printf '%s\n' "$OUT" | grep -qiE 'already exists|already uploaded' || exit "$CODE"
 
-  npm:
-    name: release / npm
-    needs: [context, lint, test]
+  # The npm package, built and packed as npm would take it; the upload job
+  # publishes exactly this directory.
+  npm-pack:
+    name: release / npm (dry run)
+    needs: guard
     runs-on: ubuntu-latest
-    env:
-      PUBLISH: ${{ github.event_name == 'push' && needs.context.outputs.upstream == 'true' }}
-    environment: ${{ github.event_name == 'push' && 'npm' || '' }}
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
         with:
           cache: release-wasm
       - uses: ./.github/actions/setup-wasm
-        with:
-          registry-url: https://registry.npmjs.org
       - working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs -- --locked
+      - working-directory: molrs-wasm/pkg
+        run: npm pack --dry-run
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-pkg
+          path: molrs-wasm/pkg
+
+  npm:
+    name: release / npm
+    needs: [context, lint, test, npm-pack]
+    if: needs.context.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-wasm
+        with:
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-pkg
+          path: molrs-wasm/pkg
       # setup-node's registry-url exports a placeholder NODE_AUTH_TOKEN that
       # would override OIDC; empty, npm >= 11.5 publishes through the id-token.
-      - if: env.PUBLISH == 'true'
-        working-directory: molrs-wasm/pkg
+      - working-directory: molrs-wasm/pkg
         env:
           NODE_AUTH_TOKEN: ""
         run: |
@@ -214,9 +236,9 @@ jobs:
   pypi:
     name: release / pypi
     needs: [context, lint, test, wheels, pyodide]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -275,7 +297,7 @@ jobs:
   github:
     name: release / github
     needs: [context, lint, test, capi]
-    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
+    if: needs.context.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
