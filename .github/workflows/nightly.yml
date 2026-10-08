@@ -1,6 +1,7 @@
 name: nightly
 
-# Upstream only (MolCrafts/molrs); a fork sees every job skipped.
+# Upstream only (MolCrafts/molrs); a fork sees every job but
+# `nightly / context` skipped.
 #
 #   measure + submit  (schedule, or a dispatch) one measured run of the Rust
 #       core, published to the MolCrafts CI index whose push rebuilds the
