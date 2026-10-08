@@ -85,7 +85,7 @@ its outputs.
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master` on MolCrafts, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
-| `lint.yml` | `lint / hooks` (commit hooks on every file, `partners`), `lint / clippy` (`clippy doc`) | same | — |
+| `lint.yml` | `lint / hooks` (commit hooks on every file, `partners`), `lint / clippy` (`clippy doc`), `lint / workflows` (`check-workflows`) | same | — |
 | `test.yml` | fast: `test / rust` (`test`), `test / python (ubuntu-latest)` | full: `test / rust` (+ `ffi cxx ext package`), `test / python` on Linux, macOS and Windows, `test / features`, `test / capi`, `test / wasm`, `test / mrec` | — |
 | `docs.yml` | `docs / build` (`docs`) | same | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: tests, coverage and conformance snapshots to molcrafts-ci; a `nightly` branch push: wheels to `molcrafts-molrs-nightly` |
