@@ -7,9 +7,9 @@ name: release
 #
 # A dispatch is the dry run, on any branch, fork or upstream: the same guard,
 # gates and builds, `cargo publish --dry-run`, and no upload anywhere. Only
-# a tag push on MolCrafts uploads (PUBLISH). Every upload skips a version the
-# registry already has, so a partial release is retried by re-running the
-# tag's run.
+# a tag push on MolCrafts uploads (PUBLISH, from `release / context`). Every
+# upload skips a version the registry already has, so a partial release is
+# retried by re-running the tag's run.
 #
 # Trusted publishing names this file, release.yml, and one environment per
 # registry: crates-io, npm, pypi. A dispatch never enters an environment.
@@ -28,17 +28,29 @@ concurrency:
   group: release-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  PUBLISH: ${{ github.event_name == 'push' && github.repository_owner == 'MolCrafts' }}
-
 defaults:
   run:
     shell: bash
 
 jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: release / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
   guard:
     name: release / guard
-    if: github.event_name == 'workflow_dispatch' || github.repository_owner == 'MolCrafts'
+    needs: context
+    if: github.event_name == 'workflow_dispatch' || needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,8 +73,10 @@ jobs:
 
   crate:
     name: release / crate
-    needs: [lint, test]
+    needs: [context, lint, test]
     runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && needs.context.outputs.upstream == 'true' }}
     environment: ${{ github.event_name == 'push' && 'crates-io' || '' }}
     permissions:
       id-token: write
@@ -95,8 +109,10 @@ jobs:
 
   npm:
     name: release / npm
-    needs: [lint, test]
+    needs: [context, lint, test]
     runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && needs.context.outputs.upstream == 'true' }}
     environment: ${{ github.event_name == 'push' && 'npm' || '' }}
     permissions:
       id-token: write
@@ -197,8 +213,8 @@ jobs:
 
   pypi:
     name: release / pypi
-    needs: [lint, test, wheels, pyodide]
-    if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
+    needs: [context, lint, test, wheels, pyodide]
+    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
     environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
     permissions:
@@ -258,8 +274,8 @@ jobs:
 
   github:
     name: release / github
-    needs: [lint, test, capi]
-    if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
+    needs: [context, lint, test, capi]
+    if: github.event_name == 'push' && needs.context.outputs.upstream == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

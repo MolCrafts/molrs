@@ -77,7 +77,11 @@ the variable is unset and every gate runs locally, exactly as CI runs it.
 One workflow per kind of work, each job a `scripts/check.sh` call. Every
 push of any branch runs `lint`, `test` and `docs`, on a fork as on
 MolCrafts. A pull request into `dev` or `master` runs them again unless it is
-a pull request inside a fork (that was already run by its push).
+a pull request inside a fork (that was already run by its push). Those
+decisions (tier, fork or upstream, the duplicate pull request) are made in
+one place: every workflow's first job, `<file> / context`, runs
+`MolCrafts/molcrafts-ci/actions/ci-context@master`, and every other job reads
+its outputs.
 
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master` on MolCrafts, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
@@ -91,7 +95,7 @@ So a fork branch gets the full tier on its push: push to your fork, wait for
 green, then open the pull request into MolCrafts `dev`. Branches pushed to
 MolCrafts itself (Dependabot's) get the fast tier, and their pull requests the
 full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
-`test / tier` and the full tier's jobs. Shared setup is
+`test / context` and the full tier's jobs. Shared setup is
 `MolCrafts/molcrafts-ci/actions/<name>@master` (`setup-rust`, `setup-python`);
 only `setup-wasm` is molrs's own, in `.github/actions/`.
 

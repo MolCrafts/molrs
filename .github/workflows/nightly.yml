@@ -40,9 +40,24 @@ defaults:
     shell: bash
 
 jobs:
+  # Where this run happens, decided once: MolCrafts/molcrafts-ci/actions/ci-context.
+  context:
+    name: nightly / context
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.context.outputs.tier }}
+      upstream: ${{ steps.context.outputs.upstream }}
+      integration: ${{ steps.context.outputs.integration }}
+      skip-pr: ${{ steps.context.outputs.skip-pr }}
+      cancel: ${{ steps.context.outputs.cancel }}
+    steps:
+      - id: context
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+
   measure:
     name: nightly / measure
-    if: github.repository_owner == 'MolCrafts' && github.ref != 'refs/heads/nightly'
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref != 'refs/heads/nightly'
     runs-on: ubuntu-latest
     env:
       # Only master's records are project history.
@@ -160,7 +175,8 @@ jobs:
   # One version for every runner: per-runner timestamps would not merge.
   version:
     name: nightly / version
-    if: github.repository_owner == 'MolCrafts' && github.ref == 'refs/heads/nightly'
+    needs: context
+    if: needs.context.outputs.upstream == 'true' && github.ref == 'refs/heads/nightly'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
