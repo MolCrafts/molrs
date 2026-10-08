@@ -7,7 +7,7 @@
 //! `conformer`, and `stream`.
 //!
 //! ```toml
-//! molcrafts-molrs = { version = "0.16", features = ["io", "smiles"] }
+//! molcrafts-molrs = { version = "0.17", features = ["io", "smiles"] }
 //! ```
 //!
 //! Then:
