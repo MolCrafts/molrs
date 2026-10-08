@@ -82,6 +82,8 @@ base_python = ["python3"]
 deps = [
   "maturin>=1.0,<2.0",
   "pytest",
+  # `scripts/check.sh --report` measures the Python layer's coverage.
+  "pytest-cov",
   "numpy>=2.0",
 ]
 pass_env = [
@@ -120,5 +122,5 @@ commands_pre = [
   ],
 ]
 commands = [
-  ["{envpython}", "-X", "warn_default_encoding", "-m", "pytest", "-q"],
+  ["{envpython}", "-X", "warn_default_encoding", "-m", "pytest", "-q", { replace = "posargs", extend = true }],
 ]

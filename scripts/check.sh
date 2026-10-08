@@ -6,6 +6,9 @@
 #
 #   scripts/check.sh fmt clippy     # run the named gates, in order
 #   scripts/check.sh all            # every gate (CI parity)
+#   scripts/check.sh --report .ci-out test python
+#                                   # + each test gate's numbers, for
+#                                   # MolCrafts/molcrafts-ci/actions/report
 #
 # Gates: fmt ruff partners clippy doc test features package ffi cxx ext python capi
 # wasm mrec docs. Root-workspace cargo calls go through the `cargo mrs-*`
@@ -37,6 +40,20 @@ ROOTS=("${BINDERS[@]}" molrs-ext-example)
 # wasm-opt release the wasm gate runs; CI installs exactly this one.
 BINARYEN_VERSION=version_133
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
+# --report <dir>: the test gates also write what they ran into <dir> --
+# cargo-test.log (every `cargo test` of test/ffi/cxx/ext; its `test result:`
+# lines are the totals), junit.xml and coverage.json (python). Nothing reads
+# them here; CI turns them into the run's summary.
+REPORT=
+
+# `cargo test` that also appends its output to the report log.
+cargo_test() {
+    if [ -n "$REPORT" ]; then
+        cargo "$@" | tee -a "$REPORT/cargo-test.log"
+    else
+        cargo "$@"
+    fi
+}
 
 clippy_binder() {
     cargo clippy --locked --manifest-path "$1/Cargo.toml" --all-targets "${@:2}" -- -D warnings
@@ -77,8 +94,8 @@ gate_doc() {
 
 # --lib does not run rustdoc examples, so the doctests are their own step.
 gate_test() {
-    cargo --locked mrs-test
-    cargo --locked mrs-doctest
+    cargo_test --locked mrs-test
+    cargo_test --locked mrs-doctest
 }
 
 # Each sub-system must build on its own, without molrs's native defaults,
@@ -116,12 +133,12 @@ PY
 
 gate_ffi() {
     clippy_binder molrs-ffi
-    cargo test --locked --manifest-path molrs-ffi/Cargo.toml
+    cargo_test test --locked --manifest-path molrs-ffi/Cargo.toml
 }
 
 gate_cxx() {
     clippy_binder molrs-cxxapi
-    cargo test --locked --manifest-path molrs-cxxapi/Cargo.toml
+    cargo_test test --locked --manifest-path molrs-cxxapi/Cargo.toml
 }
 
 # The force-field IR as a protocol (ff-ir-02-protocol, P-Rust): a third
@@ -130,14 +147,17 @@ gate_cxx() {
 # (scripts/ff_ir_extension_lammps_check.sh), persisted, and refused by name.
 gate_ext() {
     clippy_binder molrs-ext-example
-    cargo test --locked --manifest-path molrs-ext-example/Cargo.toml
+    cargo_test test --locked --manifest-path molrs-ext-example/Cargo.toml
 }
 
 # Tools only (no project install), so tox builds the wheel once.
 gate_python() {
     clippy_binder molrs-python
     uv --directory molrs-python sync --locked --no-install-project --extra dev
-    uv --directory molrs-python run --no-sync tox -e py
+    local report=()
+    [ -z "$REPORT" ] || report=(-- "--junitxml=$REPORT/junit.xml" --cov=molrs --cov-branch
+        "--cov-report=json:$REPORT/coverage.json")
+    uv --directory molrs-python run --no-sync tox -e py ${report[@]+"${report[@]}"}
 }
 
 # Profile and target dir are explicit: CMake caches both, and a build-test/
@@ -208,13 +228,26 @@ ALL=(fmt ruff partners clippy doc test features package ffi cxx ext python capi 
 # Gates that compile nothing; everything else goes to MOLCRAFTS_HOOK_RUNNER.
 CHEAP=(fmt ruff partners)
 
-[ "$#" -gt 0 ] || { echo "usage: $0 <gate>... | all   (gates: ${ALL[*]})" >&2; exit 2; }
+usage="usage: $0 [--report <dir>] <gate>... | all   (gates: ${ALL[*]})"
+report_args=()
+if [ "${1:-}" = --report ]; then
+    [ "$#" -gt 1 ] || { echo "$usage" >&2; exit 2; }
+    report_args=(--report "$2")
+    mkdir -p "$2"
+    REPORT=$(cd "$2" && pwd)
+    # Python on Windows reads D:/a/..., not Git Bash's /d/a/...
+    if command -v cygpath >/dev/null; then REPORT=$(cygpath -m "$REPORT"); fi
+    # A previous run's numbers must not pass as this run's.
+    rm -f "$REPORT/cargo-test.log" "$REPORT/junit.xml" "$REPORT/coverage.json"
+    shift 2
+fi
+[ "$#" -gt 0 ] || { echo "$usage" >&2; exit 2; }
 [ "$1" = all ] && set -- "${ALL[@]}"
 
 if [ -n "${MOLCRAFTS_HOOK_RUNNER:-}" ] && [ -z "${SLURM_JOB_ID:-}" ]; then
     for gate in "$@"; do
         if [[ " ${CHEAP[*]} " != *" $gate "* ]]; then
-            exec "$MOLCRAFTS_HOOK_RUNNER" "$PWD/scripts/check.sh" "$@"
+            exec "$MOLCRAFTS_HOOK_RUNNER" "$PWD/scripts/check.sh" ${report_args[@]+"${report_args[@]}"} "$@"
         fi
     done
 fi

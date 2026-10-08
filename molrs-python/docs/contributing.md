@@ -99,6 +99,13 @@ full one. The `require-green-ci` (`dev`) and `protect-master` rulesets require
 `MolCrafts/molcrafts-ci/actions/<name>@master` (`setup-rust`, `setup-python`);
 only `setup-wasm` is molrs's own, in `.github/actions/`.
 
+`test / rust` and `test / python` run their gates as `scripts/check.sh
+--report .ci-out <gate>`, which also writes what the tests ran
+(`cargo-test.log`; `junit.xml` and the Python layer's `coverage.json`).
+`MolCrafts/molcrafts-ci/actions/report@master` turns them into a table of passed,
+failed and skipped counts and line and branch coverage, in the run and pull
+request summary. It reports only: no thresholds, and it never fails a job.
+
 ## Partners
 
 molrs is judged against molrec's conformance suite (`mrec`). On `dev`,
