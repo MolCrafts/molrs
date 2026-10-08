@@ -11,7 +11,8 @@ name: release
 # registry already has, so a partial release is retried by re-running the
 # tag's run.
 #
-# Trusted publishing (crates.io, PyPI, npm) names this file: release.yml.
+# Trusted publishing names this file, release.yml, and one environment per
+# registry: crates-io, npm, pypi. A dispatch never enters an environment.
 on:
   push:
     tags: ["v*"]
@@ -59,7 +60,7 @@ jobs:
     name: release / crate
     needs: [lint, test]
     runs-on: ubuntu-latest
-    environment: release
+    environment: ${{ github.event_name == 'push' && 'crates-io' || '' }}
     permissions:
       id-token: write
     steps:
@@ -93,7 +94,7 @@ jobs:
     name: release / npm
     needs: [lint, test]
     runs-on: ubuntu-latest
-    environment: release
+    environment: ${{ github.event_name == 'push' && 'npm' || '' }}
     permissions:
       id-token: write
     steps:
@@ -106,8 +107,12 @@ jobs:
           registry-url: https://registry.npmjs.org
       - working-directory: molrs-wasm
         run: wasm-pack build --release --target bundler --scope molcrafts --out-name molrs -- --locked
+      # setup-node's registry-url exports a placeholder NODE_AUTH_TOKEN that
+      # would override OIDC; empty, npm >= 11.5 publishes through the id-token.
       - if: env.PUBLISH == 'true'
         working-directory: molrs-wasm/pkg
+        env:
+          NODE_AUTH_TOKEN: ""
         run: |
           NAME=$(node -p "require('./package.json').name")
           VERSION=$(node -p "require('./package.json').version")
@@ -192,7 +197,7 @@ jobs:
     needs: [lint, test, wheels, pyodide]
     if: github.event_name == 'push' && github.repository_owner == 'MolCrafts'
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: ${{ github.event_name == 'push' && 'pypi' || '' }}
     permissions:
       id-token: write
     steps:
