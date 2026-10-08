@@ -423,6 +423,11 @@ molrs's own LAMMPS writer wrote from the specs; `%.17g` energy and forces;
 | `nonconforming_refused` | every protocol refusal reachable from Rust (registration, compile, writers, forms), by variant and named item | 25 variants (`KernelShape`: Python) |
 | `bond_angle_cross_term` | hand value −π/60, central differences, expression = native form, rel ≤ 1e-12 | 5.8·10⁻¹⁵ |
 
+The same script prices `bond_angle` against `angle_style class2` (every
+cross term but `ba` at zero) when `MOLRS_LMP_CLASS2` names a LAMMPS built
+with CLASS2 (`scripts/build_lammps_class2.sh`): compared, not pinned, worst
+rel 2.2·10⁻¹⁶.
+
 **The Python proof** — `molrs-python/tests/test_ff_ir_extension.py`, LAMMPS
 numbers pinned in `ff_ir_extension_lammps.tsv` by the same script:
 

@@ -17,15 +17,17 @@
 # `python/*` from the Python proof, when MOLRS_PYTHON names a python with the
 # molrs wheel installed (pinned in molrs-python/tests/ff_ir_extension_lammps.tsv).
 #
-# The installed LAMMPS has `bond_style fene`, `pair_style lj/smooth/linear`
-# and `angle_style charmm`, and no CLASS2: the `bond_angle` cases (class2's
-# bond-angle cross term) run only when MOLRS_LMP_CLASS2 names a LAMMPS built
-# with CLASS2, and are compared, never pinned (the tests hold that term to
+# `lmp` needs `bond_style fene`, `pair_style lj/smooth/linear` and
+# `angle_style charmm` (MOLECULE, EXTRA-MOLECULE, EXTRA-PAIR). The
+# `bond_angle` cases (class2's bond-angle cross term) need CLASS2 and run
+# only when MOLRS_LMP_CLASS2 names such a LAMMPS; scripts/build_lammps_class2.sh
+# builds one. They are compared, never pinned (the tests hold that term to
 # its hand value, central differences and its expression instead).
 #
 # Run it where cargo may build (a compute node). Engines (override by env):
 #   LMP               LAMMPS with MOLECULE (lmp)
-#   MOLRS_LMP_CLASS2  LAMMPS with CLASS2 (unset: the bond_angle cases are skipped)
+#   MOLRS_LMP_CLASS2  LAMMPS with CLASS2 (scripts/build_lammps_class2.sh;
+#                     unset: the bond_angle cases are skipped)
 #   MOLRS_PYTHON      python with molrs installed (unset: the python cases are skipped)
 #   PYTHON            python with molrs installed, which reads LAMMPS's logs
 #                     and dumps (molrs.io.read_lammps_log,
