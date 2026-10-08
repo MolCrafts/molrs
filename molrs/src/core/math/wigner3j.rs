@@ -1,40 +1,29 @@
-//! Wigner 3-j symbols for integer angular momenta.
-//!
-//! Computes
-//!
-//! ```text
-//!     ⎛ j1  j2  j3 ⎞
-//!     ⎝ m1  m2  m3 ⎠
-//! ```
-//!
-//! via the Racah single-sum form, evaluated through `lgamma` to stay
-//! well-conditioned for ℓ up to ~30. Matches `freud/order/Wigner3j.cc`
-//! conventions exactly.
-//!
-//! # Selection rules (all must hold; otherwise the symbol is 0):
-//!
-//! - `m1 + m2 + m3 = 0`
-//! - `|m_i| ≤ j_i`
-//! - `|j1 − j2| ≤ j3 ≤ j1 + j2`
-//!
-//! # References
-//!
-//! - Edmonds, *Angular Momentum in Quantum Mechanics*, eq. (3.7.3).
-//! - Racah, *Phys. Rev.* 62, 438 (1942).
+//! Wigner 3-j symbols for integer angular momenta: [`wigner_3j`].
 
-use libm::lgamma;
+use super::factorial::ln_factorial;
+use crate::op::F;
 
-use crate::types::F;
-
-#[inline]
-fn lfact(n: i64) -> F {
-    debug_assert!(n >= 0, "lfact: argument must be ≥ 0, got {n}");
-    lgamma(n as F + 1.0)
-}
-
-/// Integer Wigner 3-j symbol.
+/// Integer Wigner 3-j symbol
 ///
-/// Returns 0 for any input violating the selection rules.
+/// ```text
+///     ⎛ j1  j2  j3 ⎞
+///     ⎝ m1  m2  m3 ⎠
+/// ```
+///
+/// via the Racah single-sum form, evaluated through `lgamma` to stay
+/// well-conditioned for ℓ up to ~30. Matches `freud/order/Wigner3j.cc`
+/// conventions exactly.
+///
+/// Returns 0 for any input violating the selection rules (all must hold):
+///
+/// - `m1 + m2 + m3 = 0`
+/// - `|m_i| ≤ j_i`
+/// - `|j1 − j2| ≤ j3 ≤ j1 + j2`
+///
+/// # References
+///
+/// - Edmonds, *Angular Momentum in Quantum Mechanics*, eq. (3.7.3).
+/// - Racah, *Phys. Rev.* 62, 438 (1942).
 pub fn wigner_3j(j1: u32, j2: u32, j3: u32, m1: i32, m2: i32, m3: i32) -> F {
     if m1 + m2 + m3 != 0 {
         return 0.0;
@@ -50,17 +39,17 @@ pub fn wigner_3j(j1: u32, j2: u32, j3: u32, m1: i32, m2: i32, m3: i32) -> F {
     }
 
     // Δ(j1,j2,j3) = (j1+j2-j3)!(j1-j2+j3)!(-j1+j2+j3)! / (j1+j2+j3+1)!
-    let log_delta = lfact((j1i + j2i - j3i) as i64)
-        + lfact((j1i - j2i + j3i) as i64)
-        + lfact((-j1i + j2i + j3i) as i64)
-        - lfact((j1i + j2i + j3i + 1) as i64);
+    let log_delta = ln_factorial((j1i + j2i - j3i) as i64)
+        + ln_factorial((j1i - j2i + j3i) as i64)
+        + ln_factorial((-j1i + j2i + j3i) as i64)
+        - ln_factorial((j1i + j2i + j3i + 1) as i64);
 
-    let log_factorials = lfact((j1i - m1) as i64)
-        + lfact((j1i + m1) as i64)
-        + lfact((j2i - m2) as i64)
-        + lfact((j2i + m2) as i64)
-        + lfact((j3i - m3) as i64)
-        + lfact((j3i + m3) as i64);
+    let log_factorials = ln_factorial((j1i - m1) as i64)
+        + ln_factorial((j1i + m1) as i64)
+        + ln_factorial((j2i - m2) as i64)
+        + ln_factorial((j2i + m2) as i64)
+        + ln_factorial((j3i - m3) as i64)
+        + ln_factorial((j3i + m3) as i64);
 
     let log_prefactor = 0.5 * (log_delta + log_factorials);
 
@@ -78,12 +67,12 @@ pub fn wigner_3j(j1: u32, j2: u32, j3: u32, m1: i32, m2: i32, m3: i32) -> F {
     let mut sum: F = 0.0;
     for t in t_min..=t_max {
         let ti = t as i32;
-        let log_term = lfact(t)
-            + lfact((j3i - j2i + ti + m1) as i64)
-            + lfact((j3i - j1i + ti - m2) as i64)
-            + lfact((j1i + j2i - j3i - ti) as i64)
-            + lfact((j1i - ti - m1) as i64)
-            + lfact((j2i - ti + m2) as i64);
+        let log_term = ln_factorial(t)
+            + ln_factorial((j3i - j2i + ti + m1) as i64)
+            + ln_factorial((j3i - j1i + ti - m2) as i64)
+            + ln_factorial((j1i + j2i - j3i - ti) as i64)
+            + ln_factorial((j1i - ti - m1) as i64)
+            + ln_factorial((j2i - ti + m2) as i64);
         let sign = if t & 1 == 0 { 1.0 } else { -1.0 };
         sum += sign * (log_prefactor - log_term).exp();
     }

@@ -1,29 +1,7 @@
 //! Vibrational and chiral spectroscopy: raw flux/tensor correlation
 //! [`Compute`](crate::compute::Compute)s and the spectral
-//! [`Fit`](crate::compute::traits::Fit) transforms that turn them into
+//! [`Fit`](crate::compute::Fit) transforms that turn them into
 //! frequency-domain spectra.
-//!
-//! Each spectrum is an explicit two-step composition — a raw compute produces
-//! an (unwindowed) correlation function, a fit applies window + FFT (+
-//! physical prefactors):
-//!
-//! | Spectrum | Raw compute | Fit transform |
-//! |----------|-------------|---------------|
-//! | VDOS | [`VACF`](crate::compute::transport::VACF) (velocity ACF) | [`PowerSpectrum`] |
-//! | IR | [`IRFlux`] (dipole-flux ACF) | [`IRSpectrum`] |
-//! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
-//! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
-//! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
-//! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
-//! | Dielectric ε(ω) | [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) / [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) / [`DipoleRateCross`](crate::compute::transport::DipoleRateCross) | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
-//!
-//! # Units
-//!
-//! | quantity   | unit |
-//! |------------|------|
-//! | time / dt  | fs   |
-//! | frequency  | cm⁻¹ |
-//! | intensity  | arb. |
 //!
 //! # Shared spectral primitives
 //!
@@ -35,61 +13,53 @@
 //! coefficients always route through [`molrs::signal`] (never reimplemented);
 //! the pad + forward-FFT core is the crate-shared `forward_fft_onesided`.
 
-pub mod dielectric_spectrum;
-pub mod ir_flux;
-pub mod ir_spectrum;
-pub mod power_spectrum;
-pub mod raman_spectrum;
-pub mod raman_tensor;
-pub mod resonance_raman_spectrum;
-pub mod resonance_raman_tensor;
-pub mod roa_cross_tensor;
-pub mod roa_spectrum;
-pub mod spectra;
-pub mod vcd_cross_flux;
-pub mod vcd_spectrum;
+mod dielectric_spectrum;
+mod ir_flux;
+mod ir_spectrum;
+mod power_spectrum;
+mod raman_spectrum;
+mod raman_tensor;
+mod resonance_raman_spectrum;
+mod resonance_raman_tensor;
+mod roa_cross_tensor;
+mod roa_spectrum;
+mod spectra;
+mod vcd_cross_flux;
+mod vcd_spectrum;
 
 pub use dielectric_spectrum::{
     ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
     DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, KramersKronig,
     KramersKronigCheck, RouteAgreement, RouteAgreementCheck, SumRuleCheck,
 };
-pub use ir_flux::{IRFlux, IRFluxArgs, IRFluxResult};
-pub use ir_spectrum::IRSpectrum;
+pub use ir_flux::{IrFlux, IrFluxArgs, IrFluxResult};
+pub use ir_spectrum::IrSpectrum;
 pub use power_spectrum::PowerSpectrum;
 pub use raman_spectrum::RamanSpectrum;
 pub use raman_tensor::{RamanTensor, RamanTensorArgs, RamanTensorResult};
 pub use resonance_raman_spectrum::ResonanceRamanSpectrum;
-pub use resonance_raman_tensor::{ResonanceRamanArgs, ResonanceRamanTensor};
-pub use roa_cross_tensor::{RoaCrossArgs, RoaCrossResult, RoaCrossTensor};
+pub use resonance_raman_tensor::{ResonanceRamanTensor, ResonanceRamanTensorArgs};
+pub use roa_cross_tensor::{RoaCrossTensor, RoaCrossTensorArgs, RoaCrossTensorResult};
 pub use roa_spectrum::RoaSpectrum;
 pub use spectra::{RamanSpectrumResult, SpectrumResult};
-pub use vcd_cross_flux::{VcdCrossArgs, VcdCrossFlux, VcdCrossResult};
+pub use vcd_cross_flux::{VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult};
 pub use vcd_spectrum::VcdSpectrum;
 
 use ndarray::{Array1, Array2, ArrayD};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
-use crate::compute::fitting::forward_fft_onesided;
-use crate::compute::transport::lag_times as transport_lag_times;
+use crate::compute::ComputeError;
+use crate::signal::forward_fft_onesided;
+use molrs::core::constants::{SECOND_RADIATION_CONSTANT, SPEED_OF_LIGHT};
+use molrs::core::unit_factors::M_PER_S_TO_CM_PER_FS;
 use molrs::signal as sig;
 
-// ── Spectral constants ────────────────────────────────────────────────────────
-
-/// Speed of light in m/s (exact).
-const C_MS: f64 = 299_792_458.0;
-/// Femtoseconds to seconds.
-const FS_TO_S: f64 = 1e-15;
-/// Metres to centimetres.
-const M_TO_CM: f64 = 100.0;
-
-/// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹).
-///
-/// ν̃ = ω · (2π · c · 10⁻¹⁵ · 100)⁻¹ = ω / (2π · c · FS_TO_S · M_TO_CM)
-pub(crate) const ANGULAR_FREQ_TO_CM1: f64 =
-    1.0 / (2.0 * std::f64::consts::PI * C_MS * FS_TO_S * M_TO_CM);
+/// Conversion from angular frequency (rad / fs) to wavenumber (cm⁻¹):
+/// ν̃ = ω / (2π · c), with `c` in cm/fs.
+pub(crate) fn angular_freq_to_cm1() -> f64 {
+    1.0 / (2.0 * std::f64::consts::PI * SPEED_OF_LIGHT * M_PER_S_TO_CM_PER_FS.get())
+}
 
 /// Largest exponent such that `exp(x)` does not overflow f64.
 const MAX_EXP_ARG: f64 = 700.0;
@@ -139,7 +109,7 @@ pub(crate) fn acf_to_spectrum(
     let n_freq = intensities.len();
     let mut frequencies_cm1 = Array1::zeros(n_freq);
     for j in 0..n_freq {
-        frequencies_cm1[j] = freqs_rad[j] * ANGULAR_FREQ_TO_CM1;
+        frequencies_cm1[j] = freqs_rad[j] * angular_freq_to_cm1();
     }
     (frequencies_cm1, intensities)
 }
@@ -189,8 +159,7 @@ pub(crate) fn bose_factor(nu: f64, temperature_k: f64) -> f64 {
     if nu <= 0.0 || temperature_k <= 0.0 {
         return 1.0;
     }
-    // HC_KB = h·c / k_B ≈ 1.438777 cm·K
-    let exponent = -1.438777 * nu / temperature_k;
+    let exponent = -SECOND_RADIATION_CONSTANT * nu / temperature_k;
     if exponent > -MAX_EXP_ARG {
         1.0 / (1.0 - exponent.exp())
     } else {
@@ -199,12 +168,6 @@ pub(crate) fn bose_factor(nu: f64, temperature_k: f64) -> f64 {
 }
 
 // ── Flux + correlator primitives (IR / Raman / VCD / ROA) ────────────────────
-
-/// Lag grid shared with transport computes (`τ = i·dt`).
-#[inline]
-pub(crate) fn lag_times(max_lag: usize, dt: f64) -> Array1<f64> {
-    transport_lag_times(max_lag, dt)
-}
 
 /// Central-difference time derivative of every column of an `(n_frames, n_cols)`
 /// series, dropping first and last frame → shape `(n_frames − 2, n_cols)`.

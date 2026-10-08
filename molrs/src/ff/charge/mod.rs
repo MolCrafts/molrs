@@ -18,17 +18,17 @@
 //! # The seam is a push, not a pull
 //!
 //! QM charges are an **argument** — `assign(&mol, Some(&am1))`,
-//! `BccModel::correct(&mol, &am1)` — because molrs does not compute them. It used to
-//! ask for them through a backend trait, and every implementor that trait ever had
-//! ignored the molecule it was handed and returned a vector computed elsewhere; the
-//! production path had to dress a `Vec<f64>` up as a solver to get it in. The
-//! charges now go in the direction they actually travel.
+//! `BccModel::correct(&mol, &am1)` — because molrs does not compute them. A
+//! backend trait that asks for them would have implementors that ignore the
+//! molecule they are handed and return a vector computed elsewhere, a
+//! `Vec<f64>` dressed up as a solver. The charges go in the direction they
+//! actually travel.
 //!
 //! # Nothing is written into the molecule
 //!
 //! Every model takes `&Atomistic` and returns `Vec<f64>`. The charges are the return
 //! value, and the models' internal atom types (BCC codes like `11` / `91`) stay
-//! internal — a caller keeps their GAFF or OPLS types in [`keys::TYPE`](molrs::store::keys::TYPE)
+//! internal — a caller keeps their GAFF or OPLS types in [`keys::TYPE`](molrs::core::keys::TYPE)
 //! and gets BCC charges back, which is what the standard AM1-BCC workflow needs.
 //!
 //! # Equivalencing is the model's declaration, and the model honours it
@@ -41,7 +41,7 @@
 //! then corrects; [`MullikenModel`] hands the same bits back.
 //!
 //! ```
-//! use molrs::Atomistic;
+//! use molrs::core::Atomistic;
 //! use molrs::ff::charge::{BccModel, BccParameterSet, ChargeModel, MullikenModel};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -55,7 +55,7 @@
 //! // The model is chosen at runtime — the trait is object-safe, and no caller has
 //! // to know which one it is holding.
 //! let models: Vec<Box<dyn ChargeModel>> = vec![
-//!     Box::new(BccModel::new(BccParameterSet::Bcc)?),
+//!     Box::new(BccModel::new(BccParameterSet::Bcc)),
 //!     Box::new(MullikenModel),
 //! ];
 //! let am1 = [-0.826, 0.417, 0.409];
@@ -75,16 +75,8 @@ mod gasteiger;
 mod model;
 mod mulliken;
 
-pub use bcc::BccModel;
+pub use bcc::{BccModel, BccParameterSet};
 pub use error::ChargeError;
-pub use gasteiger::{GasteigerModel, compute_gasteiger_charges};
+pub use gasteiger::GasteigerModel;
 pub use model::ChargeModel;
 pub use mulliken::MullikenModel;
-
-/// The correction family a [`BccModel`] applies: `BCCPARM.DAT` or `BCCPARM_ABCG2.DAT`.
-///
-/// Re-exported from the module that owns the tables
-/// ([`ff::typifier::am1bcc`](crate::ff::typifier::am1bcc)), so that a caller building
-/// a charge model never has to reach into the typifier tree for the one argument the
-/// model needs.
-pub use crate::ff::typifier::am1bcc::BccParameterSet;

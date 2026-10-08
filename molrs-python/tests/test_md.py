@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import warnings
-
 import molrs
 import numpy as np
 import pytest
-from molrs.ff.potential import Potential as FfPotential
-from molrs.md import MD, LJCut, MaxwellBoltzmann, Potential, VelocityVerlet
+from molrs.ff.potential import PairLjCut, Potential
+from molrs.md import MdDriver, MaxwellBoltzmann, VelocityVerlet
 
 
 class Harmonic:
@@ -28,56 +26,25 @@ class TestPotentialProtocol:
         assert isinstance(Harmonic(), Potential)
 
     def test_ljcut_is_potential(self) -> None:
-        assert isinstance(LJCut(1.0, 1.0, 2.5), Potential)
+        assert isinstance(PairLjCut(1.0, 1.0, 2.5), Potential)
 
-    def test_md_and_ff_potential_are_the_same_object(self) -> None:
-        assert Potential is FfPotential
+    def test_md_defines_no_potential(self) -> None:
+        """MD integrates potentials; it does not define or re-export one."""
+        from molrs import md
 
-    def test_no_pyo3_potential_class(self) -> None:
-        assert not hasattr(molrs._lib.md, "Potential")
+        for name in ("Potential", "Potentials", "PairLjCut"):
+            assert not hasattr(md, name)
+            assert not hasattr(molrs._native.md, name)
 
 
-class TestMDDtype:
+class TestMdDtype:
     def test_float64_is_accepted(self) -> None:
-        md = MD(dtype=np.float64)
+        md = MdDriver(dtype=np.float64)
         assert md.dtype == np.dtype(np.float64)
 
     def test_float32_is_rejected_with_rust_message(self) -> None:
         with pytest.raises(ValueError, match="Rust"):
-            MD(dtype=np.float32)
-
-
-class TestAbsence:
-    def test_deleted_precision_names_are_gone(self) -> None:
-        from molrs import md
-
-        for name in (
-            "PRECISIONS",
-            "resolve_prec",
-            "FrameVelocityVerlet",
-            "kb_md",
-            "MD_ENERGY",
-        ):
-            assert not hasattr(md, name)
-
-
-class TestWarnings:
-    def test_import_molrs_is_silent(self) -> None:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            import importlib
-
-            importlib.reload(molrs)
-        assert not [w for w in caught if issubclass(w.category, FutureWarning)]
-
-    def test_import_molrs_md_is_silent(self) -> None:
-        import importlib
-
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", FutureWarning)
-            importlib.reload(molrs.md)
-        fw = [w for w in caught if issubclass(w.category, FutureWarning)]
-        assert not fw
+            MdDriver(dtype=np.float32)
 
 
 class TestDispatch:
@@ -97,7 +64,7 @@ class TestDispatch:
         assert calls and all(c == 2 for c in calls)
 
     def test_potentials_take_the_native_fast_path(self) -> None:
-        from molrs.ff import Potentials
+        from molrs.ff.potential import Potentials
 
         pots = Potentials()
         # empty collection is a native type; take_potential must not duck-wrap it.
@@ -107,7 +74,7 @@ class TestDispatch:
 
 class TestMaxwellBoltzmann:
     def test_kbt_constructor(self) -> None:
-        mb = MaxwellBoltzmann(molrs.UnitPreset("real").boltzmann() * 300.0, seed=1)
+        mb = MaxwellBoltzmann(molrs.core.UnitPreset("real").boltzmann() * 300.0, seed=1)
         pos = np.zeros((4, 3))
         vel = mb.velocities(pos, np.ones(4))
         assert vel.shape == (4, 3)

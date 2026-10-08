@@ -1,16 +1,18 @@
 //! Distance-geometry constraint generation (ETKDGv3), a faithful port of
 //! RDKit's bounds-matrix builder + smoothing + experimental-torsion knowledge.
 //!
-//! This module replaces the approximate, first-principles bounds in
-//! `super::distance_geometry` with a port of RDKit's actual ETKDGv3 constraint
-//! generation (BSD-3, Copyright (C) Greg Landrum / Sereina Riniker and other
+//! A port of RDKit's ETKDGv3 constraint generation (BSD-3, Copyright (C) Greg Landrum / Sereina Riniker and other
 //! RDKit contributors). It produces, for a molecular graph:
 //!
 //!   * a smoothed **bounds matrix** identical (< 1e-3 Å) to
 //!     `rdkit.Chem.rdDistGeom.GetMoleculeBoundsMatrix`,
 //!   * **experimental torsion** preferences (CrystalFF M6),
 //!   * **chiral** volume constraints,
-//!   * **improper** (out-of-plane) constraints.
+//!   * **improper** (out-of-plane) constraints,
+//!
+//! and the error function an embedding minimizes against them
+//! ([`ViolationEnergy`]: distance-bound and chiral-volume violations and the
+//! fourth-dimension penalty).
 //!
 //! ## References
 //! - Blaney & Dixon, *Rev. Comput. Chem.* **5**, 299 (1994) — bounds smoothing.
@@ -31,35 +33,23 @@
 //!   bond). See `torsion_prefs` for the precise boundary. Tetrangle smoothing
 //!   is omitted because RDKit's reference matrix does not apply it.
 
+mod basic_knowledge_torsions;
 mod bounds;
+mod bounds_matrix;
 mod chirality;
-mod knowledge;
-mod matrix;
 mod mol_features;
-mod smooth;
 mod torsion_prefs;
 mod torsion_tables;
-mod uff;
+mod triangle_smoothing;
+mod violation_energy;
 
-use molrs::error::MolRsError;
-use molrs::system::atomistic::Atomistic;
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
 
+pub use bounds_matrix::BoundsMatrix;
 pub use chirality::{ChiralConstraint, ChiralSign, ImproperConstraint};
-pub use knowledge::KnowledgeTorsion;
-pub use matrix::BoundsMatrix;
-pub use smooth::{smooth_bounds, smooth_bounds_tol};
-pub use torsion_prefs::{AssignedTorsion, TorsionConstraint, TorsionTable, assign_with_provenance};
-
-/// ETKDG generation version. This spec targets `Etkdgv3` by default.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EtkdgVersion {
-    /// Plain ETDG — topological bounds + smoothing only.
-    Etdg,
-    /// ETKDGv2 — experimental torsions + basic knowledge.
-    Etkdgv2,
-    /// ETKDGv3 — v2 plus small-ring / macrocycle handling.
-    Etkdgv3,
-}
+pub use torsion_prefs::TorsionConstraint;
+pub(crate) use violation_energy::{DistanceViolations, ViolationEnergy, chiral_volume};
 
 /// The full ETKDGv3 constraint set consumed by the embedding stage (spec 04).
 pub struct DgConstraints {
@@ -67,60 +57,34 @@ pub struct DgConstraints {
     pub bounds: BoundsMatrix,
     /// Experimental (CrystalFF) torsion preferences (partial — see module docs).
     pub experimental_torsions: Vec<TorsionConstraint>,
-    /// Flat sp2-ring planarising torsions (basic knowledge).
-    pub flat_ring_torsions: Vec<KnowledgeTorsion>,
+    /// Flat sp2-ring planarising torsions (basic knowledge), applied in the
+    /// same second stage as the experimental ones.
+    pub flat_ring_torsions: Vec<TorsionConstraint>,
     /// Chiral volume constraints.
     pub chiral: Vec<ChiralConstraint>,
     /// Improper / out-of-plane constraints.
     pub improper: Vec<ImproperConstraint>,
 }
 
-impl BoundsMatrix {
-    /// The unsmoothed topological bounds matrix for `mol`
-    /// (RDKit `setTopolBounds`, `set15bounds=true, scaleVDW=false`).
-    pub fn from_graph(mol: &Atomistic) -> Result<Self, MolRsError> {
-        if mol.n_atoms() == 0 {
-            return Err(MolRsError::validation("molecule has no atoms"));
-        }
-        let p = mol_features::perceive(mol);
-        Ok(bounds::set_topol_bounds(&p))
-    }
-}
-
 impl DgConstraints {
     /// The complete ETKDGv3 constraint set for `mol`: topological bounds
     /// (triangle-smoothed in place), experimental torsions, knowledge terms,
     /// chiral and improper constraints.
-    ///
-    /// `version` gates the knowledge layers: `Etdg` emits bounds only;
-    /// `Etkdgv2` / `Etkdgv3` additionally emit torsion / chiral / improper
-    /// constraints. (v2 vs v3 differ only in small-ring/macrocycle torsion
-    /// data, which is part of the documented experimental-torsion partial.)
-    pub fn from_graph(mol: &Atomistic, version: EtkdgVersion) -> Result<Self, MolRsError> {
+    pub fn from_graph(mol: &Atomistic) -> Result<Self, MolRsError> {
         if mol.n_atoms() == 0 {
             return Err(MolRsError::validation("molecule has no atoms"));
         }
-        let p = mol_features::perceive(mol);
+        let p = mol_features::perceive_dg_features(mol);
 
         let mut bounds = bounds::set_topol_bounds(&p);
-        smooth::smooth_bounds(&mut bounds)?;
-
-        let (experimental_torsions, flat_ring_torsions, chiral, improper) = match version {
-            EtkdgVersion::Etdg => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            EtkdgVersion::Etkdgv2 | EtkdgVersion::Etkdgv3 => (
-                torsion_prefs::assign_experimental_torsions(mol, &p),
-                p.flat_ring_torsions(),
-                p.chiral_constraints(mol),
-                p.improper_constraints(),
-            ),
-        };
+        triangle_smoothing::smooth_bounds(&mut bounds)?;
 
         Ok(Self {
             bounds,
-            experimental_torsions,
-            flat_ring_torsions,
-            chiral,
-            improper,
+            experimental_torsions: torsion_prefs::assign_experimental_torsions(mol, &p),
+            flat_ring_torsions: p.flat_ring_torsions(),
+            chiral: p.chiral_constraints(mol),
+            improper: p.improper_constraints(),
         })
     }
 }

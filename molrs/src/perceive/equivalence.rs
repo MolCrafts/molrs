@@ -1,108 +1,14 @@
 //! Charge equivalencing — the topological-equivalence classes AM1 charges are
 //! averaged over before the BCC stage (antechamber's `-eq`).
-//!
-//! A semi-empirical calculation is done on **one conformer**, so its Mulliken
-//! charges are not symmetric: methanol's three methyl hydrogens come out of `sqm`
-//! as `(0.053, 0.098, 0.053)` purely because one of them eclipses the O–H. Feeding
-//! that straight into a force field yields **conformer-dependent, symmetry-broken**
-//! charges — the same molecule, re-embedded, would type differently. Averaging over
-//! the topological-equivalence classes removes the artefact (all three become
-//! `0.068`, the mean) and is what `antechamber -c bcc` does by default, *before*
-//! applying any bond-charge correction.
-//!
-//! # The algorithm: path scores, **not** automorphism orbits
-//!
-//! For every atom, enumerate **all simple paths starting at it**, score each path,
-//! sort the scores ascending, and compare. Two atoms are equivalent iff they have
-//! the **same number of paths** and their sorted score arrays are **elementwise
-//! exactly equal** (`f64` equality — there is no tolerance; see
-//! [`EquivalenceClasses`]).
-//!
-//! The score of a path is the Antechamber paper's Eq. (I) — position index `j`
-//! (0-based) and atomic number `Z_j` of the atom at that position:
-//!
-//! ```text
-//! score = Σ_j [ (j + 1)·0.11 + Z_j·0.08 ]
-//! ```
-//!
-//! **This is not a graph-automorphism partition, and using one would be wrong.**
-//! In exact arithmetic the sum collapses to
-//!
-//! ```text
-//! score = 0.11·L(L+1)/2 + 0.08·(Σ Z along the path)
-//! ```
-//!
-//! so a path enters the score only through its **length** and its **sum of atomic
-//! numbers**. Two things follow, and both are load-bearing.
-//!
-//! **It reads no bond orders and no formal charges.** A Kekulé carboxylate's two
-//! oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
-//! antechamber **merges** them and averages their charges. Any partition that
-//! respects bond order or formal charge (Morgan / Weisfeiler-Leman /
-//! [`crate::system::graph_hash`], which folds both into its colours) **splits**
-//! them. Orbits are therefore a **strictly finer** partition: the path score never
-//! splits an orbit — an automorphism maps a path to a path with the same ordered
-//! atomic numbers, hence the same score, bit for bit — but it does merge atoms that
-//! lie in different orbits. Averaging by orbits leaves acetate's two oxygens at the
-//! `sqm` values `-0.595 / -0.597` where antechamber returns `-0.596 / -0.596`: a
-//! symmetry-broken carboxylate, and a `1e-3` e divergence from the oracle. A graph
-//! hash may be used as a *pre-filter* (same orbit ⇒ same class) but never as the
-//! class engine.
-//!
-//! **It is order-blind only in exact arithmetic.** The score is accumulated
-//! left to right along the path in `f64`, and the comparison is exact, so two paths
-//! that are mathematically tied (same length, same `Σ Z`, different order — C–N–O
-//! and C–O–N) can still land one ULP apart: `H–H–C` sums to `1.2999999999999998`
-//! where `C–H–H` sums to `1.3`. The accumulation order is therefore part of the
-//! contract, not an implementation detail — the scorer accumulates left to right
-//! exactly as `scorepath()` does, so that the equality tested here is the equality
-//! antechamber tested. (A *tolerant* comparison would merge such a pair. That is
-//! the bug this exactness exists to prevent, and it is pinned by
-//! `two_atoms_a_tolerance_would_merge_are_kept_apart`.)
-//!
-//! # `-eq` levels
-//!
-//! | Level | antechamber | Meaning |
-//! |---|---|---|
-//! | [`EquivalenceLevel::Off`] | `-eq 0` | no equivalencing; every atom is its own class |
-//! | [`EquivalenceLevel::Paths`] | `-eq 1` | the path score above — **the default for `-c bcc` / `-c abcg2` / `-c resp`** (and *only* for those; every other charge method defaults to `0`) |
-//! | [`EquivalenceLevel::PathsAndGeometry`] | `-eq 2` | the path score with an E/Z coefficient per position, making the partition **strictly finer** than level 1 — never coarser |
-//!
-//! Because the default is per-charge-method, equivalencing is a **declaration of
-//! the charge model**, not a global pipeline stage: see the `needs_equivalencing`
-//! flag in the `ChargeModel` trait.
-//!
-//! [`EquivalenceOptions::max_path_length`] is antechamber's `-pl`: paths longer
-//! than the cap are not scored. The default is unlimited, matching `-pl -1`.
-//!
-//! # Averaging is a separate step
-//!
-//! Perception ends at the classes. [`average_charges`] applies the class-mean and
-//! is called explicitly by the charge model, so that a model which does *not* want
-//! equivalencing simply never calls it.
-//!
-//! # Provenance
-//!
-//! A reimplementation of the perception in AmberTools' `antechamber/equatom.c`
-//! (`scorepath()` / `equatom()`) and the class-mean in `charge.c::bccharge()`,
-//! written by reading that source with the AmberTools developers' permission; see
-//! `.claude/notes/notes.md` (2026-07-12) for the licensing posture.
 
 use std::collections::HashMap;
 
-use crate::op::vec3::{cross, dot, sub};
-use crate::store::keys;
-use crate::system::atomistic::{AtomId, Atomistic};
-use crate::system::bond::BondType;
-use molrs::Element;
-
-/// Atom prop written by [`crate::perceive::Perceive::find_equivalence_classes`]:
-/// the 0-based id of the atom's charge-equivalence class.
-///
-/// Class ids are assigned in order of first appearance in the graph's atom order,
-/// so the atom that antechamber would pick as a class's representative (its
-/// lowest-indexed member) is the one that names it.
-pub const EQUIV_CLASS: &str = "equiv_class";
+use crate::core::Atomistic;
+use crate::core::BondOrder;
+use crate::core::NodeId;
+use crate::core::keys;
+use crate::op::vec3::dihedral;
+use molrs::core::Element;
 
 /// Weight of a path position, `0.11` (Antechamber Eq. (I)).
 const POSITION_WEIGHT: f64 = 0.11;
@@ -126,10 +32,23 @@ const CIS_COEF: f64 = 0.99;
 const MAX_CON: usize = 6;
 
 /// antechamber's `-eq`: which topological-equivalence model to use.
+///
+/// | Level | antechamber | Meaning |
+/// |---|---|---|
+/// | [`EquivalenceLevel::Off`] | `-eq 0` | no equivalencing; every atom is its own class |
+/// | [`EquivalenceLevel::Paths`] | `-eq 1` | the path score of [`perceive_equivalence_classes`] — **the default for `-c bcc` / `-c abcg2` / `-c resp`** (and *only* for those; every other charge method defaults to `0`) |
+/// | [`EquivalenceLevel::PathsAndGeometry`] | `-eq 2` | the path score with an E/Z coefficient per position, making the partition **strictly finer** than level 1 — never coarser |
+///
+/// Because the default is per-charge-method, equivalencing is a **declaration of
+/// the charge model**, not a global pipeline stage: see the `needs_equivalencing`
+/// flag in the `ChargeModel` trait.
+///
+/// [`EquivalenceOptions::max_path_length`] is antechamber's `-pl`: paths longer
+/// than the cap are not scored. The default is unlimited, matching `-pl -1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EquivalenceLevel {
-    /// `-eq 0` — no equivalencing. Every atom is its own class, so
-    /// [`average_charges`] is a no-op.
+    /// `-eq 0` — no equivalencing. Every atom is its own class, so averaging
+    /// over the classes is a no-op.
     Off,
     /// `-eq 1` — equivalence by atomic paths. The default for AM1-BCC, ABCG2 and
     /// RESP, and the level pinned to the antechamber oracle.
@@ -187,7 +106,7 @@ impl EquivalenceOptions {
 
 /// The topological-equivalence partition of a molecule's atoms.
 ///
-/// Produced by [`find_equivalence_classes`]. Two atoms share a class iff their
+/// Produced by [`perceive_equivalence_classes`]. Two atoms share a class iff their
 /// sorted path-score arrays are **exactly** equal — the comparison is bit-for-bit,
 /// as it is in `equatom.c`, and deliberately carries no tolerance: the scores are
 /// sums of a handful of exactly-representable-ish terms, and two atoms that differ
@@ -196,9 +115,9 @@ impl EquivalenceOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EquivalenceClasses {
     /// Per atom: its class id.
-    class_of: HashMap<AtomId, u32>,
+    class_of: HashMap<NodeId, u32>,
     /// Per class: its members, in graph atom order.
-    members: Vec<Vec<AtomId>>,
+    members: Vec<Vec<NodeId>>,
 }
 
 impl EquivalenceClasses {
@@ -212,7 +131,7 @@ impl EquivalenceClasses {
     ///
     /// The 0-based class id, or `None` when the atom is not in the molecule the
     /// classes were computed from.
-    pub fn class_of(&self, atom: AtomId) -> Option<u32> {
+    pub fn class_of(&self, atom: NodeId) -> Option<u32> {
         self.class_of.get(&atom).copied()
     }
 
@@ -235,7 +154,7 @@ impl EquivalenceClasses {
     /// # Returns
     ///
     /// The atoms in that class, in graph atom order, or `None` for an unknown id.
-    pub fn members(&self, class: u32) -> Option<&[AtomId]> {
+    pub fn members(&self, class: u32) -> Option<&[NodeId]> {
         self.members.get(class as usize).map(Vec::as_slice)
     }
 
@@ -244,16 +163,74 @@ impl EquivalenceClasses {
     /// # Returns
     ///
     /// An iterator yielding each class's atoms, in class-id order.
-    pub fn classes(&self) -> impl Iterator<Item = &[AtomId]> {
+    pub fn classes(&self) -> impl Iterator<Item = &[NodeId]> {
         self.members.iter().map(Vec::as_slice)
     }
 }
 
 /// Partition a molecule's atoms into charge-equivalence classes.
 ///
-/// The path-score algorithm described in the [module docs](self). At
-/// [`EquivalenceLevel::Off`] every atom is placed in a class of its own, so the
-/// caller can keep the pipeline shape and still opt out.
+/// At [`EquivalenceLevel::Off`] every atom is placed in a class of its own, so
+/// the caller can keep the pipeline shape and still opt out.
+///
+/// A semi-empirical calculation is done on **one conformer**, so its Mulliken
+/// charges are not symmetric: methanol's three methyl hydrogens come out of `sqm`
+/// as `(0.053, 0.098, 0.053)` purely because one of them eclipses the O–H. Feeding
+/// that straight into a force field yields **conformer-dependent, symmetry-broken**
+/// charges — the same molecule, re-embedded, would type differently. Averaging over
+/// the topological-equivalence classes removes the artefact (all three become
+/// `0.068`, the mean) and is what `antechamber -c bcc` does by default, *before*
+/// applying any bond-charge correction.
+///
+/// # The algorithm: path scores, **not** automorphism orbits
+///
+/// For every atom, enumerate **all simple paths starting at it**, score each path,
+/// sort the scores ascending, and compare. Two atoms are equivalent iff they have
+/// the **same number of paths** and their sorted score arrays are **elementwise
+/// exactly equal** (`f64` equality — there is no tolerance; see
+/// [`EquivalenceClasses`]).
+///
+/// The score of a path is the Antechamber paper's Eq. (I) — position index `j`
+/// (0-based) and atomic number `Z_j` of the atom at that position:
+///
+/// ```text
+/// score = Σ_j [ (j + 1)·0.11 + Z_j·0.08 ]
+/// ```
+///
+/// **This is not a graph-automorphism partition, and using one would be wrong.**
+/// In exact arithmetic the sum collapses to
+///
+/// ```text
+/// score = 0.11·L(L+1)/2 + 0.08·(Σ Z along the path)
+/// ```
+///
+/// so a path enters the score only through its **length** and its **sum of atomic
+/// numbers**. Two things follow, and both are load-bearing.
+///
+/// **It reads no bond orders and no formal charges.** A Kekulé carboxylate's two
+/// oxygens — one `C=O`, one `C–O⁻` — are *the same atom* to this score, so
+/// antechamber **merges** them and averages their charges. Any partition that
+/// respects bond order or formal charge (Morgan / Weisfeiler-Leman /
+/// [`crate::core::structural_hash`], which folds both into its colours) **splits**
+/// them. Orbits are therefore a **strictly finer** partition: the path score never
+/// splits an orbit — an automorphism maps a path to a path with the same ordered
+/// atomic numbers, hence the same score, bit for bit — but it does merge atoms that
+/// lie in different orbits. Averaging by orbits leaves acetate's two oxygens at the
+/// `sqm` values `-0.595 / -0.597` where antechamber returns `-0.596 / -0.596`: a
+/// symmetry-broken carboxylate, and a `1e-3` e divergence from the oracle. A graph
+/// hash may be used as a *pre-filter* (same orbit ⇒ same class) but never as the
+/// class engine.
+///
+/// **It is order-blind only in exact arithmetic.** The score is accumulated
+/// left to right along the path in `f64`, and the comparison is exact, so two paths
+/// that are mathematically tied (same length, same `Σ Z`, different order — C–N–O
+/// and C–O–N) can still land one ULP apart: `H–H–C` sums to `1.2999999999999998`
+/// where `C–H–H` sums to `1.3`. The accumulation order is therefore part of the
+/// contract, not an implementation detail — the scorer accumulates left to right
+/// exactly as `scorepath()` does, so that the equality tested here is the equality
+/// antechamber tested. (A *tolerant* comparison would merge such a pair. That is
+/// the bug this exactness exists to prevent, and it is pinned by
+/// `two_atoms_a_tolerance_would_merge_are_kept_apart`.)
 ///
 /// # Arguments
 ///
@@ -262,7 +239,7 @@ impl EquivalenceClasses {
 ///
 /// # Returns
 ///
-/// The partition, keyed by [`AtomId`].
+/// The partition, keyed by [`NodeId`].
 ///
 /// # Performance
 ///
@@ -271,7 +248,17 @@ impl EquivalenceClasses {
 /// 37 molecules peak at 28 paths for a single atom), but a large fused-ring system
 /// can blow up; [`EquivalenceOptions::max_path_length`] is the escape hatch, and is
 /// why antechamber ships `-pl`.
-pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> EquivalenceClasses {
+///
+/// # Provenance
+///
+/// A reimplementation of the perception in AmberTools' `antechamber/equatom.c`
+/// (`scorepath()` / `equatom()`) and the class-mean in `charge.c::bccharge()`,
+/// written by reading that source with the AmberTools developers' permission; see
+/// `.claude/notes/notes.md` (2026-07-12) for the licensing posture.
+pub fn perceive_equivalence_classes(
+    mol: &Atomistic,
+    opts: EquivalenceOptions,
+) -> EquivalenceClasses {
     let flat = Flat::new(mol);
     let n = flat.ids.len();
 
@@ -306,7 +293,7 @@ pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Eq
     // antechamber's O(N²) sweep into one pass.
     let mut seen: HashMap<Vec<u64>, u32> = HashMap::new();
     let mut class_of = HashMap::with_capacity(n);
-    let mut members: Vec<Vec<AtomId>> = Vec::new();
+    let mut members: Vec<Vec<NodeId>> = Vec::new();
     for i in 0..n {
         let key: Vec<u64> = scorer.scores_for(i).iter().map(|s| s.to_bits()).collect();
         let next = seen.len() as u32;
@@ -321,64 +308,6 @@ pub fn find_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Eq
     EquivalenceClasses { class_of, members }
 }
 
-/// Replace each atom's charge with the mean over its equivalence class.
-///
-/// The step antechamber runs between AM1 and BCC (`charge.c::bccharge()`): a plain
-/// arithmetic mean, broadcast to every member, which conserves the class's total
-/// charge and hence the molecule's. Singleton classes are left alone, so a
-/// partition from [`EquivalenceLevel::Off`] leaves every charge bit-for-bit intact.
-///
-/// Charge lives under [`keys::CHARGE`]. A class in which any member carries no
-/// charge is skipped whole — averaging over a subset of a class would invent a
-/// value that is neither the atom's nor its class's.
-///
-/// # Arguments
-///
-/// * `mol` — the molecule whose [`keys::CHARGE`] props to average; left untouched.
-/// * `classes` — the partition from [`find_equivalence_classes`].
-///
-/// # Returns
-///
-/// A clone of `mol` carrying the averaged charges.
-///
-/// # Precision
-///
-/// The mean is a rounded `f64`, so broadcasting it perturbs the molecule's total
-/// charge by a few ULP (measured over the 37-molecule antechamber oracle: at most
-/// `3.7e-16` e). That residual is inherent to an arithmetic mean — no assignment
-/// that gives every class member *the same* `f64` can also reproduce the total
-/// bit-for-bit — and antechamber carries the identical residual. Nothing is
-/// renormalized away here, because renormalizing would be a divergence from
-/// antechamber, not a fix.
-pub fn average_charges(mol: &Atomistic, classes: &EquivalenceClasses) -> Atomistic {
-    let mut out = mol.clone();
-    for members in classes.classes() {
-        if members.len() < 2 {
-            continue;
-        }
-        let mut sum = 0.0;
-        let mut complete = true;
-        for id in members {
-            match mol.get_atom(*id).ok().and_then(|a| a.get_f64(keys::CHARGE)) {
-                // Accumulated in graph atom order, as `bccharge()` accumulates it.
-                Some(q) => sum += q,
-                None => {
-                    complete = false;
-                    break;
-                }
-            }
-        }
-        if !complete {
-            continue;
-        }
-        let mean = sum / members.len() as f64;
-        for id in members {
-            let _ = out.set_atom(*id, keys::CHARGE, mean);
-        }
-    }
-    out
-}
-
 /// One rotation-restricted torsion (antechamber's `GEOM`), used at `-eq 2`.
 #[derive(Debug, Clone, Copy)]
 struct Torsion {
@@ -391,23 +320,23 @@ struct Torsion {
 /// The molecule flattened to the arrays the walk needs.
 struct Flat {
     /// Per atom: its handle, in graph atom order.
-    ids: Vec<AtomId>,
+    ids: Vec<NodeId>,
     /// Per atom: atomic number (`0` when the element is unknown, as in
-    /// [`crate::perceive::bond_type`]).
+    /// [`crate::perceive::assign_bcc_bond_types`]).
     z: Vec<u8>,
     /// Per atom: neighbour indices, in bond order — antechamber's `con[]`.
     adj: Vec<Vec<usize>>,
     /// Per atom: coordinates, for the `-eq 2` torsions.
     xyz: Vec<[f64; 3]>,
     /// Per bond: endpoints and chemical class.
-    bonds: Vec<(usize, usize, BondType)>,
+    bonds: Vec<(usize, usize, BondOrder)>,
 }
 
 impl Flat {
     /// Flatten a molecule.
     fn new(mol: &Atomistic) -> Self {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let index: HashMap<AtomId, usize> = ids
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let index: HashMap<NodeId, usize> = ids
             .iter()
             .copied()
             .enumerate()
@@ -448,7 +377,7 @@ impl Flat {
             adj[j].push(i);
             // The *class*, not the number: "is this a double bond" must stay
             // false for an aromatic bond whose Kekulé phase happens to be 2.
-            bonds.push((i, j, BondType::from_prop(bond.props.get(keys::BOND_TYPE))));
+            bonds.push((i, j, BondOrder::from_prop(bond.props.get(keys::BOND_TYPE))));
         }
 
         Self {
@@ -481,7 +410,8 @@ impl Flat {
                     if l == j {
                         continue;
                     }
-                    let phi = dihedral_deg(self.xyz[i], self.xyz[j], self.xyz[k], self.xyz[l]);
+                    let phi =
+                        dihedral(self.xyz[i], self.xyz[j], self.xyz[k], self.xyz[l]).to_degrees();
                     out.push(Torsion {
                         atoms: [i, j, k, l],
                         trans: !(-90.0..=90.0).contains(&phi),
@@ -500,10 +430,10 @@ impl Flat {
             .bonds
             .iter()
             .find(|(a, b, _)| (*a == j && *b == k) || (*a == k && *b == j))
-            .map_or(BondType::Unknown, |(_, _, t)| *t);
+            .map_or(BondOrder::Unknown, |(_, _, t)| *t);
 
         // C=C.
-        if zj == 6 && zk == 6 && bond_type == BondType::Double {
+        if zj == 6 && zk == 6 && bond_type == BondOrder::Double {
             return true;
         }
         // Amide C–N: the carbon carries a double bond to a chalcogen.
@@ -518,7 +448,7 @@ impl Flat {
                     } else {
                         return false;
                     };
-                    *o == BondType::Double && (self.z[other] == 8 || self.z[other] == 16)
+                    *o == BondOrder::Double && (self.z[other] == 8 || self.z[other] == 16)
                 })
         };
         amide(j, k) || amide(k, j)
@@ -628,18 +558,25 @@ impl PathScorer<'_> {
     }
 }
 
-/// The dihedral angle `i–j–k–l`, in degrees on `(-180, 180]`.
-fn dihedral_deg(i: [f64; 3], j: [f64; 3], k: [f64; 3], l: [f64; 3]) -> f64 {
-    let b1 = sub(j, i);
-    let b2 = sub(k, j);
-    let b3 = sub(l, k);
-    let n1 = cross(b1, b2);
-    let n2 = cross(b2, b3);
-    let m = cross(n1, b2);
-    let b2_len = dot(b2, b2).sqrt();
-    let x = dot(n1, n2);
-    let y = dot(m, n2) / b2_len;
-    (-y).atan2(x).to_degrees()
+/// Perceive charge-equivalence classes and write them onto a clone of `mol`:
+/// every atom receives an [`EQUIV_CLASS`](crate::core::keys::EQUIV_CLASS) id
+/// (0-based), the [`perceive_equivalence_classes`] partition under `opts`
+/// (`EquivalenceOptions::default()` is antechamber's `-eq 1`, the path-score
+/// partition AM1-BCC averages its AM1 charges over).
+///
+/// Perception stops at the classes: the class-mean itself is a charge-model
+/// step (`ff::charge`), taken by a model that declares it, because whether to
+/// average is a property of the charge model and not of the graph. `mol` is
+/// left untouched.
+pub fn assign_equivalence_classes(mol: &Atomistic, opts: EquivalenceOptions) -> Atomistic {
+    let classes = perceive_equivalence_classes(mol, opts);
+    let mut out = mol.clone();
+    for (class, members) in classes.classes().enumerate() {
+        for id in members {
+            let _ = out.set_atom(*id, keys::EQUIV_CLASS, super::rings::saturating_i32(class));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -676,8 +613,8 @@ mod tests {
     #[test]
     fn methyl_hydrogens_are_one_class_and_the_hydroxyl_is_not() {
         let mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
 
         assert_eq!(classes.n_classes(), 4, "C, O, 3×methyl H, hydroxyl H");
         let methyl = classes.class_of(ids[2]).expect("H class");
@@ -693,23 +630,10 @@ mod tests {
     #[test]
     fn off_gives_every_atom_its_own_class() {
         let mol = methanol();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::off());
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::off());
         assert_eq!(classes.n_classes(), mol.n_atoms());
 
-        let averaged = average_charges(&mol, &classes);
-        for (id, atom) in mol.atoms() {
-            let before = atom.get_f64(keys::CHARGE).expect("charge");
-            let after = averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge");
-            assert_eq!(
-                before.to_bits(),
-                after.to_bits(),
-                "-eq 0 must not touch charges"
-            );
-        }
+        assert!(classes.classes().all(|c| c.len() == 1));
     }
 
     #[test]
@@ -802,7 +726,7 @@ mod tests {
         );
 
         // … and they are still NOT merged.
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let classes = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
         assert_ne!(
             classes.class_of(n1),
             classes.class_of(n2),
@@ -813,8 +737,8 @@ mod tests {
     #[test]
     fn a_path_length_cap_scores_no_longer_path() {
         let mol = methanol();
-        let uncapped = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let capped = find_equivalence_classes(
+        let uncapped = perceive_equivalence_classes(&mol, EquivalenceOptions::bcc());
+        let capped = perceive_equivalence_classes(
             &mol,
             EquivalenceOptions {
                 level: EquivalenceLevel::Paths,
@@ -825,47 +749,5 @@ mod tests {
         // alone: the three methyl H, the hydroxyl H all collapse into one class.
         assert!(capped.n_classes() < uncapped.n_classes());
         assert_eq!(capped.n_classes(), 3, "C | O | every H");
-    }
-
-    #[test]
-    fn averaging_broadcasts_the_class_mean() {
-        let mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let averaged = average_charges(&mol, &classes);
-
-        let q = |id: AtomId| {
-            averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge")
-        };
-        // (0.053 + 0.098 + 0.053) / 3
-        for h in [ids[2], ids[3], ids[4]] {
-            assert!((q(h) - 0.068).abs() < 1e-12, "methyl H averaged to 0.068");
-        }
-        assert_eq!(q(ids[2]).to_bits(), q(ids[3]).to_bits());
-        assert_eq!(q(ids[2]).to_bits(), q(ids[4]).to_bits());
-        // Untouched: singleton classes.
-        assert_eq!(q(ids[5]).to_bits(), 0.195_f64.to_bits());
-    }
-
-    #[test]
-    fn a_class_with_a_chargeless_member_is_left_alone() {
-        let mut mol = methanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        mol.clear_atom(ids[3], keys::CHARGE).expect("clear");
-        let classes = find_equivalence_classes(&mol, EquivalenceOptions::bcc());
-        let averaged = average_charges(&mol, &classes);
-        let q = |id: AtomId| {
-            averaged
-                .get_atom(id)
-                .expect("atom")
-                .get_f64(keys::CHARGE)
-                .expect("charge")
-        };
-        assert_eq!(q(ids[2]).to_bits(), 0.053_f64.to_bits());
-        assert_eq!(q(ids[4]).to_bits(), 0.053_f64.to_bits());
     }
 }

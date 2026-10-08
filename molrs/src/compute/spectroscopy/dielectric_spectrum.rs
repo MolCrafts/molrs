@@ -1,49 +1,21 @@
 //! Dielectric ε(ω) transform [`Fit`] impls: [`EinsteinHelfandSpectrum`] and
 //! [`GreenKuboSpectrum`].
 //!
-//! Each [`Fit`] consumes a **raw autocorrelation function** (the fluctuation
-//! dipole ACF for the Einstein–Helfand route; the current ACF for the
-//! Green–Kubo route) plus the physical metadata (`dt`, `V`, `T`, `ε_∞`, and —
-//! for EH — the zero-lag variance ⟨|δM|²⟩) and applies window + FFT +
-//! prefactors to produce the frequency-dependent permittivity
-//! [`DielectricSpectrumResult`].
-//!
 //! The window + one-sided-FFT machinery (`piecewise_linear_onesided_ft`,
 //! `taper_derivative_spectrum`, `windowed_acf_spectrum`) was relocated here
 //! from `compute::dielectric` in compute-fit-04-dielectric: windowing +
 //! transforming a raw ACF into ε(ω) is a *fit*, so it belongs in the [`Fit`]
 //! layer. Window coefficients always route through [`molrs::signal`] (never
 //! reimplemented).
-//!
-//! The raw, unwindowed ACFs these fits consume come from the raw computes
-//! [`DebyeRelaxation`](crate::compute::transport::DebyeRelaxation) (fluctuation dipole ACF +
-//! ⟨M(0)²⟩ + V/T/Ewald-BC) and
-//! [`GreenKuboConductivity`](crate::compute::transport::GreenKuboConductivity) (current ACF).
-//!
-//! # Units
-//!
-//! All inputs and outputs use LAMMPS *real* units throughout:
-//!
-//! | quantity        | unit                |
-//! |-----------------|---------------------|
-//! | length          | Å                   |
-//! | charge          | e                   |
-//! | time / dt       | ps                  |
-//! | temperature     | K                   |
-//! | volume          | Å³                  |
-//! | dipole moment   | e · Å               |
-//! | current density | e · Å⁻² · ps⁻¹      |
-//! | angular ω       | rad · ps⁻¹          |
-//! | ε permittivity  | dimensionless       |
 
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
-use crate::compute::fitting::forward_fft_onesided;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::{Check, Fit, Verdict};
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::{Check, Fit, Verdict};
+use crate::signal::forward_fft_onesided;
 use molrs::signal as sig;
 
 /// Zero-padding multiplier for the dielectric one-sided FT.
@@ -55,17 +27,42 @@ const DIELECTRIC_PAD_FACTOR: usize = 4;
 
 // ── Physical constants (MD real units: kcal, mol, Angstrom, e, K) ─────────────
 
-use molrs::units::constants::BOLTZMANN_REAL as K_B;
-use molrs::units::constants::COULOMB_REAL as KAPPA;
-
-/// 4π/3 — the isotropic dielectric fluctuation prefactor numerator.
-const FOUR_PI_OVER_3: f64 = 4.1887902047863905;
+use molrs::core::constants::COULOMB_REAL as KAPPA;
+use molrs::core::{FOUR_PI, FOUR_THIRDS_PI, UnitPreset};
 
 /// Result of a dielectric ε(ω) spectrum transform.
 ///
 /// The complex permittivity is `ε*(ω) = ε′(ω) − i·ε″(ω)`. `eps_imag`
 /// stores `ε″(ω)` with the **positive-loss** convention (≥ 0 for stable
 /// causal systems). FT convention throughout: `X(ω) = ∫₀^∞ f(t) e^{−iωt} dt`.
+///
+/// Each of [`EinsteinHelfandSpectrum`] and [`GreenKuboSpectrum`] — a
+/// [`Fit`] — consumes a **raw autocorrelation function** (the fluctuation
+/// dipole ACF for the Einstein–Helfand route; the current ACF for the
+/// Green–Kubo route) plus the physical metadata (`dt`, `V`, `T`, `ε_∞`, and —
+/// for EH — the zero-lag variance ⟨|δM|²⟩) and applies window + FFT +
+/// prefactors to produce this frequency-dependent permittivity.
+///
+/// The raw, unwindowed ACFs these fits consume come from the raw computes
+/// [`DebyeRelaxation`](crate::compute::DebyeRelaxation) (fluctuation dipole ACF +
+/// ⟨M(0)²⟩ + V/T/Ewald-BC) and
+/// [`GreenKuboConductivity`](crate::compute::GreenKuboConductivity) (current ACF).
+///
+/// # Units
+///
+/// All inputs and outputs use LAMMPS *real* units throughout:
+///
+/// | quantity        | unit                |
+/// |-----------------|---------------------|
+/// | length          | Å                   |
+/// | charge          | e                   |
+/// | time / dt       | ps                  |
+/// | temperature     | K                   |
+/// | volume          | Å³                  |
+/// | dipole moment   | e · Å               |
+/// | current density | e · Å⁻² · ps⁻¹      |
+/// | angular ω       | rad · ps⁻¹          |
+/// | ε permittivity  | dimensionless       |
 #[derive(Debug, Clone)]
 pub struct DielectricSpectrumResult {
     /// Angular frequency grid, rad·ps⁻¹, length `n_pad/2 + 1` with
@@ -170,7 +167,7 @@ fn piecewise_linear_onesided_ft(y: &Array1<f64>, dt: f64, pad_factor: usize) -> 
 ///
 /// The input `acf` must be the **fluctuation** (mean-subtracted) dipole ACF
 /// `C(k) = ⟨δM(0)·δM(k·dt)⟩` summed over the 3 Cartesian components — exactly
-/// the [`DebyeRelaxationResult.acf`](crate::compute::transport::DebyeRelaxationResult::acf).
+/// the [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf).
 fn taper_derivative_spectrum(acf: &Array1<f64>, dt: f64) -> RawSpectrum {
     let max_lag = acf.len() - 1;
     let mut tapered = acf.clone();
@@ -219,7 +216,7 @@ fn parse_window_type(s: &str) -> Result<sig::WindowType, ComputeError> {
 /// `X(ω) = ∫₀^T C_win(t) e^{−iωt} dt`. The input `acf` must be the unbiased
 /// current ACF `C(k) = ⟨J(0)·J(k·dt)⟩` summed over the 3 Cartesian components
 /// — exactly the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::transport::GreenKuboConductivityResult::jacf).
+/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf).
 fn windowed_acf_spectrum(
     acf: &Array1<f64>,
     dt: f64,
@@ -252,9 +249,9 @@ fn windowed_acf_spectrum(
 ///
 /// Consumes the **raw fluctuation dipole ACF** `C(k) = ⟨δM(0)·δM(k·dt)⟩`
 /// (summed over the 3 Cartesian components) — the
-/// [`DebyeRelaxationResult.acf`](crate::compute::transport::DebyeRelaxationResult::acf) — together
+/// [`DebyeRelaxationResult.acf`](crate::compute::DebyeRelaxationResult::acf) — together
 /// with `dt`, `V`, `T`, `ε_∞`, and the zero-lag variance ⟨|δM|²⟩ (the
-/// [`zero_lag_variance`](crate::compute::transport::DebyeRelaxationResult::zero_lag_variance), which
+/// [`zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance), which
 /// pins the exact DC bin).
 ///
 /// Implements the integration-by-parts form of Caillol-Levesque-Weis Eq. (30):
@@ -291,7 +288,7 @@ pub struct EinsteinHelfandSpectrum {
     /// High-frequency / electronic permittivity ε_∞, dimensionless.
     pub epsilon_inf: f64,
     /// Zero-lag variance ⟨|δM|²⟩ = `acf[0]`, **(e·Å)²** — the exact DC term
-    /// (the [`DebyeRelaxationResult.zero_lag_variance`](crate::compute::transport::DebyeRelaxationResult::zero_lag_variance)).
+    /// (the [`DebyeRelaxationResult.zero_lag_variance`](crate::compute::DebyeRelaxationResult::zero_lag_variance)).
     pub zero_lag_variance: f64,
 }
 
@@ -314,7 +311,8 @@ impl Fit for EinsteinHelfandSpectrum {
         let (frequencies, dre, dim) = taper_derivative_spectrum(acf, self.dt);
 
         // ε*(ω) − ε_∞ = −A·Ĉ′(ω), with ε* = ε′ − i·ε″ (positive-loss convention).
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -341,7 +339,7 @@ impl Fit for EinsteinHelfandSpectrum {
 ///
 /// Consumes the **raw current ACF** `C(k) = ⟨J(0)·J(k·dt)⟩` (summed over the 3
 /// Cartesian components) — the
-/// [`GreenKuboConductivityResult.jacf`](crate::compute::transport::GreenKuboConductivityResult::jacf)
+/// [`GreenKuboConductivityResult.jacf`](crate::compute::GreenKuboConductivityResult::jacf)
 /// — together with `dt`, `V`, `T`, `ε_∞`, and the window choice.
 ///
 /// Implements
@@ -411,8 +409,9 @@ impl Fit for GreenKuboSpectrum {
         // With J(t) = Ṁ(t)/V: ⟨Ṁ·Ṁ⟩ = V²·⟨J·J⟩, so the textbook
         // 1/(3·V·k_B·T) prefactor for Ṁ becomes V/(3·k_B·T) for J.
         // 1/ε₀ = 4π·KAPPA in MD real units.
-        let sigma_prefactor = self.volume / (3.0 * K_B * self.temperature);
-        let eps0_factor = 4.0 * std::f64::consts::PI * KAPPA;
+        let sigma_prefactor =
+            self.volume / (3.0 * UnitPreset::real().boltzmann() * self.temperature);
+        let eps0_factor = FOUR_PI * KAPPA;
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -491,7 +490,8 @@ impl Fit for DipoleRateCrossSpectrum {
         validate_thermo(self.dt, self.volume, self.temperature)?;
 
         let (frequencies, re, im) = windowed_acf_spectrum(cross, self.dt, &self.window_type)?;
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -579,7 +579,8 @@ impl Fit for DipoleAutocorrelationSpectrum {
         };
 
         let (frequencies, re, im) = windowed_acf_spectrum(&series, self.dt, &self.window_type)?;
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (self.volume * K_B * self.temperature);
+        let prefactor = FOUR_THIRDS_PI * KAPPA
+            / (self.volume * UnitPreset::real().boltzmann() * self.temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -699,12 +700,12 @@ impl Check for KramersKronig {
         let (omega, eps_real, eps_imag) = input;
         let eps_inf = self.eps_inf;
         require_same_len(
-            "kramers_kronig eps_real vs frequency",
+            "KramersKronig eps_real vs frequency",
             omega.len(),
             eps_real.len(),
         )?;
         require_same_len(
-            "kramers_kronig eps_imag vs frequency",
+            "KramersKronig eps_imag vs frequency",
             omega.len(),
             eps_imag.len(),
         )?;
@@ -712,7 +713,7 @@ impl Check for KramersKronig {
             return Err(ComputeError::DimensionMismatch {
                 expected: 3,
                 got: omega.len(),
-                what: "kramers_kronig needs at least 3 frequency points",
+                what: "KramersKronig needs at least 3 frequency points",
             });
         }
 
@@ -801,8 +802,8 @@ impl Check for ConductivitySumRule {
             let dw = omega[i] - omega[i - 1];
             integral += 0.5 * (sigma[i] + sigma[i - 1]) * dw;
         }
-        let expected =
-            std::f64::consts::PI * 0.5 * current_sq_mean / (3.0 * volume * K_B * temperature);
+        let expected = std::f64::consts::PI * 0.5 * current_sq_mean
+            / (3.0 * volume * UnitPreset::real().boltzmann() * temperature);
         let denom = expected.abs().max(1e-30);
         let relative_error = (integral - expected) / denom;
         Ok(SumRuleCheck {
@@ -847,7 +848,7 @@ impl Check for RouteAgreement {
         }
         let expected_len = entries[0].1.len();
         for (_name, arr) in entries {
-            require_same_len("route_agreement array lengths", expected_len, arr.len())?;
+            require_same_len("RouteAgreement array lengths", expected_len, arr.len())?;
         }
 
         let mut pairwise = Vec::new();
@@ -923,9 +924,9 @@ impl ComputeResult for RouteAgreementCheck {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::traits::Compute;
-    use crate::compute::transport::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
-    use molrs::Frame;
+    use crate::compute::Compute;
+    use crate::compute::{DebyeRelaxation, EwaldBoundary, GreenKuboConductivity};
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rustfft::FftPlanner;
 
@@ -946,14 +947,14 @@ mod tests {
         s
     }
 
-    // ── Legacy-equivalent reference implementations (the pre-migration bodies)
-    // These rebuild the exact spectra the removed `einstein_helfand_spectrum` /
-    // `green_kubo_spectrum` free fns produced, so the Fit can be locked to them
-    // bit-for-bit (ac-001). ──────────────────────────────────────────────────
+    // ── Reference implementations ──────────────────────────────────────────
+    // Each spectrum written out inline in one function, an independent oracle
+    // the raw-compute + Fit composition is locked to bit-for-bit (ac-001).
 
-    /// Pre-migration EH spectrum (the removed `einstein_helfand_spectrum`).
+    /// Einstein–Helfand spectrum, inline: fluctuation ACF, cos² taper,
+    /// derivative, one-sided FT, prefactor.
     #[allow(clippy::too_many_arguments)]
-    fn legacy_einstein_helfand(
+    fn reference_einstein_helfand(
         dipole_moments: &Array2<f64>,
         dt: f64,
         volume: f64,
@@ -1017,7 +1018,8 @@ mod tests {
         let (frequencies, dre, dim) =
             piecewise_linear_onesided_ft(&deriv, dt, DIELECTRIC_PAD_FACTOR);
 
-        let prefactor = FOUR_PI_OVER_3 * KAPPA / (volume * K_B * temperature);
+        let prefactor =
+            FOUR_THIRDS_PI * KAPPA / (volume * UnitPreset::real().boltzmann() * temperature);
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -1030,11 +1032,11 @@ mod tests {
         (frequencies, eps_real, eps_imag)
     }
 
-    /// The unbiased current ACF the legacy `green_kubo_spectrum` built
-    /// internally (FFT-based, over the post-NaN `start=1` series). Returned so a
-    /// test can lock the Fit's transform tail to the legacy tail on the *same*
-    /// ACF (bit-for-bit), independent of the raw-compute estimator.
-    fn legacy_gk_acf(current: &Array2<f64>, max_lag: usize) -> Array1<f64> {
+    /// The unbiased current ACF, FFT-based, over the post-NaN `start=1`
+    /// series. Returned so a test can lock the Fit's transform tail to the
+    /// reference tail on the *same* ACF (bit-for-bit), independent of the
+    /// raw-compute estimator.
+    fn reference_gk_acf(current: &Array2<f64>, max_lag: usize) -> Array1<f64> {
         let n_frames = current.shape()[0];
         let start = 1;
         let n_eff = n_frames - start;
@@ -1053,9 +1055,9 @@ mod tests {
         acf_sum
     }
 
-    /// Pre-migration GK spectrum tail (the removed `green_kubo_spectrum`),
-    /// operating on a pre-built ACF (the `windowed_acf_spectrum` + σ→ε steps).
-    fn legacy_green_kubo_from_acf(
+    /// Green–Kubo spectrum tail on a pre-built ACF, inline: window, one-sided
+    /// FT, σ→ε.
+    fn reference_green_kubo_from_acf(
         acf: &Array1<f64>,
         dt: f64,
         volume: f64,
@@ -1072,8 +1074,8 @@ mod tests {
         let (frequencies, spec_re, spec_im) =
             piecewise_linear_onesided_ft(&windowed_1d, dt, DIELECTRIC_PAD_FACTOR);
 
-        let sigma_prefactor = volume / (3.0 * K_B * temperature);
-        let eps0_factor = 4.0 * std::f64::consts::PI * KAPPA;
+        let sigma_prefactor = volume / (3.0 * UnitPreset::real().boltzmann() * temperature);
+        let eps0_factor = FOUR_PI * KAPPA;
         let n_freq = frequencies.len();
         let mut eps_real = Array1::zeros(n_freq);
         let mut eps_imag = Array1::zeros(n_freq);
@@ -1093,7 +1095,7 @@ mod tests {
     }
 
     /// FFT / fused-scale paths may differ by a few ULP from the hand-rolled
-    /// legacy reference; keep a tight absolute tolerance.
+    /// reference; keep a tight absolute tolerance.
     fn assert_close_1d(got: &Array1<f64>, expected: &Array1<f64>, tol: f64, what: &str) {
         assert_eq!(got.len(), expected.len(), "{what} length");
         for k in 0..got.len() {
@@ -1108,16 +1110,16 @@ mod tests {
     }
 
     #[test]
-    fn eh_fit_reproduces_legacy_bit_for_bit() {
-        // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum reproduces
-        // the legacy einstein_helfand_spectrum output (tight ULP tolerance).
+    fn eh_fit_matches_the_reference_bit_for_bit() {
+        // ac-001: DebyeRelaxation raw ACF + EinsteinHelfandSpectrum matches the
+        // inline reference (tight ULP tolerance).
         let n = 256;
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.5);
         let mct = 50;
         let dm = rng_dipole(n, 42);
 
-        let (freq_l, re_l, im_l) = legacy_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
+        let (freq_l, re_l, im_l) = reference_einstein_helfand(&dm, dt, vol, temp, eps_inf, mct);
 
         let raw = DebyeRelaxation {
             volume: vol,
@@ -1138,22 +1140,21 @@ mod tests {
 
         assert_eq!(fit.frequencies, freq_l);
         // Shared FFT primitives may reassociate by a few ULP vs the inlined
-        // legacy reference; 1e-12 absolute is still machine-precision tight.
+        // reference; 1e-12 absolute is still machine-precision tight.
         assert_close_1d(&fit.eps_real, &re_l, 1e-12, "eps_real");
         assert_close_1d(&fit.eps_imag, &im_l, 1e-12, "eps_imag");
     }
 
     #[test]
-    fn gk_fit_reproduces_legacy_bit_for_bit() {
-        // ac-001: on the SAME raw current ACF, GreenKuboSpectrum reproduces the
-        // legacy green_kubo_spectrum transform tail bit-for-bit. The raw ACF is
-        // the unbiased current ACF over the start=1 (post-NaN) series — exactly
-        // what the legacy fn built internally.
+    fn gk_fit_matches_the_reference_bit_for_bit() {
+        // ac-001: on the SAME raw current ACF, GreenKuboSpectrum matches the
+        // reference transform tail bit-for-bit. The raw ACF is the unbiased
+        // current ACF over the start=1 (post-NaN) series.
         let n = 256;
         let dt = 0.001;
         let (vol, temp, eps_inf) = (1000.0, 300.0, 1.0);
         let mct = 50;
-        // Current density with NaN row 0 (as compute_current_density emits).
+        // Current density with NaN row 0 (as current_density emits).
         let mut current = rng_dipole(n, 7);
         for d in 0..3 {
             current[[0, d]] = f64::NAN;
@@ -1161,11 +1162,11 @@ mod tests {
         let start = 1;
         let effective_len = n - start;
         let max_lag = mct.min(effective_len.saturating_sub(1));
-        let raw_acf = legacy_gk_acf(&current, max_lag);
+        let raw_acf = reference_gk_acf(&current, max_lag);
 
         for window in ["hann", "blackman", "cosine_sq"] {
             let (freq_l, re_l, im_l) =
-                legacy_green_kubo_from_acf(&raw_acf, dt, vol, temp, eps_inf, window);
+                reference_green_kubo_from_acf(&raw_acf, dt, vol, temp, eps_inf, window);
 
             let fit = GreenKuboSpectrum {
                 dt,
@@ -1184,11 +1185,11 @@ mod tests {
     }
 
     #[test]
-    fn gk_raw_compute_acf_matches_legacy_fft_acf() {
+    fn gk_raw_compute_acf_matches_the_reference_fft_acf() {
         // The GreenKuboConductivity raw compute (direct-summation estimator) and
-        // the legacy FFT-based ACF agree to FP tolerance on the same series, so
-        // composing the raw compute with GreenKuboSpectrum reproduces the legacy
-        // ε(ω) within that tolerance.
+        // the reference FFT-based ACF agree to FP tolerance on the same series,
+        // so composing the raw compute with GreenKuboSpectrum matches the
+        // reference ε(ω) within that tolerance.
         let n = 256;
         let dt = 0.001;
         let mct = 50;
@@ -1199,15 +1200,15 @@ mod tests {
         let start = 1;
         let effective_len = n - start;
         let max_lag = mct.min(effective_len.saturating_sub(1));
-        let legacy = legacy_gk_acf(&current, max_lag);
+        let reference = reference_gk_acf(&current, max_lag);
 
         let post: Array2<f64> = current.slice(ndarray::s![start.., ..]).to_owned();
         let raw = GreenKuboConductivity
             .compute(&no_frames(), (&post, dt, max_lag))
             .unwrap();
-        assert_eq!(raw.jacf.len(), legacy.len());
-        for k in 0..legacy.len() {
-            assert!((raw.jacf[k] - legacy[k]).abs() < 1e-9, "k={k}");
+        assert_eq!(raw.jacf.len(), reference.len());
+        for k in 0..reference.len() {
+            assert!((raw.jacf[k] - reference[k]).abs() < 1e-9, "k={k}");
         }
     }
 
@@ -1348,7 +1349,8 @@ mod tests {
         let expected = 8.0;
         // expected = π/2 · ⟨J²⟩ / (3 V k_B T)  ⇒  ⟨J²⟩ = expected·3 V k_B T / (π/2)
         let current_sq_mean =
-            expected * 3.0 * volume * K_B * temperature / (std::f64::consts::PI * 0.5);
+            expected * 3.0 * volume * UnitPreset::real().boltzmann() * temperature
+                / (std::f64::consts::PI * 0.5);
         let out = ConductivitySumRule {
             current_sq_mean,
             volume,

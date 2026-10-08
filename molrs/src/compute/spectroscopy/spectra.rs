@@ -1,42 +1,39 @@
 //! Vibrational-spectrum result types and shared input validation.
 //!
-//! The three vibrational spectra (VDOS / IR / Raman) are now the explicit
-//! composition of a **raw-ACF compute** with a **spectral
-//! [`Fit`](crate::compute::Fit) transform**,
-//! keeping "what was measured" separate from "how the analyst transforms it":
-//!
-//! | spectrum | raw compute (raw ACF) | transform |
-//! |----------|-----------------------|-----------|
-//! | VDOS  | [`VACF`](crate::compute::transport::VACF) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
-//! | IR    | [`IRFlux`](super::IRFlux) (dipole-flux ACF) | [`IRSpectrum`](super::IRSpectrum) |
-//! | Raman | [`RamanTensor`](super::RamanTensor) (polarizability iso/aniso ACFs) | [`RamanSpectrum`](super::RamanSpectrum) |
-//!
-//! The legacy `power_spectrum` / `ir_spectrum` / `raman_spectrum` free functions
-//! (which baked window + FFT into the raw ACF) and their inline window/FFT
-//! helpers were removed in compute-fit-03-cleanup; the window + one-sided-FFT
-//! machinery now lives in [`compute::spectroscopy`](crate::compute::spectroscopy) (a
-//! windowed transform is a fit), routing every window through
-//! [`molrs::signal`]. Only the two result types and the shared input validator
-//! remain here.
-//!
-//! Reference: Dickey & Paskin, *Phys. Rev.* **188**, 1407 (1969).
-//!
-//! # Units
-//!
-//! | quantity      | unit   |
-//! |---------------|--------|
-//! | time / dt     | fs     |
-//! | frequency     | cm⁻¹   |
-//! | intensity     | arb.   |
-//! | temperature   | K      |
+//! The window + one-sided-FFT machinery lives in
+//! [`compute::spectroscopy`](crate::compute::spectroscopy) (a windowed
+//! transform is a fit), routing every window through [`molrs::signal`]. This
+//! file holds the two result types and the shared input validator.
 
 use ndarray::Array1;
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 
 // ── Result types ─────────────────────────────────────────────────────────────
 
 /// Single-spectrum result (VDOS, IR).
+///
+/// The three vibrational spectra (VDOS / IR / Raman) are the explicit
+/// composition of a **raw-ACF compute** with a **spectral
+/// [`Fit`](crate::compute::Fit) transform**,
+/// keeping "what was measured" separate from "how the analyst transforms it":
+///
+/// | spectrum | raw compute (raw ACF) | transform |
+/// |----------|-----------------------|-----------|
+/// | VDOS  | [`Vacf`](crate::compute::Vacf) (velocity ACF) | [`PowerSpectrum`](super::PowerSpectrum) |
+/// | IR    | [`IrFlux`](super::IrFlux) (dipole-flux ACF) | [`IrSpectrum`](super::IrSpectrum) |
+/// | Raman | [`RamanTensor`](super::RamanTensor) (polarizability iso/aniso ACFs) | [`RamanSpectrum`](super::RamanSpectrum) |
+///
+/// Reference: Dickey & Paskin, *Phys. Rev.* **188**, 1407 (1969).
+///
+/// # Units
+///
+/// | quantity      | unit   |
+/// |---------------|--------|
+/// | time / dt     | fs     |
+/// | frequency     | cm⁻¹   |
+/// | intensity     | arb.   |
+/// | temperature   | K      |
 #[derive(Debug, Clone)]
 pub struct SpectrumResult {
     /// Frequency grid in cm⁻¹, length `n_pad / 2 + 1`.

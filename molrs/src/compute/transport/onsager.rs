@@ -1,44 +1,13 @@
 //! Onsager transport coefficients from collective mean-displacement
 //! correlations.
-//!
-//! The Onsager phenomenological coefficients `L_ij` describe the coupled
-//! transport of species `i` and `j` driven by thermodynamic forces. In the
-//! Green–Kubo / Einstein picture they are obtained from the cross-correlation
-//! of the **collective** (summed) displacements of each species:
-//!
-//! ```text
-//!     L_ij(τ) = ⟨ ΔP_i(τ) · ΔP_j(τ) ⟩_t ,
-//!         with  P_s(t) = Σ_{a ∈ species s} r_a(t)   (unwrapped),
-//!               ΔP_s(τ) = P_s(t+τ) − P_s(t).
-//! ```
-//!
-//! The diagonal term `L_ii` is the collective (distinct-inclusive) mean-square
-//! displacement of species `i`; off-diagonal `L_ij` (i ≠ j) captures the
-//! cross-correlated drift that distinguishes the Onsager picture from the bare
-//! Nernst–Einstein sum. A long-time linear fit `L_ij(τ) ≈ 2·d·D_ij·τ` (done by
-//! the caller) yields the transport coefficient.
-//!
-//! This is the molrs port of the `onsager` recipe from the *tame* library
-//! (<https://github.com/Roy-Kid/tame>, `tame/recipes/onsager.py`). The
-//! collective-coordinate reduction `P_s = Σ_a r_a` and the periodic-image
-//! unwrapping are performed by the caller (Python wrapper); this kernel takes
-//! the already-assembled per-species collective coordinates and computes the
-//! windowed (all-time-origins) cross-correlation.
-//!
-//! # Units
-//!
-//! Unit-agnostic: with positions in Å the correlation is reported in Å². The
-//! kernel performs no volume normalization (the *tame* original likewise left
-//! the curves un-normalized; the comment there about volume normalization was
-//! never applied in code).
 
-use crate::compute::result::ComputeResult;
+use crate::compute::ComputeResult;
 use ndarray::Array1;
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 
 fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize, ComputeError> {
     let shape = p.shape();
@@ -69,7 +38,7 @@ fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize
 /// Computes the windowed (all-time-origins) cross-correlation of two species'
 /// **collective** displacements — a pure raw observable, with the long-time
 /// linear fit `L_ij(τ) ≈ 2·d·D_ij·τ` left to the caller
-/// ([`LinearFit`](crate::compute::fitting::LinearFit)). The collective-coordinate
+/// ([`LinearFit`](crate::compute::LinearFit)). The collective-coordinate
 /// reduction `P_s = Σ_a r_a` and periodic-image unwrapping are the caller's job.
 ///
 /// For each lag `τ ∈ [0, max_lag]`,
@@ -82,6 +51,37 @@ fn validate_series(p: &ndarray::Array2<f64>, name: &'static str) -> Result<usize
 /// the average over all time origins of the dot product of the two species'
 /// collective displacements. When `p_i` and `p_j` are the same array this is the
 /// collective mean-square displacement of that species.
+///
+/// The Onsager phenomenological coefficients `L_ij` describe the coupled
+/// transport of species `i` and `j` driven by thermodynamic forces. In the
+/// Green–Kubo / Einstein picture they are obtained from the cross-correlation
+/// of the **collective** (summed) displacements of each species:
+///
+/// ```text
+///     L_ij(τ) = ⟨ ΔP_i(τ) · ΔP_j(τ) ⟩_t ,
+///         with  P_s(t) = Σ_{a ∈ species s} r_a(t)   (unwrapped),
+///               ΔP_s(τ) = P_s(t+τ) − P_s(t).
+/// ```
+///
+/// The diagonal term `L_ii` is the collective (distinct-inclusive) mean-square
+/// displacement of species `i`; off-diagonal `L_ij` (i ≠ j) captures the
+/// cross-correlated drift that distinguishes the Onsager picture from the bare
+/// Nernst–Einstein sum. A long-time linear fit `L_ij(τ) ≈ 2·d·D_ij·τ` (done by
+/// the caller) yields the transport coefficient.
+///
+/// This is the molrs port of the `onsager` recipe from the *tame* library
+/// (<https://github.com/Roy-Kid/tame>, `tame/recipes/onsager.py`). The
+/// collective-coordinate reduction `P_s = Σ_a r_a` and the periodic-image
+/// unwrapping are performed by the caller (Python wrapper); this kernel takes
+/// the already-assembled per-species collective coordinates and computes the
+/// windowed (all-time-origins) cross-correlation.
+///
+/// # Units
+///
+/// Unit-agnostic: with positions in Å the correlation is reported in Å². The
+/// kernel performs no volume normalization (the *tame* original likewise left
+/// the curves un-normalized; the comment there about volume normalization was
+/// never applied in code).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OnsagerCorrelation;
 
@@ -106,7 +106,7 @@ fn collective_cross_correlation(
     p_j: &ndarray::Array2<f64>,
     dt: f64,
     max_correlation_time: usize,
-) -> Result<OnsagerResult, ComputeError> {
+) -> Result<OnsagerCorrelationResult, ComputeError> {
     let n_i = validate_series(p_i, "onsager p_i (expected (n_frames, 3))")?;
     let n_j = validate_series(p_j, "onsager p_j (expected (n_frames, 3))")?;
     if n_i != n_j {
@@ -145,7 +145,7 @@ fn collective_cross_correlation(
 
     let lag_times = Array1::from_iter((0..=max_lag).map(|i| i as f64 * dt));
 
-    Ok(OnsagerResult {
+    Ok(OnsagerCorrelationResult {
         lag_times,
         correlation,
     })
@@ -155,7 +155,7 @@ impl Compute for OnsagerCorrelation {
     /// `(p_i, p_j, dt, max_correlation_time)`. The `frames` slice is unused (the
     /// collective coordinates are pre-assembled by the caller).
     type Args<'a> = OnsagerCorrelationArgs<'a>;
-    type Output = OnsagerResult;
+    type Output = OnsagerCorrelationResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
@@ -169,7 +169,7 @@ impl Compute for OnsagerCorrelation {
 
 /// Result of an Onsager collective-displacement cross-correlation.
 #[derive(Debug, Clone)]
-pub struct OnsagerResult {
+pub struct OnsagerCorrelationResult {
     /// Lag times τ = i·dt, length `max_lag + 1` (same units as `dt`).
     pub lag_times: Array1<f64>,
     /// Cross-correlation `L_ij(τ) = ⟨ΔP_i(τ)·ΔP_j(τ)⟩_t`, averaged over time
@@ -177,12 +177,12 @@ pub struct OnsagerResult {
     pub correlation: Array1<f64>,
 }
 
-impl ComputeResult for OnsagerResult {}
+impl ComputeResult for OnsagerCorrelationResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::core::Frame;
     use ndarray::array;
 
     /// Empty frame slice for the series-based `OnsagerCorrelation` compute.

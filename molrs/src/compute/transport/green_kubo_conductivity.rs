@@ -1,30 +1,39 @@
 //! Green–Kubo conductivity raw compute — the current-ACF route to σ.
 
-use molrs::store::frame_access::FrameAccess;
-use ndarray::{Array1, Array2};
+use molrs::core::FrameAccess;
+use ndarray::{Array1, Array2, Axis};
 
-use super::correlation::{lag_times, unbiased_cartesian_acf};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use super::correlation::lag_times;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::autocorrelation;
 
-/// Raw current autocorrelation function — the raw portion of the legacy
-/// `JacfResult`, with **no** fitted sigma.
+/// Raw current autocorrelation function, with **no** fitted sigma.
 #[derive(Debug, Clone)]
 pub struct GreenKuboConductivityResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: Array1<f64>,
-    /// Current ACF `C(τ) = ⟨J(0)·J(τ)⟩` over time origins, identical to
-    /// `JacfResult.jacf`. Units: `(e·Å·fs⁻¹)²`.
+    /// Current ACF `C(τ) = ⟨J(0)·J(τ)⟩` over time origins.
+    /// Units: `(e·Å·fs⁻¹)²`.
     pub jacf: Array1<f64>,
 }
 
 impl ComputeResult for GreenKuboConductivityResult {}
 
-/// Raw current-ACF compute. Lifts the unbiased windowed-ACF loop from
-/// the Green–Kubo conductivity and stops there (no trapezoid, no σ). The
+/// Raw current-ACF compute: the unbiased windowed ACF of the Green–Kubo
+/// conductivity, and nothing more (no trapezoid, no σ). The
 /// σ = (1/(3·V·k_B·T))·∫⟨JJ⟩ step is a downstream
-/// [`CumulativeTrapezoid`](crate::compute::fitting::CumulativeTrapezoid) + scale.
+/// [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) + scale.
+///
+/// Assemble the collective current series \(J(t)=\sum_a q_a v_a(t)\) yourself
+/// (or via an upstream Frame pipeline), then compose:
+///
+/// 1. [`GreenKuboConductivity`](Self) — raw ACF
+/// 2. [`CumulativeTrapezoid`](crate::compute::CumulativeTrapezoid) — ∫C
+/// 3. scale by \(1/(3 V k_B T)\) (SI prefactor in the fit / caller units table)
+///
+/// There is no separate `Jacf` type. molpy must not invent one either.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GreenKuboConductivity;
 
@@ -63,7 +72,7 @@ impl Compute for GreenKuboConductivity {
 
         // ⟨J(0)·J(τ)⟩: Cartesian sum of component ACFs, no mean subtraction
         // (current is already a flux; shared unbiased helper).
-        let jacf = unbiased_cartesian_acf(current, max_lag, false)?;
+        let jacf = autocorrelation(current.view().insert_axis(Axis(1)), max_lag, false)?.acf;
         Ok(GreenKuboConductivityResult {
             lag_times: lag_times(max_lag, dt),
             jacf,
@@ -74,7 +83,7 @@ impl Compute for GreenKuboConductivity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::core::Frame;
     use ndarray::{Array1 as A1, Array2};
     use rand::{RngExt, SeedableRng};
 
@@ -95,8 +104,7 @@ mod tests {
 
     #[test]
     fn green_kubo_raw_jacf_matches_direct_acf() {
-        // ac-010: GreenKuboConductivity.jacf == the direct unbiased current ACF
-        // (the raw observable the removed bundled result also carried).
+        // ac-010: GreenKuboConductivity.jacf == the direct unbiased current ACF.
         let n = 256;
         let dt = 0.5;
         let mct = 80;
@@ -128,13 +136,12 @@ mod tests {
     #[test]
     fn green_kubo_raw_plus_cumulative_trapezoid_matches_manual_trapezoid() {
         // ac-015: CumulativeTrapezoid on GreenKuboConductivity.jacf reproduces a manual
-        // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined
-        // (replaces the removed bundled Green–Kubo conductivity).
-        use crate::compute::fitting::CumulativeTrapezoid;
-        use crate::compute::traits::Fit;
-        use molrs::units::constants::{
-            ANGSTROM_M, BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C, FEMTOSECOND_S,
-        };
+        // trapezoidal integral, and σ = prefactor·∫/(V·k_B·T) is well-defined.
+        use crate::compute::CumulativeTrapezoid;
+        use crate::compute::Fit;
+        use molrs::core::constants::{BOLTZMANN as K_B_SI, ELEMENTARY_CHARGE as E_C};
+        let angstrom_m = crate::core::unit_factors::ANGSTROM_TO_M.get();
+        let femtosecond_s = crate::core::unit_factors::FS_TO_S.get();
 
         let n = 256;
         let dt = 0.5;
@@ -156,8 +163,8 @@ mod tests {
         assert!((integ.integral[last] - manual).abs() < 1e-12);
 
         // Green–Kubo 1/3 prefactor.
-        let prefactor = (E_C * E_C * ANGSTROM_M * ANGSTROM_M / FEMTOSECOND_S)
-            / (3.0 * ANGSTROM_M.powi(3) * K_B_SI);
+        let prefactor = (E_C * E_C * angstrom_m * angstrom_m / femtosecond_s)
+            / (3.0 * angstrom_m.powi(3) * K_B_SI);
         let sigma = prefactor * integ.integral[last] / (volume * temperature);
         assert!(sigma.is_finite());
     }

@@ -3,38 +3,36 @@
 // Flat qℓm row layout is most readable with explicit (particle, m) indexing.
 #![allow(clippy::needless_range_loop)]
 
-//! Continuous coordination number.
-//!
-//! Mirrors `freud.order.ContinuousCoordination`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/ContinuousCoordination.cc)).
-//!
-//! For each particle `i` we compute a "soft" neighbor count weighted by
-//! how similar each neighbor's Steinhardt qℓm vector is to particle `i`'s.
-//! The weighting function used by freud is
-//!
-//! ```text
-//!   w_ij = ( clamp((d_ij + 1) / 2, 0, 1) )^p
-//! ```
-//!
-//! where `d_ij ∈ [−1, 1]` is the **cosine similarity** of the qℓm vectors
-//! and `p ≥ 1` is the configurable power. Setting `p = 1` reproduces the
-//! "average of `(1 + cos θ)/2`" weighting that smoothly goes from 0
-//! (anti-parallel qℓm) to 1 (identical environments).
-//!
-//! The output is one scalar per particle per requested ℓ value.
+use crate::compute::ComputeResult;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 
-use crate::compute::result::ComputeResult;
-use molrs::math::complex::Complex;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
-
-use super::steinhardt::compute_qlm;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use super::steinhardt::steinhardt_qlm;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 
 /// Continuous-coordination calculator.
+///
+/// Mirrors `freud.order.ContinuousCoordination`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/ContinuousCoordination.cc)).
+///
+/// For each particle `i` we compute a "soft" neighbor count weighted by
+/// how similar each neighbor's Steinhardt qℓm vector is to particle `i`'s.
+/// The weighting function used by freud is
+///
+/// ```text
+///   w_ij = ( clamp((d_ij + 1) / 2, 0, 1) )^p
+/// ```
+///
+/// where `d_ij ∈ [−1, 1]` is the **cosine similarity** of the qℓm vectors
+/// and `p ≥ 1` is the configurable power. Setting `p = 1` reproduces the
+/// "average of `(1 + cos θ)/2`" weighting that smoothly goes from 0
+/// (anti-parallel qℓm) to 1 (identical environments).
+///
+/// The output is one scalar per particle per requested ℓ value.
 #[derive(Debug, Clone)]
 pub struct ContinuousCoordination {
     l: Vec<u32>,
@@ -78,7 +76,7 @@ impl ContinuousCoordination {
         let mut coord_per_l: Vec<Vec<F>> = Vec::with_capacity(self.l.len());
         for &l in &self.l {
             let m_count = (2 * l + 1) as usize;
-            let qlm = compute_qlm(frame, nlist, l)?;
+            let qlm = steinhardt_qlm(frame, nlist, l)?;
             // Per-particle |qℓm| for cosine-similarity normalisation.
             let mut norms = vec![0.0_f64; n];
             for i in 0..n {
@@ -172,10 +170,10 @@ impl ComputeResult for ContinuousCoordinationResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

@@ -1,30 +1,13 @@
 //! Shared Cartesian correlators and the raw [`DipoleRateCross`] compute.
-//!
-//! # Why this module exists
-//!
-//! Several dielectric / transport raw Computes need the same recipe:
-//!
-//! 1. optional per-component mean subtraction,
-//! 2. FFT linear ACF / xcorr via [`molrs::signal`] accumulate primitives,
-//! 3. sum over Cartesian axes,
-//! 4. unbiased `1/(n − τ)` normalisation.
-//!
-//! | Helper / Compute | Correlator | Downstream Fit |
-//! |------------------|------------|----------------|
-//! | [`unbiased_cartesian_acf`] | `Σ_α ⟨δa_α(0) δa_α(t)⟩` | Debye / PACF / JACF / VACF |
-//! | [`unbiased_cartesian_xcorr`] | `Σ_α ⟨δa_α(0) δb_α(t)⟩` | cross spectra |
-//! | [`DipoleRateCross`] | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::spectroscopy::DipoleRateCrossSpectrum) |
-//!
-//! Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::{Array1, Array2};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex64;
 
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
 use molrs::signal as sig;
 
 // ── Shared primitives ────────────────────────────────────────────────────────
@@ -38,8 +21,8 @@ pub fn lag_times(max_lag: usize, dt: f64) -> Array1<f64> {
 /// Unbiased time-origin normalisation with an optional overall scale:
 /// `C[k] *= scale / (n_frames − k)`.
 ///
-/// Fused multiply matches the historical VACF / JACF path bit-for-bit
-/// (`scale/(n−k)` once, not `/(n−k)` then `*scale`).
+/// The factor `scale/(n−k)` is formed once and applied with one multiply, not
+/// `/(n−k)` then `*scale`, so VACF and JACF round identically.
 #[inline]
 pub fn apply_unbiased_norm(corr: &mut Array1<f64>, n_frames: usize, scale: f64) {
     let max_lag = corr.len().saturating_sub(1);
@@ -77,67 +60,25 @@ fn fill_column(series: &Array2<f64>, d: usize, mean: f64, out: &mut [f64]) {
 
 // ── Shared Cartesian helpers ─────────────────────────────────────────────────
 
-/// Unbiased Cartesian-sum autocorrelation
-/// `C(τ) = scale · Σ_α ⟨a_α(0) a_α(τ)⟩` (optionally of fluctuations `a − ⟨a⟩`).
-///
-/// `series` is `(n_frames, n_comp)` with `n_comp ≥ 1` (typically 3).
-/// `max_lag` is clamped to `n_frames − 1`. Default callers pass `scale = 1.0`;
-/// VACF passes `1/n_dof` for the DOF average.
-///
-/// Implementation reuses one real column buffer and one complex FFT scratch
-/// across components (see [`sig::acf_fft_accumulate`]).
-pub fn unbiased_cartesian_acf(
-    series: &Array2<f64>,
-    max_lag: usize,
-    mean_subtract: bool,
-) -> Result<Array1<f64>, ComputeError> {
-    unbiased_cartesian_acf_scaled(series, max_lag, mean_subtract, 1.0)
-}
-
-/// Like [`unbiased_cartesian_acf`] but multiplies by `scale` in the fused
-/// `scale/(n−τ)` normalisation (VACF uses `scale = 1/n_dof`).
-pub fn unbiased_cartesian_acf_scaled(
-    series: &Array2<f64>,
-    max_lag: usize,
-    mean_subtract: bool,
-    scale: f64,
-) -> Result<Array1<f64>, ComputeError> {
-    let n_frames = series.shape()[0];
-    let n_comp = series.shape()[1];
-    if n_frames < 2 || n_comp == 0 {
-        return Err(ComputeError::EmptyInput);
-    }
-    let max_lag = max_lag.min(n_frames - 1);
-
-    let means = if mean_subtract {
-        component_means(series)
-    } else {
-        vec![0.0; n_comp]
-    };
-
-    let mut planner = FftPlanner::new();
-    let mut acf = Array1::<f64>::zeros(max_lag + 1);
-    let mut col = vec![0.0_f64; n_frames];
-    let mut scratch: Vec<Complex64> = Vec::new();
-    let out = acf.as_slice_mut().expect("acf is contiguous");
-
-    for (d, mean) in means.iter().copied().enumerate() {
-        fill_column(series, d, mean, &mut col);
-        sig::acf_fft_accumulate(&mut planner, &col, max_lag, out, &mut scratch).map_err(|e| {
-            ComputeError::OutOfRange {
-                field: "acf_fft",
-                value: e.to_string(),
-            }
-        })?;
-    }
-    apply_unbiased_norm(&mut acf, n_frames, scale);
-    Ok(acf)
-}
-
 /// Unbiased Cartesian-sum cross-correlation
 /// `C(τ) = Σ_α ⟨a_α(0) b_α(τ)⟩` (optionally of fluctuations).
 ///
 /// Both series must share shape `(n_frames, n_comp)`.
+///
+/// Several dielectric / transport raw Computes need the same recipe:
+///
+/// 1. optional per-component mean subtraction,
+/// 2. FFT linear ACF / xcorr via [`molrs::signal`] accumulate primitives,
+/// 3. sum over Cartesian axes,
+/// 4. unbiased `1/(n − τ)` normalisation.
+///
+/// | Helper / Compute | Correlator | Downstream Fit |
+/// |------------------|------------|----------------|
+/// | [`autocorrelation`](crate::compute::autocorrelation) | `Σ_α ⟨δa_α(0) δa_α(t)⟩` | Debye / PACF / JACF / VACF |
+/// | this function | `Σ_α ⟨δa_α(0) δb_α(t)⟩` | cross spectra |
+/// | [`DipoleRateCross`](crate::compute::DipoleRateCross) | `C_{ṀM}(t)` with FD `Ṁ` | [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum) |
+///
+/// Signal kernels stay in [`molrs::signal`]; multi-component assembly lives here.
 pub fn unbiased_cartesian_xcorr(
     a: &Array2<f64>,
     b: &Array2<f64>,
@@ -248,7 +189,7 @@ pub fn gradient_axis0_order2(series: &Array2<f64>, dt: f64) -> Result<Array2<f64
 /// series are mean-subtracted before the FFT cross-correlation.
 ///
 /// Compose with
-/// [`DipoleRateCrossSpectrum`](crate::compute::spectroscopy::DipoleRateCrossSpectrum)
+/// [`DipoleRateCrossSpectrum`](crate::compute::DipoleRateCrossSpectrum)
 /// for ε(ω).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DipoleRateCross;
@@ -308,7 +249,7 @@ impl Compute for DipoleRateCross {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
+    use molrs::core::Frame;
     use ndarray::Array2;
     use rand::{RngExt, SeedableRng};
 
@@ -332,7 +273,10 @@ mod tests {
         let n = 64;
         let max_lag = 20;
         let s = rng_series(n, 3, 11);
-        let got = unbiased_cartesian_acf(&s, max_lag, true).unwrap();
+        let got =
+            crate::compute::autocorrelation(s.view().insert_axis(ndarray::Axis(1)), max_lag, true)
+                .unwrap()
+                .acf;
         let mut mean = [0.0_f64; 3];
         for t in 0..n {
             for d in 0..3 {
@@ -364,7 +308,9 @@ mod tests {
     #[test]
     fn cartesian_xcorr_of_self_matches_acf() {
         let s = rng_series(48, 3, 3);
-        let acf = unbiased_cartesian_acf(&s, 15, true).unwrap();
+        let acf = crate::compute::autocorrelation(s.view().insert_axis(ndarray::Axis(1)), 15, true)
+            .unwrap()
+            .acf;
         let xc = unbiased_cartesian_xcorr(&s, &s, 15, true).unwrap();
         for k in 0..acf.len() {
             assert!((acf[k] - xc[k]).abs() < 1e-12, "k={k}");

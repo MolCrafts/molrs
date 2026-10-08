@@ -1,6 +1,8 @@
 //! SMARTS substructure-matching engine.
 //!
-//! A parser + backtracking subgraph-isomorphism matcher covering the SMARTS
+//! SMARTS, wholly: the pattern is parsed by the crate's one line-notation
+//! grammar (shared with SMILES), compiled into a query graph, matched by a
+//! backtracking subgraph-isomorphism matcher covering the SMARTS
 //! feature subset used by RDKit's ETKDGv3 experimental-torsion preference
 //! tables (`torsionPreferences_v2 / _smallrings / _macrocycles`), including
 //! recursive SMARTS `[$(...)]`.
@@ -8,7 +10,6 @@
 //! Match semantics follow RDKit `GetSubstructMatches(uniquify=False)`: every
 //! distinct query-atom → mol-atom embedding is reported, ordered by query-atom
 //! index. Ported (semantics only) from RDKit under the BSD-3 licence:
-//! - `Code/GraphMol/SmilesParse/SmartsParse.cpp` (grammar)
 //! - `Code/GraphMol/Substruct/SubstructMatch.cpp` (matching + recursive eval)
 //! - `Code/GraphMol/QueryAtom.h` / `QueryBond.h` (query primitives)
 //!
@@ -23,22 +24,25 @@
 //! # Supported features
 //!
 //! - Atom primitives: aliphatic/aromatic elements, `*`, `a`, `A`, `#<n>`,
-//!   `H<n>`, `X<n>`, `D<n>`, `R`/`R<n>`, `r<n>`, `+`/`++`/`+<n>`/`-`/`-<n>`,
-//!   atom-map `:<n>`.
+//!   `H<n>`, `X<n>`, `D<n>`, `R`/`R<n>`, `r<n>`, `r{lo-hi}`, `x<n>`,
+//!   `+`/`++`/`+<n>`/`-`/`-<n>`, atom-map `:<n>`, and the molrs context
+//!   label `%LABEL` (see [`MatchOptions::labels`]).
 //! - Atom logic: implicit/`&` high AND, `;` low AND, `,` OR, `!` NOT.
 //! - Recursive SMARTS `[$(...)]` (nestable), rooted at the candidate atom.
 //! - Bond primitives: `-` `=` `#` `:` `~` `@`, `!`, logical combos
 //!   (`!@;-`, `-,:`); default bond = single-or-aromatic.
 //! - Branches `( )`, ring closures incl. `%nn`.
 //!
-//! Out of scope: chirality `@`/`@@`, isotopes, reaction / component SMARTS.
+//! Out of scope, refused with an error: chirality `@`/`@@`, isotopes, `h<n>`,
+//! `v<n>`, directional and quadruple bonds, and `.`-separated component
+//! SMARTS (a [`Reaction`] splits its reactants itself).
 //!
 //! # Example
 //!
 //! ```
 //! use molrs::perceive::smarts::SmartsPattern;
-//! use molrs::system::bond::BondType;
-//! use molrs::{Atom, Atomistic};
+//! use molrs::core::BondOrder;
+//! use molrs::core::{Atom, Atomistic};
 //!
 //! // Acetamide skeleton C-C(=O)-N (no Hs needed for this query).
 //! let mut g = Atomistic::new();
@@ -48,7 +52,7 @@
 //! let n = g.add_atom(Atom::xyz("N", 1.0, 1.0, 0.0));
 //! g.add_bond(c0, c1).unwrap();
 //! let bo = g.add_bond(c1, o).unwrap();
-//! g.set_bond_type(bo, BondType::Double).unwrap();
+//! g.set_bond_type(bo, BondOrder::Double).unwrap();
 //! g.add_bond(c1, n).unwrap();
 //!
 //! let pat = SmartsPattern::parse("[$([CX3]=[OX1]):1]~[*:2]").unwrap();
@@ -56,18 +60,21 @@
 //! assert_eq!(pat.map_label(0), Some(1));
 //! ```
 
-mod ast;
+mod compile;
+mod environment;
 mod matcher;
-mod parser;
+mod predicate;
 mod reaction;
 
 use std::collections::HashMap;
 
-use crate::error::MolRsError;
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::core::Atomistic;
+use crate::core::MolRsError;
+use crate::core::NodeId;
 
-use parser::QueryGraph;
+use compile::QueryGraph;
 
+pub use environment::{EnvironmentOptions, NeighborStyle};
 pub use reaction::Reaction;
 
 /// Ring-related SMARTS atom primitives found in a compiled pattern.
@@ -90,9 +97,9 @@ pub enum RingPrimitive {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MatchOptions<'a> {
     /// Optional `%LABEL` context (`atom -> current label`).
-    pub labels: Option<&'a HashMap<AtomId, String>>,
+    pub labels: Option<&'a HashMap<NodeId, String>>,
     /// Optional root pin for query atom 0.
-    pub root: Option<AtomId>,
+    pub root: Option<NodeId>,
     /// Optional maximum number of matches to return.
     pub limit: Option<usize>,
 }
@@ -100,26 +107,67 @@ pub struct MatchOptions<'a> {
 /// One SMARTS match, indexed by query atom order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmartsMatch {
-    pub atoms: Vec<AtomId>,
+    pub atoms: Vec<NodeId>,
 }
 
 impl SmartsMatch {
-    pub fn atoms(&self) -> &[AtomId] {
+    pub fn atoms(&self) -> &[NodeId] {
         &self.atoms
     }
 }
 
 /// A compiled SMARTS query.
+///
+/// Its [`Display`](std::fmt::Display) is the SMARTS text: what
+/// [`parse`](Self::parse) read, or what
+/// [`from_environment`](Self::from_environment) generated.
 #[derive(Debug, Clone)]
 pub struct SmartsPattern {
     graph: QueryGraph,
+    smarts: String,
+}
+
+impl std::fmt::Display for SmartsPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.smarts)
+    }
 }
 
 impl SmartsPattern {
-    /// Parse a SMARTS string. Returns `Err` on any syntax error (never panics).
+    /// Parse a SMARTS string and compile it for matching. Returns `Err` on any
+    /// syntax error, or on a construct the matcher does not evaluate (never
+    /// panics).
     pub fn parse(smarts: &str) -> Result<SmartsPattern, MolRsError> {
-        let graph = parser::parse(smarts)?;
-        Ok(SmartsPattern { graph })
+        let graph = compile::compile(smarts)?;
+        Ok(SmartsPattern {
+            graph,
+            smarts: smarts.to_owned(),
+        })
+    }
+
+    /// The pattern that states the local environment of `center` in `mol` —
+    /// its element, and as many of degree, hydrogen count, charge,
+    /// aromaticity, ring membership and neighbours out to `options.reach`
+    /// bonds as `options` asks for.
+    ///
+    /// The pattern matches `mol` at `center` (as atom 0). With
+    /// [`NeighborStyle::Chain`] its
+    /// [`max_bond_depth`](Self::max_bond_depth) is at most `options.reach`.
+    ///
+    /// # Errors
+    ///
+    /// `options.reach` is 0, `center` is not an atom of `mol`, or an atom
+    /// carries no known `element`.
+    pub fn from_environment(
+        mol: &Atomistic,
+        center: NodeId,
+        options: &EnvironmentOptions,
+    ) -> Result<SmartsPattern, MolRsError> {
+        let ir = environment::environment_ir(mol, center, options)
+            .map_err(|e| MolRsError::parse(e.to_string()))?;
+        let smarts = crate::line_notation::writer::smarts_text(&ir)
+            .map_err(|e| MolRsError::parse(e.to_string()))?;
+        Self::parse(&smarts)
     }
 
     /// All matches (non-uniquified), controlled by [`MatchOptions`].
@@ -127,12 +175,12 @@ impl SmartsPattern {
         matcher::find(&self.graph, mol, options)
     }
 
-    pub(crate) fn find_in_context(
+    pub(crate) fn find_in_target(
         &self,
-        context: &ast::MolContext<'_>,
-        root: Option<AtomId>,
+        target: &predicate::SmartsTarget<'_>,
+        root: Option<NodeId>,
     ) -> Vec<SmartsMatch> {
-        matcher::find_in_context(&self.graph, context, root, None)
+        matcher::find_in_target(&self.graph, target, root, None)
     }
 
     /// Whether at least one match exists.
@@ -141,7 +189,7 @@ impl SmartsPattern {
     }
 
     /// Project a match into `{atom_map_label -> molecule atom}`.
-    pub fn mapped(&self, m: &SmartsMatch) -> HashMap<u32, AtomId> {
+    pub fn mapped(&self, m: &SmartsMatch) -> HashMap<u32, NodeId> {
         m.atoms
             .iter()
             .enumerate()
@@ -156,7 +204,7 @@ impl SmartsPattern {
     }
 
     /// Number of query atoms.
-    pub fn num_query_atoms(&self) -> usize {
+    pub fn n_query_atoms(&self) -> usize {
         self.graph.atoms.len()
     }
 

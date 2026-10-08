@@ -63,7 +63,6 @@ molrs-python/python/molrs/*.dylib
 molrs-python/python/molrs/*.dll
 molrs-python/python/molrs/*.so
 molrs-python/python/molrs/*.dylib.dSYM/
-molrs-cxxapi/src/bridge.rs
 
 .claude/worktrees/
 
@@ -71,7 +70,7 @@ molrs-cxxapi/src/bridge.rs
 
 # Per-arch / per-consumer cargo target dirs (target-aarch64, target-x86_64-molnex, ...).
 **/target-*/
-molrs-python/python/molrs/_lib.abi3.so.*
+molrs-python/python/molrs/_native.abi3.so.*
 
 # Per-architecture toolchain and wheel output for the GH200 build job
 .cargo-aarch64/

@@ -10,16 +10,12 @@ import socket
 import threading
 
 import molrs
-import molrs.io as mio
 import numpy as np
 import pytest
 from molrs.stream import ControlCommand
 
-pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
-
-
-def _frame(n: int = 3, offset: float = 0.0) -> molrs.Frame:
-    return molrs.Frame(
+def _frame(n: int = 3, offset: float = 0.0) -> molrs.core.Frame:
+    return molrs.core.Frame(
         blocks={
             "atoms": {
                 "x": np.arange(n, dtype=np.float64) + offset,
@@ -34,39 +30,36 @@ def _frame(n: int = 3, offset: float = 0.0) -> molrs.Frame:
 class TestFrameWireCodec:
     def test_round_trip_preserves_columns(self):
         frame = _frame()
-        back = mio.read_frame_bytes(mio.write_frame_bytes(frame))
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(frame))
         np.testing.assert_allclose(back["atoms"]["x"], frame["atoms"]["x"])
         assert list(back["atoms"]["element"]) == ["C", "C", "C"]
 
     def test_round_trip_returns_the_rich_frame_subclass(self):
-        # `_lib.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
+        # `_native.Frame.from_bytes` is a staticmethod on the bare PyO3 core; the
         # rich layer shadows it. Without the shadow a decoded stream frame
         # would not accept `frame["atoms"]["x"]`.
-        back = mio.read_frame_bytes(mio.write_frame_bytes(_frame()))
-        assert isinstance(back, molrs.Frame)
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(_frame()))
+        assert isinstance(back, molrs.core.Frame)
 
     def test_round_trip_preserves_the_box(self):
         frame = _frame()
-        frame.box = molrs.Box(np.eye(3) * 10.0)
-        back = mio.read_frame_bytes(mio.write_frame_bytes(frame))
+        frame.box = molrs.core.Box(np.eye(3) * 10.0)
+        back = molrs.io.read_msgpack_frame_bytes(molrs.io.write_msgpack_frame_bytes(frame))
         assert back.box is not None
         np.testing.assert_allclose(back.box.h, frame.box.h)
 
-    @pytest.mark.parametrize("fmt", ["msgpack", "json"])
-    def test_both_formats_round_trip(self, fmt):
-        back = mio.read_frame_bytes(mio.write_frame_bytes(_frame(), fmt), fmt)
+    def test_json_round_trip(self):
+        text = molrs.io.write_json_frame_str(_frame())
+        assert isinstance(text, str)
+        back = molrs.io.read_json_frame_str(text)
         np.testing.assert_allclose(back["atoms"]["x"], [0.0, 1.0, 2.0])
 
-    def test_decoding_with_the_wrong_format_raises(self):
+    def test_decoding_with_the_wrong_encoding_raises(self):
         # Silently reading MessagePack as JSON is how a stream turns into
         # garbage columns instead of an error.
-        payload = mio.write_frame_bytes(_frame(), "msgpack")
+        payload = molrs.io.write_msgpack_frame_bytes(_frame())
         with pytest.raises(ValueError):
-            mio.read_frame_bytes(payload, "json")
-
-    def test_unknown_format_name_raises(self):
-        with pytest.raises(ValueError, match="unknown wire format"):
-            mio.write_frame_bytes(_frame(), "messagepack")
+            molrs.io.read_json_frame_str(payload.decode("latin-1"))
 
 
 class TestControlCommand:
@@ -123,7 +116,7 @@ class TestFrameServer:
 
     def test_starts_with_no_clients(self):
         with molrs.stream.Publisher("127.0.0.1:0") as server:
-            assert server.client_count == 0
+            assert server.n_clients == 0
 
     def test_send_without_a_client_does_not_block(self):
         # The bounded buffer drops rather than stalls; a producer must be able

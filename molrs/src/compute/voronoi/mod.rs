@@ -5,8 +5,8 @@
 //! ([`RadicalVoronoi`]) — no C/C++ FFI, WASM-clean — ported from voro++
 //! (`src/v_cell.cpp`, `src/v_rad_option.h`, `src/v_container_prd.cpp`) as used
 //! by the reference implementation (`vorowrapper.cpp`). Two real consumers ship with it:
-//! [`DomainAnalysis`] (microheterogeneity / ionic-liquid domains, `domain.cpp`)
-//! and [`VoidAnalysis`] (cavity / free-volume, `void.cpp`).
+//! [`VoronoiDomainAnalysis`] (microheterogeneity / ionic-liquid domains, `domain.cpp`)
+//! and [`VoronoiVoidAnalysis`] (cavity / free-volume, `void.cpp`).
 //!
 //! Layer: `compute` → `core` (`SimBox`); no new dependency.
 
@@ -17,9 +17,9 @@ mod polarizability;
 mod radical;
 mod void;
 
-pub use cell::{BOUNDARY, Face, VoronoiCells};
-pub use domain::{DomainAnalysis, DomainResult};
-pub use integrate::{BOHR_TO_ANG, DensityGrid, MolecularMoments, VoronoiIntegration};
+pub use cell::{VORONOI_BOUNDARY, VoronoiCells, VoronoiFace};
+pub use domain::{VoronoiDomainAnalysis, VoronoiDomainResult};
+pub use integrate::{DensityGrid, MolecularMoments, VoronoiIntegration};
 pub use polarizability::polarizability_finite_field;
 pub use radical::RadicalVoronoi;
-pub use void::{VoidAnalysis, VoidResult};
+pub use void::{VoronoiVoidAnalysis, VoronoiVoidResult};

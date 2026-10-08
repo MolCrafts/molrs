@@ -1,9 +1,4 @@
 //! Native WebSocket server that broadcasts serialized [`Frame`]s to clients.
-//!
-//! The accept loop and per-client I/O run on a background `std::thread` that
-//! owns a multi-thread tokio runtime. The simulation loop stays synchronous:
-//! [`Publisher::send`] never blocks on network writes; when the bounded
-//! broadcast buffer is full the oldest payload is dropped.
 
 use std::io;
 use std::net::SocketAddr;
@@ -21,22 +16,22 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::core::store::frame::Frame;
-use crate::stream::{MessageFormat, StreamError, frame_to_bytes};
+use crate::core::Frame;
+use crate::stream::{FrameEncoding, StreamError, encode_frame};
 
-use super::message::ControlCommand;
+use super::control::ControlCommand;
 
 /// Configuration for a [`Publisher`].
 #[derive(Debug, Clone)]
 pub struct PublisherConfig {
     /// Wire encoding for outbound frames (default: MessagePack).
-    pub format: MessageFormat,
+    pub format: FrameEncoding,
     /// Capacity of the simulation→network frame buffer (default: 4).
     ///
     /// When full, [`Publisher::send`] drops the oldest buffered frame so the
     /// producer never blocks.
     pub buffer_size: usize,
-    /// Reserved maximum stream rate in Hz. Not enforced in v1 (no-op).
+    /// Reserved maximum stream rate in Hz. Not enforced (no-op).
     pub max_frame_rate: f64,
     /// Shared secret a client must present before it receives anything.
     ///
@@ -60,7 +55,7 @@ pub struct PublisherConfig {
 impl Default for PublisherConfig {
     fn default() -> Self {
         Self {
-            format: MessageFormat::MessagePack,
+            format: FrameEncoding::MessagePack,
             buffer_size: 4,
             max_frame_rate: 0.0,
             token: None,
@@ -101,13 +96,14 @@ impl From<StreamError> for SendError {
     }
 }
 
-struct Shared {
-    format: MessageFormat,
+/// What the publisher handle and its background thread both hold.
+struct PublisherState {
+    format: FrameEncoding,
     /// Simulation → clients (payload already encoded). A broadcast channel
     /// overwrites its oldest entry when full, which is the drop policy.
     frame_tx: Mutex<Option<broadcast::Sender<Bytes>>>,
     cmd_rx: Mutex<mpsc::Receiver<ControlCommand>>,
-    client_count: Arc<AtomicUsize>,
+    n_clients: Arc<AtomicUsize>,
     local_addr: Option<SocketAddr>,
     shutting_down: AtomicBool,
     join: Mutex<Option<JoinHandle<()>>>,
@@ -115,6 +111,11 @@ struct Shared {
 }
 
 /// Publishes over a WebSocket and collects control commands back.
+///
+/// The accept loop and per-client I/O run on a background `std::thread` that
+/// owns a multi-thread tokio runtime. The simulation loop stays synchronous:
+/// [`Publisher::send`] never blocks on network writes; when the bounded
+/// broadcast buffer is full the oldest payload is dropped.
 ///
 /// Named for neither its socket nor its payload, because it commits to
 /// neither. It [`bind`](Self::bind)s and waits to be dialed, or
@@ -129,7 +130,7 @@ struct Shared {
 /// clone to join on exit.
 #[derive(Clone)]
 pub struct Publisher {
-    shared: Arc<Shared>,
+    state: Arc<PublisherState>,
 }
 
 impl Publisher {
@@ -180,8 +181,8 @@ impl Publisher {
         let (cmd_tx, cmd_rx) = mpsc::sync_channel::<ControlCommand>(64);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        let client_count = Arc::new(AtomicUsize::new(0));
-        let client_count_thread = Arc::clone(&client_count);
+        let n_clients = Arc::new(AtomicUsize::new(0));
+        let client_count_thread = Arc::clone(&n_clients);
 
         let join = std::thread::Builder::new()
             .name("molrs-frame-publisher".into())
@@ -206,11 +207,11 @@ impl Publisher {
             })?;
 
         Ok(Publisher {
-            shared: Arc::new(Shared {
+            state: Arc::new(PublisherState {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
-                client_count,
+                n_clients,
                 local_addr: None,
                 shutting_down: AtomicBool::new(false),
                 join: Mutex::new(Some(join)),
@@ -232,8 +233,8 @@ impl Publisher {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<io::Result<SocketAddr>>();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-        let client_count = Arc::new(AtomicUsize::new(0));
-        let client_count_thread = Arc::clone(&client_count);
+        let n_clients = Arc::new(AtomicUsize::new(0));
+        let client_count_thread = Arc::clone(&n_clients);
 
         let join = std::thread::Builder::new()
             .name("molrs-frame-publisher".into())
@@ -286,11 +287,11 @@ impl Publisher {
             .map_err(|_| io::Error::other("frame server thread exited before bind"))??;
 
         Ok(Publisher {
-            shared: Arc::new(Shared {
+            state: Arc::new(PublisherState {
                 format,
                 frame_tx: Mutex::new(Some(frame_tx)),
                 cmd_rx: Mutex::new(cmd_rx),
-                client_count,
+                n_clients,
                 local_addr: Some(local_addr),
                 shutting_down: AtomicBool::new(false),
                 join: Mutex::new(Some(join)),
@@ -301,12 +302,12 @@ impl Publisher {
 
     /// Local socket address the server is listening on.
     pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.shared.local_addr
+        self.state.local_addr
     }
 
     /// Number of currently connected WebSocket clients.
-    pub fn client_count(&self) -> usize {
-        self.shared.client_count.load(Ordering::Relaxed)
+    pub fn n_clients(&self) -> usize {
+        self.state.n_clients.load(Ordering::Relaxed)
     }
 
     /// Encode `frame` and enqueue it for broadcast.
@@ -314,7 +315,7 @@ impl Publisher {
     /// Never blocks on network I/O. If the internal buffer is full, the oldest
     /// pending frame is dropped so this call returns promptly.
     pub fn send(&self, frame: &Frame) -> Result<(), SendError> {
-        let bytes = frame_to_bytes(frame, self.shared.format)?;
+        let bytes = encode_frame(frame, self.state.format)?;
         self.send_bytes(Bytes::from(bytes))
     }
 
@@ -325,7 +326,7 @@ impl Publisher {
     /// runtime (not only the server's background runtime).
     pub async fn recv_command(&self) -> Option<ControlCommand> {
         loop {
-            let polled = match self.shared.cmd_rx.lock() {
+            let polled = match self.state.cmd_rx.lock() {
                 Ok(rx) => rx.try_recv(),
                 Err(_) => return None,
             };
@@ -333,7 +334,7 @@ impl Publisher {
                 Ok(cmd) => return Some(cmd),
                 Err(TryRecvError::Disconnected) => return None,
                 Err(TryRecvError::Empty) => {
-                    if self.shared.shutting_down.load(Ordering::Acquire) {
+                    if self.state.shutting_down.load(Ordering::Acquire) {
                         return None;
                     }
                     tokio::time::sleep(Duration::from_millis(5)).await;
@@ -361,7 +362,7 @@ impl Publisher {
     ///
     /// [`send`]: Self::send
     pub fn recv_command_blocking(&self, timeout: Duration) -> Option<ControlCommand> {
-        let rx = self.shared.cmd_rx.lock().ok()?;
+        let rx = self.state.cmd_rx.lock().ok()?;
         if timeout.is_zero() {
             return rx.try_recv().ok();
         }
@@ -371,7 +372,7 @@ impl Publisher {
     /// Signal the accept loop to stop and join the background thread.
     pub fn shutdown(self) {
         self.request_shutdown();
-        if let Ok(mut guard) = self.shared.join.lock()
+        if let Ok(mut guard) = self.state.join.lock()
             && let Some(handle) = guard.take()
         {
             let _ = handle.join();
@@ -379,11 +380,11 @@ impl Publisher {
     }
 
     fn request_shutdown(&self) {
-        self.shared.shutting_down.store(true, Ordering::Release);
-        if let Ok(mut guard) = self.shared.frame_tx.lock() {
+        self.state.shutting_down.store(true, Ordering::Release);
+        if let Ok(mut guard) = self.state.frame_tx.lock() {
             *guard = None;
         }
-        if let Ok(mut guard) = self.shared.shutdown_tx.lock()
+        if let Ok(mut guard) = self.state.shutdown_tx.lock()
             && let Some(tx) = guard.take()
         {
             let _ = tx.send(());
@@ -391,7 +392,7 @@ impl Publisher {
     }
 
     fn send_bytes(&self, bytes: Bytes) -> Result<(), SendError> {
-        let tx_guard = self.shared.frame_tx.lock().map_err(|_| SendError::Closed)?;
+        let tx_guard = self.state.frame_tx.lock().map_err(|_| SendError::Closed)?;
         let tx = tx_guard.as_ref().ok_or(SendError::Closed)?;
         // A full broadcast buffer overwrites its oldest entry; a send with no
         // subscriber is simply a frame nobody was attached to receive.
@@ -403,11 +404,11 @@ impl Publisher {
 impl Drop for Publisher {
     fn drop(&mut self) {
         // Only the last Arc clone should join; earlier clones leave the server running.
-        if Arc::strong_count(&self.shared) > 1 {
+        if Arc::strong_count(&self.state) > 1 {
             return;
         }
         self.request_shutdown();
-        if let Ok(mut guard) = self.shared.join.lock()
+        if let Ok(mut guard) = self.state.join.lock()
             && let Some(handle) = guard.take()
         {
             let _ = handle.join();
@@ -421,8 +422,8 @@ async fn run_bound(
     listener: TcpListener,
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    client_count: Arc<AtomicUsize>,
-    format: MessageFormat,
+    n_clients: Arc<AtomicUsize>,
+    format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -434,14 +435,14 @@ async fn run_bound(
                 let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
                     continue;
                 };
-                client_count.fetch_add(1, Ordering::Relaxed);
+                n_clients.fetch_add(1, Ordering::Relaxed);
                 let bcast_rx = bcast_tx.subscribe();
                 let cmd_tx = cmd_tx.clone();
-                let client_count = Arc::clone(&client_count);
+                let n_clients = Arc::clone(&n_clients);
                 let token = token.clone();
                 tokio::spawn(async move {
                     handle_client(ws, bcast_rx, cmd_tx, format, token).await;
-                    client_count.fetch_sub(1, Ordering::Relaxed);
+                    n_clients.fetch_sub(1, Ordering::Relaxed);
                 });
             }
         }
@@ -514,8 +515,8 @@ async fn run_dialed(
     url: String,
     bcast_tx: broadcast::Sender<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    client_count: Arc<AtomicUsize>,
-    format: MessageFormat,
+    n_clients: Arc<AtomicUsize>,
+    format: FrameEncoding,
     token: Option<String>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
@@ -531,16 +532,16 @@ async fn run_dialed(
             {
                 let (mut write, mut read) = ws.split();
                 if present_token(&mut write, &mut read, token.as_deref()).await {
-                    client_count.fetch_add(1, Ordering::Relaxed);
+                    n_clients.fetch_add(1, Ordering::Relaxed);
                     let bcast_rx = bcast_tx.subscribe();
                     tokio::select! {
                         _ = &mut shutdown_rx => {
-                            client_count.fetch_sub(1, Ordering::Relaxed);
+                            n_clients.fetch_sub(1, Ordering::Relaxed);
                             break;
                         }
                         _ = pump(write, read, bcast_rx, cmd_tx.clone(), format) => {}
                     }
-                    client_count.fetch_sub(1, Ordering::Relaxed);
+                    n_clients.fetch_sub(1, Ordering::Relaxed);
                 }
             }
         }
@@ -583,7 +584,7 @@ async fn handle_client(
     ws: WsStream,
     bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    format: MessageFormat,
+    format: FrameEncoding,
     token: Option<String>,
 ) {
     let (mut write, mut read) = ws.split();
@@ -605,7 +606,7 @@ async fn pump<S>(
     mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
     mut bcast_rx: broadcast::Receiver<Bytes>,
     cmd_tx: SyncSender<ControlCommand>,
-    format: MessageFormat,
+    format: FrameEncoding,
 ) where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -615,8 +616,8 @@ async fn pump<S>(
                 match frame {
                     Ok(payload) => {
                         let msg = match format {
-                            MessageFormat::MessagePack => Message::Binary(payload),
-                            MessageFormat::Json => {
+                            FrameEncoding::MessagePack => Message::Binary(payload),
+                            FrameEncoding::Json => {
                                 match String::from_utf8(payload.to_vec()) {
                                     Ok(s) => Message::Text(s.into()),
                                     Err(_) => continue,
@@ -658,9 +659,9 @@ async fn pump<S>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::store::block::Block;
-    use crate::stream::bytes_to_frame;
-    use crate::types::{F, I};
+    use crate::core::Block;
+    use crate::op::{F, I};
+    use crate::stream::decode_msgpack_frame;
     use futures_util::{SinkExt, StreamExt};
     use ndarray::Array1;
     use tokio_tungstenite::connect_async;
@@ -699,14 +700,14 @@ mod tests {
 
     async fn wait_clients(server: &Publisher, n: usize) {
         for _ in 0..100 {
-            if server.client_count() == n {
+            if server.n_clients() == n {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!(
             "timed out waiting for {n} clients (have {})",
-            server.client_count()
+            server.n_clients()
         );
     }
 
@@ -717,7 +718,7 @@ mod tests {
 
         let (mut ws, _) = connect_async(&url).await.expect("connect");
         wait_clients(&server, 1).await;
-        assert_eq!(server.client_count(), 1);
+        assert_eq!(server.n_clients(), 1);
 
         ws.close(None).await.ok();
         server.shutdown();
@@ -744,7 +745,7 @@ mod tests {
             Message::Text(t) => t.as_bytes().to_vec(),
             other => panic!("unexpected message: {other:?}"),
         };
-        let decoded = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        let decoded = decode_msgpack_frame(&bytes).expect("decode");
         assert!(decoded.contains_key("atoms"));
         let x = decoded["atoms"]
             .get("x")
@@ -783,7 +784,7 @@ mod tests {
         let server = Publisher::bind_with(
             "127.0.0.1:0",
             PublisherConfig {
-                format: MessageFormat::MessagePack,
+                format: FrameEncoding::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
                 token: None,
@@ -808,7 +809,7 @@ mod tests {
         let server = Publisher::bind_with(
             "127.0.0.1:0",
             PublisherConfig {
-                format: MessageFormat::MessagePack,
+                format: FrameEncoding::MessagePack,
                 buffer_size: 1,
                 max_frame_rate: 0.0,
                 token: None,
@@ -828,7 +829,7 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             match tokio::time::timeout(Duration::from_millis(200), ws.next()).await {
                 Ok(Some(Ok(Message::Binary(b)))) => {
-                    if let Ok(decoded) = bytes_to_frame(b.as_ref(), MessageFormat::MessagePack)
+                    if let Ok(decoded) = decode_msgpack_frame(b.as_ref())
                         && let Some(x) = decoded
                             .get("atoms")
                             .and_then(|a| a.get("x").and_then(|c| c.as_float()))
@@ -876,7 +877,7 @@ mod tests {
         server.send(&sample_frame(7)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 7.0).abs() < 1e-12);
     }
@@ -935,7 +936,7 @@ mod tests {
 
         server.send(&sample_frame(3)).expect("send");
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 3.0).abs() < 1e-12);
     }
@@ -961,7 +962,7 @@ mod tests {
         assert!(publisher.local_addr().is_none());
 
         for _ in 0..100 {
-            if publisher.client_count() == 1 {
+            if publisher.n_clients() == 1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -969,7 +970,7 @@ mod tests {
         publisher.send(&sample_frame(11)).expect("send");
 
         let msg = ws.next().await.expect("frame").expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 11.0).abs() < 1e-12);
 
@@ -980,7 +981,7 @@ mod tests {
     /// the long-lived end, so it keeps dialing until something answers.
     ///
     /// The assertion has to be that it eventually connects. Checking only that
-    /// `send` succeeds and `client_count` is 0 while nothing listens proves
+    /// `send` succeeds and `n_clients` is 0 while nothing listens proves
     /// nothing: that holds with the dial loop deleted entirely.
     #[tokio::test]
     async fn a_collector_that_starts_late_still_gets_the_stream() {
@@ -999,7 +1000,7 @@ mod tests {
         // the test would then pass with the retry loop deleted.
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         assert_eq!(
-            publisher.client_count(),
+            publisher.n_clients(),
             0,
             "nothing is listening yet, so no dial should have succeeded"
         );
@@ -1024,7 +1025,7 @@ mod tests {
         let mut ws = tokio_tungstenite::accept_async(stream).await.expect("ws");
 
         for _ in 0..200 {
-            if publisher.client_count() == 1 {
+            if publisher.n_clients() == 1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -1036,7 +1037,7 @@ mod tests {
             .expect("no frame after reconnect")
             .expect("frame")
             .expect("frame ok");
-        let frame = bytes_to_frame(&msg.into_data(), MessageFormat::MessagePack).expect("decode");
+        let frame = decode_msgpack_frame(&msg.into_data()).expect("decode");
         let x = frame["atoms"].get("x").and_then(|c| c.as_float()).unwrap();
         assert!((x[2] - 5.0).abs() < 1e-12);
 

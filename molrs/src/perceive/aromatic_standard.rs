@@ -5,9 +5,7 @@
 //! names** rather than any Rust type — so it is a statement about the data
 //! model, and cannot drift with the implementation that satisfies it.
 //!
-//! These were the migration's red line — written `#[ignore]`d against a
-//! representation that did not exist yet, then un-ignored one clause at a time
-//! as it landed. They are all live now and are the standard's acceptance gate.
+//! They are the standard's acceptance gate.
 //!
 //! Run them with:
 //!
@@ -31,9 +29,10 @@
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
-use crate::perceive::Perceive;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::molgraph::PropValue;
+use crate::core::Atomistic;
+use crate::core::PropValue;
+use crate::core::{NodeId, RelationId};
+use crate::perceive::{add_hydrogens, assign_aromaticity, assign_kekule_bond_orders};
 
 /// Bond prop: the chemical class (§2.1).
 const BOND_TYPE: &str = "bond_type";
@@ -90,23 +89,23 @@ const UNKEKULIZABLE: &str = "c1cccc1";
 // ---------------------------------------------------------------------------
 
 fn parse(smiles: &str) -> Atomistic {
-    let ir = crate::io::smiles::parse_smiles(smiles)
-        .unwrap_or_else(|e| panic!("{smiles}: parse failed: {e}"));
-    crate::io::smiles::to_atomistic(&ir)
+    use crate::io::smiles::SmilesIr;
+    let ir = SmilesIr::parse(smiles).unwrap_or_else(|e| panic!("{smiles}: parse failed: {e}"));
+    ir.to_atomistic()
         .unwrap_or_else(|e| panic!("{smiles}: to_atomistic failed: {e}"))
 }
 
 /// Parse and standardize.
 ///
 /// §9 makes perception responsible for the whole answer — aromatic atoms,
-/// aromatic bond type, *and* a legal localized integer — so `find_aromaticity`
+/// aromatic bond type, *and* a legal localized integer — so `assign_aromaticity`
 /// is the one entry point the standard's acceptance runs through.
 ///
 /// Hydrogens are **not** added: perception reads implicit hydrogens off each
 /// atom's valence, so `add_hydrogens` stays a separate, optional operation and
 /// standardization never changes the structure behind the caller's back.
 fn standardize(smiles: &str) -> Atomistic {
-    Perceive::new().find_aromaticity(&parse(smiles))
+    assign_aromaticity(&parse(smiles))
 }
 
 fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
@@ -119,24 +118,24 @@ fn uint_prop(props: &IndexMap<String, PropValue>, key: &str) -> Option<u32> {
     })
 }
 
-fn bond_type(mol: &Atomistic, bid: BondId) -> u32 {
+fn bond_type(mol: &Atomistic, bid: RelationId) -> u32 {
     let b = mol.get_bond(bid).expect("bond");
     uint_prop(&b.props, BOND_TYPE).unwrap_or_else(|| panic!("bond has no {BOND_TYPE}"))
 }
 
-fn bond_number(mol: &Atomistic, bid: BondId) -> u32 {
+fn bond_number(mol: &Atomistic, bid: RelationId) -> u32 {
     let b = mol.get_bond(bid).expect("bond");
     uint_prop(&b.props, BOND_NUMBER).unwrap_or_else(|| panic!("bond has no {BOND_NUMBER}"))
 }
 
-fn atom_is_aromatic(mol: &Atomistic, id: AtomId) -> bool {
+fn atom_is_aromatic(mol: &Atomistic, id: NodeId) -> bool {
     mol.get_atom(id)
         .ok()
         .and_then(|a| a.get(IS_AROMATIC).and_then(PropValue::as_f64))
         .is_some_and(|v| v != 0.0)
 }
 
-fn aromatic_bonds(mol: &Atomistic) -> Vec<BondId> {
+fn aromatic_bonds(mol: &Atomistic) -> Vec<RelationId> {
     mol.bonds()
         .filter(|(bid, _)| bond_type(mol, *bid) == TYPE_AROMATIC)
         .map(|(bid, _)| bid)
@@ -146,7 +145,7 @@ fn aromatic_bonds(mol: &Atomistic) -> Vec<BondId> {
 /// The molecule's `(bond_type, bond_number)` per bond, keyed by endpoint index
 /// pair — a comparison that survives a different bond iteration order.
 fn signature(mol: &Atomistic) -> HashMap<(usize, usize), (u32, u32)> {
-    let index: HashMap<AtomId, usize> = mol
+    let index: HashMap<NodeId, usize> = mol
         .atoms()
         .enumerate()
         .map(|(i, (id, _))| (id, i))
@@ -438,7 +437,7 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
         // And every ring atom is in exactly one of them — that, not a printed
         // `1,2,1,2,…` list, is what alternating means. The bond table's order is
         // not the ring's.
-        let mut touched: HashMap<AtomId, usize> = HashMap::new();
+        let mut touched: HashMap<NodeId, usize> = HashMap::new();
         for bid in ring
             .iter()
             .filter(|bid| bond_number(&mol, **bid) == NUMBER_DOUBLE)
@@ -462,7 +461,7 @@ fn a_benzene_ring_is_never_six_localized_doubles() {
 fn standardizing_twice_changes_nothing() {
     for (name, smiles) in MATRIX {
         let once = standardize(smiles);
-        let twice = Perceive::new().find_aromaticity(&once);
+        let twice = assign_aromaticity(&once);
         assert_eq!(
             signature(&once),
             signature(&twice),
@@ -591,12 +590,12 @@ fn a_declared_aromatic_input_is_kekulized_not_re_perceived() {
 
 #[test]
 fn kekulization_alone_never_invents_aromaticity() {
-    // `find_kekule_orders` decides a phase; it does not decide which bonds are
+    // `assign_kekule_bond_orders` decides a phase; it does not decide which bonds are
     // aromatic. A Kekulé benzene has no aromatic bonds to phase, so it comes
     // back untouched — that is the boundary that keeps the two from calling
     // each other.
     let kekule = parse("C1=CC=CC=C1");
-    let out = Perceive::new().find_kekule_orders(&kekule);
+    let out = assign_kekule_bond_orders(&kekule);
 
     assert_eq!(
         out.bonds()
@@ -617,13 +616,11 @@ fn perception_alone_never_needs_hydrogens_added() {
     // Implicit hydrogens are read off valence, so `add_hydrogens` is optional
     // and changes no answer. If this ever fails, standardization has grown a
     // hidden structural modification.
-    let p = Perceive::new();
     for (name, smiles) in MATRIX {
         let heavy = standardize(smiles);
-        let repleted = p
-            .find_hydrogens(&parse(smiles))
-            .expect("repletion succeeds on a well-formed graph");
-        let with_h = p.find_aromaticity(&repleted);
+        let repleted =
+            add_hydrogens(&parse(smiles)).expect("repletion succeeds on a well-formed graph");
+        let with_h = assign_aromaticity(&repleted);
         assert_eq!(
             aromatic_bonds(&heavy).len(),
             aromatic_bonds(&with_h).len(),
@@ -636,7 +633,7 @@ fn perception_alone_never_needs_hydrogens_added() {
 fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
     // §7, the case pyrrole and pyridine alone do not cover. Imidazole has two
     // candidate Kekulé structures, and they tie unless the penalty can see the
-    // hydrogen the graph does not draw — so the tie-break used to put the
+    // hydrogen the graph does not draw — otherwise the tie-break could put the
     // double on the [nH], giving a neutral nitrogen four bonds.
     for (name, smiles) in [
         ("imidazole", "c1c[nH]cn1"),
@@ -645,7 +642,7 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
         ("purine", "c1nc2[nH]cnc2cn1"),
     ] {
         let mol = standardize(smiles);
-        let index: HashMap<AtomId, usize> = mol
+        let index: HashMap<NodeId, usize> = mol
             .atoms()
             .enumerate()
             .map(|(i, (id, _))| (id, i))
@@ -663,8 +660,8 @@ fn a_protonated_ring_nitrogen_never_ends_up_four_valent() {
             if atom.get_str("element") != Some("N") {
                 continue;
             }
-            let total = valence[index[&id]]
-                + crate::perceive::hydrogens::implicit_h_count(&mol, id).unwrap_or(0);
+            let total =
+                valence[index[&id]] + crate::perceive::n_implicit_hydrogens(&mol, id).unwrap_or(0);
             assert!(
                 total <= 3,
                 "{name}: a neutral ring nitrogen reached valence {total}"

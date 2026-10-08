@@ -11,13 +11,13 @@ between the graph representation (`Atomistic`) and the table representation
 
 ## 1. Parse a Molecule
 
-`molrs.io.SmilesIR` returns an intermediate representation. Convert it to
+`molrs.io.smiles.SmilesIr` returns an intermediate representation. Convert it to
 `Atomistic` when you want a graph with atoms and bonds.
 
 ```python
 import molrs
 
-ir = molrs.io.SmilesIR("CCO")  # ethanol
+ir = molrs.io.smiles.SmilesIr("CCO")  # ethanol
 mol = ir.to_atomistic()
 
 print("components:", ir.n_components)
@@ -64,7 +64,7 @@ atoms = frame["atoms"]
 
 print("frame blocks:", frame.keys())
 print("atom columns:", atoms.keys())
-print("rows:", atoms.nrows)
+print("rows:", atoms.n_rows)
 print("first x values:", atoms["x"][:3])
 ```
 
@@ -81,7 +81,7 @@ periodic simulation cell.
 ```python
 import numpy as np
 
-frame.box = molrs.Box.cube(
+frame.box = molrs.core.Box.cube(
     20.0,
     pbc=np.array([True, True, True], dtype=np.bool_),
 )
@@ -104,15 +104,15 @@ points = np.column_stack(
     [atoms["x"], atoms["y"], atoms["z"]]
 ).astype(np.float64, copy=False)
 
-nl = molrs.NeighborList(6.0)
+nl = molrs.core.NeighborList(6.0)
 nl.build(points, frame.box)
 neigh = nl.neighbors()
 
 print("pairs:", neigh.n_pairs)
 print("first pairs:", neigh.query_point_indices()[:5], neigh.point_indices()[:5])
 
-from molrs.compute.density import RDF
-rdf = RDF(64, 6.0)
+from molrs.compute import Rdf
+rdf = Rdf(64, 6.0)
 rdf_result = rdf.compute(frame, neigh)
 print("rdf bins:", len(rdf_result.bin_centers))
 print("first g(r):", rdf_result.rdf[:5])
@@ -131,7 +131,7 @@ and `PotentialCompiler` turns the force field and the typed frame into
 potentials that can be evaluated.
 
 ```python
-typifier = molrs.ff.MMFF94Typifier()
+typifier = molrs.ff.typifier.Mmff94Typifier()
 typed = typifier.typify(mol3d)
 typed_frame = typed.to_frame()
 print("typed blocks:", typed_frame.keys())
@@ -139,8 +139,8 @@ print("typed blocks:", typed_frame.keys())
 # forcefield() is a copy of exactly the types typify assigned.
 ff = typifier.forcefield()
 # Non-bonded terms need an explicit pairs block; the caller owns it.
-typed_frame["pairs"] = molrs.ff.intramolecular_pairs(typed_frame, ff)
-potentials = molrs.ff.PotentialCompiler(ff).compile(typed_frame)
+typed_frame["pairs"] = molrs.ff.potential.intramolecular_pairs(typed_frame, ff)
+potentials = molrs.ff.compile.PotentialCompiler(ff).compile(typed_frame)
 
 energy, forces = potentials.calc_energy_forces(typed_frame)
 print("energy:", energy)
@@ -150,7 +150,7 @@ print("forces shape:", forces.shape)
 
 Typing and compiling are separate steps on purpose. Typing gives a labeled
 graph and accumulates the definitions it assigned in the typifier's output:
-`forcefield()` returns a copy of it, `library()` is the full parameter set it
+`forcefield()` returns a copy of it, `source_forcefield()` is the full parameter set it
 matched against, and `typify` is its only writer.
 `PotentialCompiler(ff).compile(frame)` is the one compile path every force
 field uses, whether it came from a typifier or from a file.
@@ -168,19 +168,22 @@ print("force balance:", np.abs(forces.sum(axis=0)).max())
 ```
 
 A typifier of your own subclasses `molrs.ff.typifier.Typifier` and implements
-only `match(graph)`. It returns a `Match` with one mapping of annotations per
-atom (and optionally per bond, angle, …). A type annotation is
+only `assign(graph)`. It returns a `TypeAssignment` with one mapping of annotations per
+atom and, in `links`, per term of any relation kind: keyed by a relation class
+(`Bond`, `Angle`, …) or a kind name (`"bonds"`, or a custom
+`"urey_bradleys"` the graph registered with `register_kind`, whose types land
+in the category `urey_bradley`). A type annotation is
 `(style, name, endpoints, params)`; endpoints are empty for an atom type. The
-base class's `typify` copies the graph, stamps the match onto the copy and
+base class's `typify` copies the graph, stamps the assignment onto the copy and
 defines the types in its output force field:
 
 ```python
-from molrs.ff.typifier import Match, Typifier
+from molrs.ff.typifier import TypeAssignment, Typifier
 
 
 class EveryAtomX(Typifier):
-    def match(self, graph):
-        return Match(
+    def assign(self, graph):
+        return TypeAssignment(
             [{"type": ("full", "X", (), {"mass": 12.0})} for _ in graph.atoms],
             styles=[("atom", "full", {})],
         )
@@ -191,10 +194,10 @@ custom.typify(mol3d)
 print([(s.category, s.name) for s in custom.forcefield().styles])
 ```
 
-The built-in typifiers (`OPLSAATypifier`, `MMFF94Typifier`, …) can be
-subclassed to carry your own attributes or methods, but they match in Rust:
-a subclass that defines `match` or `library` raises `TypeError`. Start from
-`Typifier` to supply your own matching.
+The built-in typifiers (`OplsAaTypifier`, `Mmff94Typifier`, …) can be
+subclassed to carry your own attributes or methods, but they type in Rust:
+a subclass that defines `assign` or `source_forcefield` raises `TypeError`. Start from
+`Typifier` to supply your own typing.
 
 ## 7. Write Files
 
@@ -204,7 +207,7 @@ work has become a portable coordinate table.
 ```python
 molrs.io.write_xyz("ethanol.xyz", frame)
 roundtrip = molrs.io.read_xyz("ethanol.xyz")
-print("roundtrip atoms:", roundtrip["atoms"].nrows)
+print("roundtrip atoms:", roundtrip["atoms"].n_rows)
 ```
 
 The XYZ format stores coordinates and element symbols, but it does not preserve
@@ -214,8 +217,8 @@ and column at its dtype, typed metadata, the box, the force field, and whole
 trajectories:
 
 ```python
-molrs.io.write_mrec("ethanol.mrec", typed_frame, forcefield=ff)
-print(sorted(molrs.io.mrec_sections("ethanol.mrec")))
+molrs.io.write_mrec_frame("ethanol.mrec", typed_frame, forcefield=ff)
+print(sorted(molrs.io.mrec.section_names("ethanol.mrec")))
 ```
 
 ## Summary
@@ -226,7 +229,7 @@ This quickstart crossed the main molrs boundaries:
 - `Conformer.generate` produced coordinates and diagnostics.
 - `to_frame` produced the columnar representation used by I/O and analysis.
 - `Box` supplied the boundary model for neighbor search.
-- `RDF` consumed an explicit neighbor list.
-- `MMFF94Typifier` typed the graph, and `PotentialCompiler` compiled its
+- `Rdf` consumed an explicit neighbor list.
+- `Mmff94Typifier` typed the graph, and `PotentialCompiler` compiled its
   force field into potentials for energy and force evaluation.
-- `write_xyz` and `write_mrec` wrote the result to disk.
+- `write_xyz` and `write_mrec_frame` wrote the result to disk.

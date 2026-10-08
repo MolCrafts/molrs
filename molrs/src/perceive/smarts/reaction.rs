@@ -1,49 +1,19 @@
 //! Daylight reaction-SMARTS (SMIRKS) transform engine.
-//!
-//! Parses a reaction SMARTS `reactants >> products` (tolerating, and ignoring,
-//! an agent field `reactants > agents > products`), derives the graph edit from
-//! the **atom-map diff** (Daylight SMIRKS transform semantics), and applies it to
-//! a single matched occurrence by editing an [`Atomistic`] in place.
-//!
-//! # Transform semantics (Daylight SMIRKS)
-//!
-//! Atoms are keyed by their `:n` atom-map label:
-//!
-//! - a label on **both** sides is a *preserved* atom (its molecule atom is kept);
-//! - a label on **exactly one** side is an error (Daylight's pairwise-map rule);
-//! - an **unmapped** atom present identically on both sides (same element and the
-//!   same bond to a shared mapped neighbour) is *paired* and left untouched — this
-//!   keeps, e.g., a carbonyl `=O` in `[C:2](=O)OC >> [C:2]=O` from being deleted
-//!   and re-added;
-//! - an unmapped reactant atom with no pair is *deleted* (a leaving group);
-//! - an unmapped product atom with no pair is *added* (element/charge from the
-//!   product template, **no coordinates**).
-//!
-//! Bonds between mapped atoms are diffed: present in product-not-reactant is
-//! *formed*, reactant-not-product is *broken*, and an order change is a
-//! *set-order*. Bonds touching an added atom are formed from the product template.
-//!
-//! # Reaction SMARTS, not strict SMIRKS
-//!
-//! SMARTS queries are permitted on reacting atoms (RDKit style) so functional
-//! groups can be matched (`[N;H2:1]`); only concrete product atoms
-//! (`[N:1]`, `O`, `[S:3]`) can be *added*, since an added atom needs a definite
-//! element. The transform mechanics follow SMIRKS; the SMILES-only restriction on
-//! reacting atoms is not enforced.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::error::MolRsError;
-use crate::system::atomistic::{AtomId, Atomistic, BondId};
-use crate::system::bond::{BondNumber, BondType};
-use molrs::Element;
+use crate::core::Atomistic;
+use crate::core::MolRsError;
+use crate::core::{BondNumber, BondOrder};
+use crate::core::{NodeId, RelationId};
+use molrs::core::Element;
 
 use super::SmartsPattern;
-use super::ast::MolContext;
-use super::ast::{AtomPrimitive, AtomQuery, BondPrimitive, BondQuery};
-use super::parser::QueryGraph;
+use super::compile::QueryGraph;
+use super::predicate::SmartsTarget;
+use super::predicate::{AtomPredicate, AtomTest, BondPredicate, BondTest};
 
-type ReactionAtomSets = Vec<Vec<AtomId>>;
+type ReactionAtomSets = Vec<Vec<NodeId>>;
 type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
 
 // ---------------------------------------------------------------------------
@@ -52,23 +22,23 @@ type DetailedReactionBatch = (ReactionAtomSets, ReactionAtomSets);
 
 /// The concrete element symbol pinned by an atom query (`C`, `[N:1]`, `[#8]`,
 /// aromatic `c`, ...), or `None` for a wildcard / purely-logical query.
-fn query_element(q: &AtomQuery) -> Option<String> {
+fn query_element(q: &AtomTest) -> Option<String> {
     match q {
-        AtomQuery::Prim(AtomPrimitive::AliphaticElement(z))
-        | AtomQuery::Prim(AtomPrimitive::AromaticElement(z))
-        | AtomQuery::Prim(AtomPrimitive::AtomicNum(z)) => {
+        AtomTest::Prim(AtomPredicate::AliphaticElement(z))
+        | AtomTest::Prim(AtomPredicate::AromaticElement(z))
+        | AtomTest::Prim(AtomPredicate::AtomicNum(z)) => {
             Element::by_number(*z).map(|e| e.symbol().to_string())
         }
-        AtomQuery::And(items) | AtomQuery::Or(items) => items.iter().find_map(query_element),
+        AtomTest::And(items) | AtomTest::Or(items) => items.iter().find_map(query_element),
         _ => None,
     }
 }
 
 /// An explicit formal charge pinned by an atom query, or `None`.
-fn query_charge(q: &AtomQuery) -> Option<i32> {
+fn query_charge(q: &AtomTest) -> Option<i32> {
     match q {
-        AtomQuery::Prim(AtomPrimitive::Charge(c)) => Some(*c),
-        AtomQuery::And(items) | AtomQuery::Or(items) => items.iter().find_map(query_charge),
+        AtomTest::Prim(AtomPredicate::Charge(c)) => Some(*c),
+        AtomTest::And(items) | AtomTest::Or(items) => items.iter().find_map(query_charge),
         _ => None,
     }
 }
@@ -80,35 +50,35 @@ fn query_charge(q: &AtomQuery) -> Option<i32> {
 /// `:` yields `(Aromatic, Unknown)` on purpose — the query declares the product
 /// bond delocalized and says nothing about which Kekulé phase it takes.
 /// Perception on the product is what decides that.
-fn query_bond_class(q: &BondQuery) -> (BondType, BondNumber) {
+fn query_bond_class(q: &BondTest) -> (BondOrder, BondNumber) {
     match q {
-        BondQuery::Prim(BondPrimitive::Double) => (BondType::Double, BondNumber::Double),
-        BondQuery::Prim(BondPrimitive::Triple) => (BondType::Triple, BondNumber::Triple),
-        BondQuery::Prim(BondPrimitive::Aromatic) => (BondType::Aromatic, BondNumber::Unknown),
-        BondQuery::Prim(_) => (BondType::Single, BondNumber::Single),
-        BondQuery::And(items) | BondQuery::Or(items) => items
+        BondTest::Prim(BondPredicate::Double) => (BondOrder::Double, BondNumber::Double),
+        BondTest::Prim(BondPredicate::Triple) => (BondOrder::Triple, BondNumber::Triple),
+        BondTest::Prim(BondPredicate::Aromatic) => (BondOrder::Aromatic, BondNumber::Unknown),
+        BondTest::Prim(_) => (BondOrder::Single, BondNumber::Single),
+        BondTest::And(items) | BondTest::Or(items) => items
             .first()
             .map(query_bond_class)
-            .unwrap_or((BondType::Single, BondNumber::Single)),
-        BondQuery::Not(_) => (BondType::Single, BondNumber::Single),
+            .unwrap_or((BondOrder::Single, BondNumber::Single)),
+        BondTest::Not(_) => (BondOrder::Single, BondNumber::Single),
     }
 }
 
 /// Per-atom facts read out of a [`QueryGraph`] for the map diff.
-struct AtomInfo {
+struct QueryAtomFacts {
     label: Option<u32>,
     element: Option<String>,
     charge: Option<i32>,
     /// `(mapped-neighbour label, bond order)` for each bond to a mapped atom.
-    attach: Vec<(u32, (BondType, BondNumber))>,
+    attach: Vec<(u32, (BondOrder, BondNumber))>,
 }
 
 /// Read the per-atom facts (label, element, charge, mapped-neighbour bonds).
-fn analyze_graph(g: &QueryGraph) -> Vec<AtomInfo> {
-    let mut infos: Vec<AtomInfo> = g
+fn analyze_graph(g: &QueryGraph) -> Vec<QueryAtomFacts> {
+    let mut facts: Vec<QueryAtomFacts> = g
         .atoms
         .iter()
-        .map(|a| AtomInfo {
+        .map(|a| QueryAtomFacts {
             label: a.map_label,
             element: query_element(&a.query),
             charge: query_charge(&a.query),
@@ -121,15 +91,15 @@ fn analyze_graph(g: &QueryGraph) -> Vec<AtomInfo> {
         if let Some(l) = la
             && lb.is_none()
         {
-            infos[b.b].attach.push((l, order));
+            facts[b.b].attach.push((l, order));
         }
         if let Some(l) = lb
             && la.is_none()
         {
-            infos[b.a].attach.push((l, order));
+            facts[b.a].attach.push((l, order));
         }
     }
-    infos
+    facts
 }
 
 /// Canonical `(min, max)` key for an unordered mapped-atom bond.
@@ -139,7 +109,7 @@ fn ordered(a: u32, b: u32) -> (u32, u32) {
 
 /// Collect the `{(map_a, map_b): (type, number)}` bonds whose *both*
 /// endpoints are mapped.
-fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondType, BondNumber)>) {
+fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondOrder, BondNumber)>) {
     for b in &g.bonds {
         if let (Some(la), Some(lb)) = (g.atoms[b.a].map_label, g.atoms[b.b].map_label) {
             out.insert(ordered(la, lb), query_bond_class(&b.query));
@@ -149,7 +119,7 @@ fn collect_mapped_bonds(g: &QueryGraph, out: &mut HashMap<(u32, u32), (BondType,
 
 /// Whether two unmapped atoms are the *same* atom across the arrow: identical
 /// concrete element and a shared `(mapped-neighbour, bond class)` attachment.
-fn atoms_pair(r: &AtomInfo, p: &AtomInfo) -> bool {
+fn atoms_pair(r: &QueryAtomFacts, p: &QueryAtomFacts) -> bool {
     match (&r.element, &p.element) {
         (Some(re), Some(pe)) if re == pe => {}
         _ => return false,
@@ -205,9 +175,9 @@ struct PropDelta {
 pub struct Transform {
     delete: Vec<DeleteSpec>,
     add_atoms: Vec<AddAtomSpec>,
-    form_bonds: Vec<(NodeRef, NodeRef, (BondType, BondNumber))>,
+    form_bonds: Vec<(NodeRef, NodeRef, (BondOrder, BondNumber))>,
     break_bonds: Vec<(u32, u32)>,
-    set_order: Vec<(u32, u32, (BondType, BondNumber))>,
+    set_order: Vec<(u32, u32, (BondOrder, BondNumber))>,
     set_props: Vec<PropDelta>,
 }
 
@@ -225,22 +195,22 @@ impl Transform {
         reactants: &[SmartsPattern],
         product: &SmartsPattern,
     ) -> Result<Transform, MolRsError> {
-        let r_infos: Vec<Vec<AtomInfo>> =
+        let r_facts: Vec<Vec<QueryAtomFacts>> =
             reactants.iter().map(|p| analyze_graph(&p.graph)).collect();
-        let p_info = analyze_graph(&product.graph);
+        let p_facts = analyze_graph(&product.graph);
 
-        let (r_labels, p_labels) = Self::index_maps(&r_infos, &p_info)?;
+        let (r_labels, p_labels) = Self::index_maps(&r_facts, &p_facts)?;
 
         // Pair unmapped atoms; classify the rest as delete / add.
-        let mut p_claimed = vec![false; p_info.len()];
+        let mut p_claimed = vec![false; p_facts.len()];
         let mut delete_atoms: Vec<(usize, usize)> = Vec::new();
-        for (ci, infos) in r_infos.iter().enumerate() {
-            for (ai, info) in infos.iter().enumerate() {
-                if info.label.is_some() {
+        for (ci, facts) in r_facts.iter().enumerate() {
+            for (ai, r_atom) in facts.iter().enumerate() {
+                if r_atom.label.is_some() {
                     continue; // preserved
                 }
-                let pair = p_info.iter().enumerate().find(|&(pi, pinfo)| {
-                    !p_claimed[pi] && pinfo.label.is_none() && atoms_pair(info, pinfo)
+                let pair = p_facts.iter().enumerate().find(|&(pi, p_atom)| {
+                    !p_claimed[pi] && p_atom.label.is_none() && atoms_pair(r_atom, p_atom)
                 });
                 match pair {
                     Some((pi, _)) => p_claimed[pi] = true,
@@ -250,9 +220,9 @@ impl Transform {
         }
 
         let mut add_atoms: Vec<AddAtomSpec> = Vec::new();
-        for (pi, pinfo) in p_info.iter().enumerate() {
-            if pinfo.label.is_none() && !p_claimed[pi] {
-                let element = pinfo.element.clone().ok_or_else(|| {
+        for (pi, p_atom) in p_facts.iter().enumerate() {
+            if p_atom.label.is_none() && !p_claimed[pi] {
+                let element = p_atom.element.clone().ok_or_else(|| {
                     MolRsError::validation(format!(
                         "product atom {pi} is added but declares no concrete element"
                     ))
@@ -260,14 +230,14 @@ impl Transform {
                 add_atoms.push(AddAtomSpec {
                     product_idx: pi,
                     element,
-                    charge: pinfo.charge.unwrap_or(0),
+                    charge: p_atom.charge.unwrap_or(0),
                 });
             }
         }
 
-        let delete = Self::group_deletes(&r_infos, &delete_atoms);
+        let delete = Self::group_deletes(&r_facts, &delete_atoms);
         let classify = |idx: usize| -> Cls {
-            if p_info[idx].label.is_some() {
+            if p_facts[idx].label.is_some() {
                 Cls::Mapped
             } else if p_claimed[idx] {
                 Cls::Paired
@@ -284,8 +254,8 @@ impl Transform {
         let mut p_mm = HashMap::new();
         collect_mapped_bonds(&product.graph, &mut p_mm);
 
-        let mut form_bonds: Vec<(NodeRef, NodeRef, (BondType, BondNumber))> = Vec::new();
-        let mut set_order: Vec<(u32, u32, (BondType, BondNumber))> = Vec::new();
+        let mut form_bonds: Vec<(NodeRef, NodeRef, (BondOrder, BondNumber))> = Vec::new();
+        let mut set_order: Vec<(u32, u32, (BondOrder, BondNumber))> = Vec::new();
         for (&(a, b), &po) in &p_mm {
             match r_mm.get(&(a, b)) {
                 None => form_bonds.push((NodeRef::Mapped(a), NodeRef::Mapped(b), po)),
@@ -308,8 +278,8 @@ impl Transform {
             if ca != Cls::Added && cb != Cls::Added {
                 continue; // handled by the mapped-mapped diff above
             }
-            let na = Self::node_ref(bnd.a, &p_info)?;
-            let nb = Self::node_ref(bnd.b, &p_info)?;
+            let na = Self::node_ref(bnd.a, &p_facts)?;
+            let nb = Self::node_ref(bnd.b, &p_facts)?;
             form_bonds.push((na, nb, query_bond_class(&bnd.query)));
         }
 
@@ -317,8 +287,8 @@ impl Transform {
         let mut set_props: Vec<PropDelta> = Vec::new();
         for (&l, &pi) in &p_labels {
             let (rc, ra) = r_labels[&l];
-            let r_atom = &r_infos[rc][ra];
-            let p_atom = &p_info[pi];
+            let r_atom = &r_facts[rc][ra];
+            let p_atom = &p_facts[pi];
             let element = match (&r_atom.element, &p_atom.element) {
                 (Some(re), Some(pe)) if re != pe => Some(pe.clone()),
                 _ => None,
@@ -350,13 +320,13 @@ impl Transform {
     /// pairwise-map rule (each label ≤ once per side, present on both sides).
     #[allow(clippy::type_complexity)]
     fn index_maps(
-        r_infos: &[Vec<AtomInfo>],
-        p_info: &[AtomInfo],
+        r_facts: &[Vec<QueryAtomFacts>],
+        p_facts: &[QueryAtomFacts],
     ) -> Result<(HashMap<u32, (usize, usize)>, HashMap<u32, usize>), MolRsError> {
         let mut r_labels: HashMap<u32, (usize, usize)> = HashMap::new();
-        for (ci, infos) in r_infos.iter().enumerate() {
-            for (ai, info) in infos.iter().enumerate() {
-                if let Some(l) = info.label
+        for (ci, facts) in r_facts.iter().enumerate() {
+            for (ai, r_atom) in facts.iter().enumerate() {
+                if let Some(l) = r_atom.label
                     && r_labels.insert(l, (ci, ai)).is_some()
                 {
                     return Err(MolRsError::validation(format!(
@@ -366,8 +336,8 @@ impl Transform {
             }
         }
         let mut p_labels: HashMap<u32, usize> = HashMap::new();
-        for (ai, info) in p_info.iter().enumerate() {
-            if let Some(l) = info.label
+        for (ai, p_atom) in p_facts.iter().enumerate() {
+            if let Some(l) = p_atom.label
                 && p_labels.insert(l, ai).is_some()
             {
                 return Err(MolRsError::validation(format!(
@@ -394,7 +364,7 @@ impl Transform {
 
     /// Group per-atom deletes into per-component [`DeleteSpec`]s with pins.
     fn group_deletes(
-        r_infos: &[Vec<AtomInfo>],
+        r_facts: &[Vec<QueryAtomFacts>],
         delete_atoms: &[(usize, usize)],
     ) -> Vec<DeleteSpec> {
         let mut comps: Vec<usize> = delete_atoms.iter().map(|&(c, _)| c).collect();
@@ -403,10 +373,10 @@ impl Transform {
         comps
             .into_iter()
             .map(|ci| {
-                let pins: Vec<(usize, u32)> = r_infos[ci]
+                let pins: Vec<(usize, u32)> = r_facts[ci]
                     .iter()
                     .enumerate()
-                    .filter_map(|(ai, info)| info.label.map(|l| (ai, l)))
+                    .filter_map(|(ai, r_atom)| r_atom.label.map(|l| (ai, l)))
                     .collect();
                 let delete_idxs: Vec<usize> = delete_atoms
                     .iter()
@@ -423,8 +393,8 @@ impl Transform {
     }
 
     /// The [`NodeRef`] for a product atom that participates in an added-atom bond.
-    fn node_ref(idx: usize, p_info: &[AtomInfo]) -> Result<NodeRef, MolRsError> {
-        match p_info[idx].label {
+    fn node_ref(idx: usize, p_facts: &[QueryAtomFacts]) -> Result<NodeRef, MolRsError> {
+        match p_facts[idx].label {
             Some(l) => Ok(NodeRef::Mapped(l)),
             None => Ok(NodeRef::Added(idx)),
         }
@@ -433,25 +403,25 @@ impl Transform {
     /// Resolve every unmapped LHS atom while the reactant world is still intact.
     fn resolve_leaving(
         &self,
-        context: &MolContext<'_>,
-        binding: &HashMap<u32, AtomId>,
+        target: &SmartsTarget<'_>,
+        binding: &HashMap<u32, NodeId>,
         reactants: &[SmartsPattern],
-    ) -> Result<HashSet<AtomId>, MolRsError> {
-        let mut leaving: HashSet<AtomId> = HashSet::new();
+    ) -> Result<HashSet<NodeId>, MolRsError> {
+        let mut leaving: HashSet<NodeId> = HashSet::new();
         for spec in &self.delete {
             // Re-anchor the reactant to the binding to resolve its leaving atoms.
             // When the root query atom (index 0) is pinned — the usual case, e.g.
             // `[C;%cx:1][H]` — seed the match at its already-bound image so the
             // search grows locally from that anchor instead of scanning the whole
             // (possibly huge) graph: O(local), not O(N) per apply. The `%LABEL`
-            // context is threaded so a labelled reactant still resolves; an empty
+            // target is threaded so a labelled reactant still resolves; an empty
             // map behaves like plain matching.
             let root = spec
                 .pins
                 .iter()
                 .find(|&&(qi, _)| qi == 0)
                 .and_then(|&(_, l)| binding.get(&l).copied());
-            let matches = reactants[spec.component].find_in_context(context, root);
+            let matches = reactants[spec.component].find_in_target(target, root);
             let chosen = matches
                 .iter()
                 .find(|m| {
@@ -481,12 +451,12 @@ impl Transform {
     fn apply_after_delete(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
-        touched: &mut Vec<AtomId>,
-        created: &mut Vec<AtomId>,
+        binding: &HashMap<u32, NodeId>,
+        touched: &mut Vec<NodeId>,
+        created: &mut Vec<NodeId>,
     ) -> Result<(), MolRsError> {
         // 2. Add unmapped product atoms (no coordinates).
-        let mut added: HashMap<usize, AtomId> = HashMap::new();
+        let mut added: HashMap<usize, NodeId> = HashMap::new();
         for spec in &self.add_atoms {
             let id = mol.add_atom_bare(&spec.element);
             if spec.charge != 0 {
@@ -497,7 +467,7 @@ impl Transform {
             created.push(id);
         }
 
-        let resolve = |n: &NodeRef| -> Result<AtomId, MolRsError> {
+        let resolve = |n: &NodeRef| -> Result<NodeId, MolRsError> {
             match n {
                 NodeRef::Mapped(l) => binding.get(l).copied().ok_or_else(|| {
                     MolRsError::validation(format!("reaction apply: binding missing atom map :{l}"))
@@ -509,7 +479,7 @@ impl Transform {
                 }),
             }
         };
-        let mapped = |l: &u32| -> Result<AtomId, MolRsError> {
+        let mapped = |l: &u32| -> Result<NodeId, MolRsError> {
             binding.get(l).copied().ok_or_else(|| {
                 MolRsError::validation(format!("reaction apply: binding missing atom map :{l}"))
             })
@@ -566,14 +536,14 @@ impl Transform {
     fn apply(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
+        binding: &HashMap<u32, NodeId>,
         reactants: &[SmartsPattern],
-        labels: &HashMap<AtomId, String>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<AtomId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         let leaving = {
-            let context = MolContext::with_labels(mol, labels);
-            self.resolve_leaving(&context, binding, reactants)?
+            let target = SmartsTarget::with_labels(mol, labels);
+            self.resolve_leaving(&target, binding, reactants)?
         };
         let mut touched = Vec::new();
         for &aid in &leaving {
@@ -591,7 +561,7 @@ impl Transform {
 
         if refresh {
             mol.generate_topology(true, true, false, false)?;
-            crate::perceive::aromaticity::perceive_aromaticity(mol);
+            crate::perceive::mark_aromaticity(mol);
         }
 
         // Dedup with a deterministic order (sort by the stable atom handle).
@@ -605,16 +575,16 @@ impl Transform {
     fn apply_many(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
+        bindings: &[HashMap<u32, NodeId>],
         reactants: &[SmartsPattern],
-        labels: &HashMap<AtomId, String>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
     ) -> Result<DetailedReactionBatch, MolRsError> {
         let leaving_per_edit = {
-            let context = MolContext::with_labels(mol, labels);
+            let target = SmartsTarget::with_labels(mol, labels);
             bindings
                 .iter()
-                .map(|binding| self.resolve_leaving(&context, binding, reactants))
+                .map(|binding| self.resolve_leaving(&target, binding, reactants))
                 .collect::<Result<Vec<_>, _>>()?
         };
         let mut all_leaving = HashSet::new();
@@ -654,14 +624,14 @@ impl Transform {
         }
         if refresh {
             mol.generate_topology(true, true, false, false)?;
-            crate::perceive::aromaticity::perceive_aromaticity(mol);
+            crate::perceive::mark_aromaticity(mol);
         }
         Ok((touched_per_edit, created_per_edit))
     }
 }
 
-/// The [`BondId`] of the bond directly joining `a` and `b`, if any.
-fn bond_between(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
+/// The [`RelationId`] of the bond directly joining `a` and `b`, if any.
+fn bond_between(mol: &Atomistic, a: NodeId, b: NodeId) -> Option<RelationId> {
     mol.incident_bond_ids(a)
         .find(|&(_, other)| other == b)
         .map(|(bid, _)| bid)
@@ -674,6 +644,37 @@ fn bond_between(mol: &Atomistic, a: AtomId, b: AtomId) -> Option<BondId> {
 /// A parsed Daylight reaction SMARTS and its compiled graph edit (the private
 /// `Transform`: the atom/bond additions, deletions and property changes the
 /// reaction applies to a match).
+///
+/// Parses a reaction SMARTS `reactants >> products` (tolerating, and ignoring,
+/// an agent field `reactants > agents > products`), derives the graph edit from
+/// the **atom-map diff** (Daylight SMIRKS transform semantics), and applies it to
+/// a single matched occurrence by editing an [`Atomistic`] in place.
+///
+/// # Transform semantics (Daylight SMIRKS)
+///
+/// Atoms are keyed by their `:n` atom-map label:
+///
+/// - a label on **both** sides is a *preserved* atom (its molecule atom is kept);
+/// - a label on **exactly one** side is an error (Daylight's pairwise-map rule);
+/// - an **unmapped** atom present identically on both sides (same element and the
+///   same bond to a shared mapped neighbour) is *paired* and left untouched — this
+///   keeps, e.g., a carbonyl `=O` in `[C:2](=O)OC >> [C:2]=O` from being deleted
+///   and re-added;
+/// - an unmapped reactant atom with no pair is *deleted* (a leaving group);
+/// - an unmapped product atom with no pair is *added* (element/charge from the
+///   product template, **no coordinates**).
+///
+/// Bonds between mapped atoms are diffed: present in product-not-reactant is
+/// *formed*, reactant-not-product is *broken*, and an order change is a
+/// *set-order*. Bonds touching an added atom are formed from the product template.
+///
+/// # Reaction SMARTS, not strict SMIRKS
+///
+/// SMARTS queries are permitted on reacting atoms (RDKit style) so functional
+/// groups can be matched (`[N;H2:1]`); only concrete product atoms
+/// (`[N:1]`, `O`, `[S:3]`) can be *added*, since an added atom needs a definite
+/// element. The transform mechanics follow SMIRKS; the SMILES-only restriction on
+/// reacting atoms is not enforced.
 #[derive(Debug, Clone)]
 pub struct Reaction {
     source: String,
@@ -785,10 +786,10 @@ impl Reaction {
     pub fn apply(
         &self,
         mol: &mut Atomistic,
-        binding: &HashMap<u32, AtomId>,
-        labels: &HashMap<AtomId, String>,
+        binding: &HashMap<u32, NodeId>,
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<AtomId>, MolRsError> {
+    ) -> Result<Vec<NodeId>, MolRsError> {
         self.transform
             .apply(mol, binding, &self.reactants, labels, refresh)
     }
@@ -798,10 +799,10 @@ impl Reaction {
     pub fn apply_many(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
-        labels: &HashMap<AtomId, String>,
+        bindings: &[HashMap<u32, NodeId>],
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
-    ) -> Result<Vec<Vec<AtomId>>, MolRsError> {
+    ) -> Result<Vec<Vec<NodeId>>, MolRsError> {
         self.transform
             .apply_many(mol, bindings, &self.reactants, labels, refresh)
             .map(|(touched, _)| touched)
@@ -815,8 +816,8 @@ impl Reaction {
     pub fn apply_many_detailed(
         &self,
         mol: &mut Atomistic,
-        bindings: &[HashMap<u32, AtomId>],
-        labels: &HashMap<AtomId, String>,
+        bindings: &[HashMap<u32, NodeId>],
+        labels: &HashMap<NodeId, String>,
         refresh: bool,
     ) -> Result<DetailedReactionBatch, MolRsError> {
         self.transform
@@ -866,7 +867,7 @@ mod tests {
         let rxn = Reaction::parse("[N;H2:1].[C:2](=O)OC >> [N:1][C:2]=O").unwrap();
         assert_eq!(rxn.reactants().len(), 2);
         assert_eq!(rxn.reactant_smarts(), vec!["[N;H2:1]", "[C:2](=O)OC"]);
-        assert_eq!(rxn.product().num_query_atoms(), 3);
+        assert_eq!(rxn.product().n_query_atoms(), 3);
     }
 
     #[test]
@@ -906,7 +907,7 @@ mod tests {
         assert_eq!(t.set_order.len(), 1);
         let (a, b, class) = t.set_order[0];
         assert_eq!(ordered(a, b), (1, 2));
-        assert_eq!(class, (BondType::Single, BondNumber::Single));
+        assert_eq!(class, (BondOrder::Single, BondNumber::Single));
     }
 
     #[test]
@@ -943,7 +944,7 @@ mod tests {
         let o2 = mol.add_atom_xyz("O", 5.0, -1.3, 0.0);
         let c3 = mol.add_atom_xyz("C", 5.0, -2.6, 0.0);
         let bo = mol.add_bond(c0, o1).unwrap();
-        mol.set_bond_type(bo, BondType::Double).unwrap();
+        mol.set_bond_type(bo, BondOrder::Double).unwrap();
         mol.add_bond(c0, o2).unwrap();
         mol.add_bond(o2, c3).unwrap();
 
@@ -1012,7 +1013,7 @@ mod tests {
         let s3 = mol.add_atom_xyz("S", 3.0, 0.0, 0.0);
         let hs = mol.add_atom_xyz("H", 3.0, 1.0, 0.0);
         let b = mol.add_bond(c1, c2).unwrap();
-        mol.set_bond_type(b, BondType::Double).unwrap();
+        mol.set_bond_type(b, BondOrder::Double).unwrap();
         mol.add_bond(s3, hs).unwrap();
 
         // No leaving group; the binding pins the three reacting atoms directly.

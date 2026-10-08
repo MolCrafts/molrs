@@ -33,8 +33,8 @@
 //! Most analyses here are *pair* analyses: they answer a question about every
 //! pair of particles lying closer together than a fixed **cutoff** distance.
 //! Finding those pairs is not their job. The search lives in
-//! [`molrs::spatial::neighbors`], and what it
-//! produces — a [`Neighbors`](molrs::spatial::neighbors::Neighbors) table, a
+//! [`molrs::core::NeighborList`], and what it
+//! produces — a [`Neighbors`](molrs::core::Neighbors) table, a
 //! column store holding one row per pair — is handed to the kernel as its
 //! `Args`:
 //! `&Neighbors` for a single frame, `&Vec<Neighbors>` for a trajectory, in
@@ -47,7 +47,7 @@
 //! Every table stores each pair's two particle indices `(i, j)`. Its two
 //! *physical* columns are stored only if the caller asked for them when the
 //! table was materialized, by naming a
-//! [`NeighborsStorage`](molrs::spatial::neighbors::NeighborsStorage) policy:
+//! [`NeighborColumns`](molrs::core::NeighborColumns) policy:
 //!
 //! - `dist_sq` — the squared pair distance `|r_j − r_i|²` in Å², taken under
 //!   the **minimum-image convention**: with periodic boundaries the box is
@@ -72,13 +72,13 @@
 //!
 //! | Needs | Kernels | Materialize the table with |
 //! |---|---|---|
-//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`compute_qlm`](order::compute_qlm)), every [`pmft`] kernel, [`BondOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`MatchEnv`] | `NeighborsStorage::DISP` or `FULL` |
-//! | `dist_sq` — distances only | [`RDF`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborsStorage::DIST_SQ` or `FULL` |
+//! | `disp` — bond *directions* | [`Steinhardt`], [`Hexatic`], [`SolidLiquid`], [`ContinuousCoordination`] (the last three via [`steinhardt_qlm`]), every PMFT kernel, [`BondOrientationalOrder`], [`LocalDescriptors`], [`LocalBondProjection`], [`EnvironmentMatch`] | `NeighborColumns::DISP` or `FULL` |
+//! | `dist_sq` — distances only | [`Rdf`] when fed a materialized table, [`CorrelationFunction`], [`LocalDensity`] | `NeighborColumns::DIST_SQ` or `FULL` |
 //! | indices only — connectivity | [`Cluster`], [`AngularSeparationNeighbor`] | any policy, `INDICES_ONLY` included |
 //!
 //! `FULL` means *every column is present*. It never means a bidirectional pair
 //! list — pair direction is an independent property, recorded by the table's
-//! [`QueryMode`](molrs::spatial::neighbors::QueryMode). A **self-query**
+//! [`QueryMode`](molrs::core::QueryMode). A **self-query**
 //! searches one point set against itself and is half-shell: each unordered pair
 //! appears exactly once, with `i < j`. A **cross-query** searches query points
 //! against a separate reference set and is directed, with both orderings
@@ -87,8 +87,8 @@
 //! [`RdfMode`].
 //!
 //! Some entry points take no table at all, because they run a search of their
-//! own per call: [`RDF::compute_self`], [`RDF::compute_frame`] and
-//! [`RDF::compute_cross`] stream pairs straight out of the cell list without
+//! own per call: [`Rdf::compute_self`], [`Rdf::compute_frame`] and
+//! [`Rdf::compute_cross`] stream pairs straight out of the cell list without
 //! ever materializing them, and [`HBonds`] and [`VanHove`] build a cross-query
 //! internally, one per frame and one per time origin respectively.
 //!
@@ -98,76 +98,131 @@
 //! (RDF) override [`finalize`](ComputeResult::finalize) to normalize; other
 //! outputs use the default no-op.
 //!
+//! # Raw observable, then fit: transport
+//!
+//! Every transport method returns **only a raw curve + scalar metadata**; the fit
+//! step (slope, integral, Debye τ) is the analyst's explicit, parameterized
+//! choice:
+//!
+//! | Method | Raw output | Downstream fit |
+//! |--------|-----------|----------------|
+//! | [`Vacf`] / [`GreenKuboDiffusion`] | velocity ACF | [`PowerSpectrum`] (VDOS) / [`CumulativeTrapezoid`] (D) |
+//! | [`EinsteinDiffusion`] | self-MSD curve | [`LinearFit`] (D = slope/2d) |
+//! | [`EinsteinConductivity`] | collective charge-dipole MSD | [`LinearFit`] (σ) |
+//! | [`GreenKuboConductivity`] | current ACF | [`CumulativeTrapezoid`] (σ) |
+//! | [`DebyeRelaxation`] | dipole ACF + ⟨M²⟩ + V/T/BC | [`DebyeFit`] (τ_D, amplitude) / [`DipoleAutocorrelationSpectrum`] |
+//! | [`DipoleRateCross`] | `C_{ṀM}` (FD Ṁ × M) | [`DipoleRateCrossSpectrum`] |
+//! | [`OnsagerCorrelation`] | Onsager L_ij displacement correlations | [`LinearFit`] per pair |
+//!
+//! [`VacfAccumulator`] is the streaming (frame-by-frame, bounded-memory)
+//! counterpart of [`Vacf`] for on-the-fly MD analysis. Units follow the MD
+//! convention of the caller (time in the `dt` unit, velocities/dipoles as
+//! supplied); the fits document the MD→SI prefactors.
+//!
+//! ```ignore
+//! let raw = Vacf.compute(&[] as &[&Frame], (&velocities, dt, resolution))?;
+//! let d = CumulativeTrapezoid.fit((&raw.acf, dt, None))?; // D = integral/3 in MD units
+//! ```
+//!
+//! # Raw observable, then fit: spectra
+//!
+//! Each spectrum is an explicit two-step composition — a raw compute produces
+//! an (unwindowed) correlation function, a fit applies window + FFT (+
+//! physical prefactors):
+//!
+//! | Spectrum | Raw compute | Fit transform |
+//! |----------|-------------|---------------|
+//! | VDOS | [`Vacf`] (velocity ACF) | [`PowerSpectrum`] |
+//! | IR | [`IrFlux`] (dipole-flux ACF) | [`IrSpectrum`] |
+//! | Raman | [`RamanTensor`] (polarizability iso/aniso ACFs) | [`RamanSpectrum`] |
+//! | VCD | [`VcdCrossFlux`] (μ̇ × ṁ cross-correlation) | [`VcdSpectrum`] |
+//! | ROA | [`RoaCrossTensor`] (α̇ × Ġ′ cross-correlations) | [`RoaSpectrum`] |
+//! | Resonance Raman | [`ResonanceRamanTensor`] (resonant iso/aniso ACFs) | [`ResonanceRamanSpectrum`] |
+//! | Dielectric ε(ω) | [`DebyeRelaxation`] / [`GreenKuboConductivity`] / [`DipoleRateCross`] | [`EinsteinHelfandSpectrum`] / [`GreenKuboSpectrum`] / [`DipoleAutocorrelationSpectrum`] / [`DipoleRateCrossSpectrum`] |
+//!
+//! Spectral units:
+//!
+//! | quantity   | unit |
+//! |------------|------|
+//! | time / dt  | fs   |
+//! | frequency  | cm⁻¹ |
+//! | intensity  | arb. |
+//!
 //! # Implementation modules (`compute/<name>/`)
 //!
 //! One folder per kernel family. **UI/catalog categories** (see
 //! `molrs-wasm` `molrsComputeCatalog`, catalog v3) follow freud's top-level
 //! modules and are not always 1:1 with folder names:
-//! - g(r) lives in [`rdf`] but is catalogued under **density**
-//!   (`freud.density.RDF`)
+//! - g(r) ([`Rdf`]) lives in `rdf/` but is catalogued under **density**
+//!   (`freud.density.Rdf`)
 //! - Voronoi kernels are catalogued under **locality**
 //!   (`freud.locality.Voronoi`)
-//! - van Hove / pair persistence live under **transport** (with VACF/diffusion)
+//! - van Hove / pair survival live under **transport** (with VACF/diffusion)
 //! - static dielectric is under **spectroscopy**
 //! - cluster radius-of-gyration is under **cluster** (freud.cluster.ClusterProperties)
 //!
 //! | Folder | Methods |
 //! |----------|---------|
-//! | [`rdf`] | pair distribution g(r) (+ streaming [`RDFAccumulator`]) |
-//! | [`msd`] | mean squared displacement (+ streaming [`MSDAccumulator`]) |
-//! | [`transport`] | VACF (+ streaming [`VACFAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
-//! | [`spectroscopy`] | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
-//! | [`fitting`] | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
-//! | [`dynamics`] | van Hove G(r, t), pair persistence |
-//! | [`dielectric`] | static dielectric constant from dipole fluctuations |
-//! | [`cluster`] | connected-component clustering + per-cluster properties |
-//! | [`shape`] | center of mass, cluster centers, gyration/inertia tensors, Rg |
-//! | [`ml`] | PCA projection, k-means |
-//! | [`density`] | correlation function, Gaussian/local density, spatial distribution, voxelization |
-//! | [`order`] | Steinhardt, hexatic, nematic, cubatic, solid-liquid, … |
-//! | [`environment`] | bond order, local descriptors, environment matching, … |
-//! | [`diffraction`] | S(k) (Debye & direct), diffraction pattern |
-//! | [`pmft`] | potentials of mean force and torque (R12/XY/XYT/XYZ) |
-//! | [`distribution`] | distance/angle/dihedral distribution functions |
-//! | [`hbond`] | hydrogen-bond detection, lifetimes, network components |
-//! | [`voronoi`] | radical Voronoi cells, domains, voids (feature `voronoi`) |
+//! | `rdf` | pair distribution g(r) (+ streaming [`RdfAccumulator`]) |
+//! | `msd` | mean squared displacement (+ streaming [`MsdAccumulator`]) |
+//! | `transport` | VACF (+ streaming [`VacfAccumulator`]), Einstein/Green–Kubo diffusion & conductivity, Debye relaxation, Onsager |
+//! | `spectroscopy` | IR / Raman / VCD / ROA / resonance-Raman raw correlators + spectral transforms, dielectric spectra |
+//! | `fitting` | generic curve fits: [`LinearFit`], [`CumulativeTrapezoid`], [`Plateau`], [`DebyeFit`] |
+//! | `dynamics` | van Hove G(r, t), pair survival |
+//! | `dielectric` | static dielectric constant from dipole fluctuations |
+//! | `cluster` | cluster analysis (freud's `Cluster`): connected components by distance + per-cluster properties |
+//! | `shape` | center of mass, cluster centers, gyration/inertia tensors, Rg |
+//! | `decomposition` | PCA projection |
+//! | `kmeans` | k-means over a PCA projection |
+//! | `density` | correlation function, Gaussian/local density, spatial distribution, voxelization |
+//! | `order` | Steinhardt, hexatic, nematic, cubatic, solid-liquid, … |
+//! | `environment` | bond order, local descriptors, environment matching, … |
+//! | `diffraction` | S(k) (Debye & direct), diffraction pattern |
+//! | `pmft` | potentials of mean force and torque (R12/XY/XYT/XYZ) |
+//! | `distribution` | distance/angle/dihedral distribution functions |
+//! | `hbond` | hydrogen-bond detection, lifetimes, network components |
+//! | `kinetic` | kinetic energy, kinetic temperature, centre-of-mass velocity of one state |
+//! | `voronoi` | radical Voronoi cells, domains, voids (feature `voronoi`) |
 
-pub mod cluster;
-pub mod density;
-pub mod dielectric;
-pub mod diffraction;
-pub mod distribution;
-pub mod dynamics;
-pub mod environment;
-pub mod error;
-pub mod fitting;
-pub mod hbond;
-pub mod ml;
-pub mod msd;
-pub mod order;
-pub mod pmft;
-pub mod rdf;
-pub(crate) mod require;
-pub mod result;
-pub mod shape;
-pub mod spectroscopy;
+mod analysis_contract;
+mod cluster;
+mod decomposition;
+mod density;
+mod dielectric;
+mod diffraction;
+mod distribution;
+mod dynamics;
+mod environment;
+mod error;
+mod fitting;
 #[cfg(test)]
-pub(crate) mod test_support;
-pub mod traits;
-pub mod transport;
-pub mod util;
+pub(crate) mod fixtures;
+mod hbond;
+mod kinetic;
+mod kmeans;
+mod msd;
+mod order;
+mod pmft;
+pub(crate) mod positions;
+mod rdf;
+pub(crate) mod require;
+mod shape;
+mod spectroscopy;
+mod transport;
 #[cfg(feature = "voronoi")]
-pub mod voronoi;
+mod voronoi;
 
 // Re-exports
+pub use analysis_contract::{Check, Compute, ComputeResult, DescriptorRow, Fit, Verdict};
 pub use cluster::{Cluster, ClusterProperties, ClusterPropertiesResult, ClusterResult};
+pub use decomposition::{Pca, PcaResult};
 pub use density::{
-    CorrelationFunction, CorrelationFunctionResult, GaussianDensity, GaussianDensityResult,
-    GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution, SpatialDistributionResult,
-    SphereVoxelization, SphereVoxelizationResult,
+    CorrelationFunction, CorrelationFunctionArgs, CorrelationFunctionResult, GaussianDensity,
+    GaussianDensityResult, GridSpec, LocalDensity, LocalDensityResult, SpatialDistribution,
+    SpatialDistributionResult, SphereVoxelization, SphereVoxelizationResult,
 };
 pub use dielectric::{
-    StaticDielectricResult, compute_current_density, compute_dipole_moment, decompose_current,
+    StaticDielectricResult, current_density, decompose_current, dipole_moment,
     static_dielectric_constant, static_dielectric_constant_components,
 };
 pub use diffraction::{
@@ -175,15 +230,21 @@ pub use diffraction::{
     StaticStructureFactorDebyeResult, StaticStructureFactorDirect,
     StaticStructureFactorDirectResult,
 };
-pub use distribution::{AxisSpec, CombinedDistribution, CombinedDistributionResult};
+pub use distribution::{
+    AngleObservable, AtomGroups, AxisSpec, CombinedDistribution, CombinedDistributionResult,
+    DihedralObservable, DistanceObservable, DistributionFunction, DistributionResult, Histogram1d,
+    InternalCoordinate, Observable, renormalize_density,
+};
 pub use dynamics::{
-    Acf, AcfArgs, AcfResult, PersistResult, SurvivalMethod, VanHove, VanHoveResult,
+    Acf, AcfArgs, AcfResult, PairSurvivalResult, SurvivalMethod, VanHove, VanHoveResult,
     autocorrelation, pair_survival_tcf,
 };
 pub use environment::{
-    AngularSeparationGlobal, AngularSeparationGlobalResult, AngularSeparationNeighbor,
-    AngularSeparationNeighborResult, BondOrder, BondOrderResult, LocalBondProjection,
-    LocalBondProjectionResult, LocalDescriptors, LocalDescriptorsResult, MatchEnv, MatchEnvResult,
+    AngularSeparationGlobal, AngularSeparationGlobalArgs, AngularSeparationGlobalResult,
+    AngularSeparationNeighbor, AngularSeparationNeighborArgs, AngularSeparationNeighborResult,
+    BondOrientationalOrder, BondOrientationalOrderResult, EnvironmentMatch, EnvironmentMatchResult,
+    LocalBondProjection, LocalBondProjectionArgs, LocalBondProjectionResult, LocalDescriptors,
+    LocalDescriptorsResult,
 };
 pub use error::ComputeError;
 pub use fitting::{
@@ -191,58 +252,63 @@ pub use fitting::{
     PlateauResult,
 };
 pub use hbond::{
-    DistKind, HBond, HBondCriterion, HBonds, HBondsResult, LifetimeResult, NetworkResult,
-    hbond_components, hbond_lifetimes, presence_from_hbonds,
+    HBond, HBondCriterion, HBondDistanceKind, HBondLifetimeResult, HBondNetworkResult, HBonds,
+    HBondsResult, hbond_components, hbond_lifetimes, presence_from_hbonds,
 };
-pub use ml::{KMeans, KMeansResult, Pca2, PcaResult};
-pub use msd::{MSD, MSDAccumulator, MSDResult, MSDTimeSeries, MsdMode};
+pub use kinetic::{center_of_mass_velocity, kinetic_energy, kinetic_temperature};
+pub use kmeans::{Kmeans, KmeansResult};
+pub use msd::{Msd, MsdAccumulator, MsdMode, MsdResult, MsdTimeSeries};
 pub use order::{
     ContinuousCoordination, ContinuousCoordinationResult, Cubatic, CubaticResult, Hexatic,
     HexaticResult, LegendreReorientation, LegendreReorientationResult, Nematic, NematicResult,
-    RotationalAutocorrelation, RotationalAutocorrelationResult, SolidLiquid, SolidLiquidResult,
-    Steinhardt, SteinhardtResult,
+    RotationalAutocorrelation, RotationalAutocorrelationArgs, RotationalAutocorrelationResult,
+    SolidLiquid, SolidLiquidResult, Steinhardt, SteinhardtResult, steinhardt_qlm,
 };
 pub use pmft::{
-    PMFTR12, PMFTR12Args, PMFTR12Result, PMFTXY, PMFTXYArgs, PMFTXYResult, PMFTXYT, PMFTXYTArgs,
-    PMFTXYTResult, PMFTXYZ, PMFTXYZArgs, PMFTXYZResult,
+    PmftR12, PmftR12Args, PmftR12Result, PmftXy, PmftXyArgs, PmftXyResult, PmftXyt, PmftXytArgs,
+    PmftXytResult, PmftXyz, PmftXyzArgs, PmftXyzResult, orientation_quaternions,
+    planar_orientation_angles,
 };
-pub use rdf::{RDF, RDFAccumulator, RDFResult, RdfMode};
+pub use rdf::{Rdf, RdfAccumulator, RdfMode, RdfResult};
 /// Crate-internal: the input guards every neighbor-consuming kernel calls
 /// before it reads `disp` (Å) or `dist_sq` (Å²), or before it updates both
 /// endpoints of a row and so depends on the table being half-shell.
 /// Deliberately not public API — a caller outside the crate holds the table
 /// itself and asks it directly with
-/// [`Neighbors::disp()`](molrs::spatial::neighbors::Neighbors::disp),
-/// [`Neighbors::dist_sq()`](molrs::spatial::neighbors::Neighbors::dist_sq) and
-/// [`Neighbors::mode()`](molrs::spatial::neighbors::Neighbors::mode), which
-/// answer `Option` / [`QueryMode`](molrs::spatial::neighbors::QueryMode) rather
+/// [`Neighbors::disp()`](molrs::core::Neighbors::disp),
+/// [`Neighbors::dist_sq()`](molrs::core::Neighbors::dist_sq) and
+/// [`Neighbors::mode()`](molrs::core::Neighbors::mode), which
+/// answer `Option` / [`QueryMode`](molrs::core::QueryMode) rather
 /// than [`ComputeError`].
 pub(crate) use require::{require_disp, require_dist_sq, require_self_query};
-pub use result::{ComputeResult, DescriptorRow};
 pub use shape::{
-    COMResult, CenterOfMass, ClusterCenters, ClusterCentersResult, GyrationTensor,
-    GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration, RgResult,
+    CenterOfMass, CenterOfMassResult, ClusterCenters, ClusterCentersResult, GyrationTensor,
+    GyrationTensorResult, InertiaTensor, InertiaTensorResult, RadiusOfGyration,
+    RadiusOfGyrationResult,
 };
 pub use spectroscopy::{
     ConductivitySumRule, DielectricSpectrumResult, DipoleAutocorrelationSpectrum,
-    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IRFlux, IRFluxResult,
-    IRSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
-    RamanSpectrumResult, RamanTensor, RamanTensorResult, ResonanceRamanSpectrum,
-    ResonanceRamanTensor, RoaCrossResult, RoaCrossTensor, RoaSpectrum, RouteAgreement,
-    RouteAgreementCheck, SpectrumResult, SumRuleCheck, VcdCrossFlux, VcdCrossResult, VcdSpectrum,
+    DipoleRateCrossSpectrum, EinsteinHelfandSpectrum, GreenKuboSpectrum, IrFlux, IrFluxArgs,
+    IrFluxResult, IrSpectrum, KramersKronig, KramersKronigCheck, PowerSpectrum, RamanSpectrum,
+    RamanSpectrumResult, RamanTensor, RamanTensorArgs, RamanTensorResult, ResonanceRamanSpectrum,
+    ResonanceRamanTensor, ResonanceRamanTensorArgs, RoaCrossTensor, RoaCrossTensorArgs,
+    RoaCrossTensorResult, RoaSpectrum, RouteAgreement, RouteAgreementCheck, SpectrumResult,
+    SumRuleCheck, VcdCrossFlux, VcdCrossFluxArgs, VcdCrossFluxResult, VcdSpectrum,
 };
-pub use traits::{Check, Compute, Fit, Verdict};
 pub use transport::{
-    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationResult, DipoleRateCross,
-    DipoleRateCrossResult, EinsteinConductivity, EinsteinConductivityResult, EinsteinDiffusion,
-    EinsteinDiffusionArgs, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityResult,
-    GreenKuboDiffusion, OnsagerCorrelation, OnsagerResult, VACF, VACFAccumulator, VacfResult,
-    lag_times, unbiased_cartesian_acf, unbiased_cartesian_xcorr,
+    DebyeFit, DebyeFitResult, DebyeRelaxation, DebyeRelaxationArgs, DebyeRelaxationResult,
+    DipoleRateCross, DipoleRateCrossArgs, DipoleRateCrossResult, EinsteinConductivity,
+    EinsteinConductivityArgs, EinsteinConductivityResult, EinsteinDiffusion, EinsteinDiffusionArgs,
+    EinsteinDiffusionResult, EwaldBoundary, GreenKuboConductivity, GreenKuboConductivityArgs,
+    GreenKuboConductivityResult, GreenKuboDiffusion, OnsagerCorrelation, OnsagerCorrelationArgs,
+    OnsagerCorrelationResult, Vacf, VacfAccumulator, VacfArgs, VacfResult, lag_times,
+    unbiased_cartesian_xcorr,
 };
 #[cfg(feature = "voronoi")]
 pub use voronoi::{
-    DensityGrid, DomainAnalysis, DomainResult, Face, MolecularMoments, RadicalVoronoi,
-    VoidAnalysis, VoidResult, VoronoiCells, VoronoiIntegration, polarizability_finite_field,
+    DensityGrid, MolecularMoments, RadicalVoronoi, VORONOI_BOUNDARY, VoronoiCells,
+    VoronoiDomainAnalysis, VoronoiDomainResult, VoronoiFace, VoronoiIntegration,
+    VoronoiVoidAnalysis, VoronoiVoidResult, polarizability_finite_field,
 };
 
 // ---------------------------------------------------------------------------
@@ -252,7 +318,7 @@ pub use voronoi::{
 /// `require_disp` / `require_dist_sq`: the one place a compute kernel turns
 /// "this table never stored that column" into a [`ComputeError::BadShape`].
 ///
-/// A [`Neighbors`](molrs::spatial::neighbors::Neighbors) table reports an
+/// A [`Neighbors`](molrs::core::Neighbors) table reports an
 /// absent column as `None`, never as a fabricated zero — so every kernel that
 /// needs one has to reject `None` itself. These helpers are that rejection,
 /// written once: a kernel calls one of them and gets either the column or an
@@ -270,13 +336,13 @@ pub use voronoi::{
 /// | 1 | 1 | 3 | 9.0       | (0.0,0.0,3.0) |
 #[cfg(test)]
 mod require_tests {
-    use crate::compute::error::ComputeError;
+    use crate::compute::ComputeError;
     use crate::compute::{require_disp, require_dist_sq};
-    use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-    use molrs::types::F;
+    use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
+    use molrs::op::F;
 
     /// Two hard-coded half-shell pairs (`i < j`), legal under
-    /// `SelfQuery { num_points: 4 }`.
+    /// `SelfQuery { n_points: 4 }`.
     fn two_pairs() -> [NeighborPair; 2] {
         [
             NeighborPair {
@@ -294,8 +360,8 @@ mod require_tests {
         ]
     }
 
-    fn table(storage: NeighborsStorage) -> Neighbors {
-        Neighbors::from_pairs(two_pairs(), storage, QueryMode::SelfQuery { num_points: 4 })
+    fn table(columns: NeighborColumns) -> Neighbors {
+        Neighbors::from_pairs(two_pairs(), columns, QueryMode::SelfQuery { n_points: 4 })
     }
 
     /// Basics: on a `FULL` table the displacement column comes back as an
@@ -303,7 +369,7 @@ mod require_tests {
     /// are copies, not arithmetic).
     #[test]
     fn require_disp_returns_the_full_table_column() {
-        let nb = table(NeighborsStorage::FULL);
+        let nb = table(NeighborColumns::FULL);
         let disp = require_disp(&nb).expect("FULL table has a disp column");
 
         assert_eq!(disp.nrows(), 2);
@@ -325,7 +391,7 @@ mod require_tests {
     /// slice of `n_pairs` values, in table order (Å², exact copies).
     #[test]
     fn require_dist_sq_returns_the_full_table_column() {
-        let nb = table(NeighborsStorage::FULL);
+        let nb = table(NeighborColumns::FULL);
         let d2 = require_dist_sq(&nb).expect("FULL table has a dist_sq column");
 
         assert_eq!(d2.len(), nb.n_pairs());
@@ -337,7 +403,7 @@ mod require_tests {
     /// text names the missing column and how many pairs it was needed for.
     #[test]
     fn require_disp_on_indices_only_is_bad_shape() {
-        let nb = table(NeighborsStorage::INDICES_ONLY);
+        let nb = table(NeighborColumns::INDICES_ONLY);
         assert_eq!(
             nb.n_pairs(),
             2,
@@ -362,7 +428,7 @@ mod require_tests {
     /// Edge: same for the radial column — a lean list with pairs but no `d²`.
     #[test]
     fn require_dist_sq_on_indices_only_is_bad_shape() {
-        let nb = table(NeighborsStorage::INDICES_ONLY);
+        let nb = table(NeighborColumns::INDICES_ONLY);
         assert_eq!(
             nb.n_pairs(),
             2,

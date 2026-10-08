@@ -1,7 +1,7 @@
-//! WASM binding for the triangle mesh ([`Mesh`]).
+//! WASM binding for the triangle mesh, `molrs::core::TriMesh`.
 //!
 //! A surface, not a structure: shared vertices plus indexed faces, with no
-//! atoms and no simulation box. It is what [`readSTL`](crate::io::mesh) hands
+//! atoms and no simulation box. It is what [`readStlBytes`](crate::io::mesh) hands
 //! back — the container a packing run was confined to, the geometry a viewer
 //! paints around the trajectory.
 //!
@@ -10,7 +10,7 @@
 //! `Float32Array`: a mesh goes to a GPU vertex buffer, which is `f32`
 //! regardless, and the double it was read as buys nothing on the way there.
 
-use molrs::spatial::TriMesh;
+use molrs::core::TriMesh as RsTriMesh;
 use wasm_bindgen::prelude::*;
 
 /// Triangle surface: vertices, faces, and the questions worth asking about
@@ -19,7 +19,7 @@ use wasm_bindgen::prelude::*;
 /// # Example (JavaScript)
 ///
 /// ```js
-/// const mesh = readSTL(new Uint8Array(await file.arrayBuffer()));
+/// const mesh = readStlBytes(new Uint8Array(await file.arrayBuffer()));
 /// console.log(mesh.nFaces(), mesh.isWatertight());
 /// const vertices = mesh.vertices();    // Float32Array, 3 per vertex
 /// const faces    = mesh.faces();       // Uint32Array, 3 indices per face
@@ -27,18 +27,12 @@ use wasm_bindgen::prelude::*;
 /// mesh.free();
 /// ```
 #[wasm_bindgen]
-pub struct Mesh {
-    pub(crate) inner: TriMesh,
-}
-
-impl Mesh {
-    pub(crate) fn new(inner: TriMesh) -> Self {
-        Self { inner }
-    }
+pub struct TriMesh {
+    pub(crate) inner: RsTriMesh,
 }
 
 #[wasm_bindgen]
-impl Mesh {
+impl TriMesh {
     /// Number of vertices in the shared table.
     #[wasm_bindgen(js_name = nVertices)]
     pub fn n_vertices(&self) -> usize {

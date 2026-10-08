@@ -1,19 +1,12 @@
-//! Result type for the radial distribution function [`RDF`](super::RDF):
+//! Result type for the radial distribution function [`Rdf`](super::Rdf):
 //! binned pair counts plus the normalized `g(r)` curve (bin edges/centers in
 //! Å).
-//!
-//! `g(r)` is the ratio of the number of neighbor pairs found at separation `r`
-//! to the number an ideal gas of the same number density would have there, so
-//! it is dimensionless and tends to 1 at large `r`. Turning raw counts into
-//! that ratio is what [`finalize`](ComputeResult::finalize) below does, and
-//! [`RdfMode`] is the one input to it that depends on *how* the pairs were
-//! searched rather than on where the particles are.
 
-use molrs::spatial::neighbors::QueryMode;
-use molrs::types::F;
+use molrs::core::QueryMode;
+use molrs::op::F;
 use ndarray::Array1;
 
-use crate::compute::result::{ComputeResult, DescriptorRow};
+use crate::compute::{ComputeResult, DescriptorRow};
 
 /// Which point sets a radial-distribution histogram was accumulated over — the
 /// pairing alone, with no point counts attached.
@@ -26,10 +19,10 @@ use crate::compute::result::{ComputeResult, DescriptorRow};
 /// # Why the counts are not here
 ///
 /// [`QueryMode`] — the neighbor layer's own answer to the same question —
-/// carries the point counts of the one table it describes. An [`RDFResult`],
+/// carries the point counts of the one table it describes. An [`RdfResult`],
 /// though, sums over every frame of a trajectory, so an embedded `QueryMode`
 /// would report the counts of whichever single frame it was built from while
-/// [`n_points`](RDFResult::n_points) / [`n_query_points`](RDFResult::n_query_points)
+/// [`n_points`](RdfResult::n_points) / [`n_query_points`](RdfResult::n_query_points)
 /// report the sum over all of them. That is two fields for one quantity,
 /// disagreeing for every trajectory longer than one frame, with nothing in the
 /// type to say which is authoritative. Normalization only ever read the
@@ -71,9 +64,16 @@ impl From<QueryMode> for RdfMode {
 /// Before [`finalize`](ComputeResult::finalize) is called the `rdf` array is
 /// meaningless — only `n_r`, `volume`, `n_points`, and `n_query_points` carry
 /// information. `Graph::run` calls `finalize` automatically; direct users of
-/// `RDF::compute` must call it themselves before reading `rdf`.
+/// `Rdf::compute` must call it themselves before reading `rdf`.
+///
+/// `g(r)` is the ratio of the number of neighbor pairs found at separation `r`
+/// to the number an ideal gas of the same number density would have there, so
+/// it is dimensionless and tends to 1 at large `r`. Turning raw counts into
+/// that ratio is what [`finalize`](ComputeResult::finalize) below does, and
+/// [`RdfMode`] is the one input to it that depends on *how* the pairs were
+/// searched rather than on where the particles are.
 #[derive(Debug, Clone)]
-pub struct RDFResult {
+pub struct RdfResult {
     /// Bin edges in angstrom (n_bins + 1).
     pub bin_edges: Array1<F>,
     /// Bin centers in angstrom (n_bins).
@@ -103,7 +103,7 @@ pub struct RDFResult {
     pub finalized: bool,
 }
 
-impl RDFResult {
+impl RdfResult {
     /// Volume of the spherical (2-D: annular) shell between radii `r_inner` and
     /// `r_outer`, both Å, for the configured dimensionality.
     /// 3-D: `(4/3) π (r_o³ − r_i³)`, Å³. 2-D: `π (r_o² − r_i²)`, Å².
@@ -160,7 +160,7 @@ impl RDFResult {
     }
 }
 
-impl ComputeResult for RDFResult {
+impl ComputeResult for RdfResult {
     fn finalize(&mut self) {
         if self.finalized {
             return;
@@ -170,10 +170,10 @@ impl ComputeResult for RDFResult {
     }
 }
 
-impl DescriptorRow for RDFResult {
+impl DescriptorRow for RdfResult {
     fn as_row(&self) -> &[F] {
         self.rdf
             .as_slice()
-            .expect("RDFResult::rdf must be contiguous")
+            .expect("RdfResult::rdf must be contiguous")
     }
 }

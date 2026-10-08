@@ -1,25 +1,25 @@
 //! Lattice/grid occupancy tracking for self-avoidance.
-//!
-//! Overlap is decided **purely by cell occupancy** — never by pairwise distance
-//! or a neighbour list. Two occupancy models are supported, selected per
-//! [`GrowthStrategy`](super::GrowthStrategy):
-//!
-//! - [`OccupancyMode::SameCell`] — reject only if the candidate's own cell is
-//!   already taken. Used by lattice strategies whose step geometry already
-//!   guarantees a minimum separation (e.g. FCC: any two distinct sites are
-//!   `>= bond_length` apart), so the grid only has to forbid re-occupying a
-//!   site. The cell edge is chosen so each lattice site maps to a unique cell.
-//! - [`OccupancyMode::BlockClear`] — reject if the candidate's cell or any of
-//!   its 26 neighbours (excluding the bonding tip's cell) is occupied. With a
-//!   cell edge equal to the excluded radius this guarantees every pair of
-//!   non-bonded monomers is at least one cell — i.e. `excluded_radius` — apart.
 
 use std::collections::HashSet;
 
-use crate::spatial::simbox::SimBox;
-use crate::types::{F, Pbc3};
+use crate::core::SimBox;
+use crate::op::{F, Pbc3};
 
 /// How cell occupancy decides whether a candidate position overlaps.
+///
+/// Overlap is decided **purely by cell occupancy** — never by pairwise distance
+/// or a neighbour list. Two occupancy models are supported, selected per
+/// [`GrowthStrategy`](super::GrowthStrategy):
+///
+/// - [`OccupancyMode::SameCell`] — reject only if the candidate's own cell is
+///   already taken. Used by lattice strategies whose step geometry already
+///   guarantees a minimum separation (e.g. FCC: any two distinct sites are
+///   `>= bond_length` apart), so the grid only has to forbid re-occupying a
+///   site. The cell edge is chosen so each lattice site maps to a unique cell.
+/// - [`OccupancyMode::BlockClear`] — reject if the candidate's cell or any of
+///   its 26 neighbours (excluding the bonding tip's cell) is occupied. With a
+///   cell edge equal to the excluded radius this guarantees every pair of
+///   non-bonded monomers is at least one cell — i.e. `excluded_radius` — apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OccupancyMode {
     /// Reject iff the candidate's own cell is occupied. `cell` is the grid edge.

@@ -1,24 +1,24 @@
 //! Pair potential kernels.
 
-use molrs::store::schema::block_names::ATOMS;
+use molrs::core::schema::block_names::ATOMS;
 use ndarray::{Array2, ArrayView2};
 
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::op::F;
 
 /// Pair kernel: already-reduced geometry in, energy / force on `j` out.
 pub trait PairPotential: Send + Sync {
     fn pair_energy(&self, r2: F, disp: [F; 3]) -> Option<F>;
     fn pair_force(&self, r2: F, disp: [F; 3]) -> Option<[F; 3]>;
-    fn pair_eval(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
+    fn pair_energy_force(&self, r2: F, disp: [F; 3]) -> Option<(F, [F; 3])> {
         match (self.pair_energy(r2, disp), self.pair_force(r2, disp)) {
             (Some(e), Some(f)) => Some((e, f)),
             _ => None,
         }
     }
 
-    fn eval_pairs(
+    fn energy_forces_pairs(
         &self,
         n_atoms: usize,
         i: &[u32],
@@ -55,7 +55,7 @@ pub trait PairPotential: Send + Sync {
                 Some(col) => col[p],
                 None => d[0] * d[0] + d[1] * d[1] + d[2] * d[2],
             };
-            let Some((e, f)) = self.pair_eval(r2, d) else {
+            let Some((e, f)) = self.pair_energy_force(r2, d) else {
                 continue;
             };
             energy += e;
@@ -69,11 +69,15 @@ pub trait PairPotential: Send + Sync {
         Ok((energy, forces))
     }
 
-    fn eval_table(&self, n_atoms: usize, neighbors: &Neighbors) -> Result<(F, Array2<F>), String> {
+    fn energy_forces_table(
+        &self,
+        n_atoms: usize,
+        neighbors: &Neighbors,
+    ) -> Result<(F, Array2<F>), String> {
         let disp = neighbors
             .disp()
-            .ok_or_else(|| "eval_table needs the Neighbors disp column".to_owned())?;
-        self.eval_pairs(
+            .ok_or_else(|| "energy_forces_table needs the Neighbors disp column".to_owned())?;
+        self.energy_forces_pairs(
             n_atoms,
             neighbors.query_point_indices(),
             neighbors.point_indices(),
@@ -89,7 +93,7 @@ pub trait PairPotential: Send + Sync {
 /// `Σ f ⊗ r` there is free; the entry points that do not report one say so by
 /// discarding it here rather than by keeping a second loop that does not.
 #[inline]
-pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::math::Virial)) -> (F, Vec<F>) {
+pub(crate) fn energy_forces((e, f, _): (F, Vec<F>, molrs::core::Virial)) -> (F, Vec<F>) {
     (e, f)
 }
 
@@ -140,11 +144,11 @@ pub(crate) fn atom_type_index(frame: &Frame) -> Result<(Vec<u32>, Vec<String>), 
 /// A scatter needs one accumulator per chunk, and below the threshold those
 /// cost more to allocate and merge than the fold costs to run — so a small
 /// table stays serial and touches no pool.
-pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::math::Virial)
+pub(crate) fn fold_chunks<R>(out: &mut [F], n_pairs: usize, run: R) -> (F, molrs::core::Virial)
 where
-    R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::math::Virial) + Sync,
+    R: Fn(&mut [F], std::ops::Range<usize>) -> (F, molrs::core::Virial) + Sync,
 {
-    use molrs::math::Virial;
+    use molrs::core::Virial;
     /// Pairs per chunk. Fixed, because it decides the grouping of a
     /// floating-point sum and so is part of the answer.
     const CHUNK: usize = 4_096;
@@ -218,36 +222,44 @@ where
 /// This is LAMMPS's `pair_coeff i j` model, and it is what a neighbour-driven
 /// evaluation needs: which pairs exist is re-decided at every rebuild, so a
 /// pair's parameters have to be findable from the atoms it names rather than
-/// from the row it used to occupy.
+/// from a row of a previous list.
 #[inline]
 pub(crate) fn type_pair(ti: u32, tj: u32, ntypes: usize) -> usize {
     ti as usize * ntypes + tj as usize
 }
 
-pub mod buck;
-pub mod coul_cut;
-pub mod lj_class2;
-pub mod lj_cut;
-pub mod mmff;
-pub mod morse;
-pub mod tang_toennies;
-pub mod thole;
-pub mod uff;
+pub(crate) mod buck;
+pub(crate) mod charmm;
+pub(crate) mod coul_cut;
+pub(crate) mod exceptions;
+pub(crate) mod lj_class2;
+pub(crate) mod lj_cut;
+pub(crate) mod mmff;
+pub(crate) mod morse;
+pub(crate) mod tang_toennies;
+pub(crate) mod thole;
+pub(crate) mod uff;
 
-pub use buck::{PairBuck, pair_buck_ctor};
-pub use coul_cut::{PairCoulCut, pair_coul_cut_ctor};
-pub use lj_class2::{PairLJClass2, pair_lj_class2_ctor};
-pub use lj_cut::{LJCut, pair_lj_cut_ctor};
-pub use mmff::{MMFFVdW, mmff_vdw_ctor};
-pub use morse::{PairMorse, pair_morse_ctor};
-pub use tang_toennies::{PairTangToennies, pair_tang_toennies_ctor};
-pub use thole::{PairThole, pair_thole_ctor};
-pub use uff::{UffVdW, uff_lj_ctor};
+pub use buck::{PairBuck, pair_buck_constructor};
+pub use charmm::{
+    PairCoulCharmm, PairLjCharmm, pair_coul_charmm_constructor, pair_lj_charmm_constructor,
+};
+pub use coul_cut::{PairCoulCut, pair_coul_cut_constructor};
+pub use exceptions::PairExceptions;
+pub use lj_class2::{PairLjClass2, pair_lj_class2_constructor};
+pub use lj_cut::{PairLjCut, lj_ab_to_sigma_epsilon, pair_lj_cut_constructor};
+pub use mmff::{
+    PairMmffVdw, PairMmffVdwAtomParams, PairMmffVdwStyleParams, pair_mmff_vdw_constructor,
+};
+pub use morse::{PairMorse, pair_morse_constructor};
+pub use tang_toennies::{PairTangToennies, pair_tang_toennies_constructor};
+pub use thole::{PairThole, pair_thole_constructor};
+pub use uff::{PairUffVdw, pair_uff_vdw_constructor};
 
 #[cfg(test)]
-pub(crate) mod testing {
-    use molrs::spatial::neighbors::{NeighborPair, Neighbors, NeighborsStorage, QueryMode};
-    use molrs::types::F;
+pub(crate) mod fixtures {
+    use molrs::core::{NeighborColumns, NeighborPair, Neighbors, QueryMode};
+    use molrs::op::F;
 
     /// A neighbour table over exactly `links`, with the displacements a
     /// neighbour engine would have computed for them.
@@ -276,10 +288,8 @@ pub(crate) mod testing {
             .collect();
         Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
-            QueryMode::SelfQuery {
-                num_points: n_points,
-            },
+            NeighborColumns::FULL,
+            QueryMode::SelfQuery { n_points },
         )
     }
 
@@ -297,11 +307,11 @@ pub(crate) mod testing {
     pub(crate) fn assert_virial_matches_forces(
         label: &str,
         coords: &[F],
-        out: (F, Vec<F>, Option<molrs::math::Virial>),
+        out: (F, Vec<F>, Option<molrs::core::Virial>),
     ) {
         let (_, forces, virial) = out;
         let virial = virial.unwrap_or_else(|| panic!("{label}: this kernel must tally a virial"));
-        let mut from_forces = molrs::math::Virial::ZERO;
+        let mut from_forces = molrs::core::Virial::ZERO;
         for a in 0..coords.len() / 3 {
             from_forces.add_outer(
                 [forces[a * 3], forces[a * 3 + 1], forces[a * 3 + 2]],

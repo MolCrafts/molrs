@@ -1,22 +1,26 @@
-//! Class2 (quartic) angle potential:
-//! E = k2*(theta-theta0)^2 + k3*(theta-theta0)^3 + k4*(theta-theta0)^4
-//!
-//! The COMPASS/class2 anharmonic angle core term (cross-terms bb/ba are
-//! separate styles, not implemented here). Parameters per type: `theta0`
-//! (radians; readers normalize to radians at their boundary), `k2`, `k3`, `k4`.
+//! Class2 (quartic) angle (LAMMPS `angle_style class2`).
 
-use molrs::store::schema::block_names::ANGLES;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::ANGLES;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{compute_angle, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{compute_angle, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
-/// Class2 quartic angle potential. `theta0` is stored in radians.
+/// Class2 quartic angle potential. Its own `theta0` array is in radians.
+///
+/// Class2 (quartic) angle potential:
+/// E = k2*(theta-theta0)^2 + k3*(theta-theta0)^3 + k4*(theta-theta0)^4
+///
+/// The COMPASS/class2 anharmonic angle core term (cross-terms bb/ba are
+/// separate styles, not implemented here). Parameters per type, as LAMMPS
+/// `angle_style class2` takes them: `theta0` in **degrees**, `k2`, `k3`, `k4`
+/// in energy/radianⁿ. The kernel converts `theta0` to radians once.
 pub struct AngleClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -137,11 +141,11 @@ impl IndexedTerms for AngleClass2 {
 }
 
 /// Construct an [`AngleClass2`] from style params, type params, and Frame topology.
-pub fn angle_class2_ctor(
+pub fn angle_class2_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -166,11 +170,7 @@ pub fn angle_class2_ctor(
 
     let (mut ai, mut aj, mut ak) = (Vec::new(), Vec::new(), Vec::new());
     let (mut t0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("AngleClass2 type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -179,13 +179,13 @@ pub fn angle_class2_ctor(
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         ak.push(k_col[idx] as usize);
-        t0.push(need(p, "theta0", label)?); // consumed in radians
+        t0.push(need(p, "theta0", label)?.to_radians()); // degrees → radians
         k2.push(need(p, "k2", label)?);
         k3.push(need(p, "k3", label)?);
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Member::indexed(AngleClass2::new(
+    Ok(ForceTerm::indexed(AngleClass2::new(
         ai, aj, ak, t0, k2, k3, k4,
     )))
 }

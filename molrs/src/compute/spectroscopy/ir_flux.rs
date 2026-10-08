@@ -1,44 +1,45 @@
 //! IR dipole-flux ACF raw compute — the IR-spectrum raw input.
 
-use molrs::store::frame_access::FrameAccess;
+use molrs::core::FrameAccess;
 use ndarray::Array2;
 
-use super::{central_diff_series, lag_times, sum_column_acf};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
+use super::{central_diff_series, sum_column_acf};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::lag_times;
 
 /// Raw dipole-flux autocorrelation function — the IR-spectrum raw input.
 #[derive(Debug, Clone)]
-pub struct IRFluxResult {
+pub struct IrFluxResult {
     /// Lag times τ = i·dt, length `max_lag + 1`. Units: `[dt]`.
     pub lag_times: ndarray::Array1<f64>,
     /// Unnormalized dipole-flux ACF `C(τ) = Σ_d ⟨Ṁ_d(0)·Ṁ_d(τ)⟩`, summed over
     /// the 3 Cartesian components — the ACF the
-    /// [`IRSpectrum`](super::IRSpectrum) transform consumes. Units: `[Ṁ]²`.
+    /// [`IrSpectrum`](super::IrSpectrum) transform consumes. Units: `[Ṁ]²`.
     pub acf: ndarray::Array1<f64>,
 }
 
-impl ComputeResult for IRFluxResult {}
+impl ComputeResult for IrFluxResult {}
 
 /// Raw dipole-flux-ACF compute (the IR-spectrum input).
 ///
 /// Lifts the central-difference dipole flux + FFT-ACF + component-sum block (the
 /// part *before* windowing), returning only the raw ACF. The window + FFT step
-/// is then the [`IRSpectrum`](super::IRSpectrum)
-/// [`Fit`](crate::compute::traits::Fit).
+/// is then the [`IrSpectrum`](super::IrSpectrum)
+/// [`Fit`](crate::compute::Fit).
 #[derive(Debug, Clone, Copy, Default)]
-pub struct IRFlux;
+pub struct IrFlux;
 
-/// `(dipole_moments, dt, resolution)` argument bundle for [`IRFlux`].
+/// `(dipole_moments, dt, resolution)` argument bundle for [`IrFlux`].
 ///
 /// `dipole_moments` is `(n_frames, 3)`; the central-difference flux loses the
 /// first and last frame, so the effective flux length is `n_frames − 2`.
-pub type IRFluxArgs<'a> = (&'a Array2<f64>, f64, usize);
+pub type IrFluxArgs<'a> = (&'a Array2<f64>, f64, usize);
 
-impl Compute for IRFlux {
-    type Args<'a> = IRFluxArgs<'a>;
-    type Output = IRFluxResult;
+impl Compute for IrFlux {
+    type Args<'a> = IrFluxArgs<'a>;
+    type Output = IrFluxResult;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
@@ -70,7 +71,7 @@ impl Compute for IRFlux {
         // Shared primitives: central-diff flux → unnormalized Σ_α ACF.
         let flux = central_diff_series(dipole_moments, dt);
         let acf = sum_column_acf(&flux, max_lag);
-        Ok(IRFluxResult {
+        Ok(IrFluxResult {
             lag_times: lag_times(max_lag, dt),
             acf,
         })

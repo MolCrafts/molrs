@@ -1,22 +1,24 @@
 //! Mass-weighted cluster centers (center of mass) with MIC.
-//!
-//! Reads `atoms.{x,y,z}` (Å) from each frame; takes one
-//! [`ClusterResult`] per frame as
-//! `Args` (run [`Cluster`](crate::compute::cluster::Cluster) first). Output:
-//! one [`COMResult`] per frame — per-cluster COM (Å) + total mass.
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::sub;
+use molrs::core::{Mic, SimBox};
 
 /// Computes the center of mass of each cluster per frame using MIC.
 ///
 /// Masses are optional — defaults to 1.0 for all particles (uniform).
+///
+/// Reads `atoms.{x,y,z}` (Å) from each frame; takes one
+/// [`ClusterResult`] per frame as
+/// `Args` (run [`Cluster`](crate::compute::Cluster) first). Output:
+/// one [`CenterOfMassResult`] per frame — per-cluster COM (Å) + total mass.
 #[derive(Debug, Clone, Default)]
 pub struct CenterOfMass {
     masses: Option<Vec<F>>,
@@ -40,7 +42,7 @@ impl CenterOfMass {
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-    ) -> Result<COMResult, ComputeError> {
+    ) -> Result<CenterOfMassResult, ComputeError> {
         let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
         let xs = xs_p.slice();
         let ys = ys_p.slice();
@@ -57,8 +59,8 @@ impl CenterOfMass {
             });
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
-        let nc = clusters.num_clusters;
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        let nc = clusters.n_clusters;
 
         let mut ref_pos = vec![[0.0 as F; 3]; nc];
         let mut sum_m_delta = vec![[0.0 as F; 3]; nc];
@@ -79,7 +81,7 @@ impl CenterOfMass {
                 has_ref[c] = true;
             }
 
-            let d = mic.disp(ref_pos[c], pos);
+            let d = mic.apply(sub(pos, ref_pos[c]));
             sum_m_delta[c][0] += m * d[0];
             sum_m_delta[c][1] += m * d[1];
             sum_m_delta[c][2] += m * d[2];
@@ -96,7 +98,7 @@ impl CenterOfMass {
             }
         }
 
-        Ok(COMResult {
+        Ok(CenterOfMassResult {
             centers_of_mass,
             cluster_masses: total_mass,
         })
@@ -105,13 +107,13 @@ impl CenterOfMass {
 
 impl Compute for CenterOfMass {
     type Args<'a> = &'a Vec<ClusterResult>;
-    type Output = Vec<COMResult>;
+    type Output = Vec<CenterOfMassResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
         &self,
         frames: &[&'a FA],
         clusters: &'a Vec<ClusterResult>,
-    ) -> Result<Vec<COMResult>, ComputeError> {
+    ) -> Result<Vec<CenterOfMassResult>, ComputeError> {
         if frames.is_empty() {
             return Err(ComputeError::EmptyInput);
         }
@@ -145,21 +147,21 @@ impl Compute for CenterOfMass {
 
 /// Per-cluster center of mass and total mass for one frame.
 #[derive(Debug, Clone, Default)]
-pub struct COMResult {
+pub struct CenterOfMassResult {
     /// Mass-weighted center per cluster.
     pub centers_of_mass: Vec<[F; 3]>,
     /// Total mass per cluster.
     pub cluster_masses: Vec<F>,
 }
 
-impl ComputeResult for COMResult {}
+impl ComputeResult for CenterOfMassResult {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -187,13 +189,13 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }
     }
 
-    fn com_single(frame: &Frame, cl: ClusterResult, com: CenterOfMass) -> COMResult {
+    fn com_single(frame: &Frame, cl: ClusterResult, com: CenterOfMass) -> CenterOfMassResult {
         let out = com.compute(&[frame], &vec![cl]).unwrap();
         out.into_iter().next().unwrap()
     }

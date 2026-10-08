@@ -1,22 +1,11 @@
 //! The [`ChargeModel`] trait — one seam for every charge method.
-//!
-//! | model | needs QM input? | topology correction? | `needs_equivalencing` |
-//! |---|---|---|---|
-//! | Mulliken | yes | no (pass-through) | `false` (`-eq 0`) |
-//! | AM1-BCC | yes | yes (bond increments) | `true` (`-eq 1`) |
-//! | ABCG2 | yes | yes (bond increments) | `true` (`-eq 1`) |
-//! | Gasteiger | **no** | yes (iterative) | `false` |
-//!
-//! The trait carries all four without any of them being a special case, which is
-//! what says it has not quietly assumed "QM base charges plus a correction": the
-//! QM charges are an `Option`, so a model that needs none simply ignores them, and
-//! the correction is the model's own business, so a model with none returns what it
-//! was handed.
 
-use molrs::store::keys;
-use molrs::{AtomId, Atomistic};
+use std::collections::HashMap;
 
-use molrs::perceive::equivalence::{EquivalenceOptions, average_charges, find_equivalence_classes};
+use molrs::core::keys;
+use molrs::core::{Atomistic, NodeId};
+
+use molrs::perceive::{EquivalenceOptions, perceive_equivalence_classes};
 
 use crate::ff::typifier::atd::{AtdError, DUMMY_TYPE};
 
@@ -76,7 +65,7 @@ pub trait ChargeModel {
 }
 
 /// The atoms of `mol`, in graph atom order — the order every charge slice is in.
-pub(super) fn atom_ids(mol: &Atomistic) -> Vec<AtomId> {
+pub(super) fn atom_ids(mol: &Atomistic) -> Vec<NodeId> {
     mol.atoms().map(|(aid, _)| aid).collect()
 }
 
@@ -99,17 +88,26 @@ pub(super) fn check_count(mol: &Atomistic, charges: &[f64]) -> Result<(), Charge
 
 /// Average `qm` over the molecule's topological-equivalence classes (`-eq 1`).
 ///
-/// The step antechamber runs between AM1 and BCC. A semi-empirical calculation is
-/// done on one conformer, so its Mulliken charges are not symmetric — methanol's
-/// three methyl hydrogens come out of `sqm` split `0.053 / 0.098 / 0.053` purely
-/// because one of them eclipses the O–H — and the class-mean removes that artefact
-/// before any bond-charge correction is applied.
+/// The step antechamber runs between AM1 and BCC (`charge.c::bccharge()`). A
+/// semi-empirical calculation is done on one conformer, so its Mulliken charges
+/// are not symmetric — methanol's three methyl hydrogens come out of `sqm` split
+/// `0.053 / 0.098 / 0.053` purely because one of them eclipses the O–H — and the
+/// class-mean removes that artefact before any bond-charge correction is applied.
 ///
-/// The perception and the mean are molrs's one implementation of each
-/// ([`find_equivalence_classes`] and [`average_charges`]); this only carries `qm`
-/// through them, which is why the charges are laid onto a throwaway clone rather
-/// than re-summed here. Two class-means would be two chances to disagree with
-/// antechamber in the last bits.
+/// Perception owns the classes ([`perceive_equivalence_classes`]); the mean is this
+/// charge-model step. Each class's charges are summed in graph atom order, as
+/// `bccharge()` sums them, and the mean is given to every member; a singleton
+/// keeps its charge bit for bit.
+///
+/// # Precision
+///
+/// The mean is a rounded `f64`, so broadcasting it perturbs the molecule's total
+/// charge by a few ULP (measured over the 37-molecule antechamber oracle: at most
+/// `3.7e-16` e). That residual is inherent to an arithmetic mean — no assignment
+/// that gives every class member *the same* `f64` can also reproduce the total
+/// bit-for-bit — and antechamber carries the identical residual. Nothing is
+/// renormalized away, because renormalizing would be a divergence from
+/// antechamber, not a fix.
 ///
 /// # Arguments
 ///
@@ -119,35 +117,24 @@ pub(super) fn check_count(mol: &Atomistic, charges: &[f64]) -> Result<(), Charge
 /// # Returns
 ///
 /// The class-averaged charges, in the same order.
-///
-/// # Errors
-///
-/// [`ChargeError::Malformed`] when the charges cannot be laid onto the graph or
-/// read back off it.
-pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Result<Vec<f64>, ChargeError> {
-    let ids = atom_ids(mol);
-    let mut base = mol.clone();
-    for (aid, q) in ids.iter().zip(qm) {
-        base.set_atom(*aid, keys::CHARGE, *q)
-            .map_err(|e| ChargeError::Malformed {
-                detail: e.to_string(),
-            })?;
+pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Vec<f64> {
+    let index: HashMap<NodeId, usize> = atom_ids(mol)
+        .into_iter()
+        .enumerate()
+        .map(|(i, id)| (id, i))
+        .collect();
+    let mut out = qm.to_vec();
+    for members in perceive_equivalence_classes(mol, EquivalenceOptions::bcc()).classes() {
+        if members.len() < 2 {
+            continue;
+        }
+        let rows: Vec<usize> = members.iter().map(|id| index[id]).collect();
+        let mean = rows.iter().map(|&i| qm[i]).sum::<f64>() / rows.len() as f64;
+        for i in rows {
+            out[i] = mean;
+        }
     }
-
-    let classes = find_equivalence_classes(&base, EquivalenceOptions::bcc());
-    let averaged = average_charges(&base, &classes);
-
-    ids.iter()
-        .map(|aid| {
-            averaged
-                .get_atom(*aid)
-                .ok()
-                .and_then(|atom| atom.get_f64(keys::CHARGE))
-                .ok_or_else(|| ChargeError::Malformed {
-                    detail: format!("atom {aid:?} lost its charge while equivalencing"),
-                })
-        })
-        .collect()
+    out
 }
 
 /// A copy of `mol` with both `type` columns removed.
@@ -161,8 +148,8 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Result<Vec<f64
 /// The **atom** column is the load-bearing one: the ATD engine labels atoms *into*
 /// [`keys::TYPE`], so a molecule arriving with an incompatible column there (LAMMPS
 /// integer atom-type ids, say) would refuse the write. The **bond** column is
-/// stripped as defence in depth only: perception now keeps its perceived bond types
-/// in their own [`BCC_BOND_TYPE`](molrs::perceive::bond_type::BCC_BOND_TYPE) prop and
+/// stripped as defence in depth only: perception keeps its perceived bond types
+/// in their own [`BCC_BOND_TYPE`](molrs::core::keys::BCC_BOND_TYPE) prop and
 /// neither reads nor writes a bond's `type`, so nothing downstream can be steered by
 /// a caller's bond labels even when they are left in place.
 ///
@@ -178,7 +165,7 @@ pub(super) fn equivalence_average(mol: &Atomistic, qm: &[f64]) -> Result<Vec<f64
 /// [`ChargeError::Malformed`] when a column cannot be cleared.
 pub(super) fn without_type_columns(mol: &Atomistic) -> Result<Atomistic, ChargeError> {
     let mut work = mol.clone();
-    let malformed = |e: molrs::MolRsError| ChargeError::Malformed {
+    let malformed = |e: molrs::core::MolRsError| ChargeError::Malformed {
         detail: e.to_string(),
     };
 
@@ -286,7 +273,7 @@ mod tests {
     #[test]
     fn equivalence_average_merges_the_methyl_hydrogens_only() {
         let raw = [-0.073, -0.326, 0.053, 0.098, 0.053, 0.195];
-        let got = equivalence_average(&methanol(), &raw).expect("average methanol");
+        let got = equivalence_average(&methanol(), &raw);
 
         let mean: f64 = (0.053 + 0.098 + 0.053) / 3.0;
         for (k, q) in got.iter().enumerate().take(5).skip(2) {

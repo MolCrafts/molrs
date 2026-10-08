@@ -1,6 +1,32 @@
-"""Potential forms (``molrs::ff::potential``): the :class:`Potential` protocol
-every Python-defined force provider satisfies."""
+"""Evaluable force terms — ``molrs::ff::potential``.
 
-from .protocol import Potential
+* :class:`Potentials` — kernels evaluated together
+  (``calc_energy_forces``); ``push`` moves one more member in. A force field
+  compiles into one through :mod:`molrs.ff.compile`.
+* :class:`WeightedTerms` — kernels each with its special-bonds weights, for a
+  neighbour-driven integrator (``PotentialCompiler.compile_typed``).
+* :class:`PairLjCut` — the one-type ``lj/cut`` kernel a neighbour loop feeds
+  (the MD integrators' nonbond kernel).
+* :func:`intramolecular_pairs` — the special-bonds pair list of a typed
+  frame, what ``PotentialCompiler.compile`` prices nonbonded terms over.
+* :class:`Potential` — the protocol every Python-defined force provider
+  satisfies (one method, ``calc_energy_forces(pos) -> (energy, forces)``).
+"""
 
-__all__ = ["Potential"]
+from ..._native import (
+    PairLjCut,
+    Potentials,
+    WeightedTerms,
+    intramolecular_pairs,
+)
+from ._protocol import Potential
+
+Potential.__module__ = __name__
+
+__all__ = [
+    "PairLjCut",
+    "Potential",
+    "Potentials",
+    "WeightedTerms",
+    "intramolecular_pairs",
+]

@@ -8,26 +8,33 @@
 //!
 //! The facts are table-independent: `sb`/`db`/`ab`/`DL` mean the same thing in
 //! `ATOMTYPE_BCC.DEF` and in `ATOMTYPE_GAS.DEF`. That is what lets one engine
-//! walk every table.
+//! walk every table. The one exception is antechamber's own: under the AM1-BCC
+//! tables (BCC, ABCG2) `atomtype` perceives rings with the indole rule on.
+//!
+//! The ring facts (`RG*`, `NR`, `AR1` … `AR5`) are antechamber's rings and ring
+//! classes ([`perceive_ring_classes`]): every chordless ring of up to ten
+//! ring-capable atoms, not a smallest set, classed from connection counts and
+//! the perceived bond types — so anthracene's middle ring is AR1 whichever
+//! Kekulé structure it holds, and a ring through selenium is no ring.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use molrs::perceive::bond_type::BCC_BOND_TYPE;
-use molrs::perceive::rings::find_rings;
-use molrs::store::keys;
-use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic, Bond, BondId, Element};
+use molrs::core::PropValue;
+use molrs::core::keys;
+use molrs::core::keys::BCC_BOND_TYPE;
+use molrs::core::{Atomistic, Element, NodeId, Relation, RelationId};
+use molrs::perceive::perceive_ring_classes;
 
 use crate::ff::params::AtomProp;
 
 /// Pre-computed answers to every question an ATD rule can ask about an atom.
 ///
 /// All vectors are indexed by the atom's position in `mol.atoms()` order;
-/// [`MolFacts::index_of`] maps an [`AtomId`] onto that position.
+/// [`MolFacts::index_of`] maps an [`NodeId`] onto that position.
 #[derive(Debug, Clone)]
 pub(super) struct MolFacts {
     /// Atom id -> row index into every vector below.
-    pub(super) index: HashMap<AtomId, usize>,
+    pub(super) index: HashMap<NodeId, usize>,
     /// Atomic number.
     pub(super) atomic_number: Vec<u8>,
     /// Number of bonded neighbours.
@@ -41,16 +48,23 @@ pub(super) struct MolFacts {
     /// Ring / aromaticity / bond-order counts.
     pub(super) props: Vec<AtomPropertyFacts>,
     /// Neighbours as `(atom, antechamber bond type, bond)`.
-    pub(super) neighbors: Vec<Vec<(AtomId, i32, BondId)>>,
+    pub(super) neighbors: Vec<Vec<(NodeId, i32, RelationId)>>,
+    /// Every bond as `(first atom row, second atom row, antechamber bond type)`,
+    /// in graph bond order and with its endpoints in stored order — the bond
+    /// list antechamber's post-typing passes sweep.
+    pub(super) bonds: Vec<(usize, usize, i32)>,
 }
 
 impl MolFacts {
     /// Derive the facts of `mol`, whose bonds must already carry perceived
     /// antechamber bond types under [`BCC_BOND_TYPE`] (see
-    /// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types)).
-    pub(super) fn new(mol: &Atomistic) -> Result<Self, String> {
+    /// [`AtdTypifier::perceive_bond_types`](super::AtdTypifier::perceive_bond_types)).
+    ///
+    /// `bcc` — the table is an AM1-BCC one (BCC, ABCG2), for which `atomtype`
+    /// perceives rings with the indole rule on.
+    pub(super) fn new(mol: &Atomistic, bcc: bool) -> Result<Self, String> {
         let atom_ids: Vec<_> = mol.atoms().map(|(aid, _)| aid).collect();
-        let index: HashMap<AtomId, usize> = atom_ids
+        let index: HashMap<NodeId, usize> = atom_ids
             .iter()
             .copied()
             .enumerate()
@@ -70,6 +84,7 @@ impl MolFacts {
         }
 
         let mut neighbors = vec![Vec::new(); atom_ids.len()];
+        let mut bonds = Vec::new();
         for (bid, bond) in mol.bonds() {
             let bond_type = antechamber_bond_type(&bond)?;
             let a = bond.nodes[0];
@@ -78,6 +93,7 @@ impl MolFacts {
             let ib = index[&b];
             neighbors[ia].push((b, bond_type, bid));
             neighbors[ib].push((a, bond_type, bid));
+            bonds.push((ia, ib, bond_type));
         }
         let degree: Vec<usize> = neighbors.iter().map(Vec::len).collect();
         let mut hydrogen_count = vec![0; atom_ids.len()];
@@ -92,29 +108,28 @@ impl MolFacts {
             .map(|z| matches!(*z, 7 | 8 | 9 | 16 | 17 | 35 | 53))
             .collect();
 
-        let ring_info = find_rings(mol);
-        let mut props = vec![AtomPropertyFacts::default(); atom_ids.len()];
-        for ring in ring_info.rings() {
-            let size = ring.len();
-            let class = classify_ring(ring, &index, &atomic_number, &degree, &neighbors)?;
-            for aid in ring {
-                let p = &mut props[index[aid]];
-                p.rg[0] += 1;
-                if size < p.rg.len() {
-                    p.rg[size] += 1;
-                }
-                match class {
-                    RingClass::Ar1 => p.ar1 += 1,
-                    RingClass::Ar2 => p.ar2 += 1,
-                    RingClass::Ar3 => p.ar3 += 1,
-                    RingClass::Ar4 => p.ar4 += 1,
-                    RingClass::Ar5 => p.ar5 += 1,
-                }
-            }
-        }
-        for p in &mut props {
-            p.nr = usize::from(p.rg[0] == 0);
-        }
+        // antechamber's own rings and ring classes (`ring.c`), on the bond
+        // types just perceived — as `atomtype` runs `ringdetect` on the bond
+        // types `bondtype` wrote.
+        let con: Vec<Vec<usize>> = neighbors
+            .iter()
+            .map(|nbs| nbs.iter().map(|(nb, _, _)| index[nb]).collect())
+            .collect();
+        let rings = perceive_ring_classes(&atomic_number, &con, &bonds, bcc);
+        let mut props: Vec<AtomPropertyFacts> = rings
+            .atoms
+            .iter()
+            .map(|f| AtomPropertyFacts {
+                rg: f.rg,
+                nr: f.nr,
+                ar1: f.ar[0],
+                ar2: f.ar[1],
+                ar3: f.ar[2],
+                ar4: f.ar[3],
+                ar5: f.ar[4],
+                ..AtomPropertyFacts::default()
+            })
+            .collect();
         for (i, nbs) in neighbors.iter().enumerate() {
             for (_, bond_type, _) in nbs {
                 props[i].add_bond_type(*bond_type);
@@ -130,11 +145,12 @@ impl MolFacts {
             residue,
             props,
             neighbors,
+            bonds,
         })
     }
 
     /// The row index of `aid`.
-    pub(super) fn index_of(&self, aid: AtomId) -> Result<usize, String> {
+    pub(super) fn index_of(&self, aid: NodeId) -> Result<usize, String> {
         self.index
             .get(&aid)
             .copied()
@@ -146,7 +162,7 @@ impl MolFacts {
     /// The `.DEF` column counts the EW neighbours of the *attachment point*, not
     /// of the candidate itself — that is how a hydrogen learns about the
     /// substituents of the carbon it sits on.
-    pub(super) fn ewd_count_around_attachment(&self, aid: AtomId) -> Option<usize> {
+    pub(super) fn ewd_count_around_attachment(&self, aid: NodeId) -> Option<usize> {
         let i = self.index_of(aid).ok()?;
         let attached = self.neighbors[i].first()?.0;
         let j = self.index_of(attached).ok()?;
@@ -166,38 +182,39 @@ impl MolFacts {
 /// here, and [`AtomPropertyFacts::count`] hands out whichever the rule asked for.
 #[derive(Debug, Clone, Default)]
 pub(super) struct AtomPropertyFacts {
-    /// `rg[0]` = rings of any size; `rg[n]` = rings of size `n`.
-    rg: [usize; 12],
+    /// `rg[0]` = rings of any size; `rg[n]` = rings of size `n` (antechamber's
+    /// rings, see [`perceive_ring_classes`]).
+    rg: [i32; 11],
     /// `NR` — in no ring.
-    nr: usize,
+    nr: i32,
     /// `AR1` — rings of this atom that are pure aromatic (benzene, pyridine).
-    ar1: usize,
+    ar1: i32,
     /// `AR2` — planar rings of this atom with two continuous single bonds and at
     /// least two double bonds (imidazole, thiophene, pyrrole).
-    ar2: usize,
+    ar2: i32,
     /// `AR3` — planar rings of this atom whose double bonds are formed between
     /// ring atoms and non-ring atoms (a quinone, a pyridone).
-    ar3: usize,
+    ar3: i32,
     /// `AR4` — rings of this atom that are none of AR1, AR2, AR3 or AR5.
-    ar4: usize,
+    ar4: i32,
     /// `AR5` — pure aliphatic rings of this atom, made of sp3 carbon.
-    ar5: usize,
+    ar5: i32,
     /// `sb` — single bonds, aromatic and delocalized ones included.
-    sb: usize,
+    sb: i32,
     /// `SB` — single bonds, strictly.
-    sb_strict: usize,
+    sb_strict: i32,
     /// `db` — double bonds, aromatic and delocalized ones included.
-    db: usize,
+    db: i32,
     /// `DB` — double bonds, strictly.
-    db_strict: usize,
+    db_strict: i32,
     /// `tb` — triple bonds, aromatic ones included.
-    tb: usize,
+    tb: i32,
     /// `TB` — triple bonds, strictly.
-    tb_strict: usize,
+    tb_strict: i32,
     /// `AB` — aromatic bonds.
-    ab: usize,
+    ab: i32,
     /// `DL` — delocalized bonds.
-    dl: usize,
+    dl: i32,
 }
 
 impl AtomPropertyFacts {
@@ -236,8 +253,9 @@ impl AtomPropertyFacts {
         }
     }
 
-    /// How many times this atom satisfies `prop`.
-    pub(super) fn count(&self, prop: AtomProp) -> usize {
+    /// How many times this atom satisfies `prop` — negative only for an AR2
+    /// count the AM1-BCC indole rule took below zero, as antechamber's does.
+    pub(super) fn count(&self, prop: AtomProp) -> i32 {
         match prop {
             AtomProp::Rg => self.rg[0],
             AtomProp::Rg3 => self.rg[3],
@@ -266,174 +284,18 @@ impl AtomPropertyFacts {
     }
 }
 
-/// The class of a whole ring, as `ATOMTYPE_*.DEF`'s own header defines it.
-///
-/// The header (`AR1` … `AR5`, verbatim) is the specification:
-///
-/// * **AR1** — "Pure aromatic atom (such as benzene and pyridine)".
-/// * **AR2** — "Atom in a planar ring, usually the ring has two continuous
-///   single bonds and at least two double bonds".
-/// * **AR3** — "Atom in a planar ring, which has one or several double bonds
-///   formed between non-ring atoms and the ring atoms".
-/// * **AR4** — "Atom other than AR1, AR2, AR3 and AR5".
-/// * **AR5** — "Pure aliphatic atom in a ring, which is made of sp3 carbon".
-///
-/// The property is a fact about the **ring**, not about the atom: every atom of
-/// the ring gets the ring's class, and an atom in two rings is counted once per
-/// ring (`[2AR1]` is a rule a table may legitimately write).
-///
-/// The AR1/AR2 boundary is what separates benzene from imidazole, and it is the
-/// only place the five-membered heteroaromatics are visible: `ATOMTYPE_GFF.DEF`
-/// spells `ca` as `[AR1]` and `cc` as `[sb,db,AR2]`, so calling a pyrrole-type
-/// ring AR1 types thiophene's carbons `ca` where antechamber says `cc`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RingClass {
-    Ar1,
-    Ar2,
-    Ar3,
-    Ar4,
-    Ar5,
-}
-
-/// Which class `ring` belongs to.
-///
-/// `ring` is a closed path (consecutive atoms are bonded, and the last is bonded
-/// back to the first), which is what [`find_rings`] returns.
-fn classify_ring(
-    ring: &[AtomId],
-    index: &HashMap<AtomId, usize>,
-    atomic_number: &[u8],
-    degree: &[usize],
-    neighbors: &[Vec<(AtomId, i32, BondId)>],
-) -> Result<RingClass, String> {
-    let n = ring.len();
-    let members: HashSet<AtomId> = ring.iter().copied().collect();
-
-    // The bond joining ring[k] to ring[k + 1], wrapping at the end.
-    let mut ring_bonds = Vec::with_capacity(n);
-    for k in 0..n {
-        let a = ring[k];
-        let b = ring[(k + 1) % n];
-        let ia = *index
-            .get(&a)
-            .ok_or_else(|| format!("ring atom {a:?} is not in the molecule"))?;
-        let bond_type = neighbors[ia]
-            .iter()
-            .find(|(nb, _, _)| *nb == b)
-            .map(|(_, bond_type, _)| *bond_type)
-            .ok_or_else(|| format!("ring path is not closed: {a:?} is not bonded to {b:?}"))?;
-        ring_bonds.push(bond_type);
-    }
-
-    // AR1 — a *pure* aromatic ring: every bond aromatic, and every atom carrying
-    // one of the ring's double bonds. Benzene and pyridine alternate perfectly;
-    // imidazole's pyrrole-type N sits between two aromatic *single* bonds, which
-    // is precisely the "two continuous single bonds" AR2 names. An odd-membered
-    // ring can never alternate, so a 5-ring is never AR1 — as intended.
-    let aromatic_ring = ring_bonds.iter().all(|t| is_aromatic_bond_type(*t));
-    let mut carries_ring_double = vec![false; n];
-    for (k, bond_type) in ring_bonds.iter().enumerate() {
-        if is_double_bond_type(*bond_type) {
-            carries_ring_double[k] = true;
-            carries_ring_double[(k + 1) % n] = true;
-        }
-    }
-    if aromatic_ring && carries_ring_double.iter().all(|carries| *carries) {
-        return Ok(RingClass::Ar1);
-    }
-
-    let planar = ring
-        .iter()
-        .all(|aid| is_planar_ring_atom(*aid, index, atomic_number, neighbors));
-    if planar {
-        // AR3 before AR2: the header separates them by whether the ring's double
-        // bonds point *out* of the ring (a quinone, a pyridone), and a ring that
-        // has exocyclic double bonds usually has continuous single bonds too. The
-        // seven tables mirror every AR2 rule with an identical AR3 one, so this
-        // order is not observable through them — but the header's wording is, and
-        // it is what a future table would be written against.
-        let exocyclic_double = ring.iter().any(|aid| {
-            let i = index[aid];
-            neighbors[i]
-                .iter()
-                .any(|(nb, bond_type, _)| !members.contains(nb) && is_double_bond_type(*bond_type))
-        });
-        return Ok(if exocyclic_double {
-            RingClass::Ar3
-        } else {
-            RingClass::Ar2
-        });
-    }
-
-    // AR5 — "pure aliphatic ... made of sp3 carbon": cyclohexane, cyclopropane.
-    let aliphatic = ring.iter().all(|aid| {
-        let i = index[aid];
-        atomic_number[i] == 6 && degree[i] == 4
-    });
-    Ok(if aliphatic {
-        RingClass::Ar5
-    } else {
-        RingClass::Ar4
-    })
-}
-
-/// Is this ring atom planar — i.e. does it keep the ring flat?
-///
-/// Either it is sp2 itself (it carries an aromatic or double bond, whether
-/// inside the ring or hanging off it), or it is a heteroatom donating a lone
-/// pair into a neighbouring sp2 centre — the `N` of pyrrole, the `O` of furan,
-/// the `S` of thiophene, none of which carry a double bond of their own.
-///
-/// An sp3 carbon is neither, which is what keeps ethylene carbonate's ring
-/// (`-O-CH2-CH2-O-`) out of AR2 / AR3 despite its exocyclic `C=O`.
-fn is_planar_ring_atom(
-    aid: AtomId,
-    index: &HashMap<AtomId, usize>,
-    atomic_number: &[u8],
-    neighbors: &[Vec<(AtomId, i32, BondId)>],
-) -> bool {
-    let i = index[&aid];
-    if is_sp2(i, neighbors) {
-        return true;
-    }
-    let lone_pair_donor = matches!(atomic_number[i], 7 | 8 | 15 | 16);
-    lone_pair_donor
-        && neighbors[i]
-            .iter()
-            .any(|(nb, _, _)| is_sp2(index[nb], neighbors))
-}
-
-/// Does the atom at row `i` carry any bond that pins it into a plane?
-fn is_sp2(i: usize, neighbors: &[Vec<(AtomId, i32, BondId)>]) -> bool {
-    neighbors[i].iter().any(|(_, bond_type, _)| {
-        is_double_bond_type(*bond_type) || is_aromatic_bond_type(*bond_type)
-    })
-}
-
-/// Antechamber's aromatic bond types: 7 (aromatic single), 8 (aromatic double),
-/// 10 (the unresolved aromatic precursor).
-fn is_aromatic_bond_type(bond_type: i32) -> bool {
-    matches!(bond_type, 7 | 8 | 10)
-}
-
-/// A bond that makes both endpoints sp2: a plain double (2) or an aromatic
-/// double (8). Aromatic singles (7) and delocalized bonds (9) are not doubles —
-/// that distinction is exactly what the AR1/AR2 boundary rests on.
-fn is_double_bond_type(bond_type: i32) -> bool {
-    matches!(bond_type, 2 | 8)
-}
-
 /// The antechamber bond type a bond carries: 1 single, 2 double, 3 triple,
 /// 7/8/10 aromatic, 9 delocalized.
 ///
-/// Read from [`BCC_BOND_TYPE`] — the key
-/// [`Perceive::find_bond_types`](molrs::perceive::Perceive::find_bond_types) writes
+/// Read from [`BCC_BOND_TYPE`] — the key bond-type perception
+/// (`find_bond_types_from_connectivity`,
+/// [`assign_bcc_bond_types`](molrs::perceive::assign_bcc_bond_types)) writes
 /// it to — and **never** from the bond's `type`, which is the caller's and holds
 /// their force-field bond-type *name*.
 ///
 /// Shared with the BCC corrector, whose correction rows are keyed on the same
 /// integer. A bond without one is an error, never a guessed single bond.
-pub(crate) fn antechamber_bond_type(bond: &Bond) -> Result<i32, String> {
+pub(crate) fn antechamber_bond_type(bond: &Relation) -> Result<i32, String> {
     match bond.props.get(BCC_BOND_TYPE) {
         Some(PropValue::Int(v)) => Ok(*v),
         Some(PropValue::F64(v)) if (*v - v.round()).abs() < 1.0e-6 => Ok(v.round() as i32),

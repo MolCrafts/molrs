@@ -1,27 +1,30 @@
-//! OPLS 4-cosine (Fourier) proper dihedral:
-//!
-//! E(φ) = ½[ F1(1+cos φ) + F2(1−cos 2φ) + F3(1+cos 3φ) + F4(1−cos 4φ) ]
-//!
-//! This is the OPLS-AA torsion form (Jorgensen, Maxwell & Tirado-Rives,
-//! J. Am. Chem. Soc. 1996, 118, 11225). Coefficients F1..F4 are in kcal/mol.
-//! The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
-//! and coefficients, mirroring the MMFF torsion kernel.
+//! OPLS 4-cosine (Fourier) proper dihedral.
 
-use molrs::store::schema::block_names::DIHEDRALS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// OPLS 4-cosine proper dihedral with pre-resolved flat arrays.
-pub struct DihedralOPLS {
+///
+/// OPLS 4-cosine (Fourier) proper dihedral:
+///
+/// E(φ) = ½[ F1(1+cos φ) + F2(1−cos 2φ) + F3(1+cos 3φ) + F4(1−cos 4φ) ]
+///
+/// This is the OPLS-AA torsion form (Jorgensen, Maxwell & Tirado-Rives,
+/// J. Am. Chem. Soc. 1996, 118, 11225). Coefficients F1..F4 are in kcal/mol.
+/// The kernel is topology-blind: it consumes pre-resolved dihedral quadruples
+/// and coefficients, mirroring the MMFF torsion kernel.
+pub struct DihedralOpls {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
@@ -32,7 +35,7 @@ pub struct DihedralOPLS {
     f4: Vec<F>,
 }
 
-impl DihedralOPLS {
+impl DihedralOpls {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -69,7 +72,7 @@ impl DihedralOPLS {
     }
 }
 
-impl Potential for DihedralOPLS {
+impl Potential for DihedralOpls {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -88,7 +91,7 @@ impl Potential for DihedralOPLS {
     }
 }
 
-impl IndexedTerms for DihedralOPLS {
+impl IndexedTerms for DihedralOpls {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j, &self.atom_k, &self.atom_l])
     }
@@ -119,13 +122,13 @@ impl IndexedTerms for DihedralOPLS {
     }
 }
 
-/// Construct a [`DihedralOPLS`] from style params, per-type params (F1..F4),
+/// Construct a [`DihedralOpls`] from style params, per-type params (F1..F4),
 /// and a Frame's `"dihedrals"` block (`atomi/atomj/atomk/atoml/type`).
-pub fn dihedral_opls_ctor(
+pub fn dihedral_opls_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -173,41 +176,36 @@ pub fn dihedral_opls_ctor(
         aj.push(jc[idx] as usize);
         ak.push(kc[idx] as usize);
         al.push(lc[idx] as usize);
-        // A sparse term is common, so an individually missing coefficient is 0.
-        // A type carrying *none* of them is not sparse, it is mis-spelled or
-        // unparameterised — and defaulting the lot to zero used to make a whole
-        // torsion vanish in silence (molnex wrote `c1..c4`, this kernel read
-        // `f1..f4`). Canonical spelling is `k1..k4`; spec ff-params-01.
+        // Every coefficient is required, as LAMMPS's `dihedral_coeff` requires
+        // all four: reading a missing one as 0, or a mis-spelled bag
+        // (`c1..c4`), would make a whole torsion vanish in silence.
         // `Params` is flat scalars, so the multi-term `periodic` style spells
         // its terms `k{m}`/`periodicity{m}`/`phase{m}` — the same `k1..k4` keys
         // this style uses for the OPLS quartet, with a different meaning (LAMMPS
         // `K_n` already carries the 1/2). A bag that also names
         // `periodicity1`/`phase1` is a periodic bag on the wrong style, and
         // reading it here would price a plain barrier as a half barrier, silently.
-        if p.get("periodicity1").is_some() || p.get("phase1").is_some() {
-            return Err(format!(
-                "dihedral_opls: type '{}' carries periodicity1/phase1 — that is a \
-                 `dihedral_style periodic` term table, not the OPLS quartet; \
-                 declare the periodic style for it",
-                tc[idx]
-            ));
-        }
-        if ["k1", "k2", "k3", "k4"]
-            .iter()
-            .all(|key| p.get(key).is_none())
+        let label = tc[idx].as_str();
+        if let Some(key) = ["periodicity1", "phase1"]
+            .into_iter()
+            .find(|key| p.get(key).is_some())
         {
-            return Err(format!(
-                "dihedral_opls: type '{}' carries none of k1..k4; an OPLS torsion \
-                 with no coefficient at all is unparameterised, not sparse",
-                tc[idx]
-            ));
+            return Err(param_reads::bad(
+                "opls",
+                label,
+                key,
+                "is no `dihedral opls` parameter: the row is a `dihedral periodic` \
+                 term table; declare the periodic style for it",
+            )
+            .into());
         }
-        f1.push(p.get("k1").unwrap_or(0.0) as F);
-        f2.push(p.get("k2").unwrap_or(0.0) as F);
-        f3.push(p.get("k3").unwrap_or(0.0) as F);
-        f4.push(p.get("k4").unwrap_or(0.0) as F);
+        let need = |key: &str| param_reads::type_num("opls", label, p, key);
+        f1.push(need("k1")?);
+        f2.push(need("k2")?);
+        f3.push(need("k3")?);
+        f4.push(need("k4")?);
     }
-    Ok(Member::indexed(DihedralOPLS {
+    Ok(ForceTerm::indexed(DihedralOpls {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,
@@ -231,8 +229,8 @@ mod tests {
         vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, c, s]
     }
 
-    fn single(f1: F, f2: F, f3: F, f4: F) -> DihedralOPLS {
-        DihedralOPLS {
+    fn single(f1: F, f2: F, f3: F, f4: F) -> DihedralOpls {
+        DihedralOpls {
             atom_i: vec![0],
             atom_j: vec![1],
             atom_k: vec![2],

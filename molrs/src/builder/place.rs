@@ -1,28 +1,20 @@
 //! Placement of template copies: the [`Placer`] trait, the site-anchored
 //! [`SitePlacer`] and the chain-growing [`GrowthPlacer`].
-//!
-//! A placer answers one question for the
-//! [`Assembler`](crate::builder::Assembler): where does this copy go? It
-//! returns the copy's whole pose, a rigid motion ([`Rigid`], `p' = R p + t`)
-//! of the template, and may rotate as well as translate (operator,
-//! 2026-09-28: "the placer puts a fragment at a point"). The assembler calls
-//! it once per site, parents before children, so a placer can build on the
-//! copies already placed.
 
 use std::fmt;
 
-use crate::op::rigid::{Rigid, alignment, apply, axis_angle, compose};
-use crate::op::types::Vec3;
+use crate::core::CenterError;
+use crate::core::MolGraph;
+use crate::core::RelationId;
+use crate::op::Vec3;
 use crate::op::vec3::sub;
-use crate::spatial::geometry::CenterError;
-use crate::system::molgraph::MolGraph;
-use crate::system::port::PortId;
+use crate::op::{Rigid, alignment_axis_angle, axis_angle, compose_rigid, transform_point};
 
 /// The bond from a site to its already-placed parent.
 #[derive(Debug, Clone, Copy)]
 pub struct ParentJoin {
     /// This copy's port on the bond to the parent (a port of the template).
-    pub port: PortId,
+    pub port: RelationId,
     /// The parent copy's placed anchor on that bond (Å).
     pub anchor: Vec3,
     /// The parent copy's placed leaving-group handle on that bond (Å).
@@ -44,6 +36,14 @@ pub struct PlaceSite {
 
 /// Turns one template and one site into the copy's pose.
 ///
+/// A placer answers one question for the
+/// [`Assembler`](crate::builder::Assembler): where does this copy go? It
+/// returns the copy's whole pose, a rigid motion ([`Rigid`], `p' = R p + t`)
+/// of the template, and may rotate as well as translate (operator,
+/// 2026-09-28: "the placer puts a fragment at a point"). The assembler calls
+/// it once per site, parents before children, so a placer can build on the
+/// copies already placed.
+///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.
 pub trait Placer: Send + Sync {
@@ -59,7 +59,7 @@ pub trait Placer: Send + Sync {
 
 /// Puts each copy's centre of mass on its site.
 ///
-/// With the template's centre of mass `R_c` ([`center`](crate::spatial::geometry::center), Å), the
+/// With the template's centre of mass `R_c` ([`MolGraph::center`](crate::core::MolGraph::center), Å), the
 /// orienter's turn `T` (which fixes `R_c`) and the site position `p` (Å),
 /// the pose is `x ↦ T x + (p − R_c)`: turned, then moved so its centre of
 /// mass lands on `p`. This is the translation step of geometric backmapping
@@ -70,9 +70,9 @@ pub trait Placer: Send + Sync {
 ///
 /// ```
 /// use molrs::builder::{PlaceSite, Placer, SitePlacer};
-/// use molrs::op::rigid::Rigid;
-/// use molrs::store::keys;
-/// use molrs::system::atomistic::Atomistic;
+/// use molrs::op::Rigid;
+/// use molrs::core::keys;
+/// use molrs::core::Atomistic;
 ///
 /// // Two carbons 1.5 Å apart: the centre of mass is (0.75, 0, 0).
 /// let mut template = Atomistic::new();
@@ -108,14 +108,14 @@ impl Placer for SitePlacer {
         if !p.iter().all(|c| c.is_finite()) {
             return Err(PlaceError::NonFinitePoint);
         }
-        let center =
-            crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
-                .map_err(PlaceError::Template)?;
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
+            .map_err(PlaceError::Template)?;
         let shift = Rigid {
             rotation: Rigid::IDENTITY.rotation,
             translation: sub(p, center),
         };
-        Ok(compose(&shift, &site.turn))
+        Ok(compose_rigid(&shift, &site.turn))
     }
 }
 
@@ -135,11 +135,11 @@ impl Placer for SitePlacer {
 ///
 /// ```
 /// use molrs::builder::{GrowthPlacer, ParentJoin, PlaceSite, Placer};
-/// use molrs::op::rigid::{Rigid, apply};
-/// use molrs::store::keys;
-/// use molrs::system::bond::BondNumber;
-/// use molrs::system::atomistic::Atomistic;
-/// use molrs::system::port::PortKind;
+/// use molrs::op::{Rigid, transform_point};
+/// use molrs::core::keys;
+/// use molrs::core::BondNumber;
+/// use molrs::core::Atomistic;
+/// use molrs::core::PortKind;
 ///
 /// // C with its `<` hydrogen at +x.
 /// let mut unit = Atomistic::new();
@@ -157,7 +157,7 @@ impl Placer for SitePlacer {
 /// let pose = GrowthPlacer::new().place(unit.as_molgraph(), &site).unwrap();
 ///
 /// // The copy's C lands on the parent's handle, its H points back down.
-/// let (c_at, h_at) = (apply(&pose, [0.0; 3]), apply(&pose, [1.0, 0.0, 0.0]));
+/// let (c_at, h_at) = (transform_point(&pose, [0.0; 3]), transform_point(&pose, [1.0, 0.0, 0.0]));
 /// assert!((c_at[1] - 2.0).abs() < 1e-12 && (h_at[1] - 1.0).abs() < 1e-12);
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
@@ -204,10 +204,10 @@ impl Placer for GrowthPlacer {
                 .position()
                 .ok_or_else(|| PlaceError::Port("a port atom has no x/y/z".to_owned()))
         };
-        let a = apply(&site.turn, position(port.anchor)?);
-        let h = apply(&site.turn, position(port.handle)?);
+        let a = transform_point(&site.turn, position(port.anchor)?);
+        let h = transform_point(&site.turn, position(port.handle)?);
         let (from, to) = (sub(h, a), sub(join.anchor, join.handle));
-        let rotation = match alignment(from, to) {
+        let rotation = match alignment_axis_angle(from, to) {
             Some((axis, angle)) => axis_angle(axis, angle).expect("alignment gives a unit axis"),
             None if crate::op::vec3::normalize(from).is_some()
                 && crate::op::vec3::normalize(to).is_some() =>
@@ -220,12 +220,15 @@ impl Placer for GrowthPlacer {
                 ));
             }
         };
-        let turn_about_anchor = crate::op::rigid::about(rotation, a);
+        let turn_about_anchor = crate::op::rotation_about(rotation, a);
         let shift = Rigid {
             rotation: Rigid::IDENTITY.rotation,
             translation: sub(join.handle, a),
         };
-        Ok(compose(&shift, &compose(&turn_about_anchor, &site.turn)))
+        Ok(compose_rigid(
+            &shift,
+            &compose_rigid(&turn_about_anchor, &site.turn),
+        ))
     }
 }
 
@@ -265,19 +268,20 @@ impl std::error::Error for PlaceError {
 #[cfg(test)]
 mod tests {
     use super::{GrowthPlacer, ParentJoin, PlaceError, PlaceSite, Placer, SitePlacer};
-    use crate::op::rigid::{Rigid, about, apply};
-    use crate::spatial::geometry::CenterError;
-    use crate::store::keys;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::port::{PortId, PortKind};
+    use crate::core::Atomistic;
+    use crate::core::BondNumber;
+    use crate::core::CenterError;
+    use crate::core::PortKind;
+    use crate::core::RelationId;
+    use crate::core::keys;
+    use crate::op::{Rigid, rotation_about, transform_point};
 
     const TOL: f64 = 1e-12;
 
     /// Monomer M: C0 (0,0,0), C1 (1.5,0,0), H0 (−1,0,0), H1 (2.5,0,0); masses
     /// 12, 12, 1, 1 (or none). Centre of mass x = 19.5 / 26 = 0.75. Ports
     /// (C0, H0, `<`) and (C1, H1, `>`).
-    fn monomer(with_mass: bool) -> (Atomistic, PortId, PortId) {
+    fn monomer(with_mass: bool) -> (Atomistic, RelationId, RelationId) {
         let mut m = Atomistic::new();
         let mut ids = Vec::new();
         for (symbol, x, mass) in [
@@ -334,7 +338,7 @@ mod tests {
         let rz = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
         let turned = PlaceSite {
             position: Some([0.0; 3]),
-            turn: about(rz, [0.75, 0.0, 0.0]),
+            turn: rotation_about(rz, [0.75, 0.0, 0.0]),
             parent: None,
         };
         let pose = SitePlacer::new()
@@ -342,7 +346,7 @@ mod tests {
             .expect("placeable");
         // C1 (1.5,0,0) is 0.75 along +x of the centre: after the quarter turn
         // it sits 0.75 along +y of the site.
-        close(apply(&pose, [1.5, 0.0, 0.0]), [0.0, 0.75, 0.0]);
+        close(transform_point(&pose, [1.5, 0.0, 0.0]), [0.0, 0.75, 0.0]);
     }
 
     #[test]
@@ -389,8 +393,8 @@ mod tests {
         let pose = GrowthPlacer::new()
             .place(m.as_molgraph(), &site(None, Some(join)))
             .expect("joined");
-        close(apply(&pose, [0.0; 3]), [0.0, 0.0, 6.0]);
-        close(apply(&pose, [-1.0, 0.0, 0.0]), [0.0, 0.0, 5.0]);
+        close(transform_point(&pose, [0.0; 3]), [0.0, 0.0, 6.0]);
+        close(transform_point(&pose, [-1.0, 0.0, 0.0]), [0.0, 0.0, 5.0]);
     }
 
     #[test]

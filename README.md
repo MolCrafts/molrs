@@ -8,7 +8,7 @@
 <p><strong>Rust core for molecular modeling — data structures, I/O, and compute kernels, native and in the browser.</strong></p>
 
 <p>
-  <a href="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"><img src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI"></a>
+  <a href="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI"><img src="https://img.shields.io/github/actions/workflow/status/MolCrafts/molrs/test.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI"></a>
   <a href="https://crates.io/crates/molcrafts-molrs"><img src="https://img.shields.io/crates/v/molcrafts-molrs?style=flat-square&logo=rust&logoColor=white" alt="crates.io"></a>
   <a href="https://docs.rs/molcrafts-molrs"><img src="https://img.shields.io/docsrs/molcrafts-molrs?style=flat-square&logo=docsdotrs&logoColor=white" alt="docs.rs"></a>
   <a href="https://pypi.org/project/molcrafts-molrs/"><img src="https://img.shields.io/pypi/v/molcrafts-molrs?style=flat-square&logo=pypi&logoColor=white&label=PyPI" alt="PyPI"></a>
@@ -70,7 +70,7 @@ for all of them (`builder`, `io`, `smiles`, `signal`, `compute`, `voronoi`,
 drops `rayon` (wasm, Pyodide).
 
 ```toml
-molcrafts-molrs = { version = "0.15", features = ["io", "smiles", "conformer"] }
+molcrafts-molrs = { version = "0.16", features = ["io", "smiles", "conformer"] }
 ```
 
 | Environment | Install | Import / use |
@@ -126,7 +126,7 @@ name `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.SmilesIR('O').n_components)"
+python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
 ```
 
 **WASM / npm** is built with [wasm-pack](https://rustwasm.github.io/wasm-pack/),
@@ -146,10 +146,9 @@ documentation loop.
 
 ```rust
 use molrs::conformer::{Conformer, ConformerOptions};
-use molrs::io::smiles::{parse_smiles, to_atomistic};
+use molrs::io::read_smiles_str;
 
-let ir = parse_smiles("c1ccccc1").unwrap();          // benzene
-let mol = to_atomistic(&ir).unwrap();
+let mol = read_smiles_str("c1ccccc1").unwrap();      // benzene
 let (mol3d, _report) = Conformer::new(ConformerOptions::default()).generate(&mol).unwrap();
 ```
 
@@ -163,7 +162,6 @@ Python and JavaScript/TypeScript quickstarts live in the documentation.
 - [Task-oriented guides](https://docs.molcrafts.org/molpy/) — data model, SMILES, neighbor search, 3D embedding, force fields, I/O, trajectory analysis (molpy, the Python library built on molrs)
 - [Rust API reference](https://docs.rs/molcrafts-molrs) — full rustdoc on docs.rs
 - [Record files](https://docs.molcrafts.org/molrs/guides/records/) — saving frames, trajectories and force fields as `*.mrec`
-- [What's new in 0.15](https://docs.molcrafts.org/molrs/release-notes/) and the [migration guide](https://docs.molcrafts.org/molrs/migration/) — upgrading from 0.14
 
 ## MolCrafts ecosystem
 

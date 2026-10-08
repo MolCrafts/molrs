@@ -1,23 +1,21 @@
-//! Morse pair potential: E = D0 * ((1 - exp(-alpha*(r-r0)))^2 - 1)
-//!
-//! Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
-//! minimum is `-D0` at `r = r0`). Parameters per pair type: `D0`, `alpha`, `r0`.
+//! Morse pair potential (LAMMPS `pair_style morse`).
 
-use molrs::store::schema::block_names::PAIRS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
 use std::collections::HashMap;
 
-use crate::ff::forcefield::{Params, pair_key};
+use crate::ff::ir::{Params, pair_key};
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::atom_type_index;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
 use crate::ff::potential::pair::type_pair;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::op::F;
 
 /// Where a pair's Morse `(D₀, α, r₀)` comes from.
 enum Source {
@@ -48,8 +46,19 @@ enum Source {
     },
 }
 
+/// Morse pair potential (LAMMPS `pair_style morse`):
+/// E = d0 * ((1 - exp(-alpha*(r-r0)))^2 - 1) = d0 [e^{-2α(r-r0)} - 2e^{-α(r-r0)}]
+///
+/// Morse non-bonded form (note the `-1` offset vs the Morse bond, so the well
+/// minimum is `-d0` at `r = r0`). Parameters per pair type, as LAMMPS names
+/// them: `d0` (LAMMPS `D0`), `alpha`, `r0`. The compiled and the
+/// neighbour-driven constructors read the same keys, so one field prices
+/// under both.
 pub struct PairMorse {
     source: Source,
+    /// `cutoff²` (`r < cutoff`, as LAMMPS), at both compile doors; infinite
+    /// for a style that states no cutoff.
+    cutoff2: F,
 }
 
 impl PairMorse {
@@ -66,6 +75,7 @@ impl PairMorse {
         assert_eq!(alpha.len(), n);
         assert_eq!(r0.len(), n);
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Compiled {
                 atom_i,
                 atom_j,
@@ -97,6 +107,7 @@ impl PairMorse {
         );
         let n_owned = type_id.len();
         Self {
+            cutoff2: F::INFINITY,
             source: Source::Typed {
                 type_id,
                 ntypes,
@@ -106,6 +117,13 @@ impl PairMorse {
                 n_owned,
             },
         }
+    }
+
+    /// Price only pairs closer than `cutoff`: the style's, as LAMMPS
+    /// truncates, at both compile doors.
+    pub fn with_cutoff(mut self, cutoff: F) -> Self {
+        self.cutoff2 = cutoff * cutoff;
+        self
     }
 
     /// The pair term for one already-reduced separation.
@@ -174,6 +192,9 @@ impl PairMorse {
                 continue;
             }
             let (i, j, (d0, alpha, r0), disp, r2) = pair(idx);
+            if r2 >= self.cutoff2 {
+                continue;
+            }
             let Some((e, f)) = self.pair_kernel(r2, disp, d0, alpha, r0) else {
                 continue;
             };
@@ -301,11 +322,17 @@ impl PairDriven for PairMorse {
 }
 
 /// Construct a [`PairMorse`] from style params, type params, and Frame topology.
-pub fn pair_morse_ctor(
+///
+/// A pair's row is found from its two atoms' types — the self row, else the
+/// cross row (`morse` does not mix: neither is [`IrError::NoMixing`]) — as
+/// `pair_morse_typed_constructor` finds it and LAMMPS's `pair_coeff i j` states it.
+///
+/// [`IrError::NoMixing`]: crate::ff::ir::IrError::NoMixing
+pub fn pair_morse_constructor(
     style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. The energy is linear in this parameter, so scaling it is
@@ -324,48 +351,53 @@ pub fn pair_morse_ctor(
         .and_then(|c| c.as_uint())
         .ok_or_else(|| "PairMorse: pairs block missing \"atomj\" column".to_string())?;
     let is_14 = block.get("is_14").and_then(|c| c.as_bool());
-    let type_col = block
-        .get("type")
+    let atom_types = frame
+        .get(ATOMS)
+        .and_then(|b| b.get("type"))
         .and_then(|c| c.as_string())
-        .ok_or_else(|| "PairMorse: pairs block missing \"type\" column".to_string())?;
+        .ok_or_else(|| "PairMorse: atoms block missing \"type\" column".to_string())?;
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut dv, mut av, mut rv) = (Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("PairMorse type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("morse", label, p, key);
     for idx in 0..i_col.len() {
-        let label = &type_col[idx];
-        let p = type_map
-            .get(label.as_str())
-            .ok_or_else(|| format!("PairMorse: unknown pair type '{}'", label))?;
+        let (ta, tb) = (
+            atom_types[i_col[idx] as usize].as_str(),
+            atom_types[j_col[idx] as usize].as_str(),
+        );
+        let p = param_reads::unmixed_row("morse", "d0", &type_map, ta, tb)?;
+        let key = pair_key(ta, tb)?;
+        let label = &key;
         ai.push(i_col[idx] as usize);
         aj.push(j_col[idx] as usize);
         dv.push(if is_14.is_some_and(|b| b[idx]) {
-            need(p, "D0", label)? * scale_14
+            need(p, "d0", label)? * scale_14
         } else {
-            need(p, "D0", label)?
+            need(p, "d0", label)?
         });
         av.push(need(p, "alpha", label)?);
         rv.push(need(p, "r0", label)?);
     }
 
-    Ok(Member::pair(PairMorse::new(ai, aj, dv, av, rv)))
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS truncates every pair,
+    // 1-4 ones included; ∞ when it states none).
+    let cutoff = param_reads::pair_cutoff("morse", style_params)?;
+    Ok(ForceTerm::pair(
+        PairMorse::new(ai, aj, dv, av, rv).with_cutoff(cutoff),
+    ))
 }
 
 /// Construct a neighbour-driven [`PairMorse`] from per-atom parameters.
 ///
-/// The counterpart of [`pair_morse_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_morse_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn pair_morse_typed_ctor(
-    _style_params: &Params,
+pub fn pair_morse_typed_constructor(
+    style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
     let (type_id, labels) = atom_type_index(frame)?;
     let ntypes = labels.len();
@@ -375,28 +407,20 @@ pub fn pair_morse_typed_ctor(
     for ti in 0..ntypes {
         for tj in 0..ntypes {
             // Keyed in either order alike; a self-pair by the atom type alone.
-            let key = pair_key(&labels[ti], &labels[tj])?;
-            let p = type_map
-                .get(key.as_str())
-                .ok_or_else(|| format!("PairMorse: unknown pair type '{key}'"))?;
+            let (ta, tb) = (labels[ti].as_str(), labels[tj].as_str());
+            let p = param_reads::unmixed_row("morse", "d0", &type_map, ta, tb)?;
+            let key = pair_key(ta, tb)?;
             let t = type_pair(ti as u32, tj as u32, ntypes);
-            d0[t] = p
-                .get("d0")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'd0'"))?
-                as F;
-            alpha[t] = p
-                .get("alpha")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'alpha'"))?
-                as F;
-            r0[t] = p
-                .get("r0")
-                .ok_or_else(|| format!("PairMorse type '{key}': missing 'r0'"))?
-                as F;
+            d0[t] = param_reads::type_num("morse", &key, p, "d0")?;
+            alpha[t] = param_reads::type_num("morse", &key, p, "alpha")?;
+            r0[t] = param_reads::type_num("morse", &key, p, "r0")?;
         }
     }
-    Ok(Member::pair(PairMorse::typed(
-        type_id, ntypes, d0, alpha, r0,
-    )))
+    let kernel = PairMorse::typed(type_id, ntypes, d0, alpha, r0);
+    // The style's `cutoff` (`r < cutoff`, as LAMMPS): finite, for a
+    // neighbour sum is not finite without one.
+    let cutoff = param_reads::neighbour_cutoff("morse", style_params)?;
+    Ok(ForceTerm::pair(kernel.with_cutoff(cutoff)))
 }
 
 #[cfg(test)]
@@ -409,7 +433,7 @@ mod tests {
     /// scratch; the atoms' types survive it. That is the whole difference.
     #[test]
     fn a_type_table_scores_a_pair_exactly_as_compiled_rows() {
-        use crate::ff::potential::pair::testing::{
+        use crate::ff::potential::pair::fixtures::{
             assert_same, assert_virial_matches_forces, table_over,
         };
 

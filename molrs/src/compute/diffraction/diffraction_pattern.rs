@@ -4,41 +4,39 @@
 // also needs explicit row/column index ordering.
 #![allow(clippy::needless_range_loop)]
 
-//! 2-D diffraction pattern (FFT of a projected density image).
-//!
-//! Mirrors `freud.diffraction.DiffractionPattern`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/DiffractionPattern.cc)).
-//!
-//! Builds a 2-D Gaussian-smeared image of the projected particle positions,
-//! takes a 2-D FFT (composed from `rustfft`'s 1-D plans), and returns the
-//! power spectrum `|F(k)|²`. Projection axis defaults to `+z`, mapping
-//! particles onto the `xy` plane.
-//!
-//! This is the first analyzer in the port to use `rustfft 6` for real 2-D
-//! Fourier work; the FFT planner is built once per frame and reused for
-//! both row and column passes.
-//!
-//! # Conventions
-//!
-//! - The output image is FFT-shifted so that `k = 0` sits at the centre
-//!   `(n_grid / 2, n_grid / 2)`, matching freud (and the usual
-//!   `numpy.fft.fftshift` convention).
-//! - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
-//! - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
-
-use crate::compute::result::ComputeResult;
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::BoxKind;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 use ndarray::Array2;
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex as RfComplex;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 
 /// `DiffractionPattern` analyzer.
+///
+/// Mirrors `freud.diffraction.DiffractionPattern`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/DiffractionPattern.cc)).
+///
+/// Builds a 2-D Gaussian-smeared image of the projected particle positions,
+/// takes a 2-D FFT (composed from `rustfft`'s 1-D plans), and returns the
+/// power spectrum `|F(k)|²`. Projection axis defaults to `+z`, mapping
+/// particles onto the `xy` plane.
+///
+/// This is the first analyzer in the port to use `rustfft 6` for real 2-D
+/// Fourier work; the FFT planner is built once per frame and reused for
+/// both row and column passes.
+///
+/// # Conventions
+///
+/// - The output image is FFT-shifted so that `k = 0` sits at the centre
+///   `(n_grid / 2, n_grid / 2)`, matching freud (and the usual
+///   `numpy.fft.fftshift` convention).
+/// - Square grid `(n_grid × n_grid)`; rectangular grids are a follow-up.
+/// - Orthorhombic boxes only (matches `freud.DiffractionPattern.compute`).
 #[derive(Debug, Clone, Copy)]
 pub struct DiffractionPattern {
     n_grid: usize,
@@ -249,9 +247,9 @@ impl ComputeResult for DiffractionPatternResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {

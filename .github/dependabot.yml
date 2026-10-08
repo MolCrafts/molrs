@@ -11,6 +11,7 @@ updates:
       - "/molrs-wasm"
       - "/molrs-capi"
       - "/molrs-cxxapi"
+      - "/molrs-ext-example"
     schedule:
       interval: weekly
     target-branch: dev
@@ -23,6 +24,11 @@ updates:
     schedule:
       interval: weekly
     target-branch: dev
+    # maturin is the build backend ([build-system] requires, a range) as
+    # well as a dev tool; Dependabot's uv updater cannot move it and every
+    # attempt fails with "No files have changed!". Bump it by hand.
+    ignore:
+      - dependency-name: maturin
     groups:
       uv:
         patterns: ["*"]

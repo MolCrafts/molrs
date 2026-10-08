@@ -1,20 +1,17 @@
-//! UFF van der Waals: E = D · [(x/r)¹² − 2·(x/r)⁶] (RDKit `vdWContrib`).
-//!
-//! Per-instance columns on the `pairs` block: `xij`, `Dij` (baked by the
-//! typifier after the neighbour list is built — but the typifier only sets
-//! atom `x1`/`D1`; this ctor combines them geometrically like RDKit).
+//! UFF van der Waals (RDKit `vdWContrib`).
 
-use crate::ff::forcefield::Params;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::validate_coords;
 use crate::ff::potential::gather_copies;
-use crate::ff::potential::geometry::validate_coords;
 use crate::ff::potential::pair::energy_forces;
 use crate::ff::potential::pair::fold_chunks;
-use crate::ff::potential::{Member, PairDriven, Potential};
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ATOMS, PAIRS};
-use molrs::types::F;
+use crate::ff::potential::param_reads;
+use crate::ff::potential::{ForceTerm, PairDriven, Potential};
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::schema::block_names::{ATOMS, PAIRS};
+use molrs::op::F;
 
 /// Where a pair's `(xᵢⱼ, Dᵢⱼ)` comes from.
 enum Source {
@@ -40,11 +37,16 @@ enum Source {
     },
 }
 
-pub struct UffVdW {
+/// UFF van der Waals: E = D · [(x/r)¹² − 2·(x/r)⁶] (RDKit `vdWContrib`).
+///
+/// Per-instance columns on the `pairs` block: `xij`, `Dij` (baked by the
+/// typifier after the neighbour list is built — but the typifier only sets
+/// atom `x1`/`D1`; this ctor combines them geometrically like RDKit).
+pub struct PairUffVdw {
     source: Source,
 }
 
-impl UffVdW {
+impl PairUffVdw {
     /// Parameters combined against a fixed pair list.
     pub fn compiled(atom_i: Vec<usize>, atom_j: Vec<usize>, xij: Vec<F>, dij: Vec<F>) -> Self {
         assert_eq!(atom_i.len(), atom_j.len());
@@ -61,7 +63,7 @@ impl UffVdW {
     }
 
     /// Per-atom `x1`/`D1`, combined geometrically when a pair turns up — the
-    /// same rule [`uff_lj_ctor`] applies, and RDKit with it.
+    /// same rule [`pair_uff_vdw_constructor`] applies, and RDKit with it.
     pub fn typed(x1: Vec<F>, d1: Vec<F>) -> Self {
         assert_eq!(x1.len(), d1.len());
         let n_owned = x1.len();
@@ -167,7 +169,7 @@ impl UffVdW {
     }
 }
 
-impl Potential for UffVdW {
+impl Potential for PairUffVdw {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let _n = validate_coords(coords);
         let Source::Compiled {
@@ -198,7 +200,7 @@ impl Potential for UffVdW {
     }
 }
 
-impl PairDriven for UffVdW {
+impl PairDriven for PairUffVdw {
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -266,20 +268,14 @@ impl PairDriven for UffVdW {
     }
 }
 
-pub fn uff_lj_ctor(
+pub fn pair_uff_vdw_constructor(
     style_params: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms
-        .get("x1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms
-        .get("D1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.D1")?;
+    let x1 = param_reads::instance_col("uff_lj", atoms, "x1")?;
+    let d1 = param_reads::instance_col("uff_lj", atoms, "D1")?;
     // `PotentialCompiler::compile` projects the force field's `special_bonds` 1-4
     // weight here. `E = D·((x/r)¹² − 2(x/r)⁶)` is linear in `D`, so scaling
     // the well depth is exactly scaling the pair.
@@ -289,8 +285,8 @@ pub fn uff_lj_ctor(
         .get(PAIRS)
         .ok_or("uff_lj: missing pairs (call intramolecular_pairs first)")?;
     let is_14 = pairs.get("is_14").and_then(|c| c.as_bool());
-    if pairs.nrows().unwrap_or(0) == 0 {
-        return Ok(Member::pair(UffVdW::compiled(
+    if pairs.n_rows().unwrap_or(0) == 0 {
+        return Ok(ForceTerm::pair(PairUffVdw::compiled(
             vec![],
             vec![],
             vec![],
@@ -323,30 +319,26 @@ pub fn uff_lj_ctor(
             d
         });
     }
-    Ok(Member::pair(UffVdW::compiled(atom_i, atom_j, xij, dij)))
+    Ok(ForceTerm::pair(PairUffVdw::compiled(
+        atom_i, atom_j, xij, dij,
+    )))
 }
 
-/// Construct a neighbour-driven [`UffVdW`] from per-atom parameters.
+/// Construct a neighbour-driven [`PairUffVdw`] from per-atom parameters.
 ///
-/// The counterpart of [`uff_lj_ctor`]: the same force field, keyed on the atoms
+/// The counterpart of [`pair_uff_vdw_constructor`]: the same force field, keyed on the atoms
 /// instead of on a pair list, so it can answer for whatever pairs a neighbour
 /// search turns up. It reads no `pairs` block — there is none to read when the
 /// list is rebuilt every few steps.
-pub fn uff_lj_typed_ctor(
+pub fn pair_uff_vdw_typed_constructor(
     _style_params: &Params,
     _type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let atoms = frame.get(ATOMS).ok_or("uff_lj: missing atoms")?;
-    let x1 = atoms
-        .get("x1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.x1")?;
-    let d1 = atoms
-        .get("D1")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_lj: missing atoms.D1")?;
-    Ok(Member::pair(UffVdW::typed(
+    let x1 = param_reads::instance_col("uff_lj", atoms, "x1")?;
+    let d1 = param_reads::instance_col("uff_lj", atoms, "D1")?;
+    Ok(ForceTerm::pair(PairUffVdw::typed(
         x1.iter().map(|&v| v as F).collect(),
         d1.iter().map(|&v| v as F).collect(),
     )))
@@ -355,7 +347,7 @@ pub fn uff_lj_typed_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::pair::testing::{
+    use crate::ff::potential::pair::fixtures::{
         assert_same, assert_virial_matches_forces, table_over,
     };
 
@@ -387,8 +379,8 @@ mod tests {
             .iter()
             .map(|&(i, j)| ((d1[i] * d1[j]) as F).sqrt())
             .collect();
-        let compiled = UffVdW::compiled(ai, aj, xij, dij);
-        let typed = UffVdW::typed(x1, d1);
+        let compiled = PairUffVdw::compiled(ai, aj, xij, dij);
+        let typed = PairUffVdw::typed(x1, d1);
 
         let table = table_over(&coords, &links);
         assert_same(

@@ -1,7 +1,7 @@
 //! WASM bindings for [`Frame`] -- the top-level hierarchical data container.
 //!
 //! A `Frame` holds a collection of named [`Block`]s (e.g., `"atoms"`,
-//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::region::simbox::Box)
+//! `"bonds"`, `"angles"`) and an optional [`SimBox`](super::simbox::Box)
 //! defining periodic boundary conditions.
 //!
 //! # Typical block layout
@@ -33,8 +33,8 @@
 
 use wasm_bindgen::prelude::*;
 
-use molrs::store::block::Block as RsBlock;
-use molrs::store::meta::MetaValue;
+use molrs::core::Block as RsBlock;
+use molrs::core::MetaValue;
 use molrs_ffi::{BlockRef, FrameRef};
 
 use super::block::Block;
@@ -43,7 +43,7 @@ use super::js_err;
 /// Hierarchical data container mapping string keys to typed [`Block`]s.
 ///
 /// A `Frame` owns a set of named blocks (column stores) and an optional
-/// simulation box ([`Box`](super::region::simbox::Box)). This is the
+/// simulation box ([`Box`](super::simbox::Box)). This is the
 /// primary interchange type for molecular data in the WASM API.
 ///
 /// # Conventions
@@ -113,18 +113,18 @@ impl Frame {
     pub fn create_block(&self, key: &str) -> Result<Block, JsValue> {
         let rs_block = RsBlock::new();
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)?;
         let handle = self
             .inner
-            .store
+            .arena
             .borrow()
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
-            inner: BlockRef::new(self.inner.store.clone(), handle),
+            inner: BlockRef::new(self.inner.arena.clone(), handle),
         })
     }
 
@@ -141,7 +141,7 @@ impl Frame {
     ///
     /// ```js
     /// const x = frame.get("atoms").get("x");
-    /// const nBonds = frame.has("bonds") ? frame.get("bonds").nrows : 0;
+    /// const nBonds = frame.has("bonds") ? frame.get("bonds").nRows : 0;
     /// ```
     #[wasm_bindgen(js_name = get)]
     pub fn get(&self, key: &str) -> Result<Block, JsValue> {
@@ -150,12 +150,12 @@ impl Frame {
         }
         let handle = self
             .inner
-            .store
+            .arena
             .borrow()
             .get_block(self.inner.id, key)
             .map_err(js_err)?;
         Ok(Block {
-            inner: BlockRef::new(self.inner.store.clone(), handle),
+            inner: BlockRef::new(self.inner.arena.clone(), handle),
         })
     }
 
@@ -163,7 +163,7 @@ impl Frame {
     #[wasm_bindgen(js_name = has)]
     pub fn has(&self, key: &str) -> bool {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |f| f.contains_key(key))
             .unwrap_or(false)
@@ -187,7 +187,7 @@ impl Frame {
     pub fn set(&self, key: &str, block: &Block) -> Result<(), JsValue> {
         let rs_block = block.inner.clone_block().map_err(js_err)?;
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_block(self.inner.id, key, rs_block)
             .map_err(js_err)
@@ -207,7 +207,7 @@ impl Frame {
     #[wasm_bindgen(js_name = remove)]
     pub fn remove(&self, key: &str) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .remove_block(self.inner.id, key)
             .map_err(js_err)
@@ -227,7 +227,7 @@ impl Frame {
     #[wasm_bindgen(js_name = clear)]
     pub fn clear(&self) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .clear_frame(self.inner.id)
             .map_err(js_err)
@@ -257,34 +257,12 @@ impl Frame {
     #[wasm_bindgen(js_name = renameBlock)]
     pub fn rename_block(&self, old_key: &str, new_key: &str) -> Result<bool, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_mut(self.inner.id, |f| f.rename_block(old_key, new_key))
             .map_err(js_err)
     }
 
-    /// Read a per-frame metadata value as a numeric scalar.
-    ///
-    /// Returns `Some(v)` if the meta key exists AND its string value parses
-    /// as an `f64`. Returns `None` if the key is missing or the value is
-    /// non-numeric (e.g., `config="trans"`).
-    ///
-    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
-    /// scalar dtype and preserves compatibility with numeric strings written
-    /// through [`setMeta`](Self::set_meta).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
-    ///
-    /// # Example (JavaScript)
-    ///
-    /// ```js
-    /// const energy = frame.getMetaScalar("energy");
-    /// if (energy !== undefined) {
-    ///   console.log("Energy:", energy);
-    /// }
-    /// ```
     /// Read a per-frame metadata value that is a string.
     ///
     /// The counterpart of [`setMeta`](Self::set_meta), and the accessor for
@@ -311,7 +289,7 @@ impl Frame {
     #[wasm_bindgen(js_name = getMeta)]
     pub fn get_meta(&self, name: &str) -> Option<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame
@@ -323,10 +301,32 @@ impl Frame {
             .ok()?
     }
 
+    /// Read a per-frame metadata value as a numeric scalar.
+    ///
+    /// Returns `Some(v)` if the meta key exists AND its string value parses
+    /// as an `f64`. Returns `None` if the key is missing or the value is
+    /// non-numeric (e.g., `config="trans"`).
+    ///
+    /// Frame meta is typed (`MetaValue`). This accessor accepts every numeric
+    /// scalar dtype, and numeric strings written through
+    /// [`setMeta`](Self::set_meta).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — Meta key to look up (e.g., `"energy"`, `"temp"`).
+    ///
+    /// # Example (JavaScript)
+    ///
+    /// ```js
+    /// const energy = frame.getMetaScalar("energy");
+    /// if (energy !== undefined) {
+    ///   console.log("Energy:", energy);
+    /// }
+    /// ```
     #[wasm_bindgen(js_name = getMetaScalar)]
     pub fn get_meta_scalar(&self, name: &str) -> Option<f64> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.meta.get(name).and_then(|value| match value {
@@ -342,7 +342,7 @@ impl Frame {
             .ok()?
     }
 
-    /// Return the names of all metadata keys on this frame, in insertion order.
+    /// The metadata keys on this frame, in insertion order.
     ///
     /// Includes all keys regardless of whether their values are numeric
     /// or categorical. To filter to numeric keys, iterate and call
@@ -351,12 +351,12 @@ impl Frame {
     /// # Example (JavaScript)
     ///
     /// ```js
-    /// const names = frame.metaNames(); // e.g. ["energy", "config", "temp"]
+    /// const keys = frame.metaKeys(); // e.g. ["energy", "config", "temp"]
     /// ```
-    #[wasm_bindgen(js_name = metaNames)]
-    pub fn meta_names(&self) -> Vec<String> {
+    #[wasm_bindgen(js_name = metaKeys)]
+    pub fn meta_keys(&self) -> Vec<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.meta.keys().cloned().collect::<Vec<String>>()
@@ -375,7 +375,7 @@ impl Frame {
     #[wasm_bindgen(js_name = keys)]
     pub fn keys(&self) -> Vec<String> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, |frame| {
                 frame.keys().map(|k| k.to_string()).collect::<Vec<String>>()
@@ -407,12 +407,12 @@ impl Frame {
     #[wasm_bindgen(js_name = setMeta)]
     pub fn set_meta(&self, name: &str, value: &str) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
                 meta.insert(
                     name.to_string(),
-                    molrs::store::meta::MetaValue::String(value.to_string()),
+                    molrs::core::MetaValue::String(value.to_string()),
                 );
             })
             .map_err(js_err)
@@ -422,10 +422,10 @@ impl Frame {
     #[wasm_bindgen(js_name = setMetaScalar)]
     pub fn set_meta_scalar(&self, name: &str, value: f64) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .with_frame_meta_mut(self.inner.id, |meta| {
-                meta.insert(name.to_string(), molrs::store::meta::MetaValue::F64(value));
+                meta.insert(name.to_string(), molrs::core::MetaValue::F64(value));
             })
             .map_err(js_err)
     }
@@ -434,7 +434,7 @@ impl Frame {
     ///
     /// # Returns
     ///
-    /// The [`Box`](super::region::simbox::Box) if one has been set,
+    /// The [`Box`](super::simbox::Box) if one has been set,
     /// or `undefined` otherwise.
     ///
     /// # Example (JavaScript)
@@ -446,19 +446,19 @@ impl Frame {
     /// }
     /// ```
     #[wasm_bindgen(getter, js_name = box)]
-    pub fn get_box(&self) -> Option<super::region::simbox::Box> {
+    pub fn get_box(&self) -> Option<super::simbox::Box> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame_box(self.inner.id, |sb| {
-                sb.map(|s| super::region::simbox::Box { inner: s.clone() })
+                sb.map(|s| super::simbox::Box { inner: s.clone() })
             })
             .ok()?
     }
 
     /// Attach or detach a simulation box.
     ///
-    /// Pass a [`Box`](super::region::simbox::Box) to attach, or
+    /// Pass a [`Box`](super::simbox::Box) to attach, or
     /// `undefined`/`null` to detach.
     ///
     /// # Arguments
@@ -476,9 +476,9 @@ impl Frame {
     /// frame.simbox = Box.cube(10.0, origin, true, true, true);
     /// ```
     #[wasm_bindgen(setter, js_name = box)]
-    pub fn set_box(&self, simbox: Option<super::region::simbox::Box>) -> Result<(), JsValue> {
+    pub fn set_box(&self, simbox: Option<super::simbox::Box>) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .set_frame_box(self.inner.id, simbox.map(|b| b.inner))
             .map_err(js_err)
@@ -524,7 +524,7 @@ impl Frame {
     #[wasm_bindgen(js_name = drop)]
     pub fn drop_frame(&self) -> Result<(), JsValue> {
         self.inner
-            .store
+            .arena
             .borrow_mut()
             .frame_drop(self.inner.id)
             .map_err(js_err)
@@ -539,12 +539,12 @@ impl Default for Frame {
 
 /// Internal helpers (not exposed to JS).
 impl Frame {
-    pub(crate) fn from_rs(rs_frame: molrs::store::frame::Frame) -> Result<Self, JsValue> {
-        let store = molrs_ffi::new_shared();
-        let id = store.borrow_mut().frame_new();
-        store.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
+    pub(crate) fn from_rs(rs_frame: molrs::core::Frame) -> Result<Self, JsValue> {
+        let arena = molrs_ffi::FrameArenaCell::default();
+        let id = arena.borrow_mut().frame_new();
+        arena.borrow_mut().set_frame(id, rs_frame).map_err(js_err)?;
         Ok(Frame {
-            inner: FrameRef::new(store, id),
+            inner: FrameRef::new(arena, id),
         })
     }
 
@@ -554,10 +554,10 @@ impl Frame {
     /// immutably borrowed, so it must not attempt to mutate the store.
     pub(crate) fn with_frame<R>(
         &self,
-        f: impl FnOnce(&molrs::store::frame::Frame) -> Result<R, JsValue>,
+        f: impl FnOnce(&molrs::core::Frame) -> Result<R, JsValue>,
     ) -> Result<R, JsValue> {
         self.inner
-            .store
+            .arena
             .borrow()
             .with_frame(self.inner.id, f)
             .map_err(js_err)?
@@ -579,8 +579,8 @@ mod tests {
 
     /// Helper: build a wrapped `Frame` with two typed meta entries.
     fn frame_with_meta() -> Frame {
-        use molrs::store::meta::MetaValue;
-        let mut rs_frame = molrs::store::frame::Frame::new();
+        use molrs::core::MetaValue;
+        let mut rs_frame = molrs::core::Frame::new();
         rs_frame
             .meta
             .insert("energy".to_string(), MetaValue::F64(-1.23));
@@ -625,7 +625,7 @@ mod tests {
             .set("x", JsValue::from(x).unchecked_into(), None)
             .unwrap();
         // A second handle sees the write: `get` is not a copy.
-        assert_eq!(frame.get("atoms").unwrap().nrows().unwrap(), 2);
+        assert_eq!(frame.get("atoms").unwrap().n_rows().unwrap(), 2);
     }
 
     #[wasm_bindgen_test]
@@ -653,10 +653,10 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn meta_names_follow_insertion_order() {
+    fn meta_keys_follow_insertion_order() {
         let frame = frame_with_meta();
         assert_eq!(
-            frame.meta_names(),
+            frame.meta_keys(),
             vec!["energy".to_string(), "config".to_string()]
         );
     }

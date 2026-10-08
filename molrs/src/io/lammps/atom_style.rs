@@ -7,7 +7,7 @@
 //! Each style is a sequence of [`DataField`]s; optional trailing image flags
 //! (`nx ny nz`) are handled separately by the parser.
 
-pub(crate) use molrs::store::type_labels::is_int_token;
+pub(crate) use molrs::core::type_labels::is_int_token;
 
 /// One column in a data-file Atoms line (excluding optional image flags).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -396,13 +396,13 @@ pub(crate) fn layout_for_atom_style(style: &str) -> Option<AtomStyleLayout> {
 /// `min_cols`). Ambiguous counts that need a style comment (`body`/`sphere`
 /// at 7 cols) default to the most common molecular layouts.
 pub(crate) fn layout_from_column_count(n: usize) -> std::io::Result<AtomStyleLayout> {
-    use super::common::err_mapper;
+    use crate::io::invalid_data;
     match n {
         5 | 8 => Ok(layout(ATOMIC, false)),
         // charge vs molecular: disambiguated per-line by the data reader.
         6 | 9 => Ok(layout(CHARGE, false)),
         7 | 10 => Ok(layout(FULL, false)),
-        _ => Err(err_mapper(format!(
+        _ => Err(invalid_data(format!(
             "Invalid Atoms line: unsupported column count {n} without a known \
              atom_style comment (expected 5–10 for common styles, or a style \
              hint such as `Atoms # angle`)"
@@ -417,7 +417,7 @@ pub(crate) fn is_noninteger_float_token(token: &str) -> bool {
 
 /// Frame column key for a data-file Atoms field (canonical names where they exist).
 pub(crate) fn field_column_key(field: DataField) -> &'static str {
-    use molrs::store::keys;
+    use molrs::core::keys;
     match field {
         DataField::Id => keys::ID,
         // LAMMPS numbers its types; the label lives in `type`.

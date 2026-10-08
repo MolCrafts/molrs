@@ -21,7 +21,7 @@ Requires Python 3.12+.
 import molrs
 
 # SMILES → atomistic graph (class API under molrs.io)
-mol = molrs.io.SmilesIR("CCO").to_atomistic()
+mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
 
 # 3D coordinates
 from molrs.conformer import Conformer
@@ -29,40 +29,43 @@ from molrs.conformer import Conformer
 mol, report = Conformer().generate(mol)
 
 # Force field: typify → pairs → potentials
-from molrs.ff import (
-    MMFF94Typifier,
-    PotentialCompiler,
-    intramolecular_pairs,
-)
+from molrs.ff.typifier import Mmff94Typifier
+from molrs.ff.potential import intramolecular_pairs
+from molrs.ff.compile import PotentialCompiler
 
-typifier = MMFF94Typifier()
+typifier = Mmff94Typifier()
 typed = typifier.typify(mol)
 frame = typed.to_frame()
 ff = typifier.forcefield()  # a copy of exactly the types typify assigned
 frame["pairs"] = intramolecular_pairs(frame, ff)
 pots = PotentialCompiler(ff).compile(frame)
 energy, forces = pots.calc_energy_forces(frame)
-assert forces.shape == (frame["atoms"].nrows, 3)
+assert forces.shape == (frame["atoms"].n_rows, 3)
 ```
 
 ## Package layout
 
+The top level is the subsystems, exactly as the Rust crate's root is; every
+symbol has one path, named after its Rust owner (`molrs.core.Frame` is
+`molrs::core::Frame`).
+
 | Import | Owns |
 |--------|------|
-| `molrs` (top level) | Core: `Frame`, `Block`, `Atomistic`, `Box`, neighbors, … |
-| `molrs.io` | Readers/writers, `SmilesIR`, `*.mrec` record files (`write_mrec`, `read_mrec`, …) |
-| `molrs.io.mrec` | Streaming trajectories: `SequenceSchema`, `TrajectoryWriter`, `TrajectoryReader`, `pack` |
-| `molrs.ff` | Force fields, typifiers, potentials |
-| `molrs.compute` | RDF, MSD, transport, dielectric, … |
+| `molrs.core` | `Frame`, `Block`, `Trajectory`, frame metadata; `Box`, neighbour search, regions, `TriMesh`, `Trace`; `MolGraph`, `Atomistic`, `CoarseGrain` and their live views, `Element`, `Topology`; `Unit`, `Quantity`, `UnitPreset`, `UnitRegistry` |
+| `molrs.core.keys` / `.schema` / `.constants` | the column vocabulary, its specifications, and every physical and engine constant |
+| `molrs.io` | Every file reader and writer (structure, trajectory, force-field files, `*.mrec`, SMILES) as `read_<fmt>[_<what>]` / `write_<fmt>[_<what>]` (`_str` / `_bytes` in memory); each format's classes in its own submodule: `io.pdb`, `io.xyz`, `io.gro`, `io.dcd`, `io.trr`, `io.xtc`, `io.lammps`, `io.smiles`, `io.cgsmiles`, `io.mrec` |
+| `molrs.io.mrec` | `*.mrec` store pieces: streaming `SequenceSchema`, `MrecWriter`, `MrecReader`, `ForceFieldSection`, `section_names`, `pack_mrec_zip`, `validation` (whole records: `molrs.io.read_mrec_frame` / `write_mrec_frame` and partners) |
+| `molrs.ff.*` | `forcefield`, `potential`, `typifier`, `charge`, `ir`, `params`, `clpol_scaling` |
+| `molrs.optimize` | `Lbfgs`, `OptimizationReport` |
+| `molrs.md` | Integrators and the `MD` driver |
+| `molrs.compute` | RDF, MSD, transport, dielectric, … (flat) |
 | `molrs.conformer` | 3D generation |
-| `molrs.perceive` | Rings / aromaticity builder |
+| `molrs.perceive` | Rings, aromaticity, SMARTS, reactions |
+| `molrs.builder` | Structure builders, site-graph assembly, `Coarsener` |
 
 Analysis kernels take `dt` in the time unit of your trajectory, and
 time-valued results come back in that unit. MSD needs **unwrapped**
 coordinates. VACF is the unbiased \(C(\tau)\) used for Green–Kubo D and VDOS.
-
-Upgrading from 0.14? See the
-[migration guide](https://docs.molcrafts.org/molrs/migration/).
 
 ## Development
 

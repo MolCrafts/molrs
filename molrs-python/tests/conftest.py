@@ -18,13 +18,13 @@ import pytest
 @pytest.fixture
 def cubic_box():
     """A 10x10x10 cubic box."""
-    return molrs.Box.cube(10.0)
+    return molrs.core.Box.cube(10.0)
 
 
 @pytest.fixture
 def ortho_box():
     """A 5x10x15 orthorhombic box."""
-    return molrs.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
+    return molrs.core.Box.ortho(np.array([5.0, 10.0, 15.0], dtype=np.float64))
 
 
 @pytest.fixture
@@ -42,14 +42,14 @@ def sample_points():
     )
 
 
-def _water_frame(*, for_lammps: bool = False) -> molrs.Frame:
+def _water_frame(*, for_lammps: bool = False) -> molrs.core.Frame:
     """Minimal 3-atom frame with box.
 
     Keep columns minimal so writers (esp. extended XYZ) do not emit fields the
     matching reader cannot parse. LAMMPS data needs ``type`` (+ optional charge).
     """
-    f = molrs.Frame()
-    b = molrs.Block()
+    f = molrs.core.Frame()
+    b = molrs.core.Block()
     b.insert("symbol", ["O", "H", "H"])
     b.insert("x", np.array([0.0, 0.96, -0.24], dtype=np.float64))
     b.insert("y", np.array([0.0, 0.0, 0.93], dtype=np.float64))
@@ -63,12 +63,12 @@ def _water_frame(*, for_lammps: bool = False) -> molrs.Frame:
         b.insert("charge", np.array([-0.834, 0.417, 0.417], dtype=np.float64))
         b.insert("mol_id", np.array([1, 1, 1], dtype=np.uint32))
     f["atoms"] = b
-    f.box = molrs.Box.cube(10.0)
+    f.box = molrs.core.Box.cube(10.0)
     return f
 
 
 @pytest.fixture
-def water_frame() -> molrs.Frame:
+def water_frame() -> molrs.core.Frame:
     """Fresh water-like frame (callers may mutate)."""
     return _water_frame()
 
@@ -76,21 +76,21 @@ def water_frame() -> molrs.Frame:
 @pytest.fixture
 def water_xyz(tmp_path: Path) -> Path:
     path = tmp_path / "water.xyz"
-    molrs.io.raw.write_xyz(str(path), _water_frame())
+    molrs.io.write_xyz(str(path), _water_frame())
     return path
 
 
 @pytest.fixture
 def water_pdb(tmp_path: Path) -> Path:
     path = tmp_path / "water.pdb"
-    molrs.io.raw.write_pdb(str(path), _water_frame())
+    molrs.io.write_pdb(str(path), _water_frame())
     return path
 
 
 @pytest.fixture
 def water_gro(tmp_path: Path) -> Path:
     path = tmp_path / "water.gro"
-    molrs.io.raw.write_gro(str(path), _water_frame())
+    molrs.io.write_gro(str(path), _water_frame())
     return path
 
 
@@ -98,7 +98,7 @@ def water_gro(tmp_path: Path) -> Path:
 def water_dcd(tmp_path: Path) -> Path:
     path = tmp_path / "water.dcd"
     frame = _water_frame()
-    molrs.io.raw.write_dcd_trajectory(str(path), [frame, frame])
+    molrs.io.write_dcd_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -106,7 +106,7 @@ def water_dcd(tmp_path: Path) -> Path:
 def water_trr(tmp_path: Path) -> Path:
     path = tmp_path / "water.trr"
     frame = _water_frame()
-    molrs.io.raw.write_trr_trajectory(str(path), [frame, frame])
+    molrs.io.write_trr_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -114,7 +114,7 @@ def water_trr(tmp_path: Path) -> Path:
 def water_xtc(tmp_path: Path) -> Path:
     path = tmp_path / "water.xtc"
     frame = _water_frame()
-    molrs.io.raw.write_xtc_trajectory(str(path), [frame, frame])
+    molrs.io.write_xtc_trajectory(str(path), [frame, frame])
     return path
 
 
@@ -122,14 +122,14 @@ def water_xtc(tmp_path: Path) -> Path:
 def water_lammpstrj(tmp_path: Path) -> Path:
     path = tmp_path / "water.lammpstrj"
     frame = _water_frame(for_lammps=True)
-    molrs.io.raw.write_lammps_trajectory(str(path), [frame, frame])
+    molrs.io.write_lammps_dump_trajectory(str(path), [frame, frame])
     return path
 
 
 @pytest.fixture
 def water_lammps_data(tmp_path: Path) -> Path:
     path = tmp_path / "water.data"
-    molrs.io.raw.write_lammps_data(str(path), _water_frame(for_lammps=True))
+    molrs.io.write_lammps_data(str(path), _water_frame(for_lammps=True))
     return path
 
 
@@ -139,13 +139,13 @@ def make_frame(pts, box_len=10.0):
     Shared by test_compute.py and test_neighborlist.py — one Frame-construction
     contract, one home. Plain function (not a fixture) so helpers can call it.
     """
-    frame = molrs.Frame()
-    block = molrs.Block()
+    frame = molrs.core.Frame()
+    block = molrs.core.Block()
     block.insert("x", np.ascontiguousarray(pts[:, 0], dtype=np.float64))
     block.insert("y", np.ascontiguousarray(pts[:, 1], dtype=np.float64))
     block.insert("z", np.ascontiguousarray(pts[:, 2], dtype=np.float64))
     frame["atoms"] = block
-    frame.box = molrs.Box.cube(box_len)
+    frame.box = molrs.core.Box.cube(box_len)
     return frame
 
 

@@ -13,14 +13,16 @@
 //! query atom, so candidates are generated from the neighbourhood of the
 //! anchor's image.
 
-use crate::system::atomistic::{AtomId, Atomistic};
+use crate::core::Atomistic;
 
-use super::ast::{BondFacts, MolContext, RecursiveEval};
-use super::parser::QueryGraph;
+use crate::core::NodeId;
+
+use super::compile::QueryGraph;
+use super::predicate::{BondFacts, RecursiveEval, SmartsTarget};
 use super::{MatchOptions, SmartsMatch};
 
 /// Resolve bond facts between two molecule atoms, if they are bonded.
-fn bond_facts(ctx: &MolContext, a: AtomId, b: AtomId) -> Option<BondFacts> {
+fn bond_facts(ctx: &SmartsTarget, a: NodeId, b: NodeId) -> Option<BondFacts> {
     let mol = ctx.mol;
     for (bid, other) in mol.incident_bond_ids(a) {
         if other == b {
@@ -46,7 +48,7 @@ struct RecursiveEvaluator<'g> {
 }
 
 impl RecursiveEval for RecursiveEvaluator<'_> {
-    fn eval_recursive(&self, sub_index: usize, ctx: &MolContext, id: AtomId) -> bool {
+    fn eval_recursive(&self, sub_index: usize, ctx: &SmartsTarget, id: NodeId) -> bool {
         let sub = &self.recursives[sub_index];
         // The recursive subpattern matches iff it has at least one embedding
         // whose first query atom maps to `id` (RDKit roots `$(...)` at the
@@ -73,9 +75,9 @@ impl RecursiveEval for RecursiveEvaluator<'_> {
 /// map, and the search allocates only the two vectors below, once.
 fn enumerate_matches(
     query: &QueryGraph,
-    ctx: &MolContext,
-    root_fix: Option<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    ctx: &SmartsTarget,
+    root_fix: Option<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) {
     let n = query.atoms.len();
     if n == 0 {
@@ -84,14 +86,14 @@ fn enumerate_matches(
     let rec = RecursiveEvaluator {
         recursives: &query.recursives,
     };
-    let mut assign: Vec<Option<AtomId>> = vec![None; n];
-    let mut full: Vec<AtomId> = Vec::with_capacity(n);
+    let mut assign: Vec<Option<NodeId>> = vec![None; n];
+    let mut full: Vec<NodeId> = Vec::with_capacity(n);
     backtrack(query, ctx, &rec, root_fix, 0, &mut assign, &mut full, visit);
 }
 
 /// The earliest-placed query atom `qa` is bonded to, i.e. its lowest-indexed
-/// neighbour below `qa`. The parser always connects a new atom to a prior
-/// one, so every non-root atom has one.
+/// neighbour below `qa`. A compiled query is one connected pattern numbered
+/// in writing order, so every non-root atom has one.
 fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
     query
         .bonds
@@ -112,13 +114,13 @@ fn anchor_of(query: &QueryGraph, qa: usize) -> Option<usize> {
 #[allow(clippy::too_many_arguments)]
 fn backtrack(
     query: &QueryGraph,
-    ctx: &MolContext,
+    ctx: &SmartsTarget,
     rec: &dyn RecursiveEval,
-    root_fix: Option<AtomId>,
+    root_fix: Option<NodeId>,
     depth: usize,
-    assign: &mut [Option<AtomId>],
-    full: &mut Vec<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    assign: &mut [Option<NodeId>],
+    full: &mut Vec<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) -> bool {
     if depth == query.atoms.len() {
         full.clear();
@@ -160,14 +162,14 @@ fn backtrack(
 #[allow(clippy::too_many_arguments)]
 fn try_place(
     query: &QueryGraph,
-    ctx: &MolContext,
+    ctx: &SmartsTarget,
     rec: &dyn RecursiveEval,
-    root_fix: Option<AtomId>,
+    root_fix: Option<NodeId>,
     depth: usize,
-    cand: AtomId,
-    assign: &mut [Option<AtomId>],
-    full: &mut Vec<AtomId>,
-    visit: &mut dyn FnMut(&[AtomId]) -> bool,
+    cand: NodeId,
+    assign: &mut [Option<NodeId>],
+    full: &mut Vec<NodeId>,
+    visit: &mut dyn FnMut(&[NodeId]) -> bool,
 ) -> bool {
     if assign[..depth].contains(&Some(cand)) {
         return true;
@@ -205,17 +207,17 @@ fn try_place(
 /// Find every non-uniquified embedding of `query` in `mol`.
 pub fn find(query: &QueryGraph, mol: &Atomistic, options: MatchOptions<'_>) -> Vec<SmartsMatch> {
     let ctx = match options.labels {
-        Some(labels) => MolContext::with_labels(mol, labels),
-        None => MolContext::new(mol),
+        Some(labels) => SmartsTarget::with_labels(mol, labels),
+        None => SmartsTarget::new(mol),
     };
-    find_in_context(query, &ctx, options.root, options.limit)
+    find_in_target(query, &ctx, options.root, options.limit)
 }
 
-/// Match against a context already compiled for this molecular graph.
-pub(crate) fn find_in_context(
+/// Match against a target already perceived for this molecular graph.
+pub(crate) fn find_in_target(
     query: &QueryGraph,
-    ctx: &MolContext<'_>,
-    root: Option<AtomId>,
+    ctx: &SmartsTarget<'_>,
+    root: Option<NodeId>,
     limit: Option<usize>,
 ) -> Vec<SmartsMatch> {
     let Some(limit) = limit else {
@@ -250,8 +252,8 @@ pub fn has_match(query: &QueryGraph, mol: &Atomistic, mut options: MatchOptions<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::BondOrder;
     use crate::perceive::smarts::MatchOptions;
-    use crate::system::bond::BondType;
 
     /// Ethanol without hydrogens: C0–C1–O2, single bonds.
     fn ethanol() -> Atomistic {
@@ -265,8 +267,8 @@ mod tests {
     }
 
     fn matches(smarts: &str, mol: &Atomistic) -> Vec<Vec<usize>> {
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse(smarts).unwrap();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::compile::compile(smarts).unwrap();
         find(&q, mol, MatchOptions::default())
             .into_iter()
             .map(|m| {
@@ -283,8 +285,8 @@ mod tests {
     /// two-connected with one hydrogen, and the H still one-connected.
     #[test]
     fn a_port_is_not_counted_as_a_bond() {
-        use crate::system::bond::BondNumber;
-        use crate::system::port::PortKind;
+        use crate::core::BondNumber;
+        use crate::core::PortKind;
         let mut mol = ethanol();
         let o = mol.atoms().map(|(id, _)| id).nth(2).expect("O");
         let h = mol.add_atom_bare("H");
@@ -321,7 +323,7 @@ mod tests {
     fn bond_primitives_are_checked_against_the_molecule() {
         let mut mol = ethanol();
         let bonds: Vec<_> = mol.bonds().map(|(id, _)| id).collect();
-        mol.set_bond_type(bonds[1], BondType::Double).unwrap();
+        mol.set_bond_type(bonds[1], BondOrder::Double).unwrap();
         assert_eq!(matches("C=O", &mol).len(), 1);
         assert!(matches("C-O", &mol).is_empty());
         assert_eq!(matches("C~O", &mol).len(), 1, "`~` is any bond");
@@ -330,8 +332,8 @@ mod tests {
     #[test]
     fn a_root_pin_and_a_limit_narrow_the_enumeration() {
         let mol = ethanol();
-        let ids: Vec<AtomId> = mol.atoms().map(|(id, _)| id).collect();
-        let q = super::super::parser::parse("C").unwrap();
+        let ids: Vec<NodeId> = mol.atoms().map(|(id, _)| id).collect();
+        let q = super::super::compile::compile("C").unwrap();
         let rooted = find(
             &q,
             &mol,

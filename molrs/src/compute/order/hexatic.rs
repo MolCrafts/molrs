@@ -1,51 +1,14 @@
 //! Hexatic order parameter `ψ_k` for 2-D systems.
-//!
-//! Mirrors `freud.order.Hexatic`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/HexaticTranslational.cc)).
-//!
-//! For each particle `i` and a chosen integer rotational symmetry `k`
-//! (typically 6 for hexagonal lattices, 4 for square, 3 for triangular),
-//!
-//! ```text
-//!   ψ_k(i) = (1/N_i) Σ_{j ∈ neigh(i)} e^{i k θ_{ij}}
-//! ```
-//!
-//! where `N_i` is the number of neighbors of `i` and `θ_{ij}` is the in-plane
-//! angle in radians (`atan2(dy, dx)`) of the bond `r_j − r_i`. `ψ_k` is a
-//! dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
-//! bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
-//! (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
-//! orientation. Isolated particles get `|ψ_k| = 0`.
-//!
-//! The z-component of the bond vector is ignored — callers must arrange
-//! that the configuration is genuinely planar (typically `Lz = 1`,
-//! `pbc.z = false`).
-//!
-//! A self-query table is half-shell — it holds each bond once, as `(i, j)` with
-//! `i < j` — so the accumulator visits a pair once and updates *both*
-//! particles: from `j`'s side the same bond points the other way, `θ + π`, and
-//! `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
-//!
-//! # Required neighbor columns
-//!
-//! Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
-//! minimum-image displacement column `disp` (Å) — materialize it with
-//! [`NeighborsStorage::DISP`](molrs::spatial::neighbors::NeighborsStorage::DISP)
-//! or [`FULL`](molrs::spatial::neighbors::NeighborsStorage::FULL). A `DIST_SQ`
-//! or `INDICES_ONLY` table stores no directions and reads back `None` rather
-//! than zeros, so [`Hexatic::compute`](Compute::compute) answers
-//! [`ComputeError::BadShape`] naming the missing column instead of indexing an
-//! empty view.
 
-use crate::compute::result::ComputeResult;
-use molrs::math::complex::Complex;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::Complex;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::{require_disp, require_self_query};
 
 /// Hexatic order parameter calculator.
@@ -56,10 +19,47 @@ use crate::compute::{require_disp, require_self_query};
 /// a table without it is [`ComputeError::BadShape`], never a silent zero.
 ///
 /// Each table must also be a half-shell
-/// [`SelfQuery`](molrs::spatial::neighbors::QueryMode::SelfQuery): every row is
+/// [`SelfQuery`](molrs::core::QueryMode::SelfQuery): every row is
 /// visited once and credited to *both* of its particles, which double-counts on
-/// a [`CrossQuery`](molrs::spatial::neighbors::QueryMode::CrossQuery) table, so
+/// a [`CrossQuery`](molrs::core::QueryMode::CrossQuery) table, so
 /// that table is [`ComputeError::BadShape`] too.
+///
+/// Mirrors `freud.order.Hexatic`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/order/HexaticTranslational.cc)).
+///
+/// For each particle `i` and a chosen integer rotational symmetry `k`
+/// (typically 6 for hexagonal lattices, 4 for square, 3 for triangular),
+///
+/// ```text
+///   ψ_k(i) = (1/N_i) Σ_{j ∈ neigh(i)} e^{i k θ_{ij}}
+/// ```
+///
+/// where `N_i` is the number of neighbors of `i` and `θ_{ij}` is the in-plane
+/// angle in radians (`atan2(dy, dx)`) of the bond `r_j − r_i`. `ψ_k` is a
+/// dimensionless complex number with `|ψ_k| ≤ 1`: the magnitude is 1 when the
+/// bonds sit at perfect `2π/k` spacing and 0 when their `k`-fold phases cancel
+/// (four bonds at 90° give `|ψ_6| = 0`), and the argument is the local lattice
+/// orientation. Isolated particles get `|ψ_k| = 0`.
+///
+/// The z-component of the bond vector is ignored — callers must arrange
+/// that the configuration is genuinely planar (typically `Lz = 1`,
+/// `pbc.z = false`).
+///
+/// A self-query table is half-shell — it holds each bond once, as `(i, j)` with
+/// `i < j` — so the accumulator visits a pair once and updates *both*
+/// particles: from `j`'s side the same bond points the other way, `θ + π`, and
+/// `e^{i k (θ + π)} = (−1)^k e^{i k θ}`.
+///
+/// # Required neighbor columns
+///
+/// Only the bond *direction* enters `ψ_k`, so the neighbor table must carry the
+/// minimum-image displacement column `disp` (Å) — materialize it with
+/// [`NeighborColumns::DISP`](molrs::core::NeighborColumns::DISP)
+/// or [`FULL`](molrs::core::NeighborColumns::FULL). A `DIST_SQ`
+/// or `INDICES_ONLY` table stores no directions and reads back `None` rather
+/// than zeros, so [`Hexatic::compute`](Compute::compute) answers
+/// [`ComputeError::BadShape`] naming the missing column instead of indexing an
+/// empty view.
 #[derive(Debug, Clone, Copy)]
 pub struct Hexatic {
     k: u32,
@@ -200,10 +200,10 @@ impl ComputeResult for HexaticResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
@@ -324,10 +324,10 @@ mod tests {
     /// The pairs are the regular hexagon's own bonds, hard-coded rather than
     /// searched: centre 0 bonded to its six ring neighbours 1..=6 at unit
     /// distance and angles `2πk/6`. All satisfy `i < j`, so
-    /// `SelfQuery { num_points: 7 }` is a legal label.
+    /// `SelfQuery { n_points: 7 }` is a legal label.
     #[test]
     fn hexatic_indices_only_neighbors_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = hex_environment(20.0);
         let pairs: Vec<NeighborPair> = (0..6u32)
@@ -343,8 +343,8 @@ mod tests {
             .collect();
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::INDICES_ONLY,
-            QueryMode::SelfQuery { num_points: 7 },
+            NeighborColumns::INDICES_ONLY,
+            QueryMode::SelfQuery { n_points: 7 },
         );
         assert_eq!(
             nl.n_pairs(),
@@ -382,7 +382,7 @@ mod tests {
     /// `disp` stays `r_j − r_i`, so the reversed row carries `−disp`.
     #[test]
     fn hexatic_cross_query_table_is_bad_shape() {
-        use molrs::spatial::neighbors::{NeighborPair, NeighborsStorage, QueryMode};
+        use molrs::core::{NeighborColumns, NeighborPair, QueryMode};
 
         let frame = hex_environment(20.0);
         let mut pairs: Vec<NeighborPair> = Vec::with_capacity(12);
@@ -405,10 +405,10 @@ mod tests {
         }
         let nl = Neighbors::from_pairs(
             pairs,
-            NeighborsStorage::FULL,
+            NeighborColumns::FULL,
             QueryMode::CrossQuery {
-                num_query_points: 7,
-                num_points: 7,
+                n_query_points: 7,
+                n_points: 7,
             },
         );
         assert_eq!(nl.n_pairs(), 12, "the guard must see a non-empty table");

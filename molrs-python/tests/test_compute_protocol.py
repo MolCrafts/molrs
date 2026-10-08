@@ -16,21 +16,14 @@ class TestComputeProtocol:
         assert isinstance(OnlyCompute(), Compute)
 
     def test_kernels_satisfy_the_protocol_without_modification(self) -> None:
-        # Kernels live in the subpackages, one per molrs::compute domain.
+        # Every analysis is `molrs.compute.<Name>`, as the Rust facade is flat.
         satisfied = 0
-        for sub in (
-            getattr(molrs.compute, n)
-            for n in dir(molrs.compute)
-            if not n.startswith("_")
-        ):
-            if not hasattr(sub, "__dict__"):
-                continue
-            for name in dir(sub):
-                obj = getattr(sub, name, None)
-                if isinstance(obj, type) and callable(getattr(obj, "compute", None)):
-                    # Instantiate is not required: the protocol is structural on instances.
-                    # Check the class itself declares compute.
-                    satisfied += 1
+        for name in molrs.compute.__all__:
+            obj = getattr(molrs.compute, name)
+            if isinstance(obj, type) and callable(getattr(obj, "compute", None)):
+                # Instantiate is not required: the protocol is structural on
+                # instances. Check the class itself declares compute.
+                satisfied += 1
         assert satisfied >= 1
 
     def test_contract_is_compute_only(self) -> None:

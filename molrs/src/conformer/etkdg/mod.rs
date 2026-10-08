@@ -5,34 +5,35 @@
 //! 2004-2025 Greg Landrum / Sereina Riniker and other RDKit contributors)
 //! wired onto MolCrafts' own constraint generator (`crate::conformer::distgeom`,
 //! ETKDGv3 bounds + experimental torsions + chiral sets) and the MMFF94
-//! force field (`molrs::ff::mmff`) for the second-stage cleanup.
+//! force field (`molrs::ff::typifier::mmff`) for the second-stage cleanup.
 //!
 //! ## Stages (mapped onto the public `StageKind` variants)
 //! 1. `Preprocess`    — optional hydrogen addition.
 //! 2. `BuildInitial`  — `build_constraints` → metrization sample → 4D
 //!    eigenvalue embedding (`embed4d`).
 //! 3. `CoarseOptimize`— first-stage 4D distance/chiral/fourth-dim minimization
-//!    then 3D experimental-torsion refinement (`etmin`).
+//!    then 3D experimental-torsion refinement (`torsion_refinement`).
 //! 4. `FinalOptimize` — second-stage MMFF94 energy minimization (`molrs::ff`).
 //! 5. `StereoCheck`   — chiral-volume sign verification (no inversion).
 //!
 //! The maxIterations retry loop + `useRandomCoords` fallback live in `retry`.
 
 mod embed4d;
-mod etmin;
 mod retry;
+mod torsion_refinement;
 
 use rand::{SeedableRng, random, rngs::StdRng};
 
-use crate::conformer::distgeom::{self, ChiralSign, DgConstraints, EtkdgVersion};
-use crate::conformer::options::{ConformerOptions, ForceFieldKind};
-use crate::conformer::report::{ConformerReport, ConformerStageReport, StageKind};
-use molrs::error::MolRsError;
-use molrs::ff::potential::{PotentialCompiler, intramolecular_pairs};
+use crate::conformer::distgeom::{self, ChiralSign, DgConstraints};
+use crate::conformer::{ConformerOptions, ForceFieldKind};
+use crate::conformer::{ConformerReport, ConformerStageReport, StageKind};
+use molrs::core::Atomistic;
+use molrs::core::MolRsError;
+use molrs::ff::compile::PotentialCompiler;
+use molrs::ff::potential::intramolecular_pairs;
 use molrs::ff::typifier::Typing;
-use molrs::ff::typifier::mmff::MMFF94Typifier;
-use molrs::perceive::hydrogens::add_hydrogens;
-use molrs::system::atomistic::Atomistic;
+use molrs::ff::typifier::mmff::Mmff94Typifier;
+use molrs::perceive::add_hydrogens;
 
 /// Embedding dimension for the first stage (RDKit ETKDG uses 4D).
 const EMBED_DIM: usize = 4;
@@ -40,13 +41,17 @@ const EMBED_DIM: usize = 4;
 /// `checkChiralCenters` 0.8 threshold).
 const CHIRAL_RATIO_TOL: f64 = 0.8;
 
+/// Per-atom energy threshold above which the first minimization is rejected
+/// (RDKit `MAX_MINIMIZED_E_PER_ATOM`).
+const MAX_MEAN_ATOM_ENERGY: f64 = 0.05;
+
 /// Run the ETKDGv3 embedding pipeline and return the molecule with 3D
 /// coordinates plus a stage report.
 ///
 /// `mol` is treated as a connectivity graph; any pre-existing 3D coordinates
 /// are used only to seed chiral-volume signs (so a stereochemically-defined
 /// input keeps its handedness) and are otherwise overwritten.
-pub fn generate_3d_impl(
+pub(crate) fn generate_3d_impl(
     mol: &Atomistic,
     opts: &ConformerOptions,
 ) -> Result<(Atomistic, ConformerReport), MolRsError> {
@@ -56,7 +61,7 @@ pub fn generate_3d_impl(
         ));
     }
 
-    let mut report = ConformerReport::new(ForceFieldKind::MMFF94);
+    let mut report = ConformerReport::new(ForceFieldKind::Mmff94);
 
     let seed = opts.rng_seed.unwrap_or_else(random::<u64>);
     if opts.rng_seed.is_none() {
@@ -79,8 +84,7 @@ pub fn generate_3d_impl(
     // three-table set (v2 ++ small-rings ++ macrocycles) matched by the core
     // SMARTS engine (`molrs::perceive::smarts`), reproducing RDKit
     // `getExperimentalTorsions`. See `distgeom::torsion_prefs`.
-    let version = EtkdgVersion::Etkdgv3;
-    let constraints = distgeom::DgConstraints::from_graph(&work, version)?;
+    let constraints = distgeom::DgConstraints::from_graph(&work)?;
 
     let mut embedding = run_embedding(&constraints, n, seed, opts, &mut report);
     let mut coords3d = match embedding.best.take() {
@@ -98,7 +102,7 @@ pub fn generate_3d_impl(
 
     // --- Write coordinates back ------------------------------------------
     let mut out = work;
-    write_coords(&mut out, &coords3d)?;
+    apply_coords(&mut out, &coords3d)?;
     report.final_energy = final_energy.or(Some(embedding.coarse_energy));
     Ok((out, report))
 }
@@ -298,7 +302,7 @@ fn run_stereo_check(constraints: &DgConstraints, coords3d: &[f64], report: &mut 
         if c.sign == ChiralSign::Unknown {
             continue;
         }
-        let vol = etmin::calc_chiral_volume(coords3d, c.neighbors, 3);
+        let vol = distgeom::chiral_volume(coords3d, c.neighbors, 3);
         let target_positive = matches!(c.sign, ChiralSign::Positive);
         let got_positive = vol > 0.0;
         if target_positive != got_positive
@@ -350,18 +354,19 @@ fn try_embed<R: rand::Rng + ?Sized>(
 
     // First minimization: distance + chiral + 4th-dimension (RDKit
     // firstMinimization, weightChiral=1.0, weightFourthDim=0.1).
-    let field1 = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
-    let (e1, _c1, s1) = etmin::minimize(&mut coords4d, 400, 1e-3, |p, g| field1.energy_grad(p, g));
+    let field1 = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 1.0, 0.1);
+    let stage1 = minimize(&mut coords4d, 400, |p, g| field1.energy_grad(p, g));
+    let (e1, s1) = (stage1.final_energy, stage1.n_steps);
     // Reject obviously-bad first minimizations (RDKit github #971,
     // `MAX_MINIMIZED_E_PER_ATOM`). Random-coords fallback skips this gate.
-    if !use_random_coords && e1 / (n as f64) >= etmin::MAX_MINIMIZED_E_PER_ATOM {
+    if !use_random_coords && e1 / (n as f64) >= MAX_MEAN_ATOM_ENERGY {
         return (None, s1, e1, 0, false, false);
     }
 
     // Fourth-dimension squeeze (RDKit minimizeFourthDimension, weightChiral=0.2,
     // weightFourthDim=1.0) to collapse 4D → 3D.
-    let field1b = etmin::FirstStageField::build(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
-    let _ = etmin::minimize(&mut coords4d, 200, 1e-3, |p, g| field1b.energy_grad(p, g));
+    let field1b = distgeom::ViolationEnergy::new(bounds, &constraints.chiral, EMBED_DIM, 0.2, 1.0);
+    let _ = minimize(&mut coords4d, 200, |p, g| field1b.energy_grad(p, g));
 
     // Project to 3D (drop the 4th component).
     let mut coords3d = vec![0.0; n * 3];
@@ -373,17 +378,21 @@ fn try_embed<R: rand::Rng + ?Sized>(
 
     // Second stage: 3D experimental-torsion refinement (RDKit
     // minimizeWithExpTorsions / construct3DForceField).
-    let field2 = etmin::ExpTorsionField::build(
+    let field2 = torsion_refinement::TorsionRefinement::build(
         bounds,
-        &constraints.experimental_torsions,
+        constraints
+            .experimental_torsions
+            .iter()
+            .chain(&constraints.flat_ring_torsions),
         &constraints.improper,
     );
-    let (e2, c2, s2) = etmin::minimize(&mut coords3d, 300, 1e-3, |p, g| field2.energy_grad(p, g));
+    let stage2 = minimize(&mut coords3d, 300, |p, g| field2.energy_grad(p, g));
+    let (e2, s2, c2) = (stage2.final_energy, stage2.n_steps, stage2.converged);
 
     // Chiral check.
     let mut chiral_pass = true;
     for c in &constraints.chiral {
-        let vol = etmin::calc_chiral_volume(&coords3d, c.neighbors, 3);
+        let vol = distgeom::chiral_volume(&coords3d, c.neighbors, 3);
         let lb = c.volume_lower;
         let ub = c.volume_upper;
         if (lb > 0.0 && vol < lb && (vol / lb < CHIRAL_RATIO_TOL || have_opposite_sign(vol, lb)))
@@ -399,6 +408,23 @@ fn try_embed<R: rand::Rng + ?Sized>(
     (Some(coords3d), s1, e2, s2, c2, chiral_pass)
 }
 
+/// Minimize one distance-geometry objective with the crate's L-BFGS
+/// ([`crate::optimize::minimize_lbfgs_rms`]) to RDKit's embedding force
+/// tolerance (1e-3 RMS gradient). `objective` returns the energy and fills
+/// the gradient; L-BFGS takes forces, so the gradient is negated here.
+fn minimize(
+    coords: &mut [f64],
+    max_iters: usize,
+    objective: impl Fn(&[f64], &mut [f64]) -> f64,
+) -> crate::optimize::OptimizationReport {
+    crate::optimize::minimize_lbfgs_rms(coords, max_iters, 1e-3, |p| {
+        let mut grad = vec![0.0; p.len()];
+        let energy = objective(p, &mut grad);
+        grad.iter_mut().for_each(|g| *g = -*g);
+        (energy, grad)
+    })
+}
+
 /// RDKit `haveOppositeSign`.
 fn have_opposite_sign(a: f64, b: f64) -> bool {
     a.is_sign_negative() ^ b.is_sign_negative()
@@ -408,18 +434,17 @@ fn have_opposite_sign(a: f64, b: f64) -> bool {
 /// converged)`. Errors (as a message) if the molecule has no MMFF typing.
 ///
 /// Runs the standard route — typify → `Frame` → `PotentialCompiler::compile` — the
-/// same one every other force field in molrs goes through. (It used to call a
-/// bespoke `MmffForceField` energy assembly, a second implementation of the seven
-/// MMFF terms that `ff::potential::*::mmff` already provides; that layer is gone.)
+/// same one every other force field in molrs goes through, so the seven MMFF
+/// terms come from `ff::potential::*::mmff` and nowhere else.
 fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bool), String> {
     // Write current coords so MMFF setup that consults geometry sees them.
     let mut staged = mol.clone();
-    write_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
+    apply_coords(&mut staged, coords3d).map_err(|e| e.to_string())?;
 
     // A fresh typing per call: its output holds exactly this molecule's types.
-    // `MMFF94Typifier::new` shares the process-wide memoised MMFF94 library, so
+    // `Mmff94Typifier::new` shares the process-wide memoised MMFF94 library, so
     // this costs no parameter assembly.
-    let mut typing = Typing::new(MMFF94Typifier::new());
+    let mut typing = Typing::new(Mmff94Typifier::new());
     let mut frame = typing
         .typify(&staged)?
         .to_frame()
@@ -431,18 +456,19 @@ fn mmff_cleanup(mol: &Atomistic, coords3d: &mut [f64]) -> Result<(f64, usize, bo
     // than from an assumption about them.
     let ff = typing.forcefield();
     frame.insert("pairs", intramolecular_pairs(&frame, ff.special_bonds())?);
-    let potentials = PotentialCompiler::new(ff).compile(&frame)?;
+    let potentials = PotentialCompiler::new(ff)
+        .compile(&frame)
+        .map_err(|e| e.to_string())?;
 
     // RDKit's MMFFOptimizeMolecule runs a full BFGS minimization to a
     // gradient-norm tolerance. Mirror that with L-BFGS to an RMS-gradient
     // convergence of 1e-3 kcal/mol/Å (matching RDKit's default
     // `MMFFOptimizeMolecule` grad tol) under a generous iteration cap, so the
     // freshly-embedded geometry is relaxed all the way to the MMFF minimum.
-    let (e, _grad_rms, steps, conv) =
-        crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
-            potentials.calc_energy_forces(p)
-        });
-    Ok((e, steps, conv))
+    let report = crate::optimize::minimize_lbfgs_rms(coords3d, 1000, 1e-3, |p| {
+        potentials.calc_energy_forces(p)
+    });
+    Ok((report.final_energy, report.n_steps, report.converged))
 }
 
 /// Place a single-atom molecule at the origin.
@@ -458,7 +484,7 @@ fn place_single_atom(mol: &mut Atomistic) -> Result<(), MolRsError> {
 
 /// Write a flat `n*3` coordinate buffer back into the molecule (atom-iteration
 /// order matches `distgeom`/`MMFF` indexing).
-fn write_coords(mol: &mut Atomistic, coords: &[f64]) -> Result<(), MolRsError> {
+fn apply_coords(mol: &mut Atomistic, coords: &[f64]) -> Result<(), MolRsError> {
     let ids: Vec<_> = mol.atoms().map(|(id, _)| id).collect();
     for (i, id) in ids.into_iter().enumerate() {
         mol.set_atom(id, "x", coords[i * 3])?;

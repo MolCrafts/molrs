@@ -20,12 +20,26 @@
 
 use std::collections::HashMap;
 
-use molrs::AtomId;
+use molrs::core::NodeId;
 
 use super::facts::MolFacts;
 use crate::ff::params::{
     AtomPattern, AtomProp, EnvBond, EnvBondType, PatternAtom, PropExpr, PropRelation, PropUnit,
 };
+
+/// The `<label>` → atom bindings of one environment match.
+type Labels = HashMap<&'static str, NodeId>;
+
+/// The rest of an environment match, run on the labels bound so far.
+type Rest<'a> = dyn FnMut(&mut Labels) -> bool + 'a;
+
+/// One pattern list and where it hangs: the patterns must match distinct
+/// neighbours of `parent`, none of them `prev`.
+struct Siblings {
+    parent: NodeId,
+    prev: Option<NodeId>,
+    patterns: &'static [AtomPattern],
+}
 
 impl MolFacts {
     /// Walk a pre-parsed `[...]` expression: an AND of ORs.
@@ -34,8 +48,8 @@ impl MolFacts {
     /// own top-level property — where a `'` suffix has no bond to speak of.
     pub(super) fn atom_property_matches(
         &self,
-        aid: AtomId,
-        prev: Option<AtomId>,
+        aid: NodeId,
+        prev: Option<NodeId>,
         expr: &PropExpr,
     ) -> bool {
         expr.constraints.iter().all(|constraint| {
@@ -49,15 +63,21 @@ impl MolFacts {
     /// One `[count]PROP['|'']` unit.
     fn atom_property_unit_matches(
         &self,
-        aid: AtomId,
-        prev: Option<AtomId>,
+        aid: NodeId,
+        prev: Option<NodeId>,
         unit: &PropUnit,
     ) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
         let count = self.props[i].count(unit.prop);
-        let count_matches = unit.count.map_or(count > 0, |n| count == n);
+        // `apcheck` reads a bare `PROP` as count -1 and accepts
+        // `count == -1 || value > 0`, so a bare `AR2` also holds where the
+        // AM1-BCC indole rule left the count at exactly -1 (acenaphthylene's
+        // five-ring carbons are BCC type 16 by it).
+        let count_matches = unit.count.map_or(count > 0 || count == -1, |n| {
+            i32::try_from(n).is_ok_and(|n| count == n)
+        });
         if !count_matches {
             return false;
         }
@@ -73,7 +93,7 @@ impl MolFacts {
     }
 
     /// Is the bond from `aid` back to `prev` itself of type `prop`?
-    fn bond_to_prev_matches(&self, aid: AtomId, prev: AtomId, prop: AtomProp) -> bool {
+    fn bond_to_prev_matches(&self, aid: NodeId, prev: NodeId, prop: AtomProp) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
         };
@@ -84,23 +104,26 @@ impl MolFacts {
     }
 
     /// Does the neighbourhood of `aid` satisfy `patterns` (and any `env_bonds`)?
+    ///
+    /// The `env_bonds` take part in the search: an assignment whose labelled
+    /// atoms are not bonded as required is abandoned for the next one, as
+    /// `atomtype.c`'s `dccheck` tries every combination of matched chains.
+    /// (Carbazole's N is BCC type 23 by `XX<a1>, XB(XB(XX<a2>)) a1:a2:any`
+    /// through its second carbon path, not its first.)
     pub(super) fn environment_matches(
         &self,
-        aid: AtomId,
+        aid: NodeId,
         patterns: &'static [AtomPattern],
         env_bonds: Option<&'static [EnvBond]>,
     ) -> bool {
         let mut labels = HashMap::new();
-        self.match_pattern_list(aid, None, patterns, &mut labels)
-            && env_bonds.is_none_or(|bonds| self.environment_bonds_match(bonds, &labels))
+        self.match_pattern_list(aid, None, patterns, &mut labels, &mut |labels| {
+            env_bonds.is_none_or(|bonds| self.environment_bonds_match(bonds, labels))
+        })
     }
 
     /// The `a:b:TYPE` constraints between `<label>`ed environment atoms.
-    fn environment_bonds_match(
-        &self,
-        bonds: &[EnvBond],
-        labels: &HashMap<&'static str, AtomId>,
-    ) -> bool {
+    fn environment_bonds_match(&self, bonds: &[EnvBond], labels: &Labels) -> bool {
         for constraint in bonds {
             let Some(&a) = labels.get(constraint.a) else {
                 return false;
@@ -122,65 +145,73 @@ impl MolFacts {
         true
     }
 
-    /// Match every pattern of `patterns` against a distinct neighbour of `parent`.
+    /// Match every pattern of `patterns` against a distinct neighbour of
+    /// `parent`, then hand the labels to `rest` — the remainder of the whole
+    /// match. `true` once `rest` accepts some assignment.
     fn match_pattern_list(
         &self,
-        parent: AtomId,
-        prev: Option<AtomId>,
+        parent: NodeId,
+        prev: Option<NodeId>,
         patterns: &'static [AtomPattern],
-        labels: &mut HashMap<&'static str, AtomId>,
+        labels: &mut Labels,
+        rest: &mut Rest<'_>,
     ) -> bool {
-        let mut used = Vec::new();
-        self.match_pattern_list_rec(parent, prev, patterns, 0, labels, &mut used)
+        let siblings = Siblings {
+            parent,
+            prev,
+            patterns,
+        };
+        self.match_siblings(&siblings, 0, labels, &mut Vec::new(), rest)
     }
 
-    /// Backtracking assignment of `patterns[pos..]` to unused neighbours.
-    fn match_pattern_list_rec(
+    /// Backtracking assignment of `siblings.patterns[pos..]` to unused
+    /// neighbours of `siblings.parent`.
+    fn match_siblings(
         &self,
-        parent: AtomId,
-        prev: Option<AtomId>,
-        patterns: &'static [AtomPattern],
+        siblings: &Siblings,
         pos: usize,
-        labels: &mut HashMap<&'static str, AtomId>,
-        used: &mut Vec<AtomId>,
+        labels: &mut Labels,
+        used: &mut Vec<NodeId>,
+        rest: &mut Rest<'_>,
     ) -> bool {
-        if pos == patterns.len() {
-            return true;
+        if pos == siblings.patterns.len() {
+            return rest(labels);
         }
-        let Ok(parent_i) = self.index_of(parent) else {
+        let Ok(parent_i) = self.index_of(siblings.parent) else {
             return false;
         };
         for (candidate, _, _) in &self.neighbors[parent_i] {
-            if Some(*candidate) == prev || used.contains(candidate) {
+            if Some(*candidate) == siblings.prev || used.contains(candidate) {
                 continue;
             }
             let mut labels_next = labels.clone();
-            if self.atom_pattern_matches(*candidate, parent, &patterns[pos], &mut labels_next) {
-                used.push(*candidate);
-                if self.match_pattern_list_rec(
-                    parent,
-                    prev,
-                    patterns,
-                    pos + 1,
-                    &mut labels_next,
-                    used,
-                ) {
-                    *labels = labels_next;
-                    return true;
-                }
-                used.pop();
+            used.push(*candidate);
+            let matched = self.atom_pattern_matches(
+                *candidate,
+                siblings.parent,
+                &siblings.patterns[pos],
+                &mut labels_next,
+                &mut |labels_after| {
+                    self.match_siblings(siblings, pos + 1, labels_after, used, rest)
+                },
+            );
+            if matched {
+                *labels = labels_next;
+                return true;
             }
+            used.pop();
         }
         false
     }
 
-    /// One node of the environment forest, plus its children.
+    /// One node of the environment forest, plus its children, then `rest`.
     fn atom_pattern_matches(
         &self,
-        aid: AtomId,
-        prev: AtomId,
+        aid: NodeId,
+        prev: NodeId,
         pattern: &'static AtomPattern,
-        labels: &mut HashMap<&'static str, AtomId>,
+        labels: &mut Labels,
+        rest: &mut Rest<'_>,
     ) -> bool {
         let Ok(i) = self.index_of(aid) else {
             return false;
@@ -204,7 +235,7 @@ impl MolFacts {
         {
             return false;
         }
-        self.match_pattern_list(aid, Some(prev), pattern.children, labels)
+        self.match_pattern_list(aid, Some(prev), pattern.children, labels, rest)
     }
 
     /// Match a pattern atom whose name the generator already resolved.

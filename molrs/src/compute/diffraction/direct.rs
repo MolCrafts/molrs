@@ -1,37 +1,15 @@
 //! Direct k-grid evaluation of the static structure factor.
-//!
-//! Mirrors `freud.diffraction.StaticStructureFactorDirect`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDirect.cc)).
-//!
-//! Evaluates
-//!
-//! ```text
-//!   S(k) = (1/N) | Σ_j exp(i k · r_j) |²
-//! ```
-//!
-//! on an explicit array of k-vectors. Two convenience constructors are
-//! offered:
-//!
-//! - [`StaticStructureFactorDirect::new`] — user-supplied k-vectors
-//!   (full freedom).
-//! - [`StaticStructureFactorDirect::isotropic`] — for orthorhombic boxes,
-//!   builds a 3-D reciprocal-lattice grid with k ≤ k_max and spherically
-//!   averages into uniformly spaced k-magnitude bins.
-//!
-//! Unlike [`super::debye`], this analyzer respects the supplied SimBox: the
-//! reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 
-use crate::compute::result::ComputeResult;
-use molrs::spatial::simbox::BoxKind;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::BoxKind;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 use ndarray::Array1;
+use std::f64::consts::TAU;
 
-use crate::compute::error::ComputeError;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
-
-const TWO_PI: F = 2.0 * std::f64::consts::PI;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 
 #[derive(Debug, Clone)]
 enum KMode {
@@ -41,6 +19,28 @@ enum KMode {
     Isotropic { k_max: F, n_bins: usize },
 }
 
+/// Direct k-grid static-structure-factor calculator.
+///
+/// Mirrors `freud.diffraction.StaticStructureFactorDirect`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/diffraction/StaticStructureFactorDirect.cc)).
+///
+/// Evaluates
+///
+/// ```text
+///   S(k) = (1/N) | Σ_j exp(i k · r_j) |²
+/// ```
+///
+/// on an explicit array of k-vectors. Two convenience constructors are
+/// offered:
+///
+/// - [`StaticStructureFactorDirect::new`] — user-supplied k-vectors
+///   (full freedom).
+/// - [`StaticStructureFactorDirect::isotropic`] — for orthorhombic boxes,
+///   builds a 3-D reciprocal-lattice grid with k ≤ k_max and spherically
+///   averages into uniformly spaced k-magnitude bins.
+///
+/// Unlike [`StaticStructureFactorDebye`](crate::compute::StaticStructureFactorDebye), this analyzer respects the supplied SimBox: the
+/// reciprocal-lattice spacing comes from `2π / L_d` along each axis.
 #[derive(Debug, Clone)]
 pub struct StaticStructureFactorDirect {
     mode: KMode,
@@ -125,9 +125,9 @@ impl StaticStructureFactorDirect {
                 });
             }
         };
-        let dkx = TWO_PI / lx;
-        let dky = TWO_PI / ly;
-        let dkz = TWO_PI / lz;
+        let dkx = TAU / lx;
+        let dky = TAU / ly;
+        let dkz = TAU / lz;
         let nx = (k_max / dkx).ceil() as i32;
         let ny = (k_max / dky).ceil() as i32;
         let nz = (k_max / dkz).ceil() as i32;
@@ -250,9 +250,9 @@ impl ComputeResult for StaticStructureFactorDirectResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {

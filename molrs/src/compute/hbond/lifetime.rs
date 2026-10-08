@@ -1,37 +1,17 @@
 //! Hydrogen-bond lifetime correlation functions.
-//!
-//! Continuous `S_HB(t)` and intermittent `C_HB(t)` TCFs (Luzar & Chandler,
-//! *Phys. Rev. Lett.* **1996**, 76, 928): with `h(t) ∈ {0,1}` the per-bond
-//! presence indicator,
-//!
-//! ```text
-//! C_HB(t) = ⟨h(0) h(t)⟩ / ⟨h⟩            (intermittent — gaps allowed)
-//! S_HB(t) = ⟨h(0) Θ(t) h(t)⟩ / ⟨h⟩       (continuous — bond never broke in [0,t])
-//! ```
-//!
-//! The continuous / intermittent accumulation mirrors molrs's
-//! [`pair_survival_tcf`](crate::compute::dynamics::persist::pair_survival_tcf) exactly
-//! (`SurvivalMethod::Continuous` walks forward until the first absence;
-//! `Intermittent` counts every lag where the bond is present).
-//!
-//! **Documented deviation:** `pair_survival_tcf`'s presence model is a *distance*
-//! cutoff and cannot express the D–H···A *angle* criterion, so its API cannot be
-//! called directly here. This module applies the identical continuous /
-//! intermittent definitions to the geometric presence series produced by
-//! [`HBonds`](super::detect::HBonds), rather than re-deriving a different TCF.
 
+use molrs::op::F;
 use molrs::signal as sig;
-use molrs::types::F;
 use ndarray::Array1;
 use rustfft::FftPlanner;
 use std::collections::HashMap;
 
 use super::detect::HBondsResult;
-use crate::compute::error::ComputeError;
+use crate::compute::ComputeError;
 
 /// Lifetime TCFs for a set of bond presence series.
 #[derive(Debug, Clone)]
-pub struct LifetimeResult {
+pub struct HBondLifetimeResult {
     /// Lag times (`tau * dt`), length `max_lag + 1`.
     pub lag_times: Array1<F>,
     /// Continuous `S_HB(t)`, normalized to `S_HB(0) = 1`.
@@ -60,11 +40,31 @@ fn trapz(y: &Array1<F>, dt: F) -> F {
 ///
 /// All series must share the same frame count. `dt` is the frame spacing
 /// (> 0); `max_lag` is clamped to `n_frames − 1`.
+///
+/// Continuous `S_HB(t)` and intermittent `C_HB(t)` TCFs (Luzar & Chandler,
+/// *Phys. Rev. Lett.* **1996**, 76, 928): with `h(t) ∈ {0,1}` the per-bond
+/// presence indicator,
+///
+/// ```text
+/// C_HB(t) = ⟨h(0) h(t)⟩ / ⟨h⟩            (intermittent — gaps allowed)
+/// S_HB(t) = ⟨h(0) Θ(t) h(t)⟩ / ⟨h⟩       (continuous — bond never broke in [0,t])
+/// ```
+///
+/// The continuous / intermittent accumulation mirrors molrs's
+/// [`pair_survival_tcf`](crate::compute::pair_survival_tcf) exactly
+/// (`SurvivalMethod::Continuous` walks forward until the first absence;
+/// `Intermittent` counts every lag where the bond is present).
+///
+/// **Documented deviation:** `pair_survival_tcf`'s presence model is a *distance*
+/// cutoff and cannot express the D–H···A *angle* criterion, so its API cannot be
+/// called directly here. This module applies the identical continuous /
+/// intermittent definitions to the geometric presence series produced by
+/// [`HBonds`](super::detect::HBonds), rather than re-deriving a different TCF.
 pub fn hbond_lifetimes(
     present: &[Vec<bool>],
     dt: F,
     max_lag: usize,
-) -> Result<LifetimeResult, ComputeError> {
+) -> Result<HBondLifetimeResult, ComputeError> {
     if present.is_empty() {
         return Err(ComputeError::EmptyInput);
     }
@@ -125,7 +125,7 @@ pub fn hbond_lifetimes(
     let tau_continuous = trapz(&cont, dt);
     let tau_intermittent = trapz(&inter, dt);
 
-    Ok(LifetimeResult {
+    Ok(HBondLifetimeResult {
         lag_times,
         continuous: cont,
         intermittent: inter,

@@ -1,120 +1,101 @@
 //! OPLS-AA SMARTS atom typifier.
-//!
-//! Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
-//! ([`OplsTypingMeta`]) is kept *separately* from the potential [`ForceField`].
-//! [`OPLSAATypifier`] owns both and implements [`Typifier`], assigning
-//! `opls_NNN` atom types by SMARTS matching.
-//!
-//! # How atoms are typed
-//!
-//! - **Rules.** The shipped rules ([`crate::ff::params::oplsaa_typing`]) are
-//!   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
-//!   lowercase aromatic atoms, matched with standard semantics against a
-//!   molecule with explicit hydrogens.
-//! - **Aromaticity on a private copy.** The rules run on a clone brought to the
-//!   standard aromatic form by
-//!   [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity)
-//!   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
-//!   alike, while the caller's bond types and bond numbers are never changed.
-//!   Typifiers built by [`OPLSAATypifier::from_xml_str`] do the same.
-//! - **Ranking.** A type on a higher `layer`, or on the same layer overriding
-//!   another (directly or transitively), dominates it: it wins on an atom where
-//!   both match, and a later dependency level never replaces it. Candidates
-//!   nothing dominates rank by explicit `priority`, then pattern size, then
-//!   name (see [`layered`]).
-//!
-//! After atom typing, its `r#match` ([`Typifier`]) matches every bond /
-//! angle / dihedral against the force field's bonded tables by OPLS
-//! specificity + overlay layer (chain 2).
-//! [`Typing`](crate::ff::typifier::Typing) runs the match: it stamps
-//! the typed copy and defines exactly the types used in its output force field.
-//! Callers compose `Typing::typify` → `to_frame` → pairs →
-//! `PotentialCompiler::new(typing.forcefield()).compile`.
-//!
-//! # B-line reversal
-//!
-//! This reverses the "typifier does not sink (B-line)" decision of
-//! `opls-ef-01-kernels-seam`: OPLS bonded-parameter assignment now happens in
-//! Rust (here), not in a post-typify Python pass over a molpy `ForceField`.
-//!
-//! # Scope
-//!
-//! Only types carrying a SMARTS `def` participate; the united-atom types
-//! (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
-//! matching is out of scope. Uncovered bonded terms follow the [`NoMatch`]
-//! policy; a consumer that wants to fill them can attach its own [`Estimator`]
-//! via [`OPLSAATypifier::with_estimator`], or the restored
-//! [`Parmchk2Estimator`] via [`OPLSAATypifier::with_default_estimator`].
 
 use std::collections::HashSet;
 
-use molrs::{AtomId, Atomistic};
+use molrs::core::{Atomistic, NodeId};
 
 use crate::ff::forcefield::ForceField;
-use crate::ff::forcefield::readers::{ForceFieldReader, opls::OplsXmlReader};
 
-use crate::ff::typifier::estimate::Parmchk2Estimator;
-use crate::ff::typifier::{Match, Typifier};
+use crate::ff::typifier::{BondedTerm, ParameterInterpolator, Parmchk2Estimator};
+use crate::ff::typifier::{TypeAssignment, Typifier};
 
-pub mod assign;
-pub mod deps;
-mod embedded;
-pub mod layered;
-pub mod meta;
+mod assign;
+mod dependency;
+mod layered;
+mod shipped_forcefield;
 pub(crate) mod typing;
+pub(crate) mod typing_metadata;
 
-pub use assign::{BondedTerm, CandidateTables, Estimator, NoMatch};
-pub use meta::{OplsTypeRow, OplsTypingMeta};
+pub use assign::{CandidateTables, NoMatch};
+pub use typing_metadata::{OplsTypeRow, OplsTypingMetadata};
 
 use assign::typify_bonded_with;
 use typing::typify_atoms;
 
 /// OPLS-AA typifier — owns typing metadata and force-field parameters.
 ///
-/// Primary constructor [`from_xml_str`](Self::from_xml_str) parses both the
-/// typing metadata ([`OplsTypingMeta`]) and the potential parameters
-/// ([`ForceField`]) from a single OPLS-AA XML string, then precomputes the
-/// bonded candidate tables ([`CandidateTables`]) once.
-pub struct OPLSAATypifier {
-    meta: OplsTypingMeta,
+/// [`oplsaa`](Self::oplsaa) is the shipped set; [`new`](Self::new) takes a
+/// caller's typing metadata ([`OplsTypingMetadata`]) and potential parameters
+/// ([`ForceField`]) — read from one OPLS-AA XML file by
+/// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
+/// and [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader) —
+/// and precomputes the bonded candidate tables once.
+///
+/// Mirrors [`mmff`](crate::ff::typifier::mmff): typing metadata
+/// ([`OplsTypingMetadata`]) is kept *separately* from the potential [`ForceField`].
+/// [`OplsAaTypifier`] owns both and implements [`Typifier`], assigning
+/// `opls_NNN` atom types by SMARTS matching.
+///
+/// # How atoms are typed
+///
+/// - **Rules.** The shipped rules ([`crate::ff::params::OPLSAA_TYPING`]) are
+///   molrs-owned Daylight SMARTS with explicit bonds, `[#1]` hydrogens and
+///   lowercase aromatic atoms, matched with standard semantics against a
+///   molecule with explicit hydrogens.
+/// - **Aromaticity on a private copy.** The rules run on a clone brought to the
+///   standard aromatic form by
+///   [`assign_aromaticity`](molrs::perceive::assign_aromaticity)
+///   (same atom ids), so a Kekulé ring and an aromatic-declared ring type
+///   alike, while the caller's bond types and bond numbers are never changed.
+///   Typifiers built by [`OplsAaTypifier::new`] over a caller's own file do
+///   the same.
+/// - **Ranking.** A type on a higher `layer`, or on the same layer overriding
+///   another (directly or transitively), dominates it: it wins on an atom where
+///   both match, and a later dependency level never replaces it. Candidates
+///   nothing dominates rank by explicit `priority`, then pattern size, then
+///   name.
+///
+/// After atom typing, its `assign` ([`Typifier`]) matches every bond /
+/// angle / dihedral against the force field's bonded tables by OPLS
+/// specificity + overlay layer (chain 2).
+/// [`Typing`](crate::ff::typifier::Typing) runs the match: it stamps
+/// the typed copy and defines exactly the types used in its output force field.
+/// Callers compose `Typing::typify` → `to_frame` → pairs →
+/// `PotentialCompiler::new(typing.forcefield()).compile`.
+///
+/// # Bonded parameters
+///
+/// OPLS bonded-parameter assignment happens in Rust (here), not in a
+/// post-typify Python pass over a molpy `ForceField`.
+///
+/// # Scope
+///
+/// Only types carrying a SMARTS `def` participate; the united-atom types
+/// (`opls_001`–`opls_134`) carry none and are out of scope for auto-typing. Improper
+/// matching is out of scope. Uncovered bonded terms follow the `NoMatch`
+/// policy; a consumer that wants to fill them can attach its own [`ParameterInterpolator`]
+/// via [`OplsAaTypifier::with_estimator`], or the restored
+/// [`Parmchk2Estimator`] via [`OplsAaTypifier::with_default_estimator`].
+pub struct OplsAaTypifier {
+    meta: OplsTypingMetadata,
     ff: ForceField,
     tables: CandidateTables,
     /// No-match policy for bonded terms with no force-field candidate.
     no_match: NoMatch,
     /// Optional missing-parameter interpolator for bonded terms.
-    estimator: Option<Box<dyn Estimator + Send + Sync>>,
+    estimator: Option<Box<dyn ParameterInterpolator<Term = BondedTerm> + Send + Sync>>,
 }
 
-impl OPLSAATypifier {
-    /// Build a typifier from an OPLS-AA / GROMACS XML string.
-    ///
-    /// Reads typing metadata and potential parameters in one call. The two are
-    /// read by independent parsers from the same XML and never share state.
-    /// The bonded candidate tables are built once from the parsed force field.
-    /// Defaults to strict bonded matching ([`NoMatch::Error`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if either parse fails, and — so that an invalid typifier
-    /// is never constructed — if a type's `overrides` names a type the XML does
-    /// not declare (naming both) or the overrides form a cycle (naming its
-    /// members).
-    pub fn from_xml_str(xml: &str) -> Result<Self, String> {
-        let meta = crate::ff::forcefield::xml::read_opls_typing_xml_str(xml)?;
-        layered::Dominance::new(&meta)?;
-        let ff = OplsXmlReader::new().read_str(xml)?;
-        Ok(Self::new(meta, ff))
-    }
-
+impl OplsAaTypifier {
     /// Build a typifier over the shipped canonical OPLS-AA parameter set.
     ///
-    /// The parameters ([`crate::ff::params::oplsaa`]) are generated from
+    /// The parameters ([`crate::ff::params::OPLSAA_ATOMS`] and its sibling tables) are generated from
     /// GROMACS v2026.3 `share/top/oplsaa.ff` (LGPL-2.1-or-later): atom classes
     /// are GROMACS `bond_type`s, and the `pair/lj/cut` style declares
     /// OPLS-AA's **geometric** combining rule (σᵢⱼ = √(σᵢσⱼ), εᵢⱼ = √(εᵢεⱼ);
     /// Jorgensen et al. 1996, GROMACS comb-rule 3), so molrs's kernel and an
     /// exported LAMMPS input mix alike. The SMARTS typing rules
-    /// ([`crate::ff::params::oplsaa_typing`]) are molrs's own Daylight SMARTS;
+    /// ([`crate::ff::params::OPLSAA_TYPING`]) are molrs's own Daylight SMARTS;
     /// each takes its class from the atom row of the same name.
     ///
     /// The input molecule needs explicit hydrogens. Its rings may be written
@@ -124,10 +105,10 @@ impl OPLSAATypifier {
     /// The parameters are compiled-in typed Rust, so this is the standalone
     /// path: the OPLS typifier needs no external file on disk and parses nothing
     /// at runtime. Mirrors
-    /// [`MMFF94Typifier::new`](crate::ff::typifier::mmff::MMFF94Typifier::new).
+    /// [`Mmff94Typifier::new`](crate::ff::typifier::mmff::Mmff94Typifier::new).
     ///
     /// Infallible: the parameters are compile-time constants, the same policy
-    /// as `MMFF94Typifier::new` and `UFFTypifier::new`.
+    /// as `Mmff94Typifier::new` and `UffTypifier::new`.
     ///
     /// # Examples
     ///
@@ -135,11 +116,11 @@ impl OPLSAATypifier {
     ///
     /// ```
     /// use molrs::ff::typifier::Typifier;
-    /// use molrs::ff::typifier::opls::OPLSAATypifier;
+    /// use molrs::ff::typifier::OplsAaTypifier;
     ///
-    /// let typifier = OPLSAATypifier::oplsaa();
+    /// let typifier = OplsAaTypifier::oplsaa();
     /// let lj = typifier
-    ///     .library()
+    ///     .source_forcefield()
     ///     .get_style("pair", "lj/cut")
     ///     .expect("OPLS-AA declares lj/cut");
     /// assert_eq!(lj.params().get_str("mixing"), Some("geometric"));
@@ -150,8 +131,8 @@ impl OPLSAATypifier {
     ///
     /// ```
     /// use molrs::ff::typifier::Typing;
-    /// use molrs::ff::typifier::opls::OPLSAATypifier;
-    /// use molrs::{Atom, Atomistic};
+    /// use molrs::ff::typifier::OplsAaTypifier;
+    /// use molrs::core::{Atom, Atomistic};
     ///
     /// let mut ethanol = Atomistic::new();
     /// let c1 = ethanol.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -166,18 +147,25 @@ impl OPLSAATypifier {
     ///     }
     /// }
     ///
-    /// let typed = Typing::new(OPLSAATypifier::oplsaa().with_strict(false))
+    /// let typed = Typing::new(OplsAaTypifier::oplsaa().with_strict(false))
     ///     .typify(&ethanol)
     ///     .expect("ethanol types");
     /// assert_eq!(typed.get_atom(o).unwrap().get_str("type"), Some("opls_154"));
     /// ```
     pub fn oplsaa() -> Self {
-        Self::new(embedded::typing_meta(), embedded::force_field())
+        Self::new(
+            shipped_forcefield::typing_meta(),
+            shipped_forcefield::force_field(),
+        )
     }
 
-    /// Construct directly from already-parsed metadata and force field
-    /// (strict bonded matching).
-    pub fn new(meta: OplsTypingMeta, ff: ForceField) -> Self {
+    /// Construct from already-parsed metadata and force field (strict bonded
+    /// matching). The bonded candidate tables are built once from `ff`.
+    ///
+    /// `meta` is taken as valid ([`OplsTypingMetadata::validate`]); the XML reader
+    /// [`read_openmm_xml_opls_typing_str`](crate::io::read_openmm_xml_opls_typing_str)
+    /// refuses a table that is not.
+    pub fn new(meta: OplsTypingMetadata, ff: ForceField) -> Self {
         let tables = CandidateTables::build(&ff, &meta);
         Self {
             meta,
@@ -189,7 +177,7 @@ impl OPLSAATypifier {
     }
 
     /// Set the bonded no-match policy (chaining). `strict=true` →
-    /// [`NoMatch::Error`]; `strict=false` → [`NoMatch::Skip`].
+    /// an unmatched bonded term is an error; `strict=false` → it is skipped.
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.no_match = if strict {
             NoMatch::Error
@@ -203,10 +191,17 @@ impl OPLSAATypifier {
     ///
     /// Exact force-field table matches still win first. To keep strict mode's
     /// contract stable, attached estimators are consulted only when this
-    /// typifier is configured with [`NoMatch::Skip`] via [`with_strict(false)`](Self::with_strict).
+    /// typifier skips unmatched terms via [`with_strict(false)`](Self::with_strict).
+    ///
+    /// The bonded matcher calls
+    /// [`interpolate`](ParameterInterpolator::interpolate) for any bonded term
+    /// the force-field tables do not cover. It returns `Ok(Some(params))` —
+    /// interpolated params for the term, defined under
+    /// [`BondedTerm::type_name`] and stamped; `Ok(None)` — declined, the term
+    /// is skipped; or `Err(_)` — a hard failure, propagated.
     pub fn with_estimator<E>(mut self, estimator: E) -> Self
     where
-        E: Estimator + Send + Sync + 'static,
+        E: ParameterInterpolator<Term = BondedTerm> + Send + Sync + 'static,
     {
         self.estimator = Some(Box::new(estimator));
         self
@@ -220,30 +215,30 @@ impl OPLSAATypifier {
     }
 
     /// Access the typing metadata.
-    pub fn meta(&self) -> &OplsTypingMeta {
+    pub fn meta(&self) -> &OplsTypingMetadata {
         &self.meta
     }
 }
 
-impl Typifier for OPLSAATypifier {
+impl Typifier for OplsAaTypifier {
     /// Type the atoms, then match every bonded term.
     ///
     /// Node annotations: `type` (a `Type` under `atom/full` with the row's
     /// `mass` and `charge`, or a plain value when the library has no row) and
     /// `class`. Bonded annotations: `type`, the matched class-keyed name with
     /// its library params, or an estimate named by
-    /// [`BondedTerm::type_name`]. Styles: every library style, in library
+    /// [`BondedTerm::type_name`](crate::ff::typifier::BondedTerm::type_name). Styles: every library style, in library
     /// order. Pairs: the library's pair rows among the atom types used.
     ///
     /// # Errors
     ///
     /// Propagates atom-typing and bonded-matching errors. In strict mode
-    /// ([`NoMatch::Error`]) also returns `Err` naming every atom no def typed,
+    /// (an unmatched bonded term is an error) also returns `Err` naming every atom no def typed,
     /// before any bonded term is matched.
-    fn r#match(&self, graph: &mut Atomistic) -> Result<Match, String> {
+    fn assign(&self, graph: &mut Atomistic) -> Result<TypeAssignment, String> {
         let atoms = typify_atoms(graph, &self.meta, &self.ff)?;
         if self.no_match == NoMatch::Error {
-            let untyped: Vec<AtomId> = graph
+            let untyped: Vec<NodeId> = graph
                 .atoms()
                 .map(|(id, _)| id)
                 .filter(|id| !atoms.types.contains_key(id))
@@ -257,7 +252,10 @@ impl Typifier for OPLSAATypifier {
         }
         let estimator = match self.no_match {
             NoMatch::Error => None,
-            NoMatch::Skip => self.estimator.as_deref().map(|e| e as &dyn Estimator),
+            NoMatch::Skip => self
+                .estimator
+                .as_deref()
+                .map(|e| e as &dyn ParameterInterpolator<Term = BondedTerm>),
         };
         let mut m =
             typify_bonded_with(graph, &atoms.types, &self.tables, self.no_match, estimator)?;
@@ -269,7 +267,7 @@ impl Typifier for OPLSAATypifier {
     }
 
     /// The OPLS-AA force field this typifier matches against.
-    fn library(&self) -> &ForceField {
+    fn source_forcefield(&self) -> &ForceField {
         &self.ff
     }
 }
@@ -277,12 +275,12 @@ impl Typifier for OPLSAATypifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::Params;
+    use crate::ff::ir::Params;
     use crate::ff::typifier::Typing;
     use indexmap::IndexMap;
-    use molrs::Atom;
-    use molrs::system::BondType;
-    use molrs::system::molgraph::PropValue;
+    use molrs::core::Atom;
+    use molrs::core::BondOrder;
+    use molrs::core::PropValue;
     use std::collections::{BTreeMap, BTreeSet};
 
     /// Methylsilane `H3C-SiH3`, hand-built: C is atom 0, Si is atom 1, the
@@ -316,7 +314,7 @@ mod tests {
     /// 5..=7 stay untyped.
     #[test]
     fn strict_typify_names_every_untyped_atom() {
-        let err = Typing::new(OPLSAATypifier::oplsaa().with_strict(true))
+        let err = Typing::new(OplsAaTypifier::oplsaa().with_strict(true))
             .typify(&methylsilane())
             .expect_err("strict typing must refuse a partly typed molecule");
 
@@ -338,7 +336,7 @@ mod tests {
     #[test]
     fn non_strict_typify_accepts_a_partly_typed_molecule() {
         let typed =
-            Typing::new(OPLSAATypifier::oplsaa().with_strict(false)).typify(&methylsilane());
+            Typing::new(OplsAaTypifier::oplsaa().with_strict(false)).typify(&methylsilane());
         assert!(typed.is_ok(), "non-strict typing stays Ok: {typed:?}");
     }
 
@@ -358,18 +356,21 @@ mod tests {
         )
     }
 
-    /// `from_xml_str` refuses a dangling override at construction: `opls_a`
-    /// overrides `opls_missing`, which the XML never declares, so no typifier
-    /// is built and the error names both. The same XML without the attribute
-    /// builds.
+    /// The OPLS typing reader refuses a dangling override: `opls_a` overrides
+    /// `opls_missing`, which the XML never declares, so no table — and so no
+    /// typifier — is built, and the error names both. The same XML without
+    /// the attribute builds.
     #[test]
-    fn from_xml_str_refuses_a_dangling_override() {
-        assert!(
-            OPLSAATypifier::from_xml_str(&one_type_xml(None)).is_ok(),
-            "the XML without the override builds"
-        );
-        let Err(e) = OPLSAATypifier::from_xml_str(&one_type_xml(Some("opls_missing"))) else {
-            panic!("a dangling override must refuse construction");
+    fn a_dangling_override_refuses_the_typing_table() {
+        use crate::io::read_openmm_xml_opls_typing_str;
+        use crate::io::{openmm_xml::OpenmmXmlReader, reader::ForceFieldReader};
+        let xml = one_type_xml(None);
+        let meta =
+            read_openmm_xml_opls_typing_str(&xml).expect("the XML without the override reads");
+        let ff = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let _ = OplsAaTypifier::new(meta, ff);
+        let Err(e) = read_openmm_xml_opls_typing_str(&one_type_xml(Some("opls_missing"))) else {
+            panic!("a dangling override must refuse the table");
         };
         assert!(e.contains("opls_a"), "err names the overriding type: {e}");
         assert!(e.contains("opls_missing"), "err names the absent type: {e}");
@@ -378,8 +379,8 @@ mod tests {
     /// A typifier whose defs cover C and H only, over a force field whose
     /// all-wildcard bonded rows match every fully typed term — so a strict
     /// failure can come from atom coverage alone, never from a bonded miss.
-    fn c_h_only_typifier() -> OPLSAATypifier {
-        let mut meta = OplsTypingMeta::new();
+    fn c_h_only_typifier() -> OplsAaTypifier {
+        let mut meta = OplsTypingMetadata::new();
         let row = |class: &str, def: &str| OplsTypeRow {
             class: class.to_string(),
             def: Some(def.to_string()),
@@ -404,7 +405,7 @@ mod tests {
             .def_type(
                 "X-X-X",
                 &["X", "X", "X"],
-                Params::from_pairs(&[("k", 1.0), ("theta0", 1.9)]),
+                Params::from_pairs(&[("k", 1.0), ("theta0", 108.9)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -415,7 +416,7 @@ mod tests {
                 Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.0), ("k4", 0.0)]),
             )
             .unwrap();
-        OPLSAATypifier::new(meta, ff).with_strict(true)
+        OplsAaTypifier::new(meta, ff).with_strict(true)
     }
 
     /// Methanol `CH3-OH`, hand-built: C is atom 0, O is atom 1, the three methyl
@@ -434,7 +435,7 @@ mod tests {
         g
     }
 
-    // -- Typing<OPLSAATypifier> output (system-forcefield-07) -----------------
+    // -- Typing<OplsAaTypifier> output (system-forcefield-07) -----------------
 
     /// Ethane `CH3-CH3`, hand-built: carbons are atoms 0 and 1, the three
     /// hydrogens on C0 are 2..=4, the three on C1 are 5..=7.
@@ -470,7 +471,7 @@ mod tests {
     /// term.
     struct StubBondEstimator;
 
-    impl crate::ff::typifier::estimate::ParameterInterpolator for StubBondEstimator {
+    impl crate::ff::typifier::ParameterInterpolator for StubBondEstimator {
         type Term = BondedTerm;
 
         fn interpolate(&self, term: &BondedTerm) -> Result<Option<Params>, String> {
@@ -485,8 +486,8 @@ mod tests {
     /// one extra type ethane never uses (`opls_154` OH oxygen) with its own
     /// atom, pair and bond rows. The library has no `CT-CT` bond row, so the C-C
     /// bond is filled by [`StubBondEstimator`] (lenient mode consults it).
-    fn ethane_library_typifier() -> OPLSAATypifier {
-        let mut meta = OplsTypingMeta::new();
+    fn ethane_library_typifier() -> OplsAaTypifier {
+        let mut meta = OplsTypingMetadata::new();
         let row = |class: &str, def: &str| OplsTypeRow {
             class: class.to_string(),
             def: Some(def.to_string()),
@@ -560,13 +561,13 @@ mod tests {
             .def_type(
                 "HC-CT-HC",
                 &["HC", "CT", "HC"],
-                Params::from_pairs(&[("k", 66.0), ("theta0", 1.881)]),
+                Params::from_pairs(&[("k", 66.0), ("theta0", 107.8)]),
             )
             .unwrap()
             .def_type(
                 "CT-CT-HC",
                 &["CT", "CT", "HC"],
-                Params::from_pairs(&[("k", 75.0), ("theta0", 1.932)]),
+                Params::from_pairs(&[("k", 75.0), ("theta0", 110.7)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -578,13 +579,13 @@ mod tests {
             )
             .unwrap();
 
-        OPLSAATypifier::new(meta, ff)
+        OplsAaTypifier::new(meta, ff)
             .with_strict(false)
             .with_estimator(StubBondEstimator)
     }
 
     /// Ethane typed through the base: the typed copy and the base.
-    fn typed_ethane() -> (Atomistic, crate::ff::typifier::Typing<OPLSAATypifier>) {
+    fn typed_ethane() -> (Atomistic, crate::ff::typifier::Typing<OplsAaTypifier>) {
         let mut typing = crate::ff::typifier::Typing::new(ethane_library_typifier());
         let typed = typing.typify(&ethane()).expect("ethane types");
         (typed, typing)
@@ -717,8 +718,8 @@ mod tests {
     /// carbon between two single bonds, `opls_yd` (`CY`) the terminal `-C`.
     /// Bonds and angles all have exact class rows, so the torsion is the only
     /// estimated term.
-    fn one_torsion_estimating_typifier() -> OPLSAATypifier {
-        let mut meta = OplsTypingMeta::new();
+    fn one_torsion_estimating_typifier() -> OplsAaTypifier {
+        let mut meta = OplsTypingMetadata::new();
         let row = |class: &str, def: &str| OplsTypeRow {
             class: class.to_string(),
             def: Some(def.to_string()),
@@ -765,7 +766,7 @@ mod tests {
                 .def_type(
                     name,
                     &ends,
-                    Params::from_pairs(&[("k", 70.0), ("theta0", 2.0)]),
+                    Params::from_pairs(&[("k", 70.0), ("theta0", 114.6)]),
                 )
                 .unwrap();
         }
@@ -779,7 +780,7 @@ mod tests {
             .unwrap();
 
         let estimator = Parmchk2Estimator::new(&ff, &meta);
-        OPLSAATypifier::new(meta, ff)
+        OplsAaTypifier::new(meta, ff)
             .with_strict(false)
             .with_estimator(estimator)
     }
@@ -800,7 +801,7 @@ mod tests {
         }
         let c = ids.map(|id| id.expect("every chain atom added"));
         let double = g.add_bond(c[0], c[1]).unwrap();
-        g.set_bond_type(double, BondType::Double).unwrap();
+        g.set_bond_type(double, BondOrder::Double).unwrap();
         g.add_bond(c[1], c[2]).unwrap();
         g.add_bond(c[2], c[3]).unwrap();
         g

@@ -5,7 +5,7 @@
 //! a `%label` (e.g. benzene's aromatic-H type `opls_146` =
 //! `[#1]-[c;%opls_145]`) is matched only after its dependency is resolved. The
 //! engine returns the per-atom `opls_NNN` assignment, which this function turns
-//! into the node [`Annotation`]s of a [`Match`](crate::ff::typifier::Match):
+//! into the node [`Annotation`]s of a [`TypeAssignment`](crate::ff::typifier::TypeAssignment):
 //! each type's `type` (with its `atom/full` row's `mass` and `charge`) and
 //! `class`. It writes nothing; the typing base stamps the match.
 //!
@@ -13,8 +13,8 @@
 //!
 //! The engine never sees the caller's graph as given. It matches a clone
 //! brought to the standard aromatic form by
-//! [`Perceive::find_aromaticity`](molrs::perceive::Perceive::find_aromaticity),
-//! which keeps every [`AtomId`], so a Kekulé ring and an aromatic-declared ring
+//! [`assign_aromaticity`](molrs::perceive::assign_aromaticity),
+//! which keeps every [`NodeId`], so a Kekulé ring and an aromatic-declared ring
 //! type alike under the aromatic rules (`c`, `n`, `:`). Only the assigned type
 //! names travel back; the caller's bond types and bond numbers are never
 //! touched, so a Kekulé input stays Kekulé.
@@ -36,7 +36,7 @@
 //! When several defs match the same atom *within a level*:
 //! 1. candidates dominated by another candidate drop out — a type dominates
 //!    another when it sits on a higher `layer`, or on the same layer overrides
-//!    it directly or transitively (see [`OplsTypingMeta`]);
+//!    it directly or transitively (see [`OplsTypingMetadata`]);
 //! 2. among the rest, higher explicit `priority` wins (absent = 0);
 //! 3. then the more specific pattern (more query atoms);
 //! 4. then the earlier sorted type name.
@@ -58,21 +58,22 @@
 
 use std::collections::HashMap;
 
-use molrs::perceive::Perceive;
-use molrs::system::molgraph::PropValue;
-use molrs::{AtomId, Atomistic};
+use molrs::core::PropValue;
+use molrs::core::{Atomistic, NodeId};
+use molrs::perceive::assign_aromaticity;
 
-use crate::ff::forcefield::{ForceField, Params};
+use crate::ff::forcefield::ForceField;
+use crate::ff::ir::Params;
 use crate::ff::typifier::Annotation;
 
 use super::layered::LayeredTypingEngine;
-use super::meta::OplsTypingMeta;
+use super::typing_metadata::OplsTypingMetadata;
 
 /// The OPLS-AA atom typing of one graph.
 pub(crate) struct AtomTyping {
     /// The `opls_NNN` type of every atom a def typed; an atom no def typed is
     /// absent.
-    pub(crate) types: HashMap<AtomId, String>,
+    pub(crate) types: HashMap<NodeId, String>,
     /// The node annotations, positional against `graph.atoms()`.
     pub(crate) nodes: Vec<Vec<(String, Annotation)>>,
 }
@@ -80,7 +81,7 @@ pub(crate) struct AtomTyping {
 /// Type the atoms of `mol` with OPLS-AA atom types.
 ///
 /// Drives the [`LayeredTypingEngine`] over `meta`, matching a privately
-/// aromaticity-perceived copy of `mol` (same [`AtomId`]s; `mol` itself is never
+/// aromaticity-perceived copy of `mol` (same [`NodeId`]s; `mol` itself is never
 /// changed). Every atom assigned a type gets two annotations:
 /// - `type` → [`Annotation::Type`] under the `atom/full` style of `ff`, named
 ///   by the `opls_NNN` type, with that row's numeric params (`mass`, `charge`)
@@ -90,7 +91,7 @@ pub(crate) struct AtomTyping {
 /// - `class` → [`Annotation::Value`] of the type's class, when `meta` has one.
 ///
 /// Atoms typed by no def get no annotation (and stay untyped); the strict
-/// [`OPLSAATypifier`](super::OPLSAATypifier) refuses such a molecule.
+/// [`OplsAaTypifier`](super::OplsAaTypifier) refuses such a molecule.
 ///
 /// # Errors
 ///
@@ -98,11 +99,11 @@ pub(crate) struct AtomTyping {
 /// `def`, an override naming an absent type, or an overrides cycle.
 pub(crate) fn typify_atoms(
     mol: &Atomistic,
-    meta: &OplsTypingMeta,
+    meta: &OplsTypingMetadata,
     ff: &ForceField,
 ) -> Result<AtomTyping, String> {
     let engine = LayeredTypingEngine::build(meta)?;
-    let perceived = Perceive::new().find_aromaticity(mol);
+    let perceived = assign_aromaticity(mol);
     let types = engine.assign(&perceived);
     let atom_full = ff.get_style("atom", "full");
 
@@ -138,33 +139,33 @@ pub(crate) fn typify_atoms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::typifier::Match;
-    use crate::ff::typifier::opls::meta::OplsTypeRow;
-    use molrs::Atom;
-    use molrs::system::BondType;
+    use crate::ff::typifier::OplsTypeRow;
+    use crate::ff::typifier::TypeAssignment;
+    use molrs::core::Atom;
+    use molrs::core::BondOrder;
 
     /// `mol` with the node annotations of [`typify_atoms`] written onto it
     /// through the typing base's one execution path.
     fn typed_graph(
         mol: &Atomistic,
-        meta: &OplsTypingMeta,
+        meta: &OplsTypingMetadata,
         ff: &ForceField,
     ) -> Result<Atomistic, String> {
         let typing = typify_atoms(mol, meta, ff)?;
         let mut graph = mol.clone();
-        let mut m = Match {
+        let mut m = TypeAssignment {
             nodes: typing.nodes,
-            ..Match::default()
+            ..TypeAssignment::default()
         };
         m.declare_styles_of(ff);
-        m.write_onto(&mut graph, &mut ff.empty_like())?;
+        m.apply_to(&mut graph, &mut ff.empty_like())?;
         Ok(graph)
     }
 
     /// Build a tiny ethane-like skeleton C-C with explicit H neighbours so the
     /// `[C;X4](C)(H)(H)H` style defs have something to match. (Pure-function
     /// unit fixture — typing of real molecules by the shipped rules is the
-    /// golden tests of `opls/embedded.rs`.)
+    /// golden tests of `opls/shipped_forcefield.rs`.)
     fn ethane() -> Atomistic {
         let mut g = Atomistic::new();
         let c0 = g.add_atom(Atom::xyz("C", 0.0, 0.0, 0.0));
@@ -179,8 +180,8 @@ mod tests {
         g
     }
 
-    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMeta {
-        let mut m = OplsTypingMeta::new();
+    fn meta_with(rows: &[(&str, OplsTypeRow)]) -> OplsTypingMetadata {
+        let mut m = OplsTypingMetadata::new();
         for (name, row) in rows {
             m.insert(*name, row.clone());
         }
@@ -289,11 +290,11 @@ mod tests {
 
     #[test]
     fn typed_atom_ref_def_without_dependency_types_nothing() {
-        // A %opls_NNN def is now supported (layered), not skipped. With no
+        // A %opls_NNN def is supported (layered), not skipped. With no
         // matching dependency present (nothing is ever typed opls_145), the
         // `%opls_145` predicate never holds, so the def matches nothing — and
         // it is NOT an error. (Real layered typing is covered in
-        // `opls/layered.rs` and the golden tests of `opls/embedded.rs`.)
+        // `opls/layered.rs` and the golden tests of `opls/shipped_forcefield.rs`.)
         let m = meta_with(&[("opls_ref", row("HA", Some("[H][C;%opls_145]"), &[]))]);
         let ff = ForceField::new("OPLS-AA");
         let typed = typed_graph(&ethane(), &m, &ff).unwrap();
@@ -344,18 +345,18 @@ mod tests {
     /// Kekulé benzene, hand-built: ring carbons 0..=5 bonded `C0=C1-C2=C3-C4=C5-C0`
     /// (bond types `Double` / `Single`, no `is_aromatic` flag), one hydrogen on
     /// each carbon (atoms 6..=11). Returns the graph and its six ring bonds.
-    fn kekule_benzene() -> (Atomistic, Vec<molrs::BondId>) {
+    fn kekule_benzene() -> (Atomistic, Vec<molrs::core::RelationId>) {
         let mut g = Atomistic::new();
-        let c: Vec<AtomId> = (0..6)
+        let c: Vec<NodeId> = (0..6)
             .map(|k| g.add_atom(Atom::xyz("C", 1.4 * k as f64, 0.0, 0.0)))
             .collect();
-        let ring: Vec<molrs::BondId> = (0..6)
+        let ring: Vec<molrs::core::RelationId> = (0..6)
             .map(|k| {
                 let bond = g.add_bond(c[k], c[(k + 1) % 6]).unwrap();
                 let order = if k % 2 == 0 {
-                    BondType::Double
+                    BondOrder::Double
                 } else {
-                    BondType::Single
+                    BondOrder::Single
                 };
                 g.set_bond_type(bond, order).unwrap();
                 bond
@@ -396,9 +397,9 @@ mod tests {
 
         for (k, &bond) in ring.iter().enumerate() {
             let want = if k % 2 == 0 {
-                BondType::Double
+                BondOrder::Double
             } else {
-                BondType::Single
+                BondOrder::Single
             };
             assert_eq!(typed.bond_type(bond), want, "ring bond {k} type");
             assert_eq!(

@@ -1,8 +1,8 @@
 """FFI seam of ``molrs.op`` (assembly-07, mirrors ``molrs/src/op/``).
 
 These prove that the numeric primitives cross: arrays arrive as float64 of the
-documented shape, ``Fit`` is a frozen record whose ``freedom`` crosses as its
-lowercase name, and ``SuperposeError`` maps to ``ValueError``. They re-derive
+documented shape, ``Superposition`` is a frozen record whose ``freedom`` crosses as its
+lowercase name, and ``SuperpositionError`` maps to ``ValueError``. They re-derive
 no numerics: superposition and the eigen-gap are proven by the unit tests in
 ``molrs/src/op/superpose.rs``. The one geometric value asserted (a pure
 translation) is hand-checkable.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import molrs
 import numpy as np
 import pytest
-from molrs import _lib
+from molrs import _native
 
 # Position, numerical (tester contract: 1e-8).
 POS_TOL = 1e-8
@@ -24,11 +24,11 @@ TRIANGLE = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 class TestModule:
     def test_op_is_a_registered_submodule(self):
-        assert hasattr(_lib, "op")
+        assert hasattr(_native, "op")
         assert molrs.op.superpose is not None
 
     def test_default_gap_tol(self):
-        # `op::superpose::DEFAULT_GAP_TOL`.
+        # `op::DEFAULT_GAP_TOL`.
         assert molrs.op.DEFAULT_GAP_TOL == 1e-4
 
 
@@ -36,7 +36,7 @@ class TestSuperpose:
     def test_returns_a_fit_with_float64_arrays_of_the_documented_shape(self):
         fit = molrs.op.superpose(TRIANGLE, TRIANGLE + [1.0, 2.0, 3.0])
 
-        assert isinstance(fit, molrs.op.Fit)
+        assert isinstance(fit, molrs.op.Superposition)
         assert fit.rotation.dtype == np.float64
         assert fit.rotation.shape == (3, 3)
         assert fit.translation.dtype == np.float64
@@ -116,3 +116,56 @@ class TestCentroid:
 
     def test_zero_total_weight_has_no_centroid(self):
         assert molrs.op.centroid(TRIANGLE, np.zeros(3)) is None
+
+
+class TestPlaceFromInternalCoords:
+    """``op::place_from_internal_coords`` crosses: lists or arrays in, a
+    float64 ``(3,)`` array out, angles in radians."""
+
+    A = [0.0, 1.0, 0.0]
+    B = [0.0, 0.0, 0.0]
+    C = [1.52, 0.0, 0.0]
+
+    @staticmethod
+    def _angle(b, c, d):
+        u, v = np.subtract(b, c), np.subtract(d, c)
+        return np.arccos(np.dot(u, v) / np.linalg.norm(u) / np.linalg.norm(v))
+
+    @staticmethod
+    def _dihedral(a, b, c, d):
+        b0, b1, b2 = np.subtract(a, b), np.subtract(c, b), np.subtract(d, c)
+        b1 = b1 / np.linalg.norm(b1)
+        v = b0 - np.dot(b0, b1) * b1
+        w = b2 - np.dot(b2, b1) * b1
+        return np.arctan2(np.dot(np.cross(b1, v), w), np.dot(v, w))
+
+    def test_the_point_has_the_bond_angle_and_torsion_asked_for(self):
+        deg = molrs.core.UnitRegistry().factor("deg", "rad")
+        d = molrs.op.place_from_internal_coords(
+            self.A, self.B, self.C, 1.33, 116.0 * deg, -75.0 * deg
+        )
+        assert d.dtype == np.float64 and d.shape == (3,)
+        np.testing.assert_allclose(np.linalg.norm(d - self.C), 1.33, rtol=1e-12)
+        np.testing.assert_allclose(
+            self._angle(self.B, self.C, d), 116.0 * deg, rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            self._dihedral(self.A, self.B, self.C, d), -75.0 * deg, rtol=1e-12
+        )
+
+    def test_trans_lies_in_the_plane_opposite_a(self):
+        # Hand-derived: ∠ 90°, torsion 180° from a = +y puts d at c − y.
+        d = molrs.op.place_from_internal_coords(
+            np.array(self.A), np.array(self.B), np.array(self.C), 1.0, np.pi / 2, np.pi
+        )
+        np.testing.assert_allclose(d, [1.52, -1.0, 0.0], rtol=0, atol=1e-12)
+
+    def test_collinear_points_leave_only_the_axial_component(self):
+        d = molrs.op.place_from_internal_coords(
+            [-1.0, 0.0, 0.0], self.B, self.C, 1.0, np.pi / 2, 0.3
+        )
+        np.testing.assert_allclose(d, self.C, rtol=0, atol=1e-12)
+
+    def test_a_point_not_of_three_coordinates_is_rejected(self):
+        with pytest.raises((TypeError, ValueError)):
+            molrs.op.place_from_internal_coords([0.0, 1.0], self.B, self.C, 1.0, 1.0, 1.0)

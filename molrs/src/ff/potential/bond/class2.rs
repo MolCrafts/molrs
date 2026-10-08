@@ -1,21 +1,24 @@
-//! Class2 (quartic) bond potential:
-//! E = k2*(r-r0)^2 + k3*(r-r0)^3 + k4*(r-r0)^4
-//!
-//! The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
+//! Class2 (quartic) bond (LAMMPS `bond_style class2`).
 
-use molrs::store::schema::block_names::BONDS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::BONDS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::term_table;
-use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::term_table;
+use crate::ff::potential::flat_coords::validate_coords;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Class2 quartic bond potential with pre-resolved flat arrays.
+///
+/// Class2 (quartic) bond potential:
+/// E = k2*(r-r0)^2 + k3*(r-r0)^3 + k4*(r-r0)^4
+///
+/// The COMPASS/class2 anharmonic bond. Parameters per type: `r0`, `k2`, `k3`, `k4`.
 pub struct BondClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
@@ -144,11 +147,11 @@ impl IndexedTerms for BondClass2 {
 }
 
 /// Construct a [`BondClass2`] from style params, type params, and Frame topology.
-pub fn bond_class2_ctor(
+pub fn bond_class2_constructor(
     _style_params: &Params,
     type_params: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = type_params.iter().copied().collect();
 
     let block = frame
@@ -169,11 +172,7 @@ pub fn bond_class2_ctor(
 
     let (mut ai, mut aj) = (Vec::new(), Vec::new());
     let (mut r0, mut k2, mut k3, mut k4) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let need = |p: &Params, key: &str, label: &str| -> Result<F, String> {
-        p.get(key)
-            .ok_or_else(|| format!("BondClass2 type '{}': missing '{}'", label, key))
-            .map(|v| v as F)
-    };
+    let need = |p: &Params, key: &str, label: &str| param_reads::type_num("class2", label, p, key);
     for idx in 0..i_col.len() {
         let label = &type_col[idx];
         let p = type_map
@@ -187,7 +186,7 @@ pub fn bond_class2_ctor(
         k4.push(need(p, "k4", label)?);
     }
 
-    Ok(Member::indexed(BondClass2::new(ai, aj, r0, k2, k3, k4)))
+    Ok(ForceTerm::indexed(BondClass2::new(ai, aj, r0, k2, k3, k4)))
 }
 
 #[cfg(test)]

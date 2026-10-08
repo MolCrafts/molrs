@@ -1,18 +1,11 @@
 //! [`LinearFit`] — ordinary-least-squares line fit over a fractional window.
-//!
-//! Consumes an `(x, y)` curve (e.g. `(lag_times, msd)`) and returns the OLS
-//! slope, intercept, coefficient of determination, and the inclusive index
-//! bounds of the window actually fitted. The slope arithmetic is the same OLS
-//! lifted into `ols_slope_intercept_r2` from
-//! the Einstein–Helfand ionic-conductivity OLS, so a `LinearFit` over the same
-//! curve and fractions reproduces that function's slope bit-for-bit.
 
 use ndarray::Array1;
 
 use super::ols_slope_intercept_r2;
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Fit;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::Fit;
 
 /// Result of a linear (OLS) fit of `y = slope·x + intercept`.
 #[derive(Debug, Clone)]
@@ -46,6 +39,13 @@ impl ComputeResult for LinearFitResult {}
 ///
 /// with the same end clamp (`fit_end ≤ n − 1`) and a guard guaranteeing at
 /// least two fit points.
+///
+/// Consumes an `(x, y)` curve (e.g. `(lag_times, msd)`) and returns the OLS
+/// slope, intercept, coefficient of determination, and the inclusive index
+/// bounds of the window actually fitted. The slope arithmetic is the same OLS
+/// lifted into `ols_slope_intercept_r2` from
+/// the Einstein–Helfand ionic-conductivity OLS, so a `LinearFit` over the same
+/// curve and fractions reproduces that function's slope bit-for-bit.
 #[derive(Debug, Clone, Copy)]
 pub struct LinearFit {
     /// `(start_frac, end_frac)` window as fractions of the last index, with

@@ -1,30 +1,24 @@
 //! Rotation of template copies: the [`Orienter`] trait and the
 //! [`AxisOrienter`].
-//!
-//! An orienter answers the question a [`Placer`](crate::builder::Placer)
-//! leaves open (operator, 2026-09-28: the placer only translates, the
-//! orienter rotates): which rotation, about the template's centre of mass,
-//! turns a copy before it is moved onto its site? The
-//! [`Assembler`](crate::builder::Assembler) holds one of each and applies the
-//! orienter's motion first, then the placer's.
 
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::op::rigid::{Rigid, about, frame};
-use crate::op::superpose::{DEFAULT_GAP_TOL, superpose};
-use crate::op::types::{F, Mat3, Vec3};
+use crate::core::CenterError;
+use crate::core::MolGraph;
+use crate::core::PortKind;
+use crate::core::RelationId;
 use crate::op::vec3::{add, normalize, scale, sub};
-use crate::spatial::geometry::CenterError;
-use crate::system::molgraph::MolGraph;
-use crate::system::port::{PortId, PortKind};
+use crate::op::{DEFAULT_GAP_TOL, superpose};
+use crate::op::{F, Mat3, Vec3};
+use crate::op::{Rigid, orthonormal_frame, rotation_about};
 
 /// One bond of a site: the template port the copy joins through and the
 /// position of the partner site (Å).
 #[derive(Debug, Clone, Copy)]
 pub struct SiteLink {
     /// The template port this bond uses.
-    pub port: PortId,
+    pub port: RelationId,
     /// The partner site's position (Å).
     pub toward: Vec3,
 }
@@ -41,6 +35,13 @@ pub struct SiteView<'a> {
 }
 
 /// Turns one template and a list of sites into one rotation per site.
+///
+/// An orienter answers the question a [`Placer`](crate::builder::Placer)
+/// leaves open (operator, 2026-09-28: the placer only translates, the
+/// orienter rotates): which rotation, about the template's centre of mass,
+/// turns a copy before it is moved onto its site? The
+/// [`Assembler`](crate::builder::Assembler) holds one of each and applies the
+/// orienter's motion first, then the placer's.
 ///
 /// Implementors are `Send + Sync` so an
 /// [`Assembler`](crate::builder::Assembler) holding one can cross threads.
@@ -64,7 +65,7 @@ pub trait Orienter: Send + Sync {
 ///
 /// **Chain site** — every bond uses a `<` or `>` port and the template has
 /// exactly one of each. The frame is fixed by two directions
-/// ([`frame`](crate::op::rigid::frame), Gram–Schmidt):
+/// ([`orthonormal_frame`](crate::op::orthonormal_frame), Gram–Schmidt):
 ///
 /// - site: primary = the site axis; secondary = `Σ ±(q − p)` over its bonds,
 ///   `+` for the partner `q` on the `>` port and `−` on the `<` port (the
@@ -76,7 +77,7 @@ pub trait Orienter: Send + Sync {
 ///
 /// **Branch site** — any other site with bonds (a `$` or `!` port, or a
 /// template that is not a two-port chain unit). The rotation is the
-/// least-squares fit ([`superpose`](crate::op::superpose::superpose)) of the
+/// least-squares fit ([`superpose`](crate::op::superpose)) of the
 /// template's port directions (centre of mass → handle) onto the site's bond
 /// directions (site → partner), each set taken with its negation so the fit
 /// is a pure rotation about `R_c` (the approach of CG2AT2, Vickery &
@@ -90,11 +91,11 @@ pub trait Orienter: Send + Sync {
 ///
 /// ```
 /// use molrs::builder::{AxisOrienter, Orienter, SiteLink, SiteView};
-/// use molrs::op::rigid::apply;
-/// use molrs::store::keys;
-/// use molrs::system::bond::BondNumber;
-/// use molrs::system::atomistic::Atomistic;
-/// use molrs::system::port::PortKind;
+/// use molrs::op::transform_point;
+/// use molrs::core::keys;
+/// use molrs::core::BondNumber;
+/// use molrs::core::Atomistic;
+/// use molrs::core::PortKind;
 ///
 /// // Anchors C0 (−1,0,0) `<` and C1 (1,0,0) `>`, a heavy side atom at
 /// // (0,2,0): backbone-to-centre points +y, the joining atoms lie along +x.
@@ -118,7 +119,7 @@ pub trait Orienter: Send + Sync {
 /// let site = SiteView { position: [0.0; 3], axis: Some([0.0, 0.0, 1.0]), links: &links };
 /// let r = AxisOrienter::new().orient_many(unit.as_molgraph(), &[site]).unwrap();
 /// // The joining atoms C0 → C1 now run along +y.
-/// let (a, b) = (apply(&r[0], [-1.0, 0.0, 0.0]), apply(&r[0], [1.0, 0.0, 0.0]));
+/// let (a, b) = (transform_point(&r[0], [-1.0, 0.0, 0.0]), transform_point(&r[0], [1.0, 0.0, 0.0]));
 /// assert!((b[1] - a[1] - 2.0).abs() < 1e-12);
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
@@ -128,7 +129,7 @@ pub struct AxisOrienter;
 struct TemplateGeometry {
     center: Vec3,
     /// Kind and handle position of every port.
-    ports: HashMap<PortId, (PortKind, Vec3)>,
+    ports: HashMap<RelationId, (PortKind, Vec3)>,
     /// The chain frame, when the template has exactly one `<` and one `>`.
     chain: Option<Mat3>,
 }
@@ -142,9 +143,9 @@ impl TemplateGeometry {
                 .position()
                 .ok_or_else(|| OrientError::Template("a port atom has no x/y/z".to_owned()))
         };
-        let center =
-            crate::spatial::geometry::center(template, &template.node_ids().collect::<Vec<_>>())
-                .map_err(OrientError::Center)?;
+        let center = template
+            .center(&template.node_ids().collect::<Vec<_>>())
+            .map_err(OrientError::Center)?;
         let mut ports = HashMap::new();
         let (mut left, mut right) = (Vec::new(), Vec::new());
         for id in template.ports() {
@@ -160,7 +161,7 @@ impl TemplateGeometry {
             ports.insert(id, (port.kind, position(port.handle)?));
         }
         let chain = match (left.as_slice(), right.as_slice()) {
-            ([l], [r]) => frame(sub(center, scale(add(*l, *r), 0.5)), sub(*r, *l)),
+            ([l], [r]) => orthonormal_frame(sub(center, scale(add(*l, *r), 0.5)), sub(*r, *l)),
             _ => None,
         };
         Ok(Self {
@@ -227,7 +228,8 @@ impl Orienter for AxisOrienter {
                         let sign = if *kind == PortKind::Right { 1.0 } else { -1.0 };
                         secondary = add(secondary, scale(sub(link.toward, site.position), sign));
                     }
-                    let f_site = frame(axis, secondary).ok_or(OrientError::Frame { index })?;
+                    let f_site =
+                        orthonormal_frame(axis, secondary).ok_or(OrientError::Frame { index })?;
                     mul_transpose(&f_site, &f_template)
                 }
                 _ => {
@@ -243,7 +245,7 @@ impl Orienter for AxisOrienter {
                         .0
                 }
             };
-            rigids.push(about(rotation, g.center));
+            rigids.push(rotation_about(rotation, g.center));
         }
         Ok(rigids)
     }
@@ -327,13 +329,14 @@ impl std::error::Error for OrientError {
 #[cfg(test)]
 mod tests {
     use super::{AxisOrienter, OrientError, Orienter, SiteLink, SiteView, direction_fit};
-    use crate::op::rigid::{Rigid, apply};
-    use crate::op::types::Vec3;
+    use crate::core::Atomistic;
+    use crate::core::BondNumber;
+    use crate::core::PortKind;
+    use crate::core::RelationId;
+    use crate::core::keys;
+    use crate::op::Vec3;
     use crate::op::vec3::sub;
-    use crate::store::keys;
-    use crate::system::atomistic::Atomistic;
-    use crate::system::bond::BondNumber;
-    use crate::system::port::{PortId, PortKind};
+    use crate::op::{Rigid, transform_point};
 
     const TOL: f64 = 1e-9;
 
@@ -341,7 +344,7 @@ mod tests {
     /// x = ∓2, and X (0,2,0); masses 1, 1, 1, 1, 4. Centre of mass (0, 1, 0);
     /// chain frame: primary +y, secondary +x. Returns the unit and its
     /// (`<`, `>`) ports.
-    fn chain_unit() -> (Atomistic, PortId, PortId) {
+    fn chain_unit() -> (Atomistic, RelationId, RelationId) {
         let mut f = Atomistic::new();
         let c0 = f.add_atom_xyz("C", -1.0, 0.0, 0.0);
         let c1 = f.add_atom_xyz("C", 1.0, 0.0, 0.0);
@@ -365,7 +368,7 @@ mod tests {
 
     /// Branch unit: a centre C at the origin with three `$` hydrogens at
     /// +x, +y and +z (masses 12, 1, 1, 1). Returns it and its ports.
-    fn branch_unit() -> (Atomistic, Vec<PortId>) {
+    fn branch_unit() -> (Atomistic, Vec<RelationId>) {
         let mut f = Atomistic::new();
         let c = f.add_atom_xyz("C", 0.0, 0.0, 0.0);
         f.set_node(c, keys::MASS, 12.0).expect("mass");
@@ -390,7 +393,7 @@ mod tests {
 
     /// The image of a template displacement `from → to` under `r`.
     fn turned(r: &Rigid, from: Vec3, to: Vec3) -> Vec3 {
-        sub(apply(r, to), apply(r, from))
+        sub(transform_point(r, to), transform_point(r, from))
     }
 
     #[test]
@@ -417,7 +420,7 @@ mod tests {
             .expect("orientable")[0];
 
         let com = [0.0, 1.0, 0.0];
-        close(apply(&rot, com), com);
+        close(transform_point(&rot, com), com);
         close(turned(&rot, [0.0; 3], com), [0.0, 0.0, 1.0]);
         close(
             turned(&rot, [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]),

@@ -1,27 +1,28 @@
 //! MMFF94 bond stretching: E = (1/2)*143.9325*kb*dr^2*(1 + cs*dr + 7/12*cs^2*dr^2)
 
-use molrs::store::schema::block_names::BONDS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{sub3, term_table, validate_coords};
-use crate::ff::potential::{IndexedTerms, Member, Potential};
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{sub3, term_table, validate_coords};
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
 use crate::op::vec3::norm;
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use molrs::core::Frame;
+use molrs::op::F;
 
-use crate::ff::constants::MDYNE_A_TO_KCAL;
+use crate::core::constants::MMFF_MDYNE_A_TO_KCAL_MOL;
 /// Cubic stretch constant (A^-1).
 const CS: f64 = -2.0;
 
-pub struct MMFFBondStretch {
+pub struct BondMmff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     kb: Vec<F>,
     r0: Vec<F>,
 }
 
-impl MMFFBondStretch {
+impl BondMmff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -37,7 +38,7 @@ impl MMFFBondStretch {
         let mut energy: F = 0.0;
         let forces = out;
         let cs = CS as F;
-        let conv = MDYNE_A_TO_KCAL as F;
+        let conv = MMFF_MDYNE_A_TO_KCAL_MOL as F;
 
         for idx in 0..n_terms {
             let (i, j) = atoms(idx);
@@ -68,7 +69,7 @@ impl MMFFBondStretch {
     }
 }
 
-impl Potential for MMFFBondStretch {
+impl Potential for BondMmff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -82,7 +83,7 @@ impl Potential for MMFFBondStretch {
     }
 }
 
-impl IndexedTerms for MMFFBondStretch {
+impl IndexedTerms for BondMmff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j])
     }
@@ -108,11 +109,11 @@ impl IndexedTerms for MMFFBondStretch {
     }
 }
 
-pub fn mmff_bond_ctor(
+pub fn bond_mmff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     // Per-instance parameters: the MMFF typifier baked `kb`/`r0` onto each bond
     // (table → equivalence fallback → empirical rules). This kernel only reads the
     // columns and evaluates — no force-field-specific resolution lives here.
@@ -127,14 +128,8 @@ pub fn mmff_bond_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or("mmff_bond: missing \"atomj\"")?;
-    let kb_col = block
-        .get("kb")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_bond: missing \"kb\" column (typifier did not bake bond params)")?;
-    let r0_col = block
-        .get("r0")
-        .and_then(|c| c.as_float())
-        .ok_or("mmff_bond: missing \"r0\" column (typifier did not bake bond params)")?;
+    let kb_col = param_reads::instance_col("mmff_bond", block, "kb")?;
+    let r0_col = param_reads::instance_col("mmff_bond", block, "r0")?;
 
     let n = i_col.len();
     let (mut ai, mut aj, mut kb, mut r0) = (
@@ -149,7 +144,7 @@ pub fn mmff_bond_ctor(
         kb.push(kb_col[idx] as F);
         r0.push(r0_col[idx] as F);
     }
-    Ok(Member::indexed(MMFFBondStretch {
+    Ok(ForceTerm::indexed(BondMmff {
         atom_i: ai,
         atom_j: aj,
         kb,
@@ -163,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_mmff_bond_at_equilibrium() {
-        let pot = MMFFBondStretch {
+        let pot = BondMmff {
             atom_i: vec![0],
             atom_j: vec![1],
             kb: vec![4.258],
@@ -180,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_mmff_bond_stretched() {
-        let pot = MMFFBondStretch {
+        let pot = BondMmff {
             atom_i: vec![0],
             atom_j: vec![1],
             kb: vec![4.258],

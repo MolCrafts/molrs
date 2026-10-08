@@ -1,6 +1,6 @@
 //! Uniform sampling of directions on S², the unit sphere in 3D.
 
-use crate::op::types::{F, Vec3};
+use crate::op::{F, Vec3};
 
 use std::f64::consts::TAU;
 
@@ -20,7 +20,7 @@ pub fn unit_vector_from_uniform(u: [F; 2]) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::op::types::F;
+    use crate::op::F;
 
     const MAP_TOL: F = 1e-15;
 

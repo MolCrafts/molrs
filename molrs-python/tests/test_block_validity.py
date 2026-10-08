@@ -1,7 +1,7 @@
 """Nullable Frame columns at the Python seam.
 
 A node component is per-atom optional — an atom either carries ``frag_id`` /
-``h_count`` or it does not — while a :class:`molrs.Block` column is dense. The
+``h_count`` or it does not — while a :class:`molrs.core.Block` column is dense. The
 seam therefore needs a validity mask: ``Block.validity(key)`` is ``None`` when
 every cell is real, and a boolean array marking the holes when some are not.
 Without it a hole crosses as a zero, which is a *stated* value: a partially
@@ -9,7 +9,7 @@ labelled fragment loses its labels and a partially declared ``h_count`` tells
 hydrogen repletion that the undeclared atoms are saturated.
 
 These are FFI-seam tests. The chemistry they lean on is owned by the Rust unit
-tests (``molrs/src/core/system/fragment.rs`` for ``frag_id``,
+tests (``molrs/src/core/molgraph.rs`` for ``frag_id``,
 ``molrs/src/perceive/hydrogens.rs`` for repletion); nothing here re-derives a
 number, and no third-party scientific software runs.
 """
@@ -23,13 +23,13 @@ import numpy as np
 import pytest
 
 
-def _partially_labelled_fragment() -> molrs.Atomistic:
+def _partially_labelled_fragment() -> molrs.core.Atomistic:
     """``C–C–H`` with a ``frag_id`` on the first carbon only.
 
     The two unlabelled atoms are the holes under test: ``frag_id`` is a node
     prop, and only one node has it.
     """
-    fragment = molrs.Atomistic()
+    fragment = molrs.core.Atomistic()
     first = fragment.def_atom(element="C", x=0.0, y=0.0, z=0.0)
     second = fragment.def_atom(element="C", x=1.54, y=0.0, z=0.0)
     hydrogen = fragment.def_atom(element="H", x=2.63, y=0.0, z=0.0)
@@ -47,7 +47,7 @@ def _partially_labelled_fragment() -> molrs.Atomistic:
 def test_a_fully_valid_column_has_no_validity_mask() -> None:
     """``None``, not an all-``True`` array: a mask means "this column has
     holes", so a dense column must not manufacture one."""
-    block = molrs.Block()
+    block = molrs.core.Block()
     block.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
 
     assert block.validity("x") is None
@@ -78,12 +78,13 @@ def test_a_fully_labelled_column_has_no_validity_mask() -> None:
 def test_partial_frag_id_survives_the_frame_round_trip() -> None:
     """The labelled atom keeps its id and the unlabelled ones stay unlabelled.
 
-    Today ``to_frame`` drops the whole column when any atom lacks a label
-    (the old "all or nothing" rule), so the label is lost.
+    ``to_frame`` writes a partially labelled ``frag_id`` column with a
+    validity mask, so ``from_frame`` restores the label where it was set and
+    leaves the unlabelled atoms without one.
     """
     frame = _partially_labelled_fragment().to_frame()
 
-    restored = molrs.Atomistic.from_frame(frame)
+    restored = molrs.core.Atomistic.from_frame(frame)
 
     assert [restored.frag_id(atom.handle) for atom in restored.atoms] == [
         7,
@@ -103,14 +104,13 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
     The other two atoms carry no ``h_count`` at all, so repletion derives
     theirs from valence. Crossing the frame must not turn those holes into a
     declared ``h_count = 0``, which an explicit count short-circuits
-    (``implicit_h_count``) into "already saturated".
+    (``n_implicit_hydrogens``) into "already saturated".
     """
-    perceive = molrs.perceive.Perceive()
-    molecule = molrs.io.SmilesIR("CC[OH]").to_atomistic()
+    molecule = molrs.io.smiles.SmilesIr("CC[OH]").to_atomistic()
 
-    direct = perceive.find_hydrogens(molecule).n_atoms
-    round_tripped = perceive.find_hydrogens(
-        molrs.Atomistic.from_frame(molecule.to_frame())
+    direct = molrs.perceive.add_hydrogens(molecule).n_atoms
+    round_tripped = molrs.perceive.add_hydrogens(
+        molrs.core.Atomistic.from_frame(molecule.to_frame())
     ).n_atoms
 
     assert round_tripped == direct
@@ -119,12 +119,11 @@ def test_hydrogen_repletion_survives_a_frame_round_trip() -> None:
 def test_hydrogen_repletion_survives_a_round_trip_without_declared_counts() -> None:
     """``CCO`` declares no ``h_count`` anywhere, so the column is absent rather
     than holed — the case the mask must leave alone."""
-    perceive = molrs.perceive.Perceive()
-    molecule = molrs.io.SmilesIR("CCO").to_atomistic()
+    molecule = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
 
-    direct = perceive.find_hydrogens(molecule).n_atoms
-    round_tripped = perceive.find_hydrogens(
-        molrs.Atomistic.from_frame(molecule.to_frame())
+    direct = molrs.perceive.add_hydrogens(molecule).n_atoms
+    round_tripped = molrs.perceive.add_hydrogens(
+        molrs.core.Atomistic.from_frame(molecule.to_frame())
     ).n_atoms
 
     assert round_tripped == direct
@@ -192,7 +191,7 @@ def test_validity_of_an_absent_column_raises_key_error() -> None:
     ``test_a_fully_valid_column_has_no_validity_mask``; it is repeated here so
     the two answers are pinned side by side.
     """
-    block = molrs.Block()
+    block = molrs.core.Block()
     block.insert("x", np.array([1.0, 2.0, 3.0], dtype=np.float64))
 
     assert block.validity("x") is None
@@ -208,7 +207,7 @@ def test_validity_of_an_absent_column_raises_key_error() -> None:
 def test_insert_nullable_stores_the_mask_it_is_given() -> None:
     """The write side of :meth:`validity`: Python can state which cells are
     holes instead of having to route through a ported graph to get a mask."""
-    block = molrs.Block()
+    block = molrs.core.Block()
 
     block.insert_nullable(
         "tag", np.array([1, 2, 3], dtype=np.int32), np.array([True, False, True])
@@ -222,7 +221,7 @@ def test_insert_nullable_stores_the_mask_it_is_given() -> None:
 def test_insert_nullable_refuses_a_mask_shorter_than_the_column() -> None:
     """A mask that does not cover every row cannot say which cells are holes,
     and must be refused rather than padded."""
-    block = molrs.Block()
+    block = molrs.core.Block()
 
     with pytest.raises(ValueError):
         block.insert_nullable(

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "molcrafts-molrs"
-version = "0.15.1"
+version = "0.16.0"
 description = "Python bindings for molrs molecular simulation library"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -43,7 +43,7 @@ doc = [
 
 [tool.maturin]
 python-source = "python"
-module-name = "molrs._lib"
+module-name = "molrs._native"
 features = ["pyo3/extension-module"]
 exclude = [
   "python/molrs/*.so",
@@ -53,8 +53,22 @@ exclude = [
   "python/molrs/*.dSYM/**",
 ]
 
+# uv caches a molrs it built from a checkout by these keys. Its default, this
+# file alone, would keep handing a wheel built from an older commit to the
+# projects that build molrs from a checkout of its dev (molrec, molpack,
+# molpy); with the commit as a key, a checkout that moves is rebuilt.
+# Uncommitted Rust edits still need `--reinstall-package molcrafts-molrs`.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { git = { commit = true } }]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `python -X warn_default_encoding -m pytest` (how the suite is run) makes
+# every text-mode open without encoding= warn, and this makes the warning an
+# error: Python would decode with the locale, cp1252 on Windows, so such a
+# read passes on Linux and fails only on Windows. Ruff's PLW1514 catches it
+# statically only where it can tell the receiver is a Path.
+filterwarnings = ["error::EncodingWarning"]
 
 
 [tool.tox]
@@ -78,9 +92,8 @@ pass_env = [
   "RUSTUP_HOME",
   # Standard cargo variable, none of ours: passed through so a developer's own
   # flags (e.g. `-C target-cpu=native` for a bench build) survive tox's clean
-  # env. Nothing in this repo sets it, and LTO no longer rides on the
-  # environment at all — `lto` lives in `[profile.release]` in the manifests,
-  # where tox cannot strip it.
+  # env. Nothing in this repo sets it; `lto` lives in `[profile.release]` in
+  # the manifests, where tox cannot strip it.
   "RUSTFLAGS",
   # sccache (CI compile cache) — harmless when unset locally.
   "RUSTC_WRAPPER",
@@ -94,7 +107,7 @@ pass_env = [
 ]
 allowlist_externals = ["maturin"]
 commands_pre = [
-  ["maturin", "build", "--release", "-o", "{env_tmp_dir}/wheels"],
+  ["maturin", "build", "--release", "--locked", "-o", "{env_tmp_dir}/wheels"],
   [
     "{envpython}",
     "-c",
@@ -107,5 +120,5 @@ commands_pre = [
   ],
 ]
 commands = [
-  ["{envpython}", "-m", "pytest", "-q"],
+  ["{envpython}", "-X", "warn_default_encoding", "-m", "pytest", "-q"],
 ]

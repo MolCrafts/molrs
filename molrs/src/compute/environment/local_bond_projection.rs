@@ -1,30 +1,30 @@
 //! Projection of neighbor bond vectors onto a set of reference directions.
-//!
-//! Mirrors `freud.environment.LocalBondProjection`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalBondProjection.cc)).
-//!
-//! For each neighbor pair `(i, j)` and each reference direction `ê_k`,
-//! compute `dot_k = r̂_ij · ê_k` where `r̂_ij = (r_j − r_i) / |r_j − r_i|`.
-//! The result is a `(n_pairs × n_proj_vectors)` table of cosines, returned
-//! alongside its complement `1 − dot` for callers that prefer the
-//! "deviation from the reference" reading.
-//!
-//! freud additionally supports per-particle orientations (rotating each
-//! reference direction by the particle's quaternion before projection);
-//! that flavour is exposed via the `with_query_orientations` builder.
 
-use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 use ndarray::Array2;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
 use crate::compute::require_disp;
-use crate::compute::traits::Compute;
-use crate::op::rigid::rotate_by_quat;
+use crate::op::rotate_by_quat;
 
 /// `LocalBondProjection` analyzer.
+///
+/// Mirrors `freud.environment.LocalBondProjection`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/environment/LocalBondProjection.cc)).
+///
+/// For each neighbor pair `(i, j)` and each reference direction `ê_k`,
+/// compute `dot_k = r̂_ij · ê_k` where `r̂_ij = (r_j − r_i) / |r_j − r_i|`.
+/// The result is a `(n_pairs × n_proj_vectors)` table of cosines, returned
+/// alongside its complement `1 − dot` for callers that prefer the
+/// "deviation from the reference" reading.
+///
+/// freud additionally supports per-particle orientations (rotating each
+/// reference direction by the particle's quaternion before projection);
+/// that flavour is exposed via the `with_query_orientations` builder.
 #[derive(Debug, Clone, Default)]
 pub struct LocalBondProjection {
     /// If true, rotate each reference direction by the query-point's
@@ -155,10 +155,10 @@ impl ComputeResult for LocalBondProjectionResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     const TOL: F = 1e-12;

@@ -7,8 +7,7 @@ WebAssembly bindings for the [molrs](https://github.com/MolCrafts/molrs) molecul
 Full documentation lives at <https://docs.molcrafts.org/molrs/>. The package
 ships its TypeScript declarations (`molrs.d.ts`); the
 [WASM reference page](https://docs.molcrafts.org/molrs/reference/wasm/) maps
-the main exports. Upgrading from 0.14? See the
-[migration guide](https://docs.molcrafts.org/molrs/migration/).
+the main exports.
 
 ## Install
 
@@ -19,13 +18,12 @@ npm install @molcrafts/molrs
 ## Quick start
 
 ```js
-import { parseSMILES, generate3D, writeFrame } from "@molcrafts/molrs";
+import { readSmilesStr, Conformer, writeXyzStr } from "@molcrafts/molrs";
 
 // Parse SMILES → 3D coordinates → XYZ string
-const ir = parseSMILES("CCO");
-const frame = ir.toFrame();
-const mol3d = generate3D(frame, "fast");
-console.log(writeFrame(mol3d, "xyz"));
+const frame = readSmilesStr("CCO");
+const mol3d = new Conformer("fast").generate(frame);
+console.log(writeXyzStr(mol3d));
 ```
 
 The published package uses wasm-pack's `bundler` target: configure your bundler
@@ -34,71 +32,134 @@ async `init()` function that must be awaited before calling the API.
 
 ## API
 
-### Data model
+The exports are grouped as molrs groups them: one section per molrs module
+(`core`, `io`, `perceive`, `conformer`, `ff` / `optimize`, `compute`); the JS
+namespace itself is flat.
 
-- **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to `Block`s
-- **`Block`** — column store with typed arrays. Float columns are `Float64Array` (F = f64).
-- **`Box`** — simulation box with periodic boundary conditions
+### Core data model (`molrs::core`)
+
+- **`Frame`** — container mapping string keys (`"atoms"`, `"bonds"`) to
+  `Block`s, plus metadata (`getMeta` / `setMeta` / `metaKeys`, and
+  `getMetaScalar` / `setMetaScalar` for numbers)
+- **`Block`** — column store with typed arrays. Float columns are `Float64Array` (dtype `float`, stored as f64).
+- **`Box`** — simulation box with periodic boundary conditions (`h()` the
+  cell matrix, `toFrac` / `toCart`, `wrap`, `corners()`, …)
+- **`NDArray`** — owned `Float64Array` plus a shape (what `Box.origin()`, `Box.h()` and `Box.lengths()` return)
+- **`Topology`** — the bond graph (`Topology.fromFrame(frame)` reads
+  `bonds.atomi` / `atomj`): angles, dihedrals, impropers, connected components
+- **`TriMesh`** — a triangle surface (what `readStlBytes` returns)
+- **`Sphere`**, **`Cuboid`**, **`Parallelepiped`**, **`HalfSpace`**,
+  **`Cylinder`**, **`Ellipsoid`**, **`Polyhedron`**, **`SphereUnion`** — regions
+  (signed `distance`, `contains`, `bounds`; `and` / `or` / `not` compose into a
+  `Region`)
+- **`NeighborList`**, **`Neighbors`**, **`NeighborQuery`** — neighbor search
+  (see [Analysis](#analysis))
+- `covalentRadius(symbol)` — the element table's covalent radius (Å)
 
 Columns read like numpy: the column's dtype picks the array type, and no
-method names a dtype.
+method names a dtype. Dtype names are molrs core's (`DType::name()`), the
+same strings the Frame schema and every binding use.
 
 ```js
 const atoms = frame.get("atoms");                 // Block; throws if absent (frame.has)
-atoms.set("x", new Float64Array([0, 1, 2]));      // dtype from the constructor: f64
+atoms.set("x", new Float64Array([0, 1, 2]));      // dtype from the constructor: float
 atoms.set("element", ["C", "C", "O"]);            // string[] → string
 atoms.set("pos", new Float64Array(9), [3, 3]);    // optional row-major shape
 const v = atoms.view("x");                        // zero-copy Float64Array; invalid after WASM memory grows
 const x = atoms.copy("x");                        // owned Float64Array to keep
-const q = atoms.get("charge", new Float64Array(atoms.nrows)); // copy, or this default if absent
+const q = atoms.copy("charge", new Float64Array(atoms.nRows)); // or this fallback if absent
 atoms.dtype("x"); atoms.shape("pos"); atoms.has("x"); atoms.keys();
 ```
 
-| dtype | `view` | `copy` / `get` | `set` accepts |
-|-------|--------|----------------|---------------|
-| `f64` | `Float64Array` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
-| `i8` `i16` `i32` `i64` | same typed array | same typed array | same |
-| `u8` `u16` `u32` `u64` | same typed array | same typed array | same |
+| dtype | `view` | `copy` | `set` accepts |
+|-------|--------|--------|---------------|
+| `float` | `Float64Array` | `Float64Array` | `Float64Array` (`Float32Array` is refused) |
+| `i8` `i16` `int` `i64` | `Int8Array` … `BigInt64Array` (`int` is `Int32Array`) | same typed array | same |
+| `u8` `u16` `u32` `uint` | `Uint8Array` … `BigUint64Array` (`uint` is `BigUint64Array`) | same typed array | same |
 | `bool` | throws; use `copy` | `boolean[]` | `boolean[]` |
 | `string` | throws; use `copy` | `string[]` | `string[]` (and `[]`) |
 | `c64` / `c128` | throws; use `copy` | `{ real, imag, shape, dtype }` | never |
 
-### I/O
-
-- `parseSMILES(smiles)` → `SmilesIR` → `.toFrame()`
-- `XYZReader`, `PDBReader`, `LAMMPSReader` — file format parsers
-- `writeFrame(frame, "xyz" | "pdb" | "lammps-data" | "lammps-dump")` — serialize to string
-
-### 3D generation
-
-- `generate3D(frame, speed?, seed?)` — MMFF94 coordinate generation (`"fast"` | `"medium"` | `"better"`)
-
-### Force fields + geometry optimization
+### Perception (`molrs::perceive`)
 
 ```js
-const typifier = new UFFTypifier();                 // or MMFF94Typifier / MMFF94STypifier
+const rings = assignRings(frame);     // atoms/bonds gain is_in_ring, n_rings
+const arom  = assignAromaticity(frame);
+const withH = addHydrogens(frame);
+```
+
+### I/O (`molrs::io`)
+
+The binding's `io` sources mirror `molrs::io`: one module per format, holding
+that format's reader (or stream) and writer.
+
+- `readSmilesStr(smiles)` → `Frame` (one molecule); `SmilesIr.parse(smiles)` →
+  `SmilesIr` → `.toFrame()` (any SMILES, a `.`-separated set included);
+  `writeSmilesStr(frame)` → SMILES (molrs's default emit options);
+  `readCgsmilesStr(text)` → `Frame`
+- `readCsvBlockStr(text, delimiter?, header?)` → `Block`,
+  `writeCsvBlockStr(block, delimiter?, header?)` → CSV text
+- `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`,
+  `DcdStream`, `XtcStream`, `TrrStream` — chunk-fed readers, the one reader of
+  their format (`allocInputBuffer` → `feedIndexChunk` / `finishIndex` →
+  `parseRangeInInput` per frame)
+- `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader` — whole-content
+  readers, the molrs reader classes of those formats; `readFrame(index)` reads
+  frame `index` (0-based), as every reader in every binding does
+- `readStlBytes(bytes)` → `TriMesh`
+- `readLammpsLogStr(text, style?)` → the `LammpsLog` record (runs, thermo
+  tables, timings — Rust and Python's field names); `isLammpsLog(text)` tells a
+  log by its first run
+- the in-memory doors, named as molrs's `read_<fmt>_str` / `_bytes` and
+  `write_<fmt>_str` / `_bytes` (camelCased; Python's `molrs.io` has the same
+  set): `readXyzStr` / `readXyzBytes` / `writeXyzStr`, `readPdbStr` /
+  `readPdbBytes` / `writePdbStr`, `readSdfStr` / `readSdfBytes`,
+  `readGroStr` / `writeGroStr`, `readMol2Str` / `writeMol2Str`, `readCifStr` /
+  `writeCifStr`, `readXsfStr` / `writeXsfStr`, `readCubeStr` / `writeCubeStr`,
+  `readVaspPoscarStr` / `writeVaspPoscarStr`, `readVaspChgcarStr`,
+  `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr`,
+  `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`,
+  `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr(frame,
+  columns?)`; `readDcdBytes(bytes, decoderState?)` / `writeDcdBytes`,
+  `readTrrBytes` / `writeTrrBytes`, `readXtcBytes` / `writeXtcBytes` (binary,
+  one frame)
+- `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` /
+  `writeJsonFrameStr` — the `molrs::stream` wire encodings
+
+### 3D generation (`molrs::conformer`)
+
+- `new Conformer(speed?, addHydrogens?, seed?).generate(frame)` — distance
+  geometry + MMFF94 coordinate generation (`"fast"` | `"medium"` | `"better"`)
+
+### Force fields + geometry optimization (`molrs::ff`, `molrs::optimize`)
+
+```js
+const typifier = new UffTypifier();                 // or Mmff94Typifier / Mmff94sTypifier
 const typed    = typifier.typify(frame);
-const pots     = typifier.toPotentials(typed);      // compiles the typed output; no forcefield() handle
-const report   = new LBFGS(pots).run(typed, 200);   // Optimizer(pots).run(frame, n_steps)
-// optional: new LBFGS(pots, neighborList).run(typed, 200)
-// no neighborList → internal bruteforce topology pair list (exclude 1-2/1-3)
+const pots     = new PotentialCompiler(typifier.forcefield()).compile(typed);
+const nl       = new NeighborList(12.5);            // or NeighborList.bruteForce(12.5)
+nl.build(typed);
+const report   = new Lbfgs(pots, nl.neighbors()).minimize(typed);  // pairs come from the NeighborList
 ```
 
 - **UFF** — full RDKit default table (entire periodic table + oxidation states)
 - **MMFF94 / MMFF94s** — Merck force fields
 - **no GFN-FF**
-- **no** free-function `intramolecularPairs` / `insertIntramolecularPairs`
+- `typifier.forcefield()` → the `ForceField` typing assigned;
+  `new PotentialCompiler(ff).compile(typedFrame)` → `Potentials` — the native
+  composition, no typifier-to-potentials shortcut
+- `Potentials.calcEnergyForces(coords)` → `{ energy, forces }`
 
-### Analysis
+### Analysis (`molrs::compute`)
 
 ```js
-import { NeighborList, RDF } from "@molcrafts/molrs";
+import { NeighborList, Rdf } from "@molcrafts/molrs";
 
 const nl = new NeighborList(5.0);         // cutoff = 5.0 A, O(N) cell list
 nl.build(frame);                          // index only — no pair table
 const nlist = nl.neighbors();             // materialize: distSq + disp
 
-const rdf = new RDF(100, 5.0);
+const rdf = new Rdf(100, 5.0);
 const result = rdf.compute(frame);        // streams its own neighbor search
 console.log(result.binCenters(), result.rdf());
 ```
@@ -113,23 +174,29 @@ fabricated zero array. `disp` is the unnormalized minimum-image displacement
 - **`NeighborList`** — neighbor-search engine (`build` / `update` index,
   `neighbors` materializes); `NeighborList.bruteForce(cutoff)` selects the
   O(N²) reference backend
-- **`Neighbors`** — the materialized pair table (`numPairs`, `queryPointIndices()`,
+- **`Neighbors`** — the materialized pair table (`nPairs`, `queryPointIndices()`,
   `pointIndices()`, `distSq()`, `disp()`)
-- **`LinkedCell` / `BruteForce`** — compatibility aliases that build and
-  materialize in one call; `LinkedCell.query(refFrame, other)` is the
-  cross-search door
-- **`RDF`** — radial distribution function (periodic and free-boundary)
-- **`MSD`** — mean squared displacement
+- **`NeighborQuery`** — the cross search: `new NeighborQuery(refFrame, cutoff)`
+  indexes a reference frame, `query(otherFrame)` returns the directed pairs
+- **`Rdf`** — radial distribution function (periodic and free-boundary)
+- **`Msd`** — mean squared displacement
 - **`Cluster`** — distance-based cluster analysis
+- **`Vacf`**, **`Steinhardt`**, **`HBonds`**, **`PmftXy`**, **`RadicalVoronoi`**,
+  **`DistributionFunction`**, … — one class per molrs analysis type, under its
+  Rust name
+- `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`,
+  `pairSurvivalTcf`, … — what molrs has as a free function is a free function
+- `computeCatalog()` lists every analysis with its parameters and how to
+  call it
 
 Neighbor searches support frames without a simulation box. RDF additionally
 needs a normalization volume: for a frame without a box, pass it as the fourth
-constructor argument, e.g. `new RDF(100, 5.0, undefined, 1000.0)`.
+constructor argument, e.g. `new Rdf(100, 5.0, undefined, 1000.0)`.
 
 ### Block column conventions
 
 Names and dtypes are the Frame schema. `schemaDocument()` is that vocabulary
-(`schemaJson()` is the same document as text). `keysDocument()` is the constant
+(`JSON.stringify` it for text). `keysDocument()` is the constant
 names (`X`, `BOND_TYPE`, `ATOMS`, `UNITS`, …) projected from the same tables.
 The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
@@ -139,37 +206,38 @@ The Rust and Python bindings print the vocabulary with `schema.to_markdown()`.
 
 Records written by molrs in Python or Rust (see
 [Record files](https://docs.molcrafts.org/molrs/guides/records/)) read here
-from bytes. `readMrecFrame(files)` / `readMrecFrameFromZip(bytes)` return the
-`frame` section (or `undefined`), and `mrecSections(files)` lists the
-sections. Every reader decodes `zstd` and `shuffle`, so columns written with
+from bytes. `readMrecFrameBytes(bytes)` returns the `frame` section (or
+`undefined`) of a packed `*.mrec.zip` and `sectionNamesBytes(bytes)` lists its
+sections; `readMrecFrameFiles(files)` and `sectionNamesFiles(files)` do the
+same for a `Map<path, Uint8Array>` of the record's files. Every reader decodes `zstd` and `shuffle`, so columns written with
 a declared precision read as they do natively.
 
-`TrajectoryReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
+`MrecReader` opens a MolRec trajectory (Zarr V3) and decodes one frame
 per call; consecutive frames of the same chunk are slices, not decodes.
 
 ```js
-import { TrajectoryReader } from "@molcrafts/molrs";
+import { MrecReader } from "@molcrafts/molrs";
 
 // (a) every file in memory
-const reader = new TrajectoryReader(files);            // Map<path, Uint8Array>
+const reader = new MrecReader(files);            // Map<path, Uint8Array>
 // (b) a packed store
-const zipped = TrajectoryReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
+const zipped = MrecReader.fromZip(bytes);        // Uint8Array of *.mrec.zip
 // (c) served on demand — only touched chunks cross into wasm
-const lazy = TrajectoryReader.fromStore({
+const lazy = MrecReader.fromStorage({
   get: (key) => ...,                                   // Uint8Array | null
   getRange: (key, offset, length) => ...,              // length -1 = to end
   size: (key) => ...,                                  // number | null
   list: (prefix) => [...],                             // keys under prefix
 });
 
-reader.countFrames();
+reader.nFrames();
 const frame = reader.readFrame(t);                     // Frame | undefined
 const xyz = reader.readColumns(t, ["atoms/x", "atoms/y", "atoms/z"]);
 reader.blockUpdateAt("bonds", t);                      // same value ⇒ same rows
 reader.boxAt(t);
 ```
 
-The host callbacks of `fromStore` are synchronous: in a Worker that is
+The host callbacks of `fromStorage` are synchronous: in a Worker that is
 `FileReaderSync` over `File` handles or a synchronous range request; on the
 main thread hand the reader a `Map` instead.
 

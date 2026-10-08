@@ -1,35 +1,26 @@
 //! Wigner D-matrix elements for integer ℓ.
-//!
-//! `D^ℓ_{m',m}(α, β, γ) = e^{-i m' α} · d^ℓ_{m',m}(β) · e^{-i m γ}`
-//!
-//! where `d^ℓ_{m',m}(β)` is the real small-d matrix evaluated via the
-//! Wigner sum form (Wikipedia / Edmonds (4.1.15)):
-//!
-//! ```text
-//!   d^ℓ_{m',m}(β) =
-//!       Σ_s (-1)^{m'-m+s}
-//!           · √[(ℓ+m)!(ℓ-m)!(ℓ+m')!(ℓ-m')!]
-//!           / [(ℓ+m-s)! s! (m'-m+s)! (ℓ-m'-s)!]
-//!           · cos(β/2)^{2ℓ+m-m'-2s}
-//!           · sin(β/2)^{m'-m+2s}
-//! ```
-//!
-//! Factorials are computed via `lgamma` to stay stable for ℓ ≲ 30. The
-//! sum range `s ∈ [max(0, m-m'), min(ℓ+m, ℓ-m')]` keeps every factorial
-//! argument non-negative.
 
-use libm::lgamma;
 use ndarray::Array2;
 
-use crate::math::complex::Complex;
-use crate::types::F;
+use super::factorial::ln_factorial;
+use crate::core::Complex;
+use crate::op::F;
 
-#[inline]
-fn lfact(n: i64) -> F {
-    lgamma(n as F + 1.0)
-}
-
-/// Small Wigner d-matrix element `d^ℓ_{m',m}(β)` (real).
+/// Small Wigner d-matrix element `d^ℓ_{m',m}(β)` (real), evaluated via the
+/// Wigner sum form (Edmonds (4.1.15)):
+///
+/// ```text
+///   d^ℓ_{m',m}(β) =
+///       Σ_s (-1)^{m'-m+s}
+///           · √[(ℓ+m)!(ℓ-m)!(ℓ+m')!(ℓ-m')!]
+///           / [(ℓ+m-s)! s! (m'-m+s)! (ℓ-m'-s)!]
+///           · cos(β/2)^{2ℓ+m-m'-2s}
+///           · sin(β/2)^{m'-m+2s}
+/// ```
+///
+/// Factorials are computed via `lgamma` to stay stable for ℓ ≲ 30. The
+/// sum range `s ∈ [max(0, m-m'), min(ℓ+m, ℓ-m')]` keeps every factorial
+/// argument non-negative.
 pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
     let li = l as i32;
     if m.unsigned_abs() > l || m_prime.unsigned_abs() > l {
@@ -47,10 +38,10 @@ pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
 
     // ½ log[(ℓ+m)!(ℓ-m)!(ℓ+m')!(ℓ-m')!]
     let log_prefactor = 0.5
-        * (lfact((li + m) as i64)
-            + lfact((li - m) as i64)
-            + lfact((li + m_prime) as i64)
-            + lfact((li - m_prime) as i64));
+        * (ln_factorial((li + m) as i64)
+            + ln_factorial((li - m) as i64)
+            + ln_factorial((li + m_prime) as i64)
+            + ln_factorial((li - m_prime) as i64));
 
     let mut sum: F = 0.0;
     for s in s_min..=s_max {
@@ -58,10 +49,10 @@ pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
         let p_cos = 2 * li + m - m_prime - 2 * si;
         let p_sin = m_prime - m + 2 * si;
 
-        let log_denom = lfact((li + m - si) as i64)
-            + lfact(s)
-            + lfact((m_prime - m + si) as i64)
-            + lfact((li - m_prime - si) as i64);
+        let log_denom = ln_factorial((li + m - si) as i64)
+            + ln_factorial(s)
+            + ln_factorial((m_prime - m + si) as i64)
+            + ln_factorial((li - m_prime - si) as i64);
 
         // cos^a * sin^b — handle exact-zero base safely (0^0 = 1).
         let cos_term = if p_cos == 0 {
@@ -85,7 +76,10 @@ pub fn wigner_small_d(l: u32, m_prime: i32, m: i32, beta: F) -> F {
     sum
 }
 
-/// Wigner D-matrix element `D^ℓ_{m',m}(α, β, γ)` (complex).
+/// Wigner D-matrix element `D^ℓ_{m',m}(α, β, γ)` (complex):
+///
+/// `D^ℓ_{m',m}(α, β, γ) = e^{-i m' α} · d^ℓ_{m',m}(β) · e^{-i m γ}`, with the
+/// real small-d matrix from [`wigner_small_d`].
 pub fn wigner_d_element(l: u32, m_prime: i32, m: i32, alpha: F, beta: F, gamma: F) -> Complex {
     let d = wigner_small_d(l, m_prime, m, beta);
     let phase = Complex::from_polar(1.0, -(m_prime as F) * alpha - (m as F) * gamma);

@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::types::F;
+use crate::core::constants;
+use crate::op::F;
 
 use super::dimension::Dimension;
 use super::error::UnitsError;
@@ -106,7 +107,7 @@ const LONG_PREFIXES: &[(&str, F)] = &[
 /// End-to-end: build a registry, parse units, convert a quantity.
 ///
 /// ```
-/// use molrs::units::{UnitRegistry, UnitsError};
+/// use molrs::core::{UnitRegistry, UnitsError};
 ///
 /// let reg = UnitRegistry::new();
 ///
@@ -179,6 +180,49 @@ impl UnitRegistry {
         GLOBAL_REGISTRY.get_or_init(UnitRegistry::new)
     }
 
+    /// The factor that converts a value in `from` to `to`:
+    /// `value_in_to = value_in_from × factor`.
+    ///
+    /// The factor is `from`'s SI factor over `to`'s, except for two cases
+    /// where that quotient of rounded doubles is not the correctly rounded
+    /// answer:
+    ///
+    /// - a ratio within a few ulps of a power of ten is that power of ten,
+    ///   correctly rounded (`cm^3 → angstrom^3` is exactly `1e24`, not
+    ///   `1e24` plus an ulp; `m^3 → angstrom^3` is `1e30`). Every SI prefix
+    ///   and the ångström are exact powers of ten, so a product of them is
+    ///   one too, however many rounded multiplications built it;
+    /// - otherwise, when the inverse ratio is a whole number, the factor is
+    ///   that number's reciprocal.
+    ///
+    /// ```
+    /// use molrs::core::UnitRegistry;
+    ///
+    /// let reg = UnitRegistry::global();
+    /// assert_eq!(reg.factor("kcal", "kJ").unwrap(), 4.184);
+    /// assert_eq!(reg.factor("nm", "angstrom").unwrap(), 10.0);
+    /// assert_eq!(reg.factor("angstrom", "nm").unwrap(), 0.1);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Either expression does not parse, the two differ in dimension, or
+    /// one is affine (`degC`).
+    pub fn factor(&self, from: &str, to: &str) -> Result<F, UnitsError> {
+        let from = self.parse(from)?;
+        let to = self.parse(to)?;
+        let direct = from.factor_to(&to)?;
+        if let Some(power) = nearest_power_of_ten(direct) {
+            return Ok(power);
+        }
+        let inverse = to.factor_to(&from)?;
+        Ok(if inverse >= 1.0 && inverse.fract() == 0.0 {
+            1.0 / inverse
+        } else {
+            direct
+        })
+    }
+
     /// Define a unit, registering its name, symbol, and all aliases.
     ///
     /// # Errors
@@ -189,7 +233,7 @@ impl UnitRegistry {
     /// # Examples
     ///
     /// ```
-    /// use molrs::units::{Dimension, UnitDef, UnitRegistry, UnitsError};
+    /// use molrs::core::{Dimension, UnitDef, UnitRegistry, UnitsError};
     ///
     /// let mut reg = UnitRegistry::empty();
     /// reg.define(UnitDef {
@@ -312,7 +356,7 @@ impl UnitRegistry {
     /// - charge `sqrt(4 pi eps0 sigma epsilon)` (`eps0` the vacuum
     ///   permittivity), evaluated as
     ///   `e * sqrt(sigma[Å] * epsilon[kcal/mol] / COULOMB_REAL)` with
-    ///   [`COULOMB_REAL`](super::constants::COULOMB_REAL) and stored in
+    ///   [`COULOMB_REAL`](crate::core::constants::COULOMB_REAL) and stored in
     ///   coulomb.
     ///
     /// The definitions retain their physical dimensions, so normal checked
@@ -344,9 +388,9 @@ impl UnitRegistry {
         }
 
         let tau_s = (mass_kg * sigma_m * sigma_m / epsilon_j).sqrt();
-        let temperature_k = epsilon_j / super::constants::BOLTZMANN;
-        let charge_c = super::constants::ELEMENTARY_CHARGE
-            * (sigma_angstrom * epsilon_kcal_mol / super::constants::COULOMB_REAL).sqrt();
+        let temperature_k = epsilon_j / constants::BOLTZMANN;
+        let charge_c = crate::core::constants::ELEMENTARY_CHARGE
+            * (sigma_angstrom * epsilon_kcal_mol / crate::core::constants::COULOMB_REAL).sqrt();
         let definitions = [
             sigma_def,
             def(
@@ -448,6 +492,21 @@ impl UnitRegistry {
     }
 }
 
+/// The power of ten `x` is within rounding error of, correctly rounded, or
+/// `None`. The tolerance (8 ulps, relative 1.8e-15) bounds the error of the
+/// handful of rounded products and quotients a factor of SI prefixes and
+/// powers is built from; no CODATA-valued unit lies that close to a power
+/// of ten.
+fn nearest_power_of_ten(x: F) -> Option<F> {
+    if !x.is_finite() || x <= 0.0 {
+        return None;
+    }
+    let exponent = x.log10().round() as i32;
+    // `1eN` parsed from decimal text is the correctly rounded double.
+    let power: F = format!("1e{exponent}").parse().ok()?;
+    ((x - power).abs() <= 8.0 * F::EPSILON * power).then_some(power)
+}
+
 /// Shorthand constructor for the preload tables.
 fn def(
     name: &str,
@@ -493,18 +552,28 @@ fn md_defs() -> Vec<UnitDef> {
     let l = Dimension::LENGTH;
     let e = Dimension::ENERGY;
     vec![
-        // Length. angstrom: exact; bohr: CODATA 2018 a0.
+        // Length. angstrom: exact; bohr: CODATA 2018 a0
+        // ([`constants::BOHR_RADIUS`]).
         def("angstrom", "Å", &["ang"], 1e-10, 0.0, l, false),
-        def("bohr", "bohr", &["a0"], 5.291_772_109_03e-11, 0.0, l, false),
-        // Energy. joule: SI derived; calorie: thermochemical, exact 4.184 J;
-        // eV: SI-2019 exact; hartree: CODATA 2018.
+        def(
+            "bohr",
+            "bohr",
+            &["a0"],
+            constants::BOHR_RADIUS,
+            0.0,
+            l,
+            false,
+        ),
+        // Energy. joule: SI derived; calorie: thermochemical, exact 4.184 J
+        // (the one definition of the calorie: kcal ↔ kJ is this unit's);
+        // eV: e × 1 V; hartree: CODATA 2018 E_h.
         def("joule", "J", &[], 1.0, 0.0, e, true),
         def("calorie", "cal", &[], 4.184, 0.0, e, true),
         def(
             "kilocalorie_per_mole",
             "kcal_per_mol",
             &[],
-            4184.0 / super::constants::AVOGADRO,
+            4184.0 / constants::AVOGADRO,
             0.0,
             e,
             false,
@@ -513,14 +582,40 @@ fn md_defs() -> Vec<UnitDef> {
             "kilojoule_per_mole",
             "kJ_per_mol",
             &[],
-            1000.0 / super::constants::AVOGADRO,
+            1000.0 / constants::AVOGADRO,
             0.0,
             e,
             false,
         ),
         def("erg", "erg", &[], 1e-7, 0.0, e, false),
-        def("electron_volt", "eV", &[], 1.602_176_634e-19, 0.0, e, true),
-        def("hartree", "Eh", &[], 4.359_744_722_207_1e-18, 0.0, e, false),
+        def(
+            "electron_volt",
+            "eV",
+            &[],
+            constants::ELEMENTARY_CHARGE,
+            0.0,
+            e,
+            true,
+        ),
+        def(
+            "hartree",
+            "Eh",
+            &[],
+            constants::HARTREE_ENERGY,
+            0.0,
+            e,
+            false,
+        ),
+        // Boltzmann constant k_B (SI-2019 exact) as a unit, J/K.
+        def(
+            "boltzmann_constant",
+            "k_B",
+            &[],
+            constants::BOLTZMANN,
+            0.0,
+            Dimension::ENERGY / Dimension::TEMPERATURE,
+            false,
+        ),
         // Force / pressure (SI derived, exact).
         def("newton", "N", &[], 1.0, 0.0, Dimension::FORCE, true),
         def("dyne", "dyn", &[], 1e-5, 0.0, Dimension::FORCE, false),
@@ -545,7 +640,7 @@ fn md_defs() -> Vec<UnitDef> {
             "dalton",
             "Da",
             &["amu"],
-            1.660_539_066_60e-27,
+            constants::ATOMIC_MASS_CONSTANT,
             0.0,
             Dimension::MASS,
             true,
@@ -554,7 +649,7 @@ fn md_defs() -> Vec<UnitDef> {
             "gram_per_mole",
             "g_per_mol",
             &[],
-            1e-3 / super::constants::AVOGADRO,
+            1e-3 / constants::AVOGADRO,
             0.0,
             Dimension::MASS,
             false,
@@ -595,7 +690,7 @@ fn md_defs() -> Vec<UnitDef> {
             "statcoulomb",
             "statC",
             &[],
-            3.335_640_951_981_52e-10,
+            0.1 / constants::SPEED_OF_LIGHT,
             0.0,
             Dimension::CHARGE,
             false,
@@ -604,7 +699,7 @@ fn md_defs() -> Vec<UnitDef> {
             "elementary_charge",
             "e",
             &[],
-            1.602_176_634e-19,
+            constants::ELEMENTARY_CHARGE,
             0.0,
             Dimension::CHARGE,
             false,
@@ -613,7 +708,7 @@ fn md_defs() -> Vec<UnitDef> {
             "debye",
             "D",
             &[],
-            3.335_640_951_98e-30,
+            1e-21 / constants::SPEED_OF_LIGHT,
             0.0,
             CHARGE_LENGTH,
             false,
@@ -641,6 +736,42 @@ mod tests {
             dimension: Dimension::LENGTH,
             prefixable: false,
         }
+    }
+
+    #[test]
+    fn powers_of_ten_are_correctly_rounded() {
+        let reg = UnitRegistry::global();
+        let cases: &[(&str, &str, F)] = &[
+            ("angstrom", "nm", 0.1),
+            ("nm", "angstrom", 10.0),
+            ("cm^3", "angstrom^3", 1e24),
+            ("angstrom^3", "cm^3", 1e-24),
+            ("m^3", "angstrom^3", 1e30),
+            ("angstrom^3", "m^3", 1e-30),
+            ("nm^3", "angstrom^3", 1e3),
+            ("cm^2", "angstrom^2", 1e16),
+            ("m^2", "nm^2", 1e18),
+            ("mm^2", "cm^2", 0.01),
+            ("km/ms", "m/s", 1e6),
+            ("ns/um", "ps/nm", 1.0),
+            ("g/cm^3", "kg/m^3", 1e3),
+            ("kg/m^3", "g/cm^3", 1e-3),
+            ("fs", "ps", 1e-3),
+            ("mg*cm^-3", "ug*angstrom^-3", 1e-21),
+        ];
+        for &(from, to, want) in cases {
+            let got = reg.factor(from, to).unwrap();
+            assert_eq!(got, want, "{from} -> {to}: {got:e}");
+            assert_eq!(got, format!("{want:e}").parse::<F>().unwrap());
+        }
+    }
+
+    #[test]
+    fn non_powers_of_ten_are_not_snapped() {
+        let reg = UnitRegistry::global();
+        assert_eq!(reg.factor("kcal", "kJ").unwrap(), 4.184);
+        let bohr = reg.factor("bohr", "angstrom").unwrap();
+        assert!((bohr - 0.529177210903).abs() < 1e-15);
     }
 
     #[test]
@@ -690,6 +821,21 @@ mod tests {
             assert_eq!(long.dimension(), short.dimension());
             assert_eq!(long.factor_to(&short).unwrap(), 1.0);
         }
+    }
+
+    #[test]
+    fn boltzmann_constant_is_a_unit_of_energy_per_temperature() {
+        let r = UnitRegistry::new();
+        let kt = r.quantity(300.0, "k_B * kelvin").unwrap();
+        let kj = kt.to(&r.parse("kilojoule_per_mole").unwrap()).unwrap();
+        // R T at 300 K = 2.494 338 785 kJ/mol.
+        assert!(
+            (kj.value() - 2.494_338_785_445_6).abs() < 1e-9,
+            "{}",
+            kj.value()
+        );
+        let long = r.parse("boltzmann_constant").unwrap();
+        assert_eq!(long.factor_to(&r.parse("k_B").unwrap()).unwrap(), 1.0);
     }
 
     #[test]
@@ -855,7 +1001,7 @@ mod tests {
     /// Value in `target` of one reduced unit of preset dimension `dim`.
     fn one_lj(dim: &str, target: &str) -> F {
         let r = lj_registry();
-        let lj = crate::units::UnitPreset::lj();
+        let lj = crate::core::UnitPreset::lj();
         let from = r.parse(lj.unit(dim).unwrap()).unwrap();
         from.factor_to(&r.parse(target).unwrap()).unwrap()
     }

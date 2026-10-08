@@ -1,22 +1,16 @@
 //! Per-frame geometric hydrogen-bond detection.
-//!
-//! Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
-//! (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
-//! neighbour search, then gated by the distance and angle criterion (see
-//! [`HBondCriterion`]). molrs gathers candidates with the existing
-//! [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
-//! image via [`MicHelper`] — the same MIC the rest of `compute` uses.
 
-use molrs::spatial::neighbors::NeighborQuery;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::FrameAccess;
+use molrs::core::NeighborQuery;
+use molrs::op::F;
 
-use super::criterion::{DistKind, HBondCriterion};
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
-use crate::op::vec3::{dot, norm};
+use super::criterion::{HBondCriterion, HBondDistanceKind};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::{dot, norm, sub};
+use molrs::core::{Mic, SimBox};
 
 /// A single detected D–H···A hydrogen bond (atom indices into the frame).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,6 +31,14 @@ pub struct HBond {
 ///
 /// Stateless parameter bag: the donor/acceptor selections and the geometric
 /// [`HBondCriterion`]. `compute` returns one bond list per frame.
+///
+/// Ported from the reference implementation `CHBond::AnalyzeStep` / the bond test in `src/hbond.cpp`
+/// (lines ~900–965): candidate donor/acceptor pairs are gathered by a cutoff
+/// neighbour search, then gated by the distance and angle criterion (see
+/// [`HBondCriterion`]). molrs gathers candidates with the existing
+/// [`NeighborQuery`] cross-query and evaluates the geometry under the minimum
+/// image via [`Mic`](molrs::core::Mic) — the same MIC the rest of
+/// `compute` uses.
 #[derive(Debug, Clone)]
 pub struct HBonds {
     /// Donor `(heavy, hydrogen)` atom-index pairs.
@@ -97,7 +99,7 @@ impl HBonds {
             }
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
 
         // Candidate search: query points are the donor heavy atom (DonorAcceptor)
         // or the bridging hydrogen (HydrogenAcceptor); reference points are the
@@ -124,8 +126,8 @@ impl HBonds {
         );
         for &(don, hyd) in &self.donors {
             let src = match self.criterion.dist_kind {
-                DistKind::DonorAcceptor => don,
-                DistKind::HydrogenAcceptor => hyd,
+                HBondDistanceKind::DonorAcceptor => don,
+                HBondDistanceKind::HydrogenAcceptor => hyd,
             };
             let p = pos(src);
             q_x.push(p[0]);
@@ -137,7 +139,7 @@ impl HBonds {
         let nlist = match frame.simbox_ref() {
             Some(sb) => NeighborQuery::from_columns(sb, &acc_x, &acc_y, &acc_z, cutoff)
                 .query_columns(&q_x, &q_y, &q_z),
-            None => NeighborQuery::free_columns(&acc_x, &acc_y, &acc_z, cutoff)
+            None => NeighborQuery::unbounded_columns(&acc_x, &acc_y, &acc_z, cutoff)
                 .query_columns(&q_x, &q_y, &q_z),
         };
 
@@ -156,18 +158,18 @@ impl HBonds {
             let apos = pos(acceptor);
 
             // r(D···A) under MIC.
-            let v_da = mic.disp(dpos, apos);
+            let v_da = mic.apply(sub(apos, dpos));
             let r_da = norm(v_da);
             let dist_ok = match self.criterion.dist_kind {
                 // NeighborQuery already enforced r(D···A) ≤ cutoff.
-                DistKind::DonorAcceptor => true,
+                HBondDistanceKind::DonorAcceptor => true,
                 // NeighborQuery enforced r(H···A); still require r(D···A) finite.
-                DistKind::HydrogenAcceptor => r_da <= self.criterion.dist_cutoff + 1.05,
+                HBondDistanceKind::HydrogenAcceptor => r_da <= self.criterion.dist_cutoff + 1.05,
             };
 
             // D–H···A angle at the hydrogen: angle between H→D and H→A.
-            let v_hd = mic.disp(hpos, dpos);
-            let v_ha = mic.disp(hpos, apos);
+            let v_hd = mic.apply(sub(dpos, hpos));
+            let v_ha = mic.apply(sub(apos, hpos));
             let n_hd = norm(v_hd);
             let n_ha = norm(v_ha);
             if n_hd == 0.0 || n_ha == 0.0 {

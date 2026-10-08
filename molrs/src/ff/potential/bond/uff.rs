@@ -1,24 +1,25 @@
 //! UFF bond stretch: E = ½ · kb · (r − r0)² (RDKit `BondStretchContrib`).
 
-use molrs::store::schema::block_names::BONDS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::BONDS;
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::term_table;
-use crate::ff::potential::geometry::validate_coords;
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::term_table;
+use crate::ff::potential::flat_coords::validate_coords;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Harmonic UFF bond stretch with per-instance `kb` / `r0`.
-pub struct UffBond {
+pub struct BondUff {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     kb: Vec<F>,
     r0: Vec<F>,
 }
 
-impl UffBond {
+impl BondUff {
     /// The physics, once. Which atoms a term names is the only thing
     /// that differs between the two entry points, so it is the only thing
     /// passed in — a second copy of the loop would be a second place for
@@ -56,7 +57,7 @@ impl UffBond {
     }
 }
 
-impl Potential for UffBond {
+impl Potential for BondUff {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         let mut out = vec![0.0; coords.len()];
         let energy = self.accumulate(coords, &mut out);
@@ -70,7 +71,7 @@ impl Potential for UffBond {
     }
 }
 
-impl IndexedTerms for UffBond {
+impl IndexedTerms for BondUff {
     fn terms(&self) -> Array2<u32> {
         term_table(&[&self.atom_i, &self.atom_j])
     }
@@ -96,11 +97,11 @@ impl IndexedTerms for UffBond {
     }
 }
 
-pub fn uff_bond_ctor(
+pub fn bond_uff_constructor(
     _sp: &Params,
     _tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let block = frame
         .get(BONDS)
         .ok_or("uff_bond: missing \"bonds\" block")?;
@@ -112,16 +113,10 @@ pub fn uff_bond_ctor(
         .get("atomj")
         .and_then(|c| c.as_uint())
         .ok_or("uff_bond: missing atomj")?;
-    let kb = block
-        .get("kb")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_bond: missing kb (typifier must bake)")?;
-    let r0 = block
-        .get("r0")
-        .and_then(|c| c.as_float())
-        .ok_or("uff_bond: missing r0 (typifier must bake)")?;
+    let kb = param_reads::instance_col("uff_bond", block, "kb")?;
+    let r0 = param_reads::instance_col("uff_bond", block, "r0")?;
     let n = i.len();
-    Ok(Member::indexed(UffBond {
+    Ok(ForceTerm::indexed(BondUff {
         atom_i: (0..n).map(|t| i[t] as usize).collect(),
         atom_j: (0..n).map(|t| j[t] as usize).collect(),
         kb: kb.iter().map(|&v| v as F).collect(),
@@ -132,10 +127,10 @@ pub fn uff_bond_ctor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::potential::test_util::assert_forces_are_negative_gradient;
+    use crate::ff::potential::fixtures::assert_forces_are_negative_gradient;
 
-    fn stretched(kb: F, r0: F, r: F) -> (UffBond, Vec<F>) {
-        let pot = UffBond {
+    fn stretched(kb: F, r0: F, r: F) -> (BondUff, Vec<F>) {
+        let pot = BondUff {
             atom_i: vec![0],
             atom_j: vec![1],
             kb: vec![kb],
@@ -164,7 +159,7 @@ mod tests {
 
     #[test]
     fn forces_are_the_negative_energy_gradient() {
-        let pot = UffBond {
+        let pot = BondUff {
             atom_i: vec![0],
             atom_j: vec![1],
             kb: vec![700.0],

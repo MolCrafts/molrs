@@ -1,38 +1,37 @@
 //! Per-particle local number density in a sphere of radius `r_max`.
-//!
-//! Mirrors `freud.density.LocalDensity`
-//! ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/LocalDensity.cc)).
-//!
-//! For each query point `i` the analyzer counts neighbors within `r_max`
-//! and reports `density_i = count_i / (4/3 π r_max³)` (number per unit
-//! volume).
-//!
-//! freud also supports a `diameter` correction that subtracts the "hard-
-//! sphere fraction" near the edge of the cutoff sphere — for two unit
-//! spheres at distance `r` the overlap on the boundary linearly interpolates
-//! a partial count between 0 and 1. We replicate that smoothing: each
-//! neighbor `j` contributes
-//!
-//! ```text
-//!   weight_j = clamp((r_max + diameter/2 − r_ij) / diameter, 0, 1)
-//! ```
-//!
-//! which collapses to the standard `1.0` count when `diameter = 0`. The
-//! identical formula appears in `LocalDensity::compute` in freud.
 
-use crate::compute::result::ComputeResult;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FOUR_THIRDS_PI;
+use molrs::core::FrameAccess;
+use molrs::core::Neighbors;
+use molrs::op::F;
 
-use crate::compute::error::ComputeError;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
 use crate::compute::require_dist_sq;
-use crate::compute::traits::Compute;
-use crate::compute::util::get_positions_ref;
-
-const FOUR_THIRDS_PI: F = 4.0 / 3.0 * std::f64::consts::PI;
 
 /// Local-density calculator.
+///
+/// Mirrors `freud.density.LocalDensity`
+/// ([source](https://github.com/glotzerlab/freud/blob/main/freud/density/LocalDensity.cc)).
+///
+/// For each query point `i` the analyzer counts neighbors within `r_max`
+/// and reports `density_i = count_i / (4/3 π r_max³)` (number per unit
+/// volume).
+///
+/// freud also supports a `diameter` correction that subtracts the "hard-
+/// sphere fraction" near the edge of the cutoff sphere — for two unit
+/// spheres at distance `r` the overlap on the boundary linearly interpolates
+/// a partial count between 0 and 1. We replicate that smoothing: each
+/// neighbor `j` contributes
+///
+/// ```text
+///   weight_j = clamp((r_max + diameter/2 − r_ij) / diameter, 0, 1)
+/// ```
+///
+/// which collapses to the standard `1.0` count when `diameter = 0`. The
+/// identical formula appears in `LocalDensity::compute` in freud.
 #[derive(Debug, Clone, Copy)]
 pub struct LocalDensity {
     r_max: F,
@@ -87,10 +86,7 @@ impl LocalDensity {
         // side. For a self-query Neighbors we get i<j pairs only, so we
         // must add the symmetric contribution. For a cross-query nlist we
         // take i as the query point and j as the reference.
-        let symmetric = matches!(
-            nlist.mode(),
-            molrs::spatial::neighbors::QueryMode::SelfQuery { .. }
-        );
+        let symmetric = matches!(nlist.mode(), molrs::core::QueryMode::SelfQuery { .. });
 
         let half_diam = self.diameter * 0.5;
         let inv_diam = if self.diameter > 0.0 {
@@ -122,7 +118,7 @@ impl LocalDensity {
         let density: Vec<F> = num.iter().map(|&c| c * inv_vol).collect();
 
         Ok(LocalDensityResult {
-            num_neighbors: num,
+            n_neighbors: num,
             density,
         })
     }
@@ -159,8 +155,8 @@ impl Compute for LocalDensity {
 #[derive(Debug, Clone, Default)]
 pub struct LocalDensityResult {
     /// Fractional (or integer when `diameter = 0`) neighbor count per particle.
-    pub num_neighbors: Vec<F>,
-    /// Number density per particle: `num_neighbors / (4/3 π r_max³)`.
+    pub n_neighbors: Vec<F>,
+    /// Number density per particle: `n_neighbors / (4/3 π r_max³)`.
     pub density: Vec<F>,
 }
 
@@ -169,10 +165,10 @@ impl ComputeResult for LocalDensityResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::test_support::nlist_from_frame;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::fixtures::nlist_from_frame;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -198,7 +194,7 @@ mod tests {
             .unwrap()
             .compute(&[&frame], &[nl])
             .unwrap()[0];
-        assert_eq!(r.num_neighbors[0], 0.0);
+        assert_eq!(r.n_neighbors[0], 0.0);
         assert_eq!(r.density[0], 0.0);
     }
 
@@ -211,8 +207,8 @@ mod tests {
             .compute(&[&frame], &[nl])
             .unwrap()[0];
         // Each of the two particles has exactly 1 neighbor within 2.0.
-        assert!((r.num_neighbors[0] - 1.0).abs() < 1e-12);
-        assert!((r.num_neighbors[1] - 1.0).abs() < 1e-12);
+        assert!((r.n_neighbors[0] - 1.0).abs() < 1e-12);
+        assert!((r.n_neighbors[1] - 1.0).abs() < 1e-12);
         let v = FOUR_THIRDS_PI * 2.0_f64.powi(3);
         assert!((r.density[0] - 1.0 / v).abs() < 1e-12);
     }
@@ -231,9 +227,9 @@ mod tests {
             .compute(&[&frame], &[nl])
             .unwrap()[0];
         assert!(
-            res.num_neighbors[0] < 1e-8,
+            res.n_neighbors[0] < 1e-8,
             "weight at edge should be ≈ 0, got {}",
-            res.num_neighbors[0]
+            res.n_neighbors[0]
         );
 
         // At r = r_max − diameter/2 → weight = 1 (fully inside).
@@ -245,7 +241,7 @@ mod tests {
             .with_diameter(diameter)
             .compute(&[&frame2], &[nl2])
             .unwrap()[0];
-        assert!((res2.num_neighbors[0] - 1.0).abs() < 1e-9);
+        assert!((res2.n_neighbors[0] - 1.0).abs() < 1e-9);
     }
 
     #[test]

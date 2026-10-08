@@ -1,20 +1,14 @@
 //! Domain (microheterogeneity) analysis over a radical-Voronoi tessellation.
-//!
-//! Merges face-adjacent cells that share the same user label into connected
-//! domains via the native connected-components over the cell-adjacency graph —
-//! the aggregation reference implementation performs in `src/domain.cpp` /
-//! `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
-//! Returns the domain size distribution, count, and largest-domain fraction.
 
-use molrs::types::F;
+use molrs::op::F;
 
 use super::cell::VoronoiCells;
-use crate::compute::error::ComputeError;
-use crate::core::system::topology::Topology;
+use crate::compute::ComputeError;
+use crate::core::Topology;
 
-/// Outcome of a [`DomainAnalysis`].
+/// Outcome of a [`VoronoiDomainAnalysis`].
 #[derive(Debug, Clone)]
-pub struct DomainResult {
+pub struct VoronoiDomainResult {
     /// Domain sizes (atoms per domain), descending.
     pub sizes: Vec<usize>,
     /// Number of domains.
@@ -26,17 +20,23 @@ pub struct DomainResult {
 }
 
 /// Partition cells into same-label face-adjacent domains.
+///
+/// Merges face-adjacent cells that share the same user label into connected
+/// domains via the native connected-components over the cell-adjacency graph —
+/// the aggregation reference implementation performs in `src/domain.cpp` /
+/// `src/posdomain.cpp` (e.g. polar vs. apolar domains in ionic liquids).
+/// Returns the domain size distribution, count, and largest-domain fraction.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct DomainAnalysis;
+pub struct VoronoiDomainAnalysis;
 
-impl DomainAnalysis {
+impl VoronoiDomainAnalysis {
     /// Merge face-adjacent cells sharing the same `labels[i]` into domains.
     /// `labels` length must equal the cell count.
     pub fn analyze(
         &self,
         cells: &VoronoiCells,
         labels: &[i64],
-    ) -> Result<DomainResult, ComputeError> {
+    ) -> Result<VoronoiDomainResult, ComputeError> {
         let n = cells.len();
         if labels.len() != n {
             return Err(ComputeError::DimensionMismatch {
@@ -64,8 +64,7 @@ impl DomainAnalysis {
         // 0-based component id (isolated cells get their own), so a flat `Vec`
         // keyed by that id tallies domain sizes without hashing. Connected
         // components are a graph invariant, so the partition — and thus the size
-        // multiset — is identical to the old union-find roots; only the label
-        // integers differ.
+        // multiset — is the same under any labelling.
         let mut domain_of = vec![0usize; n];
         let mut size_of = vec![0usize; n];
         for (i, d) in domain_of.iter_mut().enumerate() {
@@ -83,7 +82,7 @@ impl DomainAnalysis {
             sizes.first().copied().unwrap_or(0) as F / n as F
         };
 
-        Ok(DomainResult {
+        Ok(VoronoiDomainResult {
             sizes,
             count,
             largest_fraction,

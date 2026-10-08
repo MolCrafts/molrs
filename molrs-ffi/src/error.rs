@@ -1,6 +1,6 @@
 //! Error types for the FFI layer.
 
-use molrs::store::block::DType;
+use molrs::core::DType;
 use std::fmt;
 
 /// Errors that can occur in FFI operations.

@@ -1,6 +1,6 @@
 [package]
 name = "molcrafts-molrs-ffi"
-version = "0.15.1"
+version = "0.16.0"
 edition = "2024"
 authors = ["MolCrafts"]
 description = "FFI layer for molrs with handle-based abstractions"
@@ -29,7 +29,7 @@ strip = "symbols"
 # (molrs-wasm, Pyodide) can pick sub-systems one at a time; nothing here
 # re-states a "feature union".
 default = ["ff", "full", "filesystem", "rayon"]
-# Stable handle for `molrs::ff::ForceField` (the `ForceFieldRef` analogue of
+# Stable handle for `molrs::ff::forcefield::ForceField` (the `ForceFieldRef` analogue of
 # `FrameRef`). Gates code in THIS crate, so it stays separate from `full` even
 # though `molrs/full` already implies `molrs/ff`.
 ff = ["molrs/ff"]
@@ -40,7 +40,7 @@ rayon      = ["molrs/rayon"]
 
 [dependencies]
 # Defaults off, then re-enabled through the forwards above — see [features].
-molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.15.1", default-features = false }
+molrs = { path = "../molrs", package = "molcrafts-molrs", version = "0.16.0", default-features = false }
 slotmap = "1.0"
 
 [dev-dependencies]

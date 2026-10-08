@@ -16,14 +16,14 @@ _OTHER = ([0.0, 0.0, 1.0], [0.0, 0.0, 1.0])
 
 def _declaring(
     name: str, weights: tuple[list[float], list[float]]
-) -> molrs.ff.ForceField:
-    ff = molrs.ff.ForceField(name)
+) -> molrs.ff.forcefield.ForceField:
+    ff = molrs.ff.forcefield.ForceField(name)
     ff.set_special_bonds(*weights)
     return ff
 
 
 def test_set_special_bonds_wrong_length_raises():
-    ff = molrs.ff.ForceField("x")
+    ff = molrs.ff.forcefield.ForceField("x")
     with pytest.raises(ValueError):
         ff.set_special_bonds([0.5], [0.0, 0.0, 0.8333])
 
@@ -36,7 +36,7 @@ def test_set_special_bonds_declares_them():
 
 
 def test_merge_into_an_undeclaring_force_field_adopts_special_bonds():
-    ff = molrs.ff.ForceField("dst")
+    ff = molrs.ff.forcefield.ForceField("dst")
     ff.merge(_declaring("src", _AMBER))
     assert ff.merge(_declaring("same", _AMBER)) is ff
     with pytest.raises(ValueError):

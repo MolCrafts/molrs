@@ -14,34 +14,34 @@ import pytest
 
 class TestTopLevelEagerReaders:
     def test_read_trr_returns_list_of_frames(self, water_trr):
-        frames = molrs.io.raw.read_trr_trajectory(str(water_trr))
+        frames = molrs.io.read_trr_trajectory(str(water_trr)).read_all()
         assert isinstance(frames, list) and len(frames) >= 1
         atoms = frames[0]["atoms"]
-        assert atoms.nrows > 0
+        assert atoms.n_rows > 0
         for axis in ("x", "y", "z"):
             assert np.all(np.isfinite(atoms[axis]))
 
     def test_read_xtc_returns_list_of_frames(self, water_xtc):
-        frames = molrs.io.raw.read_xtc_trajectory(str(water_xtc))
+        frames = molrs.io.read_xtc_trajectory(str(water_xtc)).read_all()
         assert isinstance(frames, list) and len(frames) >= 1
-        assert frames[0]["atoms"].nrows > 0
+        assert frames[0]["atoms"].n_rows > 0
 
 
 class TestLazyFacadeReaders:
     def test_trr_returns_reader(self, water_trr):
         reader = mio.read_trr_trajectory(str(water_trr))
-        assert isinstance(reader, mio.TrajectoryReader)
+        assert isinstance(reader, mio.trr.TrrReader)
         assert reader.n_frames == len(reader) > 0
 
     def test_xtc_returns_reader(self, water_xtc):
         reader = mio.read_xtc_trajectory(str(water_xtc))
-        assert isinstance(reader, mio.TrajectoryReader)
+        assert isinstance(reader, mio.xtc.XtcReader)
         assert reader.n_frames > 0
 
     def test_random_access_matches_sequential(self, water_trr):
         path = str(water_trr)
         reader = mio.read_trr_trajectory(path)
-        eager = molrs.io.raw.read_trr_trajectory(path)
+        eager = molrs.io.read_trr_trajectory(path).read_all()
         assert reader.n_frames == len(eager)
         last = reader.read_frame(-1)["atoms"]["x"]
         assert np.allclose(last, eager[-1]["atoms"]["x"])
@@ -60,19 +60,19 @@ class TestLazyFacadeReaders:
 
 class TestWriteRoundTrip:
     def test_trr_roundtrip_exact(self, water_trr, tmp_path):
-        frames = molrs.io.raw.read_trr_trajectory(str(water_trr))
+        frames = molrs.io.read_trr_trajectory(str(water_trr)).read_all()
         out = tmp_path / "out.trr"
         mio.write_trr_trajectory(str(out), frames)
-        back = molrs.io.raw.read_trr_trajectory(str(out))
+        back = molrs.io.read_trr_trajectory(str(out)).read_all()
         assert len(back) == len(frames)
         for a, b in zip(frames, back):
             assert np.allclose(a["atoms"]["x"], b["atoms"]["x"], atol=1e-5)
 
     def test_xtc_roundtrip_within_precision(self, water_xtc, tmp_path):
-        frames = molrs.io.raw.read_xtc_trajectory(str(water_xtc))
+        frames = molrs.io.read_xtc_trajectory(str(water_xtc)).read_all()
         out = tmp_path / "out.xtc"
         mio.write_xtc_trajectory(str(out), frames)
-        back = molrs.io.raw.read_xtc_trajectory(str(out))
+        back = molrs.io.read_xtc_trajectory(str(out)).read_all()
         assert len(back) == len(frames)
         for a, b in zip(frames, back):
             # XTC is lossy at 1/precision (default 1000 → 1e-3 nm).

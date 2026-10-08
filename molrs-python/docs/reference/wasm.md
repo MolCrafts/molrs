@@ -19,13 +19,15 @@ The generated `pkg/` directory is not committed.
 
 | Area | Exports |
 | --- | --- |
-| Data model | `Frame`, `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nrows`), `Box` |
-| SMILES and 3D | `parseSMILES` → `SmilesIR` (`toFrame`), `generate3D` |
-| File formats | `XYZReader`, `PDBReader`, `GROReader`, `LAMMPSReader`, `LAMMPSTrajReader`, `MOL2Reader`, `SDFReader`, `CIFReader`, `POSCARReader`, `DCDReader`, `TRRReader`, `XTCReader`, …; `writeFrame` / `writeFrameBytes` |
-| Record files (`*.mrec`) | `readMrecFrame`, `readMrecFrameFromZip`, `mrecSections`, `TrajectoryReader` (`fromZip`, `fromStore`) |
-| Neighbors and analysis | `NeighborList`, `Neighbors`, `RDF`, `MSD`, `Cluster`, and the `Wasm*` analysis classes |
-| Force fields | `UFFTypifier`, `MMFF94Typifier`, `MMFF94STypifier` (`typify`, `toPotentials`), `Potentials`, `LBFGS` |
-| Schema | `schemaDocument`, `schemaJson`, `keysDocument`, `schemaColumnDtype`, `schemaVocabVersion` |
+| Core data model (`molrs::core`) | `Frame` (`getMeta` / `setMeta` / `metaKeys`), `Block` (`get`, `view`, `copy`, `set`, `dtype`, `shape`, `nRows`), `Box` (`h`, `toFrac`, `toCart`, `corners`, …), `NDArray`, `Topology` (`fromFrame`), `TriMesh`, regions (`Sphere`, `Cuboid`, …, `Region`), `NeighborList` / `NeighborQuery` / `Neighbors`, `covalentRadius` |
+| SMILES and 3D | `SmilesIr.parse` (`toFrame`), `readSmilesStr` → `Frame`, `writeSmilesStr`, `readCgsmilesStr` → `Frame`, `Conformer` (`generate`) |
+| File formats | the in-memory doors, the camelCase of Rust's and Python's `read_<fmt>_str` / `_bytes` and `write_<fmt>_str` / `_bytes`: `readPdbStr` / `readPdbBytes` / `writePdbStr`, `readXyzStr` / `readXyzBytes` / `writeXyzStr`, `readSdfStr` / `readSdfBytes`, `readGroStr` / `writeGroStr`, `readMol2Str` / `writeMol2Str`, `readCifStr` / `writeCifStr`, `readXsfStr` / `writeXsfStr`, `readCubeStr` / `writeCubeStr`, `readVaspPoscarStr` / `writeVaspPoscarStr`, `readVaspChgcarStr`, `readAmberInpcrdStr`, `readAmberAcStr`, `readAmberPrmtopStr`, `readLammpsDataStr` / `readLammpsDataBytes` / `writeLammpsDataStr`, `readLammpsDumpStr` / `readLammpsDumpBytes` / `writeLammpsDumpStr`, `readDcdBytes` / `writeDcdBytes`, `readTrrBytes` / `writeTrrBytes`, `readXtcBytes` / `writeXtcBytes`; `readCsvBlockStr` / `writeCsvBlockStr` (a `Block`); the molrs reader classes `CifReader`, `GroReader`, `Mol2Reader`, `VaspPoscarReader`; `readStlBytes` → `TriMesh`; `readLammpsLogStr` → `LammpsLog`, `isLammpsLog`; wire-encoded frames: `readMsgpackFrameBytes` / `writeMsgpackFrameBytes`, `readJsonFrameStr` / `writeJsonFrameStr` |
+| Chunk-fed streams (the one reader of their format) | `XyzStream`, `PdbStream`, `SdfStream`, `LammpsDataStream`, `LammpsDumpStream`, `DcdStream`, `XtcStream`, `TrrStream` (`FrameOffset`) |
+| Record files (`*.mrec`) | `readMrecFrame`, `sectionNames` (each over a file map or packed bytes), `MrecReader` (`fromZip`, `fromStorage`) |
+| Perception | `assignRings`, `assignAromaticity`, `addHydrogens`, `removeHydrogens`, `assignKekuleBondOrders` |
+| Analysis (`molrs::compute`) | `Rdf`, `Msd`, `Cluster`, `Vacf`, `Steinhardt`, `PmftXy`, `DistributionFunction`, … (one class per molrs analysis type, under its Rust name); `staticDielectricConstant`, `hbondLifetimes`, `hbondComponents`, `pairSurvivalTcf`, … (molrs's free functions); `molrsComputeCatalog()` lists them all |
+| Force fields | `UffTypifier`, `Mmff94Typifier`, `Mmff94sTypifier` (`typify`, `forcefield` → `ForceField`), `PotentialCompiler` (`compile` → `Potentials`), `Potentials` (`calcEnergyForces`), `Lbfgs` (pairs from a `NeighborList`'s `Neighbors`) |
+| Schema | `schemaDocument`, `keysDocument`, `schemaColumnDtype` |
 
 The [package README](https://github.com/MolCrafts/molrs/tree/master/molrs-wasm#readme)
 shows each of these in use, including the column dtype table and the record

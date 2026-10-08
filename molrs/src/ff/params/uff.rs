@@ -2081,12 +2081,10 @@ pub fn params_for_label(label: &str) -> Option<&'static AtomicParams> {
     UFF_ATOMIC.iter().find(|(k, _)| *k == label).map(|(_, p)| p)
 }
 
-/// Bond stretch constants (RDKit `Params::lambda`, `Params::G`).
+/// The bond-order correction proportionality constant `λ` of UFF's natural
+/// bond radius (RDKit `Params::lambda`). The bond force-constant rule's
+/// Coulomb constant is `core::constants::UFF_COULOMB`.
 pub const LAMBDA: f64 = 0.1332;
-/// Bond force-constant prefactor.
-pub const G: f64 = 332.06;
-/// Amide C–N special bond order.
-pub const AMIDE_BOND_ORDER: f64 = 1.41;
 
 #[cfg(test)]
 mod tests {

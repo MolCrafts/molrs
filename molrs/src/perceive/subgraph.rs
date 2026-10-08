@@ -1,85 +1,9 @@
-//! Induced, labelled subgraph matching of coarse-grained bead graphs: find
-//! every group of beads in a target [`CoarseGrain`] that forms one occurrence
-//! of a bead pattern (one monomer, one molecule).
-//!
-//! In a coarse-grained (CG) graph each node is a **bead** standing for a group
-//! of atoms, labelled by its `bead_type` string, and each CG bond says two
-//! beads are connected. Backmapping — replacing each bead group by the
-//! all-atom molecule it stands for — first has to find those groups, which is
-//! what this module does.
-//!
-//! # Contract of [`SubgraphMatcher::find`]
-//!
-//! A **match** of a pattern `P` in a target `T` is an injective map `m` from
-//! pattern beads to target beads (no two pattern beads share an image) such
-//! that
-//!
-//! - **Labels.** `bead_type(p) == bead_type(m(p))` for every pattern bead
-//!   `p`, by string equality. A bead's label is its `bead_type` alone; a node
-//!   whose `bead_type` was removed through raw `DerefMut` access reads as `""`.
-//! - **Edges.** Every arity-2 relation is an unlabelled edge: `bond_type` /
-//!   `bond_number` on a bond never block a match (a CG bond has no order).
-//! - **Induced.** Two pattern beads are bonded iff their images are, so a
-//!   3-bead path does not match inside a triangle.
-//!
-//! Degree is a pruning bound (`deg T ≥ deg P`), never part of a label, so a
-//! pattern end bead of degree 1 matches a chain-interior target bead.
-//!
-//! The result:
-//!
-//! - **Group shape.** `group[i]` is the target bead matched to pattern row
-//!   `i`, the `i`-th bead of `pattern.node_ids()`.
-//! - **One group per bead set.** All maps onto one bead set differ by an
-//!   automorphism of the pattern — a relabelling of its beads that maps the
-//!   pattern onto itself, such as reading the symmetric `1-4-1` from the
-//!   other end — and describe the same group; the kept map is
-//!   the lexicographically smallest by target row (position in
-//!   `target.node_ids()`).
-//! - **Order.** Groups are sorted lexicographically by the target rows of
-//!   their kept map.
-//! - **Degenerate inputs.** An empty pattern, an empty target, a pattern bead
-//!   type the target lacks, or no induced embedding all give `[]`.
-//! - **Never fails.** `find` returns no `Result`.
-//! - **Disconnected patterns** are accepted. The search restarts at each
-//!   pattern component, so the number of groups can grow as `O(Nᵏ)` for `k`
-//!   components.
-//!
-//! # Known limit: `find` does not partition
-//!
-//! `find` enumerates occurrences; it does not choose a non-overlapping cover.
-//! On the head-to-tail chain `1-1-1-4-1-1-1-4` the pattern `1-1-1-4` occurs
-//! three times, as rows `[0,1,2,3]`, `[4,5,6,7]` and `[6,5,4,3]`; the third
-//! overlaps both others, and all three are returned. Picking a cover is the
-//! caller's composition step.
-//!
-//! # Algorithm
-//!
-//! State-space backtracking in the VF2 lineage: the search grows a partial map
-//! one (pattern bead, target bead) pair at a time, checks after each step that
-//! the pairs placed so far still agree on adjacency (the *feasibility* test),
-//! and undoes the last pair when no extension is feasible (L. P. Cordella,
-//! P. Foggia, C. Sansone and M. Vento, "A (sub)graph isomorphism algorithm for
-//! matching large graphs", *IEEE TPAMI* **26**, 1367–1372 (2004),
-//! doi:10.1109/TPAMI.2004.75). It is the same lineage as
-//! [`is_isomorphic`](crate::system::graph_hash::is_isomorphic), whose
-//! structural feasibility check (`feasible`) this search shares. The worst
-//! case is exponential in the pattern size.
-//!
-//! - **Candidates.** Per pattern bead, the target beads with an equal label
-//!   and a large enough degree.
-//! - **Order.** Fewest candidates first; each later bead is the
-//!   fewest-candidate pattern bead adjacent to one already placed
-//!   (neighbourhood extension, as in the SMARTS substructure matcher of
-//!   [`crate::perceive::smarts`]), so its images come
-//!   from its anchor's image neighbourhood rather than the whole target. A
-//!   disconnected pattern restarts from the fewest-candidate unplaced bead.
-
 use std::collections::{HashMap, HashSet};
 
-use crate::store::keys;
-use crate::system::coarsegrain::{BeadId, CoarseGrain};
-use crate::system::graph_hash::{GraphView, adjacency_map, feasible};
-use crate::system::molgraph::{MolGraph, NodeId};
+use crate::core::CoarseGrain;
+use crate::core::graph_hash::{GraphView, adjacency_map, feasible};
+use crate::core::keys;
+use crate::core::{MolGraph, NodeId};
 
 /// Empty slot in a partial map.
 const UNMAPPED: usize = usize::MAX;
@@ -127,14 +51,14 @@ impl MatchGraph {
 ///
 /// Built once per pattern and run with [`find`](Self::find) against any
 /// number of targets. The full contract (labels, induced edges, one group per
-/// bead set, output order, the no-partition limit) is in the
-/// [module docs](crate::perceive::subgraph).
+/// bead set, output order, the no-partition limit) is below.
 ///
 /// # Example
 ///
 /// ```
 /// use molrs::perceive::SubgraphMatcher;
-/// use molrs::system::coarsegrain::{BeadId, CoarseGrain};
+/// use molrs::core::CoarseGrain;
+/// use molrs::core::NodeId;
 ///
 /// let chain = || {
 ///     let mut g = CoarseGrain::new();
@@ -150,9 +74,85 @@ impl MatchGraph {
 ///
 /// let groups = SubgraphMatcher::new(&pattern).find(&target);
 /// // The mirror map `[c, b, a]` names the same bead set and is dropped.
-/// let beads: Vec<BeadId> = target.node_ids().collect();
+/// let beads: Vec<NodeId> = target.node_ids().collect();
 /// assert_eq!(groups, vec![beads]);
 /// ```
+///
+/// Induced, labelled subgraph matching of coarse-grained bead graphs: find
+/// every group of beads in a target [`CoarseGrain`] that forms one occurrence
+/// of a bead pattern (one monomer, one molecule).
+///
+/// In a coarse-grained (CG) graph each node is a **bead** standing for a group
+/// of atoms, labelled by its `bead_type` string, and each CG bond says two
+/// beads are connected. Backmapping — replacing each bead group by the
+/// all-atom molecule it stands for — first has to find those groups, which is
+/// what this module does.
+///
+/// # Contract of [`SubgraphMatcher::find`]
+///
+/// A **match** of a pattern `P` in a target `T` is an injective map `m` from
+/// pattern beads to target beads (no two pattern beads share an image) such
+/// that
+///
+/// - **Labels.** `bead_type(p) == bead_type(m(p))` for every pattern bead
+///   `p`, by string equality. A bead's label is its `bead_type` alone; a node
+///   whose `bead_type` was removed through raw `DerefMut` access reads as `""`.
+/// - **Edges.** Every arity-2 relation is an unlabelled edge: `bond_type` /
+///   `bond_number` on a bond never block a match (a CG bond has no order).
+/// - **Induced.** Two pattern beads are bonded iff their images are, so a
+///   3-bead path does not match inside a triangle.
+///
+/// Degree is a pruning bound (`deg T ≥ deg P`), never part of a label, so a
+/// pattern end bead of degree 1 matches a chain-interior target bead.
+///
+/// The result:
+///
+/// - **Group shape.** `group[i]` is the target bead matched to pattern row
+///   `i`, the `i`-th bead of `pattern.node_ids()`.
+/// - **One group per bead set.** All maps onto one bead set differ by an
+///   automorphism of the pattern — a relabelling of its beads that maps the
+///   pattern onto itself, such as reading the symmetric `1-4-1` from the
+///   other end — and describe the same group; the kept map is
+///   the lexicographically smallest by target row (position in
+///   `target.node_ids()`).
+/// - **Order.** Groups are sorted lexicographically by the target rows of
+///   their kept map.
+/// - **Degenerate inputs.** An empty pattern, an empty target, a pattern bead
+///   type the target lacks, or no induced embedding all give `[]`.
+/// - **Never fails.** `find` returns no `Result`.
+/// - **Disconnected patterns** are accepted. The search restarts at each
+///   pattern component, so the number of groups can grow as `O(Nᵏ)` for `k`
+///   components.
+///
+/// # Known limit: `find` does not partition
+///
+/// `find` enumerates occurrences; it does not choose a non-overlapping cover.
+/// On the head-to-tail chain `1-1-1-4-1-1-1-4` the pattern `1-1-1-4` occurs
+/// three times, as rows `[0,1,2,3]`, `[4,5,6,7]` and `[6,5,4,3]`; the third
+/// overlaps both others, and all three are returned. Picking a cover is the
+/// caller's composition step.
+///
+/// # Algorithm
+///
+/// State-space backtracking in the VF2 lineage: the search grows a partial map
+/// one (pattern bead, target bead) pair at a time, checks after each step that
+/// the pairs placed so far still agree on adjacency (the *feasibility* test),
+/// and undoes the last pair when no extension is feasible (L. P. Cordella,
+/// P. Foggia, C. Sansone and M. Vento, "A (sub)graph isomorphism algorithm for
+/// matching large graphs", *IEEE TPAMI* **26**, 1367–1372 (2004),
+/// doi:10.1109/TPAMI.2004.75). It is the same lineage as
+/// [`is_isomorphic`](crate::core::is_isomorphic), whose
+/// structural feasibility check (`feasible`) this search shares. The worst
+/// case is exponential in the pattern size.
+///
+/// - **Candidates.** Per pattern bead, the target beads with an equal label
+///   and a large enough degree.
+/// - **Order.** Fewest candidates first; each later bead is the
+///   fewest-candidate pattern bead adjacent to one already placed
+///   (neighbourhood extension, as in the SMARTS substructure matcher of
+///   [`crate::perceive::smarts`]), so its images come
+///   from its anchor's image neighbourhood rather than the whole target. A
+///   disconnected pattern restarts from the fewest-candidate unplaced bead.
 #[derive(Debug, Clone)]
 pub struct SubgraphMatcher {
     pattern: MatchGraph,
@@ -174,7 +174,7 @@ impl SubgraphMatcher {
     /// the groups are sorted by those rows. Overlapping groups are all
     /// returned. No occurrence (including an empty pattern or target) gives
     /// an empty `Vec`.
-    pub fn find(&self, target: &CoarseGrain) -> Vec<Vec<BeadId>> {
+    pub fn find(&self, target: &CoarseGrain) -> Vec<Vec<NodeId>> {
         let n = self.pattern.labels.len();
         if n == 0 {
             return Vec::new();
@@ -319,15 +319,16 @@ impl Search<'_> {
 #[cfg(test)]
 mod tests {
     use super::SubgraphMatcher;
-    use crate::store::keys;
-    use crate::system::BondNumber;
-    use crate::system::coarsegrain::{BeadId, CoarseGrain};
+    use crate::core::BondNumber;
+    use crate::core::CoarseGrain;
+    use crate::core::NodeId;
+    use crate::core::keys;
 
     /// A coarse-grained graph with one bead per entry of `types` (row = index)
     /// and one CG bond per `(row, row)` pair.
     fn cg(types: &[&str], bonds: &[(usize, usize)]) -> CoarseGrain {
         let mut g = CoarseGrain::new();
-        let ids: Vec<BeadId> = types.iter().map(|t| g.add_bead_bare(t)).collect();
+        let ids: Vec<NodeId> = types.iter().map(|t| g.add_bead_bare(t)).collect();
         for &(a, b) in bonds {
             g.add_bond(ids[a], ids[b]).expect("fixture bond");
         }
@@ -342,8 +343,8 @@ mod tests {
     /// the groups sorted lexicographically by those target rows, so the
     /// expected vectors below are exact.
     fn rows(pattern: &CoarseGrain, target: &CoarseGrain) -> Vec<Vec<usize>> {
-        let order: Vec<BeadId> = target.node_ids().collect();
-        let row = |id: BeadId| {
+        let order: Vec<NodeId> = target.node_ids().collect();
+        let row = |id: NodeId| {
             order
                 .iter()
                 .position(|&n| n == id)

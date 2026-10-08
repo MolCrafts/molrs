@@ -1,29 +1,31 @@
 //! Moment of inertia tensor computation for clusters.
-//!
-//! Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
-//! ([`ClusterResult`],
-//! [`COMResult`]) pairs — run
-//! [`Cluster`](crate::compute::cluster::Cluster) and
-//! [`CenterOfMass`](crate::compute::shape::CenterOfMass) first. Output:
-//! per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
-//! `with_masses` supplies; 1 per particle by default).
 
-use crate::compute::result::ComputeResult;
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use crate::compute::ComputeResult;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
-use crate::compute::cluster::ClusterResult;
-use crate::compute::error::ComputeError;
-use crate::compute::shape::center_of_mass::COMResult;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::compute::CenterOfMassResult;
+use crate::compute::ClusterResult;
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::sub;
+use molrs::core::{Mic, SimBox};
 
 /// Moment of inertia tensor per cluster, per frame.
 ///
 /// `I_k[a][b] = SUM_i m_i * (|s_i|^2 * delta_ab - s_i[a] * s_i[b])`
 /// where `s_i = shortest_vector(com_k, r_i)` is the MIC displacement from the
-/// center of mass. Centers of mass come from the [`COMResult`] arg — this
+/// center of mass. Centers of mass come from the [`CenterOfMassResult`] arg — this
 /// Compute does **not** recompute them.
+///
+/// Reads `atoms.{x,y,z}` (Å); `Args` = per-frame
+/// ([`ClusterResult`],
+/// [`CenterOfMassResult`]) pairs — run
+/// [`Cluster`](crate::compute::Cluster) and
+/// [`CenterOfMass`](crate::compute::CenterOfMass) first. Output:
+/// per-cluster 3×3 inertia tensors (mass·Å²) (mass unit = whatever
+/// `with_masses` supplies; 1 per particle by default).
 #[derive(Debug, Clone, Default)]
 pub struct InertiaTensor {
     masses: Option<Vec<F>>,
@@ -46,7 +48,7 @@ impl InertiaTensor {
         &self,
         frame: &FA,
         clusters: &ClusterResult,
-        com: &COMResult,
+        com: &CenterOfMassResult,
     ) -> Result<InertiaTensorResult, ComputeError> {
         let (xs_p, ys_p, zs_p) = get_positions_ref(frame)?;
         let xs = xs_p.slice();
@@ -64,14 +66,14 @@ impl InertiaTensor {
             });
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
-        let nc = clusters.num_clusters;
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        let nc = clusters.n_clusters;
 
         if com.centers_of_mass.len() != nc {
             return Err(ComputeError::DimensionMismatch {
                 expected: nc,
                 got: com.centers_of_mass.len(),
-                what: "COMResult cluster count",
+                what: "CenterOfMassResult cluster count",
             });
         }
 
@@ -85,7 +87,7 @@ impl InertiaTensor {
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
             let m = masses_ref.map_or(1.0 as F, |ms| ms[i]);
-            let s = mic.disp(com.centers_of_mass[c], pos);
+            let s = mic.apply(sub(pos, com.centers_of_mass[c]));
             let sx = s[0];
             let sy = s[1];
             let sz = s[2];
@@ -107,7 +109,7 @@ impl InertiaTensor {
 }
 
 impl Compute for InertiaTensor {
-    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<COMResult>);
+    type Args<'a> = (&'a Vec<ClusterResult>, &'a Vec<CenterOfMassResult>);
     type Output = Vec<InertiaTensorResult>;
 
     fn compute<'a, FA: FrameAccess + Sync + 'a>(
@@ -129,7 +131,7 @@ impl Compute for InertiaTensor {
             return Err(ComputeError::DimensionMismatch {
                 expected: frames.len(),
                 got: com.len(),
-                what: "COMResult count",
+                what: "CenterOfMassResult count",
             });
         }
         #[cfg(feature = "rayon")]
@@ -168,10 +170,10 @@ impl ComputeResult for InertiaTensorResult {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::shape::center_of_mass::CenterOfMass;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use crate::compute::CenterOfMass;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F) -> Frame {
@@ -205,7 +207,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

@@ -12,9 +12,9 @@
 //! live here rather than under `io` because they pull third-party runtime
 //! dependencies — tokio, tungstenite, rmp-serde — that `io` must not acquire.
 
-pub mod message;
+mod control;
 
-pub use message::ControlCommand;
+pub use control::ControlCommand;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod publisher;
@@ -22,11 +22,11 @@ mod publisher;
 #[cfg(not(target_arch = "wasm32"))]
 pub use publisher::{Publisher, PublisherConfig, SendError};
 
-use crate::core::store::frame::Frame;
+use crate::core::Frame;
 
 /// Encoding used for a streamed `Frame`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageFormat {
+pub enum FrameEncoding {
     /// MessagePack (compact binary; default).
     MessagePack,
     /// JSON (text; debugging / interop).
@@ -54,36 +54,49 @@ impl std::fmt::Display for StreamError {
 
 impl std::error::Error for StreamError {}
 
-/// Encode a [`Frame`] to bytes in `format`.
-pub fn frame_to_bytes(frame: &Frame, format: MessageFormat) -> Result<Vec<u8>, StreamError> {
-    match format {
-        MessageFormat::MessagePack => {
-            rmp_serde::to_vec_named(frame).map_err(|e| StreamError::Encode(e.to_string()))
-        }
-        MessageFormat::Json => {
-            serde_json::to_vec(frame).map_err(|e| StreamError::Encode(e.to_string()))
-        }
-    }
+// The frame codecs. Their one public path is `crate::io`
+// (`io::read_msgpack_frame_bytes`, …), which wraps these; they stay here
+// because `stream` builds without `io`.
+
+/// Encode a [`Frame`] as MessagePack bytes.
+#[cfg_attr(not(feature = "io"), allow(dead_code))]
+pub(crate) fn encode_msgpack_frame(frame: &Frame) -> Result<Vec<u8>, StreamError> {
+    rmp_serde::to_vec_named(frame).map_err(|e| StreamError::Encode(e.to_string()))
 }
 
-/// Decode bytes in `format` back into a [`Frame`].
-pub fn bytes_to_frame(bytes: &[u8], format: MessageFormat) -> Result<Frame, StreamError> {
+/// Decode a [`Frame`] from MessagePack bytes.
+#[cfg_attr(not(feature = "io"), allow(dead_code))]
+pub(crate) fn decode_msgpack_frame(bytes: &[u8]) -> Result<Frame, StreamError> {
+    rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
+}
+
+/// Encode a [`Frame`] as JSON text.
+#[cfg_attr(not(feature = "io"), allow(dead_code))]
+pub(crate) fn encode_json_frame(frame: &Frame) -> Result<String, StreamError> {
+    serde_json::to_string(frame).map_err(|e| StreamError::Encode(e.to_string()))
+}
+
+/// Decode a [`Frame`] from JSON text.
+#[cfg_attr(not(feature = "io"), allow(dead_code))]
+pub(crate) fn decode_json_frame(text: &str) -> Result<Frame, StreamError> {
+    serde_json::from_str(text).map_err(|e| StreamError::Decode(e.to_string()))
+}
+
+/// The bytes a publisher configured for `format` puts on the wire.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn encode_frame(frame: &Frame, format: FrameEncoding) -> Result<Vec<u8>, StreamError> {
     match format {
-        MessageFormat::MessagePack => {
-            rmp_serde::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
-        }
-        MessageFormat::Json => {
-            serde_json::from_slice(bytes).map_err(|e| StreamError::Decode(e.to_string()))
-        }
+        FrameEncoding::MessagePack => encode_msgpack_frame(frame),
+        FrameEncoding::Json => encode_json_frame(frame).map(String::into_bytes),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::spatial::simbox::SimBox;
-    use crate::core::store::block::Block;
-    use crate::types::{F, I, Idx};
+    use crate::core::Block;
+    use crate::core::SimBox;
+    use crate::op::{F, I, Idx};
     use ndarray::{Array1, array};
 
     /// Build a full Frame used by the net-streaming lossless round-trip contract
@@ -190,16 +203,16 @@ mod tests {
     #[test]
     fn frame_messagepack_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, MessageFormat::MessagePack).expect("encode");
-        let back = bytes_to_frame(&bytes, MessageFormat::MessagePack).expect("decode");
+        let bytes = encode_msgpack_frame(&frame).expect("encode");
+        let back = decode_msgpack_frame(&bytes).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 
     #[test]
     fn frame_json_roundtrip() {
         let frame = rich_frame();
-        let bytes = frame_to_bytes(&frame, MessageFormat::Json).expect("encode");
-        let back = bytes_to_frame(&bytes, MessageFormat::Json).expect("decode");
+        let text = encode_json_frame(&frame).expect("encode");
+        let back = decode_json_frame(&text).expect("decode");
         assert_frame_eq(&frame, &back);
     }
 }

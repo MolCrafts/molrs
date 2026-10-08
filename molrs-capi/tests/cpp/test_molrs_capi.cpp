@@ -103,10 +103,10 @@ TEST_F(MolrsTest, FrameMetadata) {
     MolrsMetaValue value{};
     value.dtype = MOLRS_META_TYPE_STRING;
     value.string_value = const_cast<char*>("gtest");
-    ASSERT_MOLRS_OK(molrs_frame_put_meta(frame, "author", &value));
+    ASSERT_MOLRS_OK(molrs_frame_set_meta(frame, "author", &value));
 
     MolrsMetaValue out{};
-    ASSERT_MOLRS_OK(molrs_frame_read_meta(frame, "author", &out));
+    ASSERT_MOLRS_OK(molrs_frame_get_meta(frame, "author", &out));
     EXPECT_EQ(out.dtype, MOLRS_META_TYPE_STRING);
     ASSERT_NE(out.string_value, nullptr);
     EXPECT_STREQ(out.string_value, "gtest");
@@ -114,7 +114,7 @@ TEST_F(MolrsTest, FrameMetadata) {
 
     // missing key
     MolrsMetaValue missing{};
-    EXPECT_NE(molrs_frame_read_meta(frame, "nope", &missing), MOLRS_STATUS_OK);
+    EXPECT_NE(molrs_frame_get_meta(frame, "nope", &missing), MOLRS_STATUS_OK);
 
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
@@ -129,11 +129,11 @@ TEST_F(MolrsTest, FrameMetadataOrder) {
         MolrsMetaValue value{};
         value.dtype = MOLRS_META_TYPE_STRING;
         value.string_value = const_cast<char*>(keys[i]);
-        ASSERT_MOLRS_OK(molrs_frame_put_meta(frame, keys[i], &value));
+        ASSERT_MOLRS_OK(molrs_frame_set_meta(frame, keys[i], &value));
     }
 
     uintptr_t count = 0;
-    ASSERT_MOLRS_OK(molrs_frame_meta_count(frame, &count));
+    ASSERT_MOLRS_OK(molrs_frame_n_meta(frame, &count));
     EXPECT_EQ(count, 3u);
 
     for (uintptr_t i = 0; i < 3; ++i) {
@@ -167,27 +167,27 @@ TEST_F(MolrsTest, BlockInsertAndRead) {
     // Insert 3x3 F column (F is f64).
     F data[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     size_t shape[2] = {3, 3};
-    ASSERT_MOLRS_OK(molrs_block_set_F(&block, pos_id, data, shape, 2));
+    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, pos_id, data, shape, 2));
 
     // nrows
     size_t nrows = 0;
-    ASSERT_MOLRS_OK(molrs_block_nrows(block, &nrows));
+    ASSERT_MOLRS_OK(molrs_block_n_rows(block, &nrows));
     EXPECT_EQ(nrows, 3u);
 
     // ncols
     size_t ncols = 0;
-    ASSERT_MOLRS_OK(molrs_block_ncols(block, &ncols));
+    ASSERT_MOLRS_OK(molrs_block_n_columns(block, &ncols));
     EXPECT_EQ(ncols, 1u);
 
     // dtype
     MolrsDType dtype{};
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, pos_id, &dtype));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, pos_id, &dtype));
     EXPECT_EQ(dtype, MOLRS_D_TYPE_FLOAT);
 
     // shape query
     size_t col_shape[4] = {};
     size_t ndim = 4;
-    ASSERT_MOLRS_OK(molrs_block_col_shape(block, pos_id, col_shape, &ndim));
+    ASSERT_MOLRS_OK(molrs_block_column_shape(block, pos_id, col_shape, &ndim));
     EXPECT_EQ(ndim, 2u);
     EXPECT_EQ(col_shape[0], 3u);
     EXPECT_EQ(col_shape[1], 3u);
@@ -232,31 +232,31 @@ TEST_F(MolrsTest, BlockInsertMultipleTypes) {
     // F column (f64)
     F f_data[3] = {-1.5f, 2.7f, 3.14f};
     size_t shape1[1] = {3};
-    ASSERT_MOLRS_OK(molrs_block_set_F(&block, f_id, f_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, f_id, f_data, shape1, 1));
 
     // I column (int32_t by default)
     int32_t i_data[3] = {100, 200, 300};
-    ASSERT_MOLRS_OK(molrs_block_set_I(&block, i_id, i_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set_i32(&block, i_id, i_data, shape1, 1));
 
     // U column (uint64_t / Idx)
     uint64_t u_data[3] = {1, 2, 3};
-    ASSERT_MOLRS_OK(molrs_block_set_U(&block, u_id, u_data, shape1, 1));
+    ASSERT_MOLRS_OK(molrs_block_set_u64(&block, u_id, u_data, shape1, 1));
 
     // verify ncols = 3
     size_t ncols = 0;
-    ASSERT_MOLRS_OK(molrs_block_ncols(block, &ncols));
+    ASSERT_MOLRS_OK(molrs_block_n_columns(block, &ncols));
     EXPECT_EQ(ncols, 3u);
 
     // verify dtypes
     MolrsDType dt{};
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, f_id, &dt));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, f_id, &dt));
     EXPECT_EQ(dt, MOLRS_D_TYPE_FLOAT);
 
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, i_id, &dt));
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, i_id, &dt));
     EXPECT_EQ(dt, MOLRS_D_TYPE_INT);
 
-    ASSERT_MOLRS_OK(molrs_block_col_dtype(block, u_id, &dt));
-    EXPECT_EQ(dt, MOLRS_D_TYPE_U_INT);
+    ASSERT_MOLRS_OK(molrs_block_column_dtype(block, u_id, &dt));
+    EXPECT_EQ(dt, MOLRS_D_TYPE_UINT);
 
     // zero-copy read F
     const uint8_t* raw = nullptr;
@@ -296,7 +296,7 @@ TEST_F(MolrsTest, BlockMutablePointer) {
 
     F data[4] = {1.0f, 2.0f, 3.0f, 4.0f};
     size_t shape[1] = {4};
-    ASSERT_MOLRS_OK(molrs_block_set_F(&block, x_id, data, shape, 1));
+    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, x_id, data, shape, 1));
 
     // get mutable pointer
     uint8_t* raw = nullptr;
@@ -311,7 +311,6 @@ TEST_F(MolrsTest, BlockMutablePointer) {
     for (size_t i = 0; i < len; ++i) {
         ptr[i] *= 10.0f;
     }
-    ASSERT_MOLRS_OK(molrs_block_col_commit(&block));
 
     // verify via copy
     F buf[4] = {};
@@ -325,9 +324,9 @@ TEST_F(MolrsTest, BlockMutablePointer) {
     ASSERT_MOLRS_OK(molrs_frame_drop(frame));
 }
 
-// ===== SimBox =============================================================
+// ===== Box =============================================================
 
-TEST_F(MolrsTest, SimBoxCube) {
+TEST_F(MolrsTest, BoxCube) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -366,7 +365,7 @@ TEST_F(MolrsTest, SimBoxCube) {
     EXPECT_NE(molrs_box_drop(sb), MOLRS_STATUS_OK);  // double drop
 }
 
-TEST_F(MolrsTest, SimBoxOrtho) {
+TEST_F(MolrsTest, BoxOrtho) {
     F lens[3] = {2, 3, 4};
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
@@ -380,7 +379,7 @@ TEST_F(MolrsTest, SimBoxOrtho) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxWrap) {
+TEST_F(MolrsTest, BoxWrap) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -398,7 +397,7 @@ TEST_F(MolrsTest, SimBoxWrap) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxShortestVector) {
+TEST_F(MolrsTest, BoxShortestVector) {
     F origin[3] = {0, 0, 0};
     bool pbc[3] = {true, true, true};
     MolrsBoxHandle sb{};
@@ -417,7 +416,7 @@ TEST_F(MolrsTest, SimBoxShortestVector) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-TEST_F(MolrsTest, SimBoxTriclinic) {
+TEST_F(MolrsTest, BoxTriclinic) {
     // upper-triangular cell matrix
     F h9[9] = {
         2, 1, 2,
@@ -438,9 +437,9 @@ TEST_F(MolrsTest, SimBoxTriclinic) {
     ASSERT_MOLRS_OK(molrs_box_drop(sb));
 }
 
-// ===== Frame <-> SimBox =====================================================
+// ===== Frame <-> Box =====================================================
 
-TEST_F(MolrsTest, FrameSimBoxAssociation) {
+TEST_F(MolrsTest, FrameBoxAssociation) {
     MolrsFrameHandle frame{};
     ASSERT_MOLRS_OK(molrs_frame_new(&frame));
 
@@ -472,141 +471,143 @@ TEST_F(MolrsTest, FrameSimBoxAssociation) {
 
 TEST_F(MolrsTest, ForceFieldLifecycle) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_ff", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_ff", &ff));
 
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "angle", "harmonic", nullptr, nullptr, 0));
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "atom", "full", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "angle", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "atom", "full", nullptr, nullptr, 0));
 
     size_t count = 0;
-    ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
+    ASSERT_MOLRS_OK(molrs_forcefield_n_styles(ff, &count));
     EXPECT_EQ(count, 3u);
 
     // query style name
     char* cat = nullptr;
     char* name = nullptr;
-    ASSERT_MOLRS_OK(molrs_ff_get_style_name(ff, 0, &cat, &name));
+    ASSERT_MOLRS_OK(molrs_forcefield_style_name(ff, 0, &cat, &name));
     ASSERT_NE(cat, nullptr);
     ASSERT_NE(name, nullptr);
     molrs_free_string(cat);
     molrs_free_string(name);
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
-    EXPECT_NE(molrs_ff_drop(ff), MOLRS_STATUS_OK);  // double drop
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
+    EXPECT_NE(molrs_forcefield_drop(ff), MOLRS_STATUS_OK);  // double drop
 }
 
 TEST_F(MolrsTest, ForceFieldPairStyle) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_pair", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_pair", &ff));
 
     const char* style_pk[] = {"cutoff"};
     double style_pv[] = {10.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", style_pk, style_pv, 1));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "pair", "lj/cut", style_pk, style_pv, 1));
 
     const char* type_pk[] = {"epsilon", "sigma"};
     double type_pv[] = {0.5, 3.4};
     const char* ar[] = {"Ar"};
     const char* ar_kr[] = {"Ar", "Kr"};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, type_pk, type_pv, 2));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, type_pk, type_pv, 2));
     ASSERT_MOLRS_OK(
-        molrs_ff_def_type(ff, "pair", "lj/cut", "Ar-Kr", ar_kr, 2, type_pk, type_pv, 2));
+        molrs_forcefield_def_type(ff, "pair", "lj/cut", "Ar-Kr", ar_kr, 2, type_pk, type_pv, 2));
 
     size_t count = 0;
-    ASSERT_MOLRS_OK(molrs_ff_style_count(ff, &count));
+    ASSERT_MOLRS_OK(molrs_forcefield_n_styles(ff, &count));
     EXPECT_EQ(count, 1u);
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
 }
 
 TEST_F(MolrsTest, ForceFieldDefStyleDefTypeAreOk) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_primitives", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_primitives", &ff));
 
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
     const char* ct_oh[] = {"CT", "OH"};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2));
 
     // The name is opaque: MMFF's `0_1_5` is defined on the endpoints given.
     const char* endpoints[] = {"1", "5"};
     ASSERT_MOLRS_OK(
-        molrs_ff_def_type(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
+        molrs_forcefield_def_type(ff, "bond", "harmonic", "0_1_5", endpoints, 2, pk, pv, 2));
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
 }
 
 TEST_F(MolrsTest, ForceFieldDefStyleUnknownCategoryIsInvalidArgument) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_bad_category", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_bad_category", &ff));
 
-    EXPECT_EQ(molrs_ff_def_style(ff, "kspace", "pme", nullptr, nullptr, 0),
+    EXPECT_EQ(molrs_forcefield_def_style(ff, "kspace", "pme", nullptr, nullptr, 0),
               MOLRS_STATUS_INVALID_ARGUMENT);
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
 }
 
 TEST_F(MolrsTest, ForceFieldDefTypeOnMissingStyleIsInvalidArgument) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_missing_style", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_missing_style", &ff));
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
     const char* ct_oh[] = {"CT", "OH"};
     // No style is created implicitly.
-    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2),
+    EXPECT_EQ(molrs_forcefield_def_type(ff, "bond", "harmonic", "CT-OH", ct_oh, 2, pk, pv, 2),
               MOLRS_STATUS_INVALID_ARGUMENT);
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
 }
 
 TEST_F(MolrsTest, ForceFieldDefTypeWrongEndpointCountIsInvalidArgument) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_malformed", &ff));
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_malformed", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "bond", "harmonic", nullptr, nullptr, 0));
 
     const char* pk[] = {"k0", "r0"};
     double pv[] = {300.0, 1.4};
     const char* ct[] = {"CT"};
     // One endpoint on a bond style: an error status, never a panic.
-    EXPECT_EQ(molrs_ff_def_type(ff, "bond", "harmonic", "CT-CT", ct, 1, pk, pv, 2),
+    EXPECT_EQ(molrs_forcefield_def_type(ff, "bond", "harmonic", "CT-CT", ct, 1, pk, pv, 2),
               MOLRS_STATUS_INVALID_ARGUMENT);
 
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
 }
 
 TEST_F(MolrsTest, ForceFieldJsonRoundtrip) {
     MolrsForceFieldHandle ff{};
-    ASSERT_MOLRS_OK(molrs_ff_new("gtest_json", &ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_new("gtest_json", &ff));
 
     const char* spk[] = {"cutoff"};
     double spv[] = {12.0};
-    ASSERT_MOLRS_OK(molrs_ff_def_style(ff, "pair", "lj/cut", spk, spv, 1));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_style(ff, "pair", "lj/cut", spk, spv, 1));
 
     const char* tpk[] = {"epsilon", "sigma"};
     double tpv[] = {1.0, 3.4};
     const char* ar[] = {"Ar"};
-    ASSERT_MOLRS_OK(molrs_ff_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
+    ASSERT_MOLRS_OK(molrs_forcefield_def_type(ff, "pair", "lj/cut", "Ar", ar, 1, tpk, tpv, 2));
 
-    // serialize
+    // serialize: the core forcefield section (ForceFieldSection::from_forcefield) as JSON
     char* json = nullptr;
     size_t json_len = 0;
-    ASSERT_MOLRS_OK(molrs_ff_to_json(ff, &json, &json_len));
+    ASSERT_MOLRS_OK(molrs_forcefield_to_json(ff, &json, &json_len));
     ASSERT_NE(json, nullptr);
     EXPECT_GT(json_len, 0u);
+    EXPECT_NE(std::string(json).find("\"document\""), std::string::npos);
+    EXPECT_NE(std::string(json).find("\"tables\""), std::string::npos);
 
     // deserialize
     MolrsForceFieldHandle ff2{};
-    ASSERT_MOLRS_OK(molrs_ff_from_json(json, &ff2));
+    ASSERT_MOLRS_OK(molrs_forcefield_from_json(json, &ff2));
 
     size_t count = 0;
-    ASSERT_MOLRS_OK(molrs_ff_style_count(ff2, &count));
+    ASSERT_MOLRS_OK(molrs_forcefield_n_styles(ff2, &count));
     EXPECT_EQ(count, 1u);
 
     molrs_free_string(json);
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff));
-    ASSERT_MOLRS_OK(molrs_ff_drop(ff2));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff));
+    ASSERT_MOLRS_OK(molrs_forcefield_drop(ff2));
 }
 
 // ===== Error Handling =====================================================
@@ -625,7 +626,7 @@ TEST_F(MolrsTest, InvalidHandleErrors) {
     EXPECT_NE(molrs_box_drop(bad_sb), MOLRS_STATUS_OK);
 
     MolrsForceFieldHandle bad_ff{999, 999};
-    EXPECT_NE(molrs_ff_drop(bad_ff), MOLRS_STATUS_OK);
+    EXPECT_NE(molrs_forcefield_drop(bad_ff), MOLRS_STATUS_OK);
 }
 
 TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
@@ -641,7 +642,7 @@ TEST_F(MolrsTest, BlockCopyBufferTooSmall) {
 
     F data[5] = {1, 2, 3, 4, 5};
     size_t shape[1] = {5};
-    ASSERT_MOLRS_OK(molrs_block_set_F(&block, col_id, data, shape, 1));
+    ASSERT_MOLRS_OK(molrs_block_set_f64(&block, col_id, data, shape, 1));
 
     // buffer too small: two elements, counted in bytes
     F small_buf[2] = {};
@@ -661,19 +662,18 @@ TEST(Abi, MolrsVersionIsANonEmptyDottedString) {
 }
 
 TEST(Schema, JsonIsOwnedNonEmptyAndFreeable) {
-    char* json = molrs_schema_json();
+    char* json = molrs_schema_document();
     ASSERT_NE(json, nullptr);
     std::string s(json);
     molrs_free_string(json);
-    EXPECT_NE(s.find("\"vocabVersion\""), std::string::npos);
+    EXPECT_NE(s.find("\"id\""), std::string::npos);
     EXPECT_NE(s.find("\"columns\""), std::string::npos);
     EXPECT_NE(s.find("\"blocks\""), std::string::npos);
 }
 
-TEST(Schema, CountsAreNonZeroAndVersioned) {
-    EXPECT_GT(molrs_schema_column_count(), 0u);
-    EXPECT_GT(molrs_schema_block_count(), 0u);
-    EXPECT_GE(molrs_schema_vocab_version(), 1u);
+TEST(Schema, CountsAreNonZero) {
+    EXPECT_GT(molrs_schema_n_columns(), 0u);
+    EXPECT_GT(molrs_schema_n_blocks(), 0u);
 }
 
 TEST(Schema, IdentifiersAreUnsignedAndTypeIsAString) {
@@ -729,4 +729,16 @@ TEST_F(MolrsTest, RegionCompositionIsDeclaredAndComposes) {
     for (MolrsRegionHandle h : {both, shell, hole, inner, outer}) {
         EXPECT_MOLRS_OK(molrs_region_drop(h));
     }
+}
+
+TEST_F(MolrsTest, ShutdownDropsRegions) {
+    // molrs_shutdown resets the whole handle registry: a region obtained
+    // before it is stale afterwards, like every other handle.
+    const F origin[3] = {0, 0, 0};
+    MolrsRegionHandle sphere;
+    ASSERT_MOLRS_OK(molrs_region_sphere(origin, 1.0, &sphere));
+    molrs_shutdown();
+    molrs_init();
+    F d = 0.0;
+    EXPECT_EQ(molrs_region_distance(sphere, origin, 1, &d), MOLRS_STATUS_INVALID_REGION_HANDLE);
 }

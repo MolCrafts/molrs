@@ -1,13 +1,18 @@
-# prek. Every gate is a `scripts/check.sh <gate>` call, the same call the CI
-# workflows make, on the toolchain rust-toolchain.toml pins for both. Change a
-# gate in check.sh, never here or in a workflow.
+# prek / pre-commit. Every gate is a `scripts/check.sh <gate>` call, the same
+# call the CI workflows make, on the toolchain rust-toolchain.toml pins for
+# both. Change a gate in check.sh, never here or in a workflow.
 #
 # Three tiers, cheapest first:
-#   pre-commit  fmt + clippy of molcrafts-molrs: one incremental build, seconds.
-#   pre-push    doc + test, plus only the binder gates whose files changed.
-#               Each binder links molrs under its own feature set / target,
-#               i.e. one more full compile, so none runs at commit time
-#               (operator ruling 2026-09-25).
+#   pre-commit  file hygiene, `fmt`, `ruff`, and the std::os cfg guard: nothing
+#               compiles, so a commit never waits for a build (or for Slurm).
+#   pre-push    the hygiene hooks on --all-files, `partners`, clippy + doc +
+#               test, the binder gates and `ext` whose files changed, `mrec` (molrec's
+#               conformance suite at the molrec commit scripts/partners.py
+#               resolves -- molrec's dev, or its branch named like this one --
+#               as test.yml runs it) and `docs` (the site as Cloudflare
+#               Pages builds it). Each binder links molrs under its own
+#               feature set / target, i.e. one more full compile, so none runs
+#               at commit time (operator ruling 2026-09-25).
 #   CI only     `features` (16 extra feature-set compiles) and `package`.
 #               They rarely break and cost the most; run them by hand with
 #               `scripts/check.sh features package` when touching Cargo
@@ -16,16 +21,23 @@
 # Hooks are scoped with `files:` so a change confined to one binder does not
 # build the other four. `molrs/` and the root build config are in every scope,
 # because every binder links molrs. Full CI parity is `scripts/check.sh all`.
+#
+# check.sh dispatches every gate but `fmt`/`partners` to $MOLCRAFTS_HOOK_RUNNER
+# when that is set (a compute node on the MolCrafts cluster); see "Hooks" in
+# molrs-python/docs/contributing.md. Never --no-verify.
 
 default_install_hook_types: [pre-commit, pre-push]
-default_stages: [pre-commit, pre-push]
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Byte-exact fixtures: what a writer wrote, kept as it wrote it.
       - id: trailing-whitespace
+        exclude: ^molrs/src/ff/testdata/builtin_conformance/
       - id: end-of-file-fixer
+        exclude: ^molrs/src/ff/testdata/builtin_conformance/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
@@ -34,6 +46,15 @@ repos:
 
   - repo: local
     hooks:
+      # lint.yml's `lint / workflows`: every workflow against the CI scheme,
+      # with the validator CI runs (MolCrafts/molcrafts-ci master).
+      - id: workflows
+        name: "check-workflows (lint.yml)"
+        entry: bash -c 'd=$(mktemp -d) && trap "rm -rf $d" EXIT && git clone -q --depth 1 https://github.com/MolCrafts/molcrafts-ci "$d" && env -u VIRTUAL_ENV uv run -q --no-project --script "$d/actions/check-workflows/check_workflows.py" .'
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/
+
       - id: fmt
         name: check fmt
         entry: scripts/check.sh fmt
@@ -42,20 +63,52 @@ repos:
         always_run: true
         stages: [pre-commit]
 
-      - id: clippy
-        name: check clippy (molcrafts-molrs)
-        entry: scripts/check.sh clippy
+      - id: ruff
+        name: check ruff (text I/O names its encoding)
+        entry: scripts/check.sh ruff
         language: system
         pass_filenames: false
-        files: &core ^(molrs/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        types_or: [python, pyi, toml]
         stages: [pre-commit]
 
-      - id: core
-        name: check doc test (molcrafts-molrs)
-        entry: scripts/check.sh doc test
+      # A bare std::os::unix / std::os::windows path is a hard compile error on
+      # the other OS, and only CI's windows/macos legs build there. Gate it:
+      # put any `#[cfg(...)]` attribute on the line directly above (or on the
+      # same line). Escape hatch, for a use inside an item already gated
+      # further up: end the line with `// os-gated: <why>`. A hit is reported
+      # from the line above the offending one (the match spans both).
+      - id: os-cfg
+        name: "std::os::unix / std::os::windows only under #[cfg]"
+        language: pygrep
+        entry: '^(?![^\n]*#\[cfg)[^\n]*\n(?![^\n]*(?:#\[cfg|os-gated))(?![ \t]*//)[^\n]*\bstd::os::(?:unix|windows)\b'
+        args: [--multiline]
+        types: [rust]
+
+      # A commit checks its staged files only. Re-run the commit-time hooks
+      # above over the whole tree, so an untouched file cannot carry a defect
+      # (a missing final newline, a bare std::os path) into CI.
+      - id: all-files
+        name: commit hooks on --all-files
+        entry: uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
         language: system
         pass_filenames: false
-        files: *core
+        always_run: true
+        stages: [pre-push]
+
+      - id: partners
+        name: check partners (partners resolve; path deps resolve in CI)
+        entry: scripts/check.sh partners
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+
+      - id: core
+        name: check clippy doc test (molcrafts-molrs)
+        entry: scripts/check.sh clippy doc test
+        language: system
+        pass_filenames: false
+        files: &core ^(molrs/|Cargo\.(toml|lock)|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
       - id: ffi
@@ -74,12 +127,23 @@ repos:
         files: ^(molrs/|molrs-ffi/|molrs-cxxapi/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
+      # The force-field IR extension proof crate: a third party extending
+      # the IR through molrs's pub API alone (ff-ir-02-protocol, P-Rust).
+      - id: ext
+        name: check ext (the force-field IR extended from outside molrs)
+        entry: scripts/check.sh ext
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ext-example/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
       - id: python
         name: check python
         entry: scripts/check.sh python
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        exclude: ^molrs-python/docs/
         stages: [pre-push]
 
       - id: capi
@@ -96,6 +160,28 @@ repos:
         language: system
         pass_filenames: false
         files: ^(molrs/|molrs-ffi/|molrs-wasm/|Cargo\.toml|\.cargo/|rust-toolchain\.toml|scripts/check\.sh)
+        stages: [pre-push]
+
+      # molrec's conformance suite through molrs.io.mrec, against the molrec
+      # commit scripts/partners.py resolves (test.yml's `test / mrec`).
+      - id: mrec
+        name: check mrec (molrec conformance at the resolved commit)
+        entry: scripts/check.sh mrec
+        language: system
+        pass_filenames: false
+        files: ^(molrs/|molrs-ffi/|molrs-python/|Cargo\.(toml|lock)|\.cargo/|rust-toolchain\.toml|scripts/(check\.sh|ci-conformance\.py|partners\.py)|\.github/(partners\.env|workflows/test\.yml))
+        exclude: ^molrs-python/docs/
+        stages: [pre-push]
+
+      # The docs site, built as Cloudflare Pages builds it, --strict. The
+      # pages, zensical.toml and the Python API (the stub, the PyO3 sources the
+      # reference introspects) all live under molrs-python/.
+      - id: docs
+        name: check docs (zensical --strict, as Cloudflare Pages)
+        entry: scripts/check.sh docs
+        language: system
+        pass_filenames: false
+        files: ^(molrs-python/|rust-toolchain\.toml|scripts/check\.sh)
         stages: [pre-push]
 
       # Local housekeeping, not a gate. target/ is a cache, and a bloated one is

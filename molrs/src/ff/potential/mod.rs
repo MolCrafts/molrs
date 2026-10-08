@@ -1,40 +1,51 @@
-//! Potential energy evaluation traits and kernel registry.
+//! Kernels: a force field's terms evaluated on coordinates — the
+//! [`Potential`] traits, every built-in kernel, the generic form kernels, and
+//! the weights a non-bonded kernel takes on close pairs ([`PairWeights`],
+//! [`SpecialWeights`]).
+//!
+//! What a style *is* (its spec) is the IR's ([`crate::ff::ir`]); which kernel
+//! prices a style is the style registry's ([`crate::ff::style_registry`]);
+//! binding a force field's styles to a frame is the compiler's
+//! ([`PotentialCompiler`](crate::ff::compile::PotentialCompiler)); which
+//! integrator calls a kernel is `md`'s and `optimize`'s.
 //!
 //! A [`Potential`] stores pre-resolved topology indices and parameters.
 //! Callers pass only flat coordinates — no [`Frame`] in the hot loop.
-//! Construction from a [`Frame`] happens once via [`PotentialCompiler::compile`](compile::PotentialCompiler::compile).
+//! Construction from a [`Frame`] happens once via
+//! [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile).
 
-pub mod geometry;
+pub(crate) mod flat_coords;
 
 pub mod angle;
 pub mod bond;
-pub mod compile;
+pub mod cmap;
 pub mod dihedral;
+mod error;
+pub mod form_kernel;
 pub mod improper;
 pub mod kspace;
+mod neighbor_pairs;
 pub mod pair;
-pub mod registry;
+pub(crate) mod param_reads;
 pub mod soft;
 
-pub use compile::PotentialCompiler;
-pub use registry::{
-    KernelConstructor, KernelRegistry, ParamSource, RowSource, lookup_kernel, lookup_param_source,
-    lookup_row_source, register_kernel, register_kernel_with,
-};
+pub use error::CompileError;
+pub use neighbor_pairs::intramolecular_pairs_from_neighbors;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ndarray::{Array1, Array2, ArrayView2};
 
-use crate::ff::forcefield::SpecialBonds;
-use molrs::math::Virial;
-use molrs::spatial::neighbors::Neighbors;
-use molrs::store::block::Block;
-use molrs::store::frame::Frame;
-use molrs::store::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS};
-use molrs::store::schema::consts::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
-use molrs::system::bond_weights::BondDistanceWeights;
-use molrs::types::{F, Idx};
+use crate::ff::ir::SpecialBonds;
+use molrs::core::Block;
+use molrs::core::BondDistanceWeights;
+use molrs::core::Frame;
+use molrs::core::Neighbors;
+use molrs::core::Virial;
+use molrs::core::keys::{ATOMI, ATOMJ, ATOMK, ATOML, IS_14};
+use molrs::core::schema::PAIR_OVERRIDE_COLUMNS;
+use molrs::core::schema::block_names::{ANGLES, ATOMS, BONDS, DIHEDRALS, PAIRS};
+use molrs::op::{F, Idx};
 
 /// Above this many atoms, [`intramolecular_pairs`] refuses rather than
 /// enumerating.
@@ -45,7 +56,7 @@ use molrs::types::{F, Idx};
 /// is still under 2 GiB and the caller is still plausibly asking for what this
 /// function is for: the intramolecular pairs of one molecule, in free space.
 /// A periodic or larger system wants a neighbour list and
-/// [`PotentialCompiler::compile_typed`](compile::PotentialCompiler::compile_typed).
+/// [`PotentialCompiler::compile_typed`](crate::ff::compile::PotentialCompiler::compile_typed).
 ///
 /// molrs-wasm caps the same path at 2 000 for its own memory budget; this is
 /// the native ceiling, not a duplicate of that policy.
@@ -58,28 +69,35 @@ const BYTES_PER_PAIR_ROW: usize = 4 + 4 + 1;
 /// from a frame's bond/angle/dihedral topology: every `i < j` pair, excluding
 /// 1-2 (bonded) and 1-3 (angle) pairs and flagging 1-4 (dihedral-end) pairs.
 ///
-/// This is the neighbour list that [`PotentialCompiler::compile`](compile::PotentialCompiler::compile) hands to every
-/// pair kernel — the same logic the MMFF frame builder used to compute
-/// privately, lifted here so every force field (GAFF/LAMMPS, OPLS, MMFF, …)
-/// shares one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
+/// This is the neighbour list that [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile) hands to every
+/// pair kernel; every force field (GAFF/LAMMPS, OPLS, MMFF, …) shares this
+/// one path. Per-pair scaling of the flagged 1-4 pairs is applied by the
 /// pair kernels using the force field's 1-4 weight, not baked into this list.
+///
+/// # Per-pair overrides
+///
+/// A `pairs` block the frame already carries — a reader's list of the pairs
+/// with their own 1-4 data, such as the AMBER prmtop reader's torsions whose
+/// `SCEE` / `SCNB` differ from the field's — keeps its override cells
+/// (`lj_scale`, `coul_scale`, `epsilon`, `sigma`, `charge_product`): they
+/// move onto the same pairs of the new list. An override on a pair the new
+/// list excludes is an [`Err`], since the list would drop it.
 ///
 /// # Why this needs the force field's weights
 ///
-/// Which 1-2 / 1-3 pairs belong in the list *is* a force-field decision, and
-/// this function used to make it — always excluding both, whatever the force
-/// field said. LAMMPS's `special_bonds fene` (`[0, 1, 1]`) keeps 1-3 pairs at
-/// full strength, and a FENE chain without them has nothing holding it open.
-/// `special` answers it instead, via
-/// [`SpecialBonds::compiled_inclusion`](crate::ff::forcefield::SpecialBonds::compiled_inclusion),
+/// Which 1-2 / 1-3 pairs belong in the list *is* a force-field decision, so
+/// this function does not make it on its own. LAMMPS's `special_bonds fene`
+/// (`[0, 1, 1]`) keeps 1-3 pairs at full strength, and a FENE chain without
+/// them has nothing holding it open. `special` answers it, via
+/// [`SpecialBonds::compiled_inclusion`](crate::ff::ir::SpecialBonds::compiled_inclusion),
 /// which is also where weights this list cannot express become an [`Err`]
 /// rather than a silently different force field.
 ///
-/// [`SpecialBonds::default`](crate::ff::forcefield::SpecialBonds::default)
-/// reproduces the historical behaviour exactly: both classes excluded.
+/// [`SpecialBonds::default`](crate::ff::ir::SpecialBonds::default)
+/// excludes both classes.
 pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Block, String> {
     let [keep_12, keep_13] = special.compiled_inclusion()?;
-    let n_atoms = frame.get(ATOMS).and_then(|b| b.nrows()).unwrap_or(0);
+    let n_atoms = frame.get(ATOMS).and_then(|b| b.n_rows()).unwrap_or(0);
     if n_atoms > MAX_ATOMS_FOR_A_FULL_PAIR_LIST {
         return Err(format!(
             "intramolecular_pairs: {n_atoms} atoms would enumerate {} pairs \
@@ -117,6 +135,7 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
 
     let mut pairs = Block::new();
     if !pi.is_empty() {
+        let overrides = carried_overrides(frame, &pi, &pj)?;
         pairs
             .insert(ATOMI, Array1::from_vec(pi).into_dyn())
             .expect("fresh pairs block");
@@ -126,8 +145,103 @@ pub fn intramolecular_pairs(frame: &Frame, special: &SpecialBonds) -> Result<Blo
         pairs
             .insert(IS_14, Array1::from_vec(p14).into_dyn())
             .expect("fresh pairs block");
+        for (key, values, valid) in overrides {
+            pairs
+                .insert_nullable(key, Array1::from_vec(values).into_dyn(), valid)
+                .map_err(|e| e.to_string())?;
+        }
+    } else if let Some((i, j)) = override_pairs(frame)?.into_iter().next() {
+        return Err(excluded_override(i, j));
     }
     Ok(pairs)
+}
+
+/// One override column of a new pair list: its name, values and validity.
+type OverrideColumn = (&'static str, Vec<F>, Vec<bool>);
+
+/// The per-pair override cells ([`PAIR_OVERRIDE_COLUMNS`]) of the frame's
+/// own `pairs` rows, moved onto the rows `(pi, pj)` of the new list: a
+/// reader's per-pair data (an AMBER torsion's own SCEE / SCNB, a GROMACS
+/// `[ pairs ]` row's parameters) survives building the full list. An
+/// override on a pair the new list leaves out (1-2 / 1-3) is an `Err`: it
+/// would be dropped.
+fn carried_overrides(frame: &Frame, pi: &[Idx], pj: &[Idx]) -> Result<Vec<OverrideColumn>, String> {
+    let Some(old) = frame.get(PAIRS) else {
+        return Ok(Vec::new());
+    };
+    let (Some(oi), Some(oj)) = (
+        old.get(ATOMI).and_then(|c| c.as_uint()),
+        old.get(ATOMJ).and_then(|c| c.as_uint()),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let row_of: HashMap<(Idx, Idx), usize> = pi
+        .iter()
+        .zip(pj)
+        .enumerate()
+        .map(|(r, (&a, &b))| ((a, b), r))
+        .collect();
+    let mut out = Vec::new();
+    for key in PAIR_OVERRIDE_COLUMNS {
+        let Some(col) = old.get(key) else {
+            continue;
+        };
+        let values = col
+            .as_float()
+            .ok_or_else(|| format!("pairs: the per-pair override column '{key}' must be float"))?;
+        let valid = old.validity(key);
+        let mut new_values = vec![0.0; pi.len()];
+        let mut new_valid = vec![false; pi.len()];
+        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
+            if valid.is_some_and(|m| !m[r]) {
+                continue;
+            }
+            let pair = (a.min(b), a.max(b));
+            let at = *row_of
+                .get(&pair)
+                .ok_or_else(|| excluded_override(pair.0 as usize, pair.1 as usize))?;
+            new_values[at] = values[r];
+            new_valid[at] = true;
+        }
+        if new_valid.iter().any(|&v| v) {
+            out.push((key, new_values, new_valid));
+        }
+    }
+    Ok(out)
+}
+
+/// The pairs of the frame's `pairs` rows that carry an override cell.
+fn override_pairs(frame: &Frame) -> Result<Vec<(usize, usize)>, String> {
+    let Some(old) = frame.get(PAIRS) else {
+        return Ok(Vec::new());
+    };
+    let (Some(oi), Some(oj)) = (
+        old.get(ATOMI).and_then(|c| c.as_uint()),
+        old.get(ATOMJ).and_then(|c| c.as_uint()),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for key in PAIR_OVERRIDE_COLUMNS {
+        if old.get(key).is_none() {
+            continue;
+        }
+        let valid = old.validity(key);
+        for (r, (&a, &b)) in oi.iter().zip(oj.iter()).enumerate() {
+            if valid.is_none_or(|m| m[r]) {
+                out.push((a.min(b) as usize, a.max(b) as usize));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn excluded_override(i: usize, j: usize) -> String {
+    format!(
+        "intramolecular_pairs: the frame's pairs row for atoms {i} and {j} carries a per-pair \
+         override, and the force field's special_bonds exclude that pair (1-2 or 1-3), so the \
+         override would be dropped"
+    )
 }
 
 /// `(lo, hi)` end-atom pairs of a topology block (bond ends, angle i–k,
@@ -165,7 +279,7 @@ pub(crate) fn end_pairs(
 /// Energy and forces from coordinates alone.
 ///
 /// A `Potential` is **molecule-bound**: its per-element parameters are expanded
-/// against the molecule's topology once at [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)
+/// against the molecule's topology once at [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)
 /// (string type labels resolved to per-bond/angle/… arrays). Evaluation
 /// therefore takes only coordinates — there is no per-call topology resolution.
 ///
@@ -178,12 +292,12 @@ pub(crate) fn end_pairs(
 /// * [`PairDriven`] — the sum runs over whatever pairs a neighbour search turns
 ///   up. Every pair kernel.
 ///
-/// [`Member`] is the three of them as one value, chosen when the kernel is
+/// [`ForceTerm`] is the three of them as one value, chosen when the kernel is
 /// built. It exists because a `Box<dyn Potential>` cannot be asked which of the
-/// two it also is — the question used to be put to `terms()`, whose job is to
-/// return a table and which allocated one per member per step to answer it.
+/// two it also is, and `terms()` is the wrong place to ask: its job is to
+/// return a table, and it allocates one per member per call.
 ///
-/// The geometry optimizer ([`crate::optimize::LBFGS`]) depends on this trait —
+/// The geometry optimizer ([`crate::optimize::Lbfgs`]) depends on this trait —
 /// not the other way around.
 pub trait Potential: Send + Sync {
     /// Compute energy and forces (= -gradient) in one pass.
@@ -292,10 +406,10 @@ pub trait PairDriven: Potential {
     ///   reason [`calc_energy_forces_with_pairs_virial`](PairDriven::calc_energy_forces_with_pairs_virial)
     ///   gives.
     ///
-    /// No default: this used to have one that ignored `factor`, which was right
-    /// for a potential that does not sum over the pair table and silently lost
-    /// a force field's exclusions for one that does. Only the second kind is in
-    /// this trait, so the question is now asked of every implementor.
+    /// No default: one that ignored `factor` would be right for a potential
+    /// that does not sum over the pair table and would silently lose a force
+    /// field's exclusions for one that does. Only the second kind is in this
+    /// trait, so the question is asked of every implementor.
     fn accumulate_pairs(
         &self,
         coords: &[F],
@@ -363,7 +477,7 @@ pub trait PairDriven: Potential {
 /// reads neither. Which part a member plays is settled by its constructor, and
 /// this is where that answer is kept, so no loop has to re-derive it per step
 /// and no method has to carry a default that is wrong for half its implementors.
-pub enum Member {
+pub enum ForceTerm {
     /// A bonded term: evaluated against an index table the caller supplies.
     Indexed(Box<dyn IndexedTerms>),
     /// A non-bonded term: evaluated against a neighbour table, with per-pair
@@ -374,35 +488,35 @@ pub enum Member {
     Plain(Box<dyn Potential>),
 }
 
-impl Member {
+impl ForceTerm {
     /// A bonded term — one whose rows are named by an index table.
     pub fn indexed(p: impl IndexedTerms + 'static) -> Self {
-        Member::Indexed(Box::new(p))
+        ForceTerm::Indexed(Box::new(p))
     }
 
     /// A non-bonded term — one summed over a neighbour table.
     pub fn pair(p: impl PairDriven + 'static) -> Self {
-        Member::Pair(Box::new(p))
+        ForceTerm::Pair(Box::new(p))
     }
 
     /// Anything else — evaluated from coordinates alone.
     pub fn plain(p: impl Potential + 'static) -> Self {
-        Member::Plain(Box::new(p))
+        ForceTerm::Plain(Box::new(p))
     }
 
     /// This member as a plain potential, whatever part it plays.
     pub fn as_potential(&self) -> &dyn Potential {
         match self {
-            Member::Indexed(p) => &**p,
-            Member::Pair(p) => &**p,
-            Member::Plain(p) => &**p,
+            ForceTerm::Indexed(p) => &**p,
+            ForceTerm::Pair(p) => &**p,
+            ForceTerm::Plain(p) => &**p,
         }
     }
 
     /// The index table, for a bonded member.
     pub fn terms(&self) -> Option<Array2<u32>> {
         match self {
-            Member::Indexed(p) => Some(p.terms()),
+            ForceTerm::Indexed(p) => Some(p.terms()),
             _ => None,
         }
     }
@@ -412,7 +526,7 @@ impl Member {
     /// table is bound to none.
     pub fn binds_a_fixed_pair_list(&self) -> bool {
         match self {
-            Member::Pair(p) => p.binds_a_fixed_pair_list(),
+            ForceTerm::Pair(p) => p.binds_a_fixed_pair_list(),
             _ => false,
         }
     }
@@ -420,23 +534,23 @@ impl Member {
     /// Extend per-atom state onto periodic copies. Only a pair member keeps
     /// any; see [`PairDriven::gather_onto_copies`].
     pub fn gather_onto_copies(&mut self, owner: &[u32]) {
-        if let Member::Pair(p) = self {
+        if let ForceTerm::Pair(p) = self {
             p.gather_onto_copies(owner);
         }
     }
 }
 
-impl std::fmt::Debug for Member {
+impl std::fmt::Debug for ForceTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Member::Indexed(_) => "Member::Indexed",
-            Member::Pair(_) => "Member::Pair",
-            Member::Plain(_) => "Member::Plain",
+            ForceTerm::Indexed(_) => "ForceTerm::Indexed",
+            ForceTerm::Pair(_) => "ForceTerm::Pair",
+            ForceTerm::Plain(_) => "ForceTerm::Plain",
         })
     }
 }
 
-impl Potential for Member {
+impl Potential for ForceTerm {
     fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
         self.as_potential().calc_energy_forces(coords)
     }
@@ -472,15 +586,216 @@ impl Potential for Box<dyn Potential> {
 /// A kernel built for a neighbour-driven evaluation, and which of a force
 /// field's special-bonds weight sets scales it. `None` for a bonded kernel:
 /// it *is* the bonded interaction, not a scaled copy of one.
-pub type TypedKernel = (Member, Option<registry::SpecialClass>);
+pub type ScaledTerm = (ForceTerm, Option<crate::ff::ir::SpecialClass>);
 
-/// One member of a neighbour-driven evaluation: the kernel, and the
-/// bond-distance weights its non-bonded term takes.
+/// One member of a neighbour-driven evaluation: the kernel, and the weights
+/// its non-bonded term takes.
 ///
 /// The weights travel with the member because a force field may scale close
 /// van-der-Waals and electrostatic neighbours differently, and in molrs those
 /// are separate kernels.
-pub type TypedMember = (Member, Option<BondDistanceWeights>);
+pub type WeightedTerm = (ForceTerm, Option<PairWeights>);
+
+/// The weights a neighbour-driven non-bonded member applies: by bond distance
+/// (`special_bonds`), and zero on the pairs the 1-4 exceptions kernel prices
+/// in its place (a `pairs` row with per-pair overrides).
+///
+/// A neighbour table finds every pair inside the cutoff, so a pair that an
+/// exception prices would otherwise be priced twice — once here at its
+/// class's weight, once there at its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairWeights {
+    by_distance: BondDistanceWeights,
+    replaced: Vec<(usize, usize)>,
+}
+
+impl PairWeights {
+    /// Weights by bond distance, with `replaced` pairs (either order) at 0.
+    pub fn new(by_distance: BondDistanceWeights, replaced: Vec<(usize, usize)>) -> Self {
+        Self {
+            by_distance,
+            replaced,
+        }
+    }
+
+    /// The weights by bond distance.
+    pub fn by_distance(&self) -> &BondDistanceWeights {
+        &self.by_distance
+    }
+
+    /// The pairs weighted 0 whatever their bond distance.
+    pub fn replaced(&self) -> &[(usize, usize)] {
+        &self.replaced
+    }
+
+    /// The weights on `topo`'s close pairs: per atom, its partners whose
+    /// weight is not 1 — the lists
+    /// [`Topology::special_weights`](molrs::core::Topology::special_weights) gives,
+    /// with the replaced pairs set to 0.
+    pub fn special_weights(&self, topo: &molrs::core::Topology) -> SpecialWeights {
+        let mut lists = topo.special_weights(&self.by_distance);
+        for &(i, j) in &self.replaced {
+            for (a, b) in [(i, j), (j, i)] {
+                if let Some(list) = lists.get_mut(a) {
+                    match list.binary_search_by_key(&b, |&(p, _)| p) {
+                        Ok(k) => list[k].1 = 0.0,
+                        Err(k) => list.insert(k, (b, 0.0)),
+                    }
+                }
+            }
+        }
+        SpecialWeights::new(&lists)
+    }
+}
+
+/// The weights a force field puts on close non-bonded neighbours.
+///
+/// A bonded pair's non-bonded term is not wanted at full strength: 1-2 and 1-3
+/// are normally excluded outright and 1-4 scaled, because the bonded terms
+/// already describe those interactions. A compiled intramolecular list carries
+/// that by *omitting* the excluded rows and baking the 1-4 factor into the
+/// parameters — which works only while that exact list is the one being
+/// evaluated. A neighbour table has no such memory: it finds every pair inside
+/// the cutoff, bonded or not.
+///
+/// So the weights have to be applied at evaluation time, and this holds them.
+/// Build it from [`PairWeights::special_weights`], or from
+/// [`Topology::special_weights`](molrs::core::Topology::special_weights), which
+/// walks the bond graph.
+///
+/// # Why it splits the table rather than scaling in the kernel
+///
+/// Energy is a sum over pairs, so scaling a group of pairs and scaling their
+/// contribution are the same number — which means the weights can be applied
+/// *outside* the kernels, and no kernel has to learn that a force field has
+/// exclusions.
+///
+/// The obvious cheaper trick — evaluate everything, then subtract what should
+/// not have been counted — is not available. A 1-2 pair sits at bond length,
+/// where a Lennard-Jones term is enormous; subtracting it from a total of
+/// ordinary size cancels away the very digits the answer is made of.
+#[derive(Clone, Debug)]
+pub struct SpecialWeights {
+    /// Per owned atom, its special partners sorted by index, with weights.
+    per_atom: Vec<Vec<(u32, F)>>,
+    /// Whether every list is empty. A fact about the table, not about a step.
+    nothing_scaled: bool,
+}
+
+/// Nothing scaled — the right default, and not the one `derive` would give.
+///
+/// `nothing_scaled` is a cached answer, and a derived `bool` default is
+/// `false`: an empty table would have claimed to scale something. It cost only
+/// a slower path, because an empty lookup answers 1.0 for every pair — but a
+/// cached fact that disagrees with the thing it caches is a trap whoever
+/// trusts it next will fall into.
+impl Default for SpecialWeights {
+    fn default() -> Self {
+        Self {
+            per_atom: Vec::new(),
+            nothing_scaled: true,
+        }
+    }
+}
+
+impl SpecialWeights {
+    /// Take the per-atom lists a bond-graph walk produced.
+    pub fn new(special: &[Vec<(usize, F)>]) -> Self {
+        let per_atom: Vec<Vec<(u32, F)>> = special
+            .iter()
+            .map(|l| l.iter().map(|&(p, w)| (p as u32, w)).collect())
+            .collect();
+        Self {
+            nothing_scaled: per_atom.iter().all(|l| l.is_empty()),
+            per_atom,
+        }
+    }
+
+    /// The weight on the pair `(i, j)`, both owned indices. `1.0` when the two
+    /// are far enough apart in the bond graph to interact normally.
+    pub fn weight(&self, i: usize, j: usize) -> F {
+        let Some(list) = self.per_atom.get(i) else {
+            return 1.0;
+        };
+        match list.binary_search_by_key(&(j as u32), |&(p, _)| p) {
+            Ok(k) => list[k].1,
+            Err(_) => 1.0,
+        }
+    }
+
+    /// True when nothing is scaled, so a caller can skip the weights entirely.
+    ///
+    /// Answered from a flag set at construction: it is a property of the table
+    /// and was being recomputed by scanning every atom, once per member, once
+    /// per step.
+    pub fn is_empty(&self) -> bool {
+        self.nothing_scaled
+    }
+
+    /// Fill `out` with one weight per row of `pairs`.
+    ///
+    /// `owner` maps a periodic copy to the atom it copies — index `a` is a copy
+    /// when `a >= n_owned`, and its owner is `owner[a - n_owned]`. A pair
+    /// naming a copy is weighted as that owner: a bond graph knows atoms, and a
+    /// copy is the same atom seen through a face. Pass an empty slice when the
+    /// table names atoms directly, as a minimum-image one does.
+    ///
+    /// # Why a column and not a split
+    ///
+    /// Partitioning the table into a full-strength one and a group per
+    /// distinct weight is also correct, because energy is a sum over pairs and
+    /// scaling a group is the same as scaling its contribution. It costs the
+    /// table being rebuilt — allocated, re-pushed column by column — once per
+    /// weight per member per step. Measured at 4 096 atoms that is four times
+    /// the kernel it prepares input for, and thirty megabytes a step.
+    ///
+    /// A weight is one number per pair. Handing the kernel that number is one
+    /// pass over a buffer the caller keeps.
+    /// The per-pair weights for `pairs`, or an empty slice when nothing is
+    /// scaled.
+    ///
+    /// The empty slice is not a table of ones: a kernel reads it as "no weights
+    /// apply" and skips the multiply entirely, which is the common case and the
+    /// one worth not paying for. `scratch` is the caller's buffer, reused
+    /// across steps — [`fill_factors`](Self::fill_factors) is what fills it.
+    pub fn factors_for<'a>(
+        &self,
+        pairs: &Neighbors,
+        n_owned: usize,
+        owner: &[u32],
+        scratch: &'a mut Vec<F>,
+    ) -> &'a [F] {
+        if self.is_empty() {
+            return &[];
+        }
+        self.fill_factors(pairs, n_owned, owner, scratch);
+        scratch
+    }
+
+    pub fn fill_factors(&self, pairs: &Neighbors, n_owned: usize, owner: &[u32], out: &mut Vec<F>) {
+        let i_col = pairs.query_point_indices();
+        let j_col = pairs.point_indices();
+        out.clear();
+        out.reserve(i_col.len());
+        let own = |a: usize| {
+            if a < n_owned {
+                a
+            } else {
+                owner[a - n_owned] as usize
+            }
+        };
+        for p in 0..i_col.len() {
+            let (i, j) = (i_col[p] as usize, j_col[p] as usize);
+            // An atom and a *copy of itself* are a real interaction, and no
+            // bond-graph weight describes it: the walk is root-inclusive, so
+            // asking for `weight(i, i)` would answer 0 — the weight of an atom
+            // with itself, which is a different question and not one this pair
+            // is asking.
+            let (oi, oj) = (own(i), own(j));
+            out.push(if oi == oj { 1.0 } else { self.weight(oi, oj) });
+        }
+    }
+}
 
 /// Rebuild the copies' entries of a per-atom vector from their owners'.
 ///
@@ -513,12 +828,9 @@ pub(crate) fn gather_copies<T: Clone>(v: &mut Vec<T>, n_owned: usize, owner: &[u
 pub struct Potentials {
     /// Each member with the part it plays, settled when it was built.
     ///
-    /// This used to be a `Vec<Box<dyn Potential>>` beside a `Vec<bool>` saying
-    /// which of them held atom indices, because the role had to be recovered by
-    /// calling `terms()` — a method whose job is to return a table, and which
-    /// allocated one per bonded member per step to answer a question that was
-    /// settled at construction. [`Member`] is that answer, kept.
-    inner: Vec<Member>,
+    /// The role is settled at construction, so it is kept as the member's
+    /// [`ForceTerm`] variant rather than recovered per step from `terms()`.
+    inner: Vec<ForceTerm>,
     /// Number of atoms the kernels were compiled against (`coords.len() / 3`).
     /// `0` when unknown (e.g. built incrementally via [`Potentials::push`]).
     n_atoms: usize,
@@ -540,9 +852,9 @@ impl Potentials {
         }
     }
 
-    /// Add a member. Which part it plays is [`Member`]'s to say, and its
+    /// Add a member. Which part it plays is [`ForceTerm`]'s to say, and its
     /// constructor already said it.
-    pub fn push(&mut self, member: Member) {
+    pub fn push(&mut self, member: ForceTerm) {
         self.inner.push(member);
     }
 
@@ -558,7 +870,7 @@ impl Potentials {
         self.n_atoms
     }
 
-    /// Record the compiled atom count (used by [`PotentialCompiler::compile`](compile::PotentialCompiler::compile)).
+    /// Record the compiled atom count (used by [`PotentialCompiler::compile`](crate::ff::compile::PotentialCompiler::compile)).
     pub fn set_n_atoms(&mut self, n_atoms: usize) {
         self.n_atoms = n_atoms;
     }
@@ -574,12 +886,12 @@ impl Potentials {
     /// neighbour table — needs them one at a time, because the index table a
     /// member wants is the member's own. Summing them all is what
     /// [`calc_energy_forces`](Self::calc_energy_forces) is for.
-    pub fn members(&self) -> &[Member] {
+    pub fn members(&self) -> &[ForceTerm] {
         &self.inner
     }
 
     /// Give up the members, for a caller that wants to own them individually.
-    pub fn into_members(self) -> Vec<Member> {
+    pub fn into_members(self) -> Vec<ForceTerm> {
         self.inner
     }
 
@@ -649,8 +961,7 @@ impl Potential for Potentials {
 /// An aggregate is pair-driven when it is asked to be: it forwards to the
 /// members that read a pair table and evaluates the rest the ordinary way.
 ///
-/// The split used to be a `Vec<bool>` filled by calling `terms()` on every
-/// member; it is now the member's own [`Member`] variant, which its
+/// The split is the member's own [`ForceTerm`] variant, which its
 /// constructor chose.
 impl PairDriven for Potentials {
     /// Every member accumulates into the same buffer, and one member that
@@ -671,7 +982,7 @@ impl PairDriven for Potentials {
         let mut total_w = Some(Virial::ZERO);
         for m in &self.inner {
             let (e, w) = match m {
-                Member::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
+                ForceTerm::Pair(p) => p.accumulate_pairs(coords, pairs, factor, out),
                 other => {
                     let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
                     for (acc, v) in out.iter_mut().zip(&f) {
@@ -697,7 +1008,7 @@ impl PairDriven for Potentials {
     /// True if *any* member is. One compiled kernel is enough to make the
     /// aggregate's answer independent of the table it is handed.
     fn binds_a_fixed_pair_list(&self) -> bool {
-        self.inner.iter().any(Member::binds_a_fixed_pair_list)
+        self.inner.iter().any(ForceTerm::binds_a_fixed_pair_list)
     }
 
     /// The members' virials, summed — and `None` the moment one of them
@@ -717,7 +1028,7 @@ impl PairDriven for Potentials {
         let mut total_w = Some(Virial::ZERO);
         for m in &self.inner {
             let (e, f, w) = match m {
-                Member::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
+                ForceTerm::Pair(p) => p.calc_energy_forces_with_pairs_virial(coords, pairs),
                 other => {
                     let (e, f) = other.calc_energy_forces_with_pairs(coords, pairs);
                     (e, f, None)
@@ -757,9 +1068,29 @@ impl PairDriven for Potentials {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ff::forcefield::{ForceField, Params};
-    use molrs::store::block::Block;
-    use molrs::types::Idx;
+    use crate::ff::compile::PotentialCompiler;
+
+    /// The default scales nothing, and says so.
+    ///
+    /// `nothing_scaled` caches an answer, and a cached fact that disagrees with
+    /// the thing it caches is worse than no cache: a derived `bool` default is
+    /// `false`, so an empty table claimed to have weights and a provider with
+    /// no neighbour list refused to build. The Python suite found it; this
+    /// keeps it found.
+    #[test]
+    fn an_empty_weight_table_scales_nothing() {
+        assert!(SpecialWeights::default().is_empty());
+        assert!(SpecialWeights::new(&[]).is_empty());
+        assert!(SpecialWeights::new(&[vec![], vec![]]).is_empty());
+        assert!(!SpecialWeights::new(&[vec![(1_usize, 0.5_f64)], vec![]]).is_empty());
+        // And an absent entry still answers full strength.
+        assert_eq!(SpecialWeights::default().weight(0, 1), 1.0);
+    }
+
+    use crate::ff::forcefield::ForceField;
+    use crate::ff::ir::Params;
+    use molrs::core::Block;
+    use molrs::op::Idx;
     use ndarray::Array1;
 
     struct DummyPotential {
@@ -910,7 +1241,7 @@ mod tests {
             .def_type(
                 "A-A-A",
                 &["A", "A", "A"],
-                Params::from_pairs(&[("k", 50.0), ("theta0", 1.911)]),
+                Params::from_pairs(&[("k", 50.0), ("theta0", 109.5)]),
             )
             .unwrap();
         ff.def_style("dihedral", "opls", Params::new())
@@ -939,7 +1270,7 @@ mod tests {
             let Some(terms) = member.terms() else {
                 continue;
             };
-            let Member::Indexed(pot) = member else {
+            let ForceTerm::Indexed(pot) = member else {
                 unreachable!("only an indexed member answers with a table")
             };
             let (e0, f0) = pot.calc_energy_forces(&coords);
@@ -1010,8 +1341,8 @@ mod tests {
     #[test]
     fn test_potentials_collection() {
         let mut pots = Potentials::new();
-        pots.push(Member::plain(DummyPotential { value: 1.0 }));
-        pots.push(Member::plain(DummyPotential { value: 2.0 }));
+        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
+        pots.push(ForceTerm::plain(DummyPotential { value: 2.0 }));
 
         assert_eq!(pots.len(), 2);
 
@@ -1043,25 +1374,25 @@ mod tests {
     fn one_pair_table_is_shared_with_every_member() {
         let pairs = Neighbors::from_pairs(
             [
-                molrs::spatial::neighbors::NeighborPair {
+                molrs::core::NeighborPair {
                     i: 0,
                     j: 1,
                     dist_sq: 1.0,
                     disp: [1.0, 0.0, 0.0],
                 },
-                molrs::spatial::neighbors::NeighborPair {
+                molrs::core::NeighborPair {
                     i: 0,
                     j: 2,
                     dist_sq: 4.0,
                     disp: [2.0, 0.0, 0.0],
                 },
             ],
-            molrs::spatial::neighbors::NeighborsStorage::FULL,
-            molrs::spatial::neighbors::QueryMode::SelfQuery { num_points: 3 },
+            molrs::core::NeighborColumns::FULL,
+            molrs::core::QueryMode::SelfQuery { n_points: 3 },
         );
         let mut pots = Potentials::new();
-        pots.push(Member::plain(PairCounting));
-        pots.push(Member::plain(DummyPotential { value: 1.0 }));
+        pots.push(ForceTerm::plain(PairCounting));
+        pots.push(ForceTerm::plain(DummyPotential { value: 1.0 }));
         let coords: Vec<F> = vec![0.0; 9];
         let (e, _) = pots.calc_energy_forces_with_pairs(&coords, &pairs);
         assert!((e - 3.0).abs() < 1e-12);
@@ -1077,17 +1408,27 @@ mod tests {
             .unwrap();
         let frame = make_bond_frame();
         let err = PotentialCompiler::new(&ff).compile(&frame).unwrap_err();
-        assert!(err.contains("no kernel"), "{err}");
+        assert!(err.to_string().contains("no kernel"), "{err}");
     }
 
     #[test]
-    fn register_kernel_extends_dispatch() {
+    fn registering_a_style_extends_dispatch() {
         // A custom (category, name) with no built-in kernel becomes usable by
         // registering its constructor — no edit to PotentialCompiler required.
-        fn my_ctor(_sp: &Params, _tp: &[(&str, &Params)], _f: &Frame) -> Result<Member, String> {
-            Ok(Member::plain(DummyPotential { value: 42.0 }))
+        fn my_constructor(
+            _sp: &Params,
+            _tp: &[(&str, &Params)],
+            _f: &Frame,
+        ) -> Result<ForceTerm, crate::ff::potential::CompileError> {
+            Ok(ForceTerm::plain(DummyPotential { value: 42.0 }))
         }
-        register_kernel("pair", "test/custom", my_ctor);
+        crate::ff::style_registry::register_style(
+            crate::ff::ir::StyleSpec::new("pair", "test/custom"),
+            Some(crate::ff::style_registry::Kernel::constructor(
+                my_constructor,
+            )),
+        )
+        .unwrap();
 
         let mut ff = ForceField::new("test");
         ff.def_style("pair", "test/custom", Params::new())
@@ -1119,7 +1460,7 @@ mod tests {
         let err = PotentialCompiler::new(&ff)
             .compile(&frame)
             .expect_err("expected compile to fail");
-        assert!(err.contains("has no type definitions"));
+        assert!(err.to_string().contains("has no type definitions"));
     }
 
     #[test]
@@ -1297,7 +1638,7 @@ mod tests {
         // The real neighbour list: only (0,3), flagged is_14.
         let pairs = intramolecular_pairs(&frame, &SpecialBonds::default()).unwrap();
         assert_eq!(
-            pairs.nrows(),
+            pairs.n_rows(),
             Some(1),
             "expected exactly the (0,3) 1-4 pair"
         );
@@ -1370,7 +1711,7 @@ mod tests {
     /// nothing about what to do instead. The refusal names the alternative.
     #[test]
     fn a_frame_too_large_for_a_full_pair_list_is_refused() {
-        use molrs::store::block::Block;
+        use molrs::core::Block;
         use ndarray::Array1;
 
         let n = MAX_ATOMS_FOR_A_FULL_PAIR_LIST + 1;
@@ -1402,9 +1743,9 @@ mod tests {
 }
 
 #[cfg(test)]
-pub(crate) mod test_util {
+pub(crate) mod fixtures {
     use super::Potential;
-    use molrs::types::F;
+    use molrs::op::F;
 
     /// Central-difference check that every force component is `-dE/dx`.
     pub(crate) fn assert_forces_are_negative_gradient(pot: &dyn Potential, coords: &[F], tol: F) {

@@ -1,46 +1,15 @@
-//! Integrator components: advance an [`MDState`].
-//!
-//! Required pieces go in the constructor — no `bind_*` afterthoughts:
-//!
-//! ```ignore
-//! VelocityVerlet::new(dt, MicPairs::new(Member::pair(lj), skin).unwrap(), mass, Some(bx))?;
-//! Langevin::new(dt, gamma, kbt, Direct::new(potentials), mass, seed, None)?;
-//! ```
-//!
-//! The second argument is a [`ForceProvider`],
-//! and it is the only thing an integrator knows about force fields. The
-//! potential, the neighbour bookkeeping and the periodic régime all live behind
-//! it: [`Direct`](super::forces::Direct) hands the potential raw coordinates,
-//! [`MicPairs`](super::forces::MicPairs) gives it minimum-image pairs, and
-//! [`GhostPairs`](super::forces::GhostPairs) gives it periodic copies and folds
-//! the forces back. An integrator holds no skin, no halo and no potential, so
-//! adding a fourth way to make a force changes nothing here.
-//!
-//! Two schemes, two types — no `gamma=0` switch:
-//!
-//! * [`VelocityVerlet`] — NVE (B-A-A-B; the two half-drifts stay as separate
-//!   adds).
-//! * [`Langevin`] — BAOAB Langevin (γ > 0). Ordering (Leimkuhler & Matthews):
-//!   B (half kick) → A (half drift) → O (Ornstein-Uhlenbeck) → A → B. The O
-//!   step `v ← c1·v + c2·σ·ξ` with `c1 = e^{-γΔt}`, `c2 = √(1-c1²)`,
-//!   `σ = √(k_BT/m)`.
-//!
-//! Units are the caller's. MD has no unit knowledge.
-//!
-//! Reference:
-//!     Leimkuhler & Matthews, "Rational Construction of Stochastic Numerical
-//!     Methods for Molecular Sampling", Appl. Math. Res. Express 2013.
-//!     <https://doi.org/10.1093/amrx/abs010>
+//! The integrators, [`VelocityVerlet`] and [`Langevin`], that advance an [`MdState`].
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
-use molrs::spatial::simbox::SimBox;
+use molrs::core::SimBox;
 
 use super::forces::ForceProvider;
-use molrs::types::{F, FNx3, I};
+use crate::op::standard_normal;
+use molrs::op::{F, Fnx3, I};
 
 use super::error::MdError;
-use super::types::{ForceOutput, MDState};
+use super::state::{ForceOutput, MdState};
 
 fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
     if mass.iter().any(|&m| !m.is_finite() || m <= 0.0) {
@@ -61,7 +30,7 @@ fn as_mass_col(mass: ArrayView1<'_, F>) -> Result<Array2<F>, MdError> {
 ///
 /// `m` is the shift the wrap actually applied, so the flags cannot disagree
 /// with the positions they belong to.
-fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MDState) -> Array2<I> {
+fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MdState) -> Array2<I> {
     let Some(bx) = simbox else {
         return Array2::zeros((state.pos.nrows(), 3));
     };
@@ -145,19 +114,19 @@ impl Stepper {
         self.forces.compute(pos, no_fold.view())
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         check_state_shape(pos.view(), vel.view(), self.mass_col.nrows())?;
         // Fold the entry configuration too, so step 0 already satisfies the
         // invariant every later step maintains. Flags start at zero: they count
         // crossings *during this run*, and an atom's history before it is not
         // this integrator's to claim.
         let n_atoms = pos.nrows();
-        let mut state = MDState {
+        let mut state = MdState {
             pos,
             images: Array2::zeros((n_atoms, 3)),
             vel,
-            forces: FNx3::zeros((n_atoms, 3)),
+            forces: Fnx3::zeros((n_atoms, 3)),
             energy: 0.0,
             virial: None,
         };
@@ -171,7 +140,7 @@ impl Stepper {
     }
 
     /// **B** — half kick, `v += (Δt/2)·f/m`.
-    fn kick(&self, state: &mut MDState, half_dt: F) {
+    fn kick(&self, state: &mut MdState, half_dt: F) {
         Zip::from(state.vel.rows_mut())
             .and(state.forces.rows())
             .and(&self.inv_mass)
@@ -184,7 +153,7 @@ impl Stepper {
 
     /// **A** — half drift, `x += (Δt/2)·v`. The two halves of a full drift stay
     /// separate adds rather than one `dt * v`.
-    fn drift(&self, state: &mut MDState, half_dt: F) {
+    fn drift(&self, state: &mut MdState, half_dt: F) {
         Zip::from(state.pos.rows_mut())
             .and(state.vel.rows())
             .for_each(|mut p, v| {
@@ -202,7 +171,7 @@ impl Stepper {
     /// that fold in the same breath — which is why the shift is handed to
     /// [`ForceProvider::compute`] rather than re-derived from the positions,
     /// where it cannot be seen: a fold relabels an atom without moving it.
-    fn refold_and_eval(&mut self, state: &mut MDState) -> Result<(), MdError> {
+    fn refold_and_eval(&mut self, state: &mut MdState) -> Result<(), MdError> {
         let folded = wrap_and_bank(self.simbox.as_ref(), state);
         // Lend the state's force array to the provider and take it back: a
         // provider that accumulates in place swaps rather than clones, so the
@@ -210,7 +179,7 @@ impl Stepper {
         // array, which is fine — a failed force evaluation ends the run.
         let mut out = ForceOutput {
             energy: 0.0,
-            forces: std::mem::replace(&mut state.forces, FNx3::zeros((0, 3))),
+            forces: std::mem::replace(&mut state.forces, Fnx3::zeros((0, 3))),
             virial: None,
         };
         self.forces
@@ -222,6 +191,25 @@ impl Stepper {
     }
 }
 
+/// Velocity-Verlet (NVE): B-A-A-B, the two half-drifts kept as separate adds.
+///
+/// Required pieces go in the constructor — no `bind_*` afterthoughts:
+///
+/// ```ignore
+/// VelocityVerlet::new(dt, MicPairs::new(ForceTerm::pair(lj), skin).unwrap(), mass, Some(bx))?;
+/// ```
+///
+/// The second argument is a [`ForceProvider`], and it is the only thing an
+/// integrator knows about force fields. The potential, the neighbour
+/// bookkeeping and the periodic régime all live behind it:
+/// [`SelfPairedForces`](crate::md::SelfPairedForces) hands the potential raw
+/// coordinates, [`MicPairs`](crate::md::MicPairs) gives it minimum-image
+/// pairs, and [`GhostPairs`](crate::md::GhostPairs) gives it periodic copies
+/// and folds the forces back. An integrator holds no skin, no halo and no
+/// potential, so adding a fourth way to make a force changes nothing here.
+///
+/// Two schemes, two types — no `gamma=0` switch: the thermostatted one is
+/// [`Langevin`]. Units are the caller's; MD has no unit knowledge.
 pub struct VelocityVerlet {
     inner: Stepper,
 }
@@ -271,13 +259,13 @@ impl VelocityVerlet {
         self.inner.eval_force(pos)
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    pub fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         self.inner.initial(pos, vel)
     }
 
     /// One NVE step from the cached entry force: **B-A-A-B**.
-    pub fn step(&mut self, mut state: MDState) -> Result<MDState, MdError> {
+    pub fn step(&mut self, mut state: MdState) -> Result<MdState, MdError> {
         let half_dt = 0.5 * self.inner.dt;
         self.inner.kick(&mut state, half_dt);
         self.inner.drift(&mut state, half_dt);
@@ -288,12 +276,12 @@ impl VelocityVerlet {
     }
 
     /// One eager step.
-    pub fn advance(&mut self, state: MDState) -> Result<MDState, MdError> {
+    pub fn advance(&mut self, state: MdState) -> Result<MdState, MdError> {
         self.step(state)
     }
 
     /// Advance `n_steps` eagerly.
-    pub fn advance_n(&mut self, mut state: MDState, n_steps: usize) -> Result<MDState, MdError> {
+    pub fn advance_n(&mut self, mut state: MdState, n_steps: usize) -> Result<MdState, MdError> {
         for _ in 0..n_steps {
             state = self.advance(state)?;
         }
@@ -303,7 +291,20 @@ impl VelocityVerlet {
 
 /// Langevin velocity-Verlet (BAOAB). γ must be strictly positive.
 ///
-/// NVE is [`VelocityVerlet`] — not this type with `gamma=0`.
+/// Ordering (Leimkuhler & Matthews): B (half kick) → A (half drift) → O
+/// (Ornstein-Uhlenbeck) → A → B. The O step is `v ← c1·v + c2·σ·ξ` with
+/// `c1 = e^{-γΔt}`, `c2 = √(1-c1²)`, `σ = √(k_BT/m)`.
+///
+/// ```ignore
+/// Langevin::new(dt, gamma, kbt, SelfPairedForces::new(potentials), mass, seed, None)?;
+/// ```
+///
+/// NVE is [`VelocityVerlet`] — not this type with `gamma=0`. Units are the
+/// caller's; MD has no unit knowledge.
+///
+/// Reference: Leimkuhler & Matthews, "Rational Construction of Stochastic
+/// Numerical Methods for Molecular Sampling", Appl. Math. Res. Express 2013.
+/// <https://doi.org/10.1093/amrx/abs010>
 pub struct Langevin {
     inner: Stepper,
     gamma: F,
@@ -416,8 +417,8 @@ impl Langevin {
         self.inner.eval_force(pos)
     }
 
-    /// Seed an [`MDState`], evaluating the entry force.
-    pub fn initial(&mut self, pos: FNx3, vel: FNx3) -> Result<MDState, MdError> {
+    /// Seed an [`MdState`], evaluating the entry force.
+    pub fn initial(&mut self, pos: Fnx3, vel: Fnx3) -> Result<MdState, MdError> {
         self.inner.initial(pos, vel)
     }
 
@@ -426,9 +427,9 @@ impl Langevin {
     /// [`advance`](Self::advance) draws from the seeded internal RNG instead.
     pub fn step(
         &mut self,
-        mut state: MDState,
+        mut state: MdState,
         noise: ArrayView2<'_, F>,
-    ) -> Result<MDState, MdError> {
+    ) -> Result<MdState, MdError> {
         if noise.shape() != state.vel.shape() {
             return Err(MdError::Invalid(format!(
                 "noise shape {:?} disagrees with vel shape {:?}",
@@ -448,7 +449,7 @@ impl Langevin {
 
     /// **O** — `v ← c1·v + c2·σ·ξ`. The only move `VelocityVerlet` does not
     /// make, and the only reason these are two types.
-    fn ornstein_uhlenbeck(&self, state: &mut MDState, noise: ArrayView2<'_, F>) {
+    fn ornstein_uhlenbeck(&self, state: &mut MdState, noise: ArrayView2<'_, F>) {
         let (c1, c2) = (self.c1, self.c2);
         Zip::from(state.vel.rows_mut())
             .and(&self.sigma)
@@ -470,13 +471,13 @@ impl Langevin {
     }
 
     /// One step with noise drawn from the seeded internal RNG.
-    pub fn advance(&mut self, state: MDState) -> Result<MDState, MdError> {
+    pub fn advance(&mut self, state: MdState) -> Result<MdState, MdError> {
         let noise = self.draw_noise(state.vel.nrows());
         self.step(state, noise.view())
     }
 
     /// Advance `n_steps` eagerly.
-    pub fn advance_n(&mut self, mut state: MDState, n_steps: usize) -> Result<MDState, MdError> {
+    pub fn advance_n(&mut self, mut state: MdState, n_steps: usize) -> Result<MdState, MdError> {
         for _ in 0..n_steps {
             state = self.advance(state)?;
         }
@@ -484,53 +485,30 @@ impl Langevin {
     }
 }
 
-fn standard_normal(rng: &mut rand::rngs::StdRng) -> F {
-    use rand::RngExt;
-    let u1 = rng.random::<F>().max(f64::MIN_POSITIVE);
-    let u2 = rng.random::<F>();
-    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
-}
-
-/// Broadcast a scalar mass to `(n,)` for a homogeneous system.
-pub fn scalar_mass(mass: F, n: usize) -> Result<Array1<F>, MdError> {
+/// The `(n,)` per-atom masses of a homogeneous system: `mass` on every atom.
+pub fn uniform_masses(mass: F, n: usize) -> Result<Array1<F>, MdError> {
     if !mass.is_finite() || mass <= 0.0 {
         return Err(MdError::Invalid("mass must be strictly positive".into()));
     }
     Ok(Array1::from_elem(n, mass))
 }
 
-/// Kinetic energy `½ Σ m_i |v_i|²` in the integrator energy unit.
-pub fn kinetic_energy(mass: ArrayView1<'_, F>, vel: ArrayView2<'_, F>) -> Result<F, MdError> {
-    if mass.len() != vel.nrows() {
-        return Err(MdError::Invalid(format!(
-            "mass length {} disagrees with n_atoms={}",
-            mass.len(),
-            vel.nrows()
-        )));
-    }
-    let mut ke = 0.0;
-    Zip::from(mass).and(vel.rows()).for_each(|&m, v| {
-        ke += m * v.dot(&v);
-    });
-    Ok(0.5 * ke)
-}
-
 #[cfg(test)]
 mod tests {
     use ndarray::{Array2, ArrayView2, array};
 
-    use molrs::ff::potential::{Member, Potential, Potentials};
-    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
+    use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
+    use molrs::ff::potential::{ForceTerm, Potential, Potentials};
 
-    use super::super::forces::{Direct, MicPairs};
+    use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
-    use molrs::ff::potential::pair::LJCut;
+    use molrs::ff::potential::pair::PairLjCut;
 
     fn cube(a: F) -> SimBox {
         SimBox::cube(a, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
-    fn soft_lj(n: usize, box_a: F) -> (LJCut, VerletSkin, Array2<F>) {
+    fn soft_lj(n: usize, box_a: F) -> (PairLjCut, VerletSkin, Array2<F>) {
         let cutoff = 2.5;
         let skin = 0.5;
         let mut pos = Array2::<F>::zeros((n, 3));
@@ -548,7 +526,7 @@ mod tests {
             cube(box_a),
         )
         .unwrap();
-        let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
+        let lj = PairLjCut::lj126(1.0, 1.0, cutoff).unwrap();
         (lj, nl, pos)
     }
 
@@ -584,8 +562,8 @@ mod tests {
             dt,
             gamma,
             kbt,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(mass, 1).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(mass, 1).unwrap().view(),
             0,
             None,
         )
@@ -604,8 +582,8 @@ mod tests {
         let (lj, nl, _) = soft_lj(2, 40.0);
         let nve = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -615,8 +593,8 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 2).unwrap().view(),
             0,
             None,
         )
@@ -630,7 +608,7 @@ mod tests {
         assert!(
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
                 array![-1.0, 1.0].view(),
                 None
             )
@@ -645,7 +623,7 @@ mod tests {
             0.01,
             0.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
             array![1.0].view(),
             0,
             None,
@@ -664,7 +642,7 @@ mod tests {
                 0.01,
                 1.0,
                 0.0,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
                 array![1.0].view(),
                 0,
                 None
@@ -681,8 +659,8 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
         )
@@ -692,8 +670,8 @@ mod tests {
             0.01,
             1.0,
             1.0,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 4).unwrap().view(),
             9,
             None,
         )
@@ -712,8 +690,8 @@ mod tests {
         let (lj, nl, mut pos) = soft_lj(4, 40.0);
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
@@ -729,16 +707,16 @@ mod tests {
         let vel = Array2::from_elem(pos.raw_dim(), 0.01);
         let mut a = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
         let (lj, nl, _) = soft_lj(4, 40.0);
         let mut b = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 4).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 4).unwrap().view(),
             None,
         )
         .unwrap();
@@ -754,13 +732,13 @@ mod tests {
 
     #[test]
     fn potentials_merge_nonbond_and_bonded_terms() {
-        // A Potentials collection [LJCut, Uniform] through the integrator
+        // A Potentials collection [PairLjCut, Uniform] through the integrator
         // must equal the lone LJ evaluation plus the uniform offsets.
         let (lj, nl, pos) = soft_lj(2, 40.0);
         let mut lone = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(lj), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -768,15 +746,15 @@ mod tests {
 
         let (lj, nl, _) = soft_lj(2, 40.0);
         let mut pots = Potentials::new();
-        pots.push(Member::pair(lj));
-        pots.push(Member::plain(Uniform {
+        pots.push(ForceTerm::pair(lj));
+        pots.push(ForceTerm::plain(Uniform {
             energy: 0.25,
             fx: -1.5,
         }));
         let mut ig = VelocityVerlet::new(
             0.01,
-            MicPairs::new(Member::pair(pots), nl).unwrap(),
-            scalar_mass(1.0, 2).unwrap().view(),
+            MicPairs::new(ForceTerm::pair(pots), nl).unwrap(),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -793,8 +771,8 @@ mod tests {
         let pos = array![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
         let mut ig = VelocityVerlet::new(
             0.01,
-            Direct::new(Potentials::new()),
-            scalar_mass(1.0, 2).unwrap().view(),
+            SelfPairedForces::new(Potentials::new()),
+            uniform_masses(1.0, 2).unwrap().view(),
             None,
         )
         .unwrap();
@@ -824,11 +802,11 @@ mod tests {
                 cube(20.0),
             )
             .unwrap();
-            let lj = LJCut::lj126(1.0, 1.0, cutoff).unwrap();
+            let lj = PairLjCut::lj126(1.0, 1.0, cutoff).unwrap();
             VelocityVerlet::new(
                 0.01,
-                MicPairs::new(Member::pair(lj), nl).unwrap(),
-                scalar_mass(1.0, 2).unwrap().view(),
+                MicPairs::new(ForceTerm::pair(lj), nl).unwrap(),
+                uniform_masses(1.0, 2).unwrap().view(),
                 None,
             )
             .unwrap()
@@ -867,13 +845,13 @@ mod tests {
 mod ghost_path_tests {
     use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
-    use molrs::ff::potential::Member;
-    use molrs::ff::potential::pair::LJCut;
-    use molrs::spatial::neighbors::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::spatial::simbox::SimBox;
+    use molrs::core::SimBox;
+    use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
+    use molrs::ff::potential::ForceTerm;
+    use molrs::ff::potential::pair::PairLjCut;
     use ndarray::array;
 
-    use super::super::pairs::Comm;
+    use molrs::core::GhostHalo;
 
     /// A halo that outlives a fold has to be reconciled with it, and the
     /// observable consequence is that nothing happens: the energy does not jump
@@ -917,29 +895,31 @@ mod ghost_path_tests {
         // could absorb a pair appearing or vanishing.
         let drift = 0.02_f64;
         let vel0 =
-            FNx3::from_shape_fn((pos0.nrows(), 3), |(_, k)| if k == 0 { drift } else { 0.0 });
+            Fnx3::from_shape_fn((pos0.nrows(), 3), |(_, k)| if k == 0 { drift } else { 0.0 });
 
         // A skin large enough that the halo survives many steps, so folds
         // happen *between* rebuilds — the case the reconciliation exists for.
-        let comm = Comm::new(bx.clone(), pos0.view(), cutoff, 0.8).unwrap();
+        let halo = GhostHalo::new(bx.clone(), pos0.view(), cutoff, 0.8).unwrap();
         // 0.2 fs: at 1 fs the velocity-Verlet truncation error on this LJ
         // lattice is itself 1e-4 of the total energy, which would swamp the
         // signal this test is looking for.
         let mut ig = VelocityVerlet::new(
             0.2,
             GhostPairs::new(
-                Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
-                comm,
+                ForceTerm::pair(PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
+                halo,
             )
             .unwrap(),
-            scalar_mass(12.0, pos0.nrows()).unwrap().view(),
+            uniform_masses(12.0, pos0.nrows()).unwrap().view(),
             Some(bx),
         )
         .unwrap();
 
-        let mass = scalar_mass(12.0, pos0.nrows()).unwrap();
+        let mass = uniform_masses(12.0, pos0.nrows()).unwrap();
         let mut state = ig.initial(pos0, vel0).unwrap();
-        let total = |st: &MDState| st.energy + kinetic_energy(mass.view(), st.vel.view()).unwrap();
+        let total = |st: &MdState| {
+            st.energy + crate::compute::kinetic_energy(mass.view(), st.vel.view()).unwrap()
+        };
         let e0 = total(&state);
         let scale = e0.abs().max(1.0);
 
@@ -1006,25 +986,25 @@ mod ghost_path_tests {
             [3.0, 3.0, 3.0],
         ];
         let n = base.nrows();
-        let mass = scalar_mass(12.0, n).unwrap();
+        let mass = uniform_masses(12.0, n).unwrap();
 
         let virial_after_one_step = |shift: F| {
             let mut pts = base.clone();
             pts.iter_mut().for_each(|x| *x += shift);
             let (wrapped, _m) = bx.wrap_shifts(pts.view());
-            let comm = Comm::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
+            let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut ig = VelocityVerlet::new(
                 1.0,
                 GhostPairs::new(
-                    Member::pair(LJCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
-                    comm,
+                    ForceTerm::pair(PairLjCut::new(0.3, 3.4, cutoff, 12, 6, false, false).unwrap()),
+                    halo,
                 )
                 .unwrap(),
                 mass.view(),
                 Some(bx.clone()),
             )
             .unwrap();
-            let state = ig.initial(wrapped, FNx3::zeros((n, 3))).unwrap();
+            let state = ig.initial(wrapped, Fnx3::zeros((n, 3))).unwrap();
             state
                 .virial
                 .expect("the ghost provider tallies a virial, and the state keeps it")
@@ -1059,7 +1039,7 @@ mod ghost_path_tests {
     /// have been none.
     #[test]
     fn the_two_regimes_derive_the_same_virial() {
-        use molrs::ff::forcefield::mixing::Mixing;
+        use molrs::ff::ir::CombiningRule;
 
         let l = 12.0_f64;
         let cutoff = 5.0;
@@ -1080,10 +1060,10 @@ mod ghost_path_tests {
         let per_type = [(0.3_f64, 3.4_f64), (0.9, 2.6)];
         let type_id: Vec<u32> = (0..n).map(|i| (i % 2) as u32).collect();
         let lj = || {
-            LJCut::typed(
+            PairLjCut::typed(
                 type_id.clone(),
                 &per_type,
-                Mixing::Arithmetic,
+                CombiningRule::Arithmetic,
                 cutoff,
                 12,
                 6,
@@ -1105,15 +1085,15 @@ mod ghost_path_tests {
             bx.clone(),
         )
         .unwrap();
-        let mic = MicPairs::new(Member::pair(lj()), skin)
+        let mic = MicPairs::new(ForceTerm::pair(lj()), skin)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
             .virial
             .expect("a typed pair kernel tallies its virial");
 
-        let comm = Comm::new(bx, pos.view(), cutoff, 0.0).unwrap();
-        let ghost = GhostPairs::new(Member::pair(lj()), comm)
+        let halo = GhostHalo::new(bx, pos.view(), cutoff, 0.0).unwrap();
+        let ghost = GhostPairs::new(ForceTerm::pair(lj()), halo)
             .unwrap()
             .compute(pos.view(), no_fold.view())
             .unwrap()
@@ -1138,7 +1118,7 @@ mod ghost_path_tests {
 
 #[cfg(test)]
 mod wrapped_state_tests {
-    use super::super::forces::Direct;
+    use super::super::forces::SelfPairedForces;
     use super::*;
     use molrs::ff::potential::Potentials;
     use ndarray::array;
@@ -1150,8 +1130,8 @@ mod wrapped_state_tests {
     fn free_boundary_leaves_positions_and_flags_alone() {
         let mut ig = VelocityVerlet::new(
             1.0,
-            Direct::new(Potentials::new()),
-            scalar_mass(1.0, 1).unwrap().view(),
+            SelfPairedForces::new(Potentials::new()),
+            uniform_masses(1.0, 1).unwrap().view(),
             None,
         )
         .unwrap();

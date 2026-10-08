@@ -1,11 +1,9 @@
-"""Signal processing utilities (FFT-based ACF, window functions, frequency grids).
+"""Signal processing — ``molrs::signal``.
 
-All computation is in Rust; these are thin Python re-exports.
+FFT autocorrelation and cross-correlation, window functions and frequency
+grids. All computation is in Rust.
 """
 
-from ._lib import signal_acf_fft as acf_fft
-from ._lib import signal_apply_window as apply_window
-from ._lib import signal_frequency_grid as frequency_grid
-from ._lib import signal_xcorr_fft as xcorr_fft
+from ._native import acf_fft, apply_window, frequency_grid, xcorr_fft
 
 __all__ = ["acf_fft", "apply_window", "frequency_grid", "xcorr_fft"]

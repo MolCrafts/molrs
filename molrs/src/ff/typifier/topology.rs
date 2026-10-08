@@ -4,7 +4,7 @@
 //! carry its own angle/dihedral enumeration policy. Bonds come from the input
 //! graph; derived topology is generated here so OPLS-AA and MMFF stay aligned.
 
-use molrs::Atomistic;
+use molrs::core::Atomistic;
 
 /// Ensure angle and dihedral relations are present for a typed graph.
 ///

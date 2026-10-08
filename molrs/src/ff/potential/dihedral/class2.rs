@@ -1,35 +1,39 @@
-//! Class2 (COMPASS / PCFF) proper dihedral — core torsion term:
-//!
-//! E(φ) = Σ_{n=1..3} K_n · [1 − cos(n·φ − φ_n)]
-//!
-//! `K_n` are force constants (kcal/mol) and `φ_n` the per-term phases in
-//! radians (readers normalize at their boundary). This kernel covers the *core*
-//! three-term cosine expansion that the
-//! molpy `class2` dihedral data model carries (`k1`,`phi1`,…,`k3`,`phi3`). The
-//! optional class2 cross terms (mbt / ebt / at / aat / bb13), which are emitted
-//! as separate LAMMPS coeff lines and not part of this style's per-type params,
-//! are out of scope here.
+//! Class2 (COMPASS / PCFF) proper dihedral, core torsion term.
 
-use molrs::store::schema::block_names::DIHEDRALS;
+use crate::ff::potential::param_reads;
+use molrs::core::schema::block_names::DIHEDRALS;
 use std::collections::HashMap;
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::ff::forcefield::Params;
-use crate::ff::potential::geometry::{
+use crate::ff::ir::Params;
+use crate::ff::potential::flat_coords::{
     accumulate_dihedral_forces, compute_dihedral, term_table, validate_coords,
 };
-use crate::ff::potential::{IndexedTerms, Member, Potential};
-use molrs::store::frame::Frame;
-use molrs::types::F;
+use crate::ff::potential::{ForceTerm, IndexedTerms, Potential};
+use molrs::core::Frame;
+use molrs::op::F;
 
 /// Class2 proper dihedral (core 3-term cosine) with pre-resolved flat arrays.
+///
+/// Class2 (COMPASS / PCFF) proper dihedral — core torsion term:
+///
+/// E(φ) = Σ_{n=1..3} K_n · [1 − cos(n·φ − φ_n)]
+///
+/// `K_n` are force constants (energy) and `φ_n` the per-term phases in
+/// **degrees**, as LAMMPS `dihedral_style class2` takes them (the kernel
+/// converts once). This kernel covers the *core*
+/// three-term cosine expansion that the
+/// molpy `class2` dihedral data model carries (`k1`,`phi1`,…,`k3`,`phi3`). The
+/// optional class2 cross terms (mbt / ebt / at / aat / bb13), which are emitted
+/// as separate LAMMPS coeff lines and not part of this style's per-type params,
+/// are out of scope here.
 pub struct DihedralClass2 {
     atom_i: Vec<usize>,
     atom_j: Vec<usize>,
     atom_k: Vec<usize>,
     atom_l: Vec<usize>,
-    /// (K_n, φ_n radians) for n = 1..3 per dihedral instance.
+    /// (K_n, φ_n in radians) for n = 1..3 per dihedral instance.
     terms: Vec<[(F, F); 3]>,
 }
 
@@ -117,12 +121,13 @@ impl IndexedTerms for DihedralClass2 {
 }
 
 /// Construct a [`DihedralClass2`] from per-type params (`k1`,`phi1`,…,`k3`,
-/// `phi3`) and a Frame's `"dihedrals"` block.
-pub fn dihedral_class2_ctor(
+/// `phi3`, the phases in degrees as LAMMPS takes them) and a Frame's
+/// `"dihedrals"` block.
+pub fn dihedral_class2_constructor(
     _sp: &Params,
     tp: &[(&str, &Params)],
     frame: &Frame,
-) -> Result<Member, String> {
+) -> Result<ForceTerm, crate::ff::potential::CompileError> {
     let type_map: HashMap<&str, &Params> = tp.iter().copied().collect();
     let block = frame
         .get(DIHEDRALS)
@@ -167,13 +172,16 @@ pub fn dihedral_class2_ctor(
         al.push(lc[idx] as usize);
         let mut t = [(0.0 as F, 0.0 as F); 3];
         for (m, slot) in t.iter_mut().enumerate() {
-            let kn = p.get(&format!("k{}", m + 1)).unwrap_or(0.0) as F;
-            let pn = p.get(&format!("phi{}", m + 1)).unwrap_or(0.0) as F; // radians
+            let label = tc[idx].as_str();
+            let kn = param_reads::type_num("class2", label, p, &format!("k{}", m + 1))?;
+            // degrees (LAMMPS `dihedral_style class2`) → radians
+            let pn =
+                param_reads::type_num("class2", label, p, &format!("phi{}", m + 1))?.to_radians();
             *slot = (kn, pn);
         }
         terms.push(t);
     }
-    Ok(Member::indexed(DihedralClass2 {
+    Ok(ForceTerm::indexed(DihedralClass2 {
         atom_i: ai,
         atom_j: aj,
         atom_k: ak,

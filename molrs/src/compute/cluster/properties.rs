@@ -3,34 +3,17 @@
 #![allow(clippy::needless_range_loop)]
 
 //! Per-cluster scalar / tensor properties, freud-compatible aggregator.
-//!
-//! Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
-//! reports its size, geometric center, mass-weighted center, the (mass-
-//! weighted) gyration tensor, and the scalar radius of gyration. All
-//! quantities are PBC-aware via [`MicHelper`]: the first atom assigned to
-//! each cluster is used as the local reference and subsequent atom positions
-//! are accumulated through minimum-image displacements, so a cluster that
-//! wraps across the box boundary is handled correctly.
-//!
-//! # Conventions (matching `freud.cluster.ClusterProperties`)
-//!
-//! - `center`             unweighted mean position
-//! - `center_of_mass`     mass-weighted mean position (equal to `center`
-//!   when no masses are supplied)
-//! - `gyration_tensors`   `G_ab = (1/M) Σ_i m_i (r_i − r_com)_a (r_i − r_com)_b`
-//! - `radii_of_gyration`  `√(trace G)`
-//! - `sizes`              particle counts per cluster
-//!
-//! Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 
-use molrs::store::frame_access::FrameAccess;
-use molrs::types::F;
+use molrs::core::FrameAccess;
+use molrs::op::F;
 
 use super::ClusterResult;
-use crate::compute::error::ComputeError;
-use crate::compute::result::ComputeResult;
-use crate::compute::traits::Compute;
-use crate::compute::util::{MicHelper, get_positions_ref};
+use crate::compute::Compute;
+use crate::compute::ComputeError;
+use crate::compute::ComputeResult;
+use crate::compute::positions::get_positions_ref;
+use crate::op::vec3::sub;
+use molrs::core::{Mic, SimBox};
 
 /// Per-frame bundle of cluster scalars and tensors.
 #[derive(Debug, Clone, Default)]
@@ -53,6 +36,28 @@ impl ComputeResult for ClusterPropertiesResult {}
 
 /// freud-style `ClusterProperties`: bundles size, center, COM, gyration
 /// tensor, and RG into a single per-cluster pass.
+///
+/// Run [`Cluster`](crate::compute::Cluster) first and pass its
+/// [`ClusterResult`](crate::compute::ClusterResult) as `Args`.
+///
+/// Mirrors `freud.cluster.ClusterProperties`: for each cluster in a frame,
+/// reports its size, geometric center, mass-weighted center, the (mass-
+/// weighted) gyration tensor, and the scalar radius of gyration. All
+/// quantities are PBC-aware via [`Mic`](molrs::core::Mic): the first atom assigned to
+/// each cluster is used as the local reference and subsequent atom positions
+/// are accumulated through minimum-image displacements, so a cluster that
+/// wraps across the box boundary is handled correctly.
+///
+/// # Conventions (matching `freud.cluster.ClusterProperties`)
+///
+/// - `center`             unweighted mean position
+/// - `center_of_mass`     mass-weighted mean position (equal to `center`
+///   when no masses are supplied)
+/// - `gyration_tensors`   `G_ab = (1/M) Σ_i m_i (r_i − r_com)_a (r_i − r_com)_b`
+/// - `radii_of_gyration`  `√(trace G)`
+/// - `sizes`              particle counts per cluster
+///
+/// Atoms with `cluster_idx < 0` (filtered by `min_cluster_size`) are ignored.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterProperties {
     masses: Option<Vec<F>>,
@@ -92,8 +97,8 @@ impl ClusterProperties {
             });
         }
 
-        let mic = MicHelper::from_simbox(frame.simbox_ref());
-        let nc = clusters.num_clusters;
+        let mic = frame.simbox_ref().map_or(Mic::Free, SimBox::mic);
+        let nc = clusters.n_clusters;
         let masses_ref = self.masses.as_deref();
 
         // First pass: per-cluster reference atom + accumulated displacement sums.
@@ -116,7 +121,7 @@ impl ClusterProperties {
                 ref_pos[c] = pos;
                 has_ref[c] = true;
             }
-            let d = mic.disp(ref_pos[c], pos);
+            let d = mic.apply(sub(pos, ref_pos[c]));
             sum_d[c][0] += d[0];
             sum_d[c][1] += d[1];
             sum_d[c][2] += d[2];
@@ -153,7 +158,7 @@ impl ClusterProperties {
             let c = cid as usize;
             let pos = [xs[i], ys[i], zs[i]];
             let m = masses_ref.map_or(1.0, |ms| ms[i]);
-            let d = mic.disp(centers_of_mass[c], pos);
+            let d = mic.apply(sub(pos, centers_of_mass[c]));
             for a in 0..3 {
                 for b in 0..3 {
                     gyration[c][a][b] += m * d[a] * d[b];
@@ -233,9 +238,9 @@ impl Compute for ClusterProperties {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use molrs::Frame;
-    use molrs::spatial::simbox::SimBox;
-    use molrs::store::block::Block;
+    use molrs::core::Block;
+    use molrs::core::Frame;
+    use molrs::core::SimBox;
     use ndarray::{Array1 as A1, array};
 
     fn frame_with(positions: &[[F; 3]], box_len: F, pbc: [bool; 3]) -> Frame {
@@ -263,7 +268,7 @@ mod tests {
         }
         ClusterResult {
             cluster_idx: ndarray::Array1::from_vec(idx.to_vec()),
-            num_clusters: nc,
+            n_clusters: nc,
             cluster_sizes: sizes,
             cluster_keys: vec![],
         }

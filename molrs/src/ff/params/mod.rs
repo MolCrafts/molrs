@@ -3,16 +3,17 @@
 //!
 //! molrs parses **no** parameter text at runtime. The upstream `.DAT` / `.DEF`
 //! tables are transcribed into the `const`s in the sibling modules here by
-//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME`; [`mmff`]
-//! is ported from RDKit's `Params.cpp` and merged with what MMFF's retired XML
-//! carried; [`oplsaa`] is generated from GROMACS `share/top/oplsaa.ff` (a
+//! `scripts/gen_param_tables.py`, which reads them from `$AMBERHOME` (the
+//! committed fourteen are AmberTools 26.1's; `--check` verifies them byte for
+//! byte); [`mmff`]
+//! is ported from RDKit's `Params.cpp` and merged with what MMFF's XML
+//! parameter file carries; the OPLS-AA tables ([`OPLSAA_ATOMS`], …) are generated from GROMACS `share/top/oplsaa.ff` (a
 //! pinned release, LGPL-2.1-or-later) by `cargo mrs-gen-opls --gromacs <dir>`,
 //! through molrs's own GROMACS reader, while the OPLS-AA SMARTS typing rules in
-//! [`oplsaa_typing`] are molrs-owned and hand-maintained — GROMACS has none,
-//! and the generator never touches them. [`amber`] is a
-//! hand-maintained sibling (like [`mmff`] / [`clpol`] / [`uff`]): AMBER
-//! file-format constants that are neither `gaff.dat` rows nor properties of
-//! the universe. The committed `.rs` is the
+//! [`OPLSAA_TYPING`] are molrs-owned and hand-maintained — GROMACS has none,
+//! and the generator never touches them. The AMBER 1-4 divisors, which are
+//! not `gaff.dat` rows, are engine constants (`core::constants::AMBER_SCEE`,
+//! `AMBER_SCNB`). The committed `.rs` is the
 //! single in-repo source of truth; a malformed table is therefore a **compile**
 //! error, not a runtime one, and the tables can be grepped, diffed and stepped
 //! through like any other code.
@@ -41,12 +42,12 @@
 //! `gaff.dat` and `gaff2.dat` become [`ParmTable`]s of MASS / BOND / ANGLE /
 //! DIHE / IMPROPER / NONBON rows. Values are kept in the **upstream's own units
 //! and conventions** — degrees, and AMBER's un-halved force constants — because
-//! the table is a transcription of the file, not a force field: converting to
-//! molrs's radians-and-half-k kernel convention is the job of the code that
-//! populates a [`ForceField`](crate::ff::forcefield::ForceField) from it (see
-//! [`crate::ff::typifier::gaff`]).
+//! the table is a transcription of the file, not a force field. That is also
+//! what the force-field IR (adopts the LAMMPS standard) holds for every
+//! bonded term; what the code that populates a
+//! [`ForceField`](crate::ff::forcefield::ForceField) from it still converts
+//! (`IDIVF`, R\*/2 → σ) is in [`crate::ff::typifier::GaffTypifier`].
 
-pub mod amber;
 pub mod atomtype_abcg2;
 pub mod atomtype_amber;
 pub mod atomtype_bcc;
@@ -54,36 +55,31 @@ pub mod atomtype_gas;
 pub mod atomtype_gff;
 pub mod atomtype_gff2;
 pub mod atomtype_sybyl;
-pub mod bccparm;
-pub mod bccparm_abcg2;
-pub mod clpol;
-pub mod gaff;
-pub mod gaff2;
-pub mod gaff_empirical;
-pub mod gaff_equiv;
-pub mod gasparm;
+mod bccparm;
+mod bccparm_abcg2;
+mod clpol;
+mod gaff;
+mod gaff2;
+mod gaff_empirical;
+mod gasparm;
 pub mod mmff;
-pub mod oplsaa;
-pub mod oplsaa_typing;
+mod oplsaa;
+mod oplsaa_typing;
+mod parmchk;
 pub mod uff;
 
-pub use atomtype_abcg2::ATOMTYPE_ABCG2;
-pub use atomtype_amber::ATOMTYPE_AMBER;
-pub use atomtype_bcc::ATOMTYPE_BCC;
-pub use atomtype_gas::ATOMTYPE_GAS;
-pub use atomtype_gff::ATOMTYPE_GFF;
-pub use atomtype_gff2::ATOMTYPE_GFF2;
-pub use atomtype_sybyl::ATOMTYPE_SYBYL;
 pub use bccparm::{BCC_ALIASES, BCC_CORRECTIONS};
 pub use bccparm_abcg2::{ABCG2_ALIASES, ABCG2_CORRECTIONS};
-pub use clpol::CLPOL_FRAGMENTS;
+pub use clpol::{CLPOL_FRAGMENTS, CLPOL_POLARIZABILITY, ClpolPolarizability, clpol_polarizability};
 pub use gaff::GAFF;
 pub use gaff_empirical::{EMPIRICAL_GAFF, EMPIRICAL_GAFF2};
-pub use gaff_equiv::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 pub use gaff2::GAFF2;
 pub use gasparm::GASTEIGER_PARAMS;
-pub use oplsaa::{OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS};
+pub use oplsaa::{
+    OPLSAA_ANGLES, OPLSAA_ATOMS, OPLSAA_BONDS, OPLSAA_DIHEDRALS, OPLSAA_MIXING, OPLSAA_NAME,
+};
 pub use oplsaa_typing::OPLSAA_TYPING;
+pub use parmchk::{PARMCHK, PARMCHK_TYPES, PARMCHK_WEIGHTS};
 
 /// One oriented bond charge correction from a `BCCPARM*.DAT` table.
 ///
@@ -319,6 +315,26 @@ pub struct EnvBond {
     pub bond: EnvBondType,
 }
 
+/// The phase-2 partner of a rule's atom type, and the colouring pass that
+/// renames to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alternate {
+    /// The phase-2 name (`cd`, `cf`, `cq`, …).
+    pub atom_type: &'static str,
+    /// Which of antechamber's two colouring passes owns the pair.
+    pub pass: AlternatePass,
+}
+
+/// antechamber's two post-typing colouring passes (`atomtype.c`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlternatePass {
+    /// `atadjust`: the conjugated chain and ring names `cc` / `ce` / `cg` /
+    /// `nc` / `ne` / `pc` / `pe`, coloured together.
+    Conjugated,
+    /// `cpadjust`: the biphenyl bridge carbons `cp`, coloured on their own.
+    Bridge,
+}
+
 /// One `ATD` row: a conjunction of constraints on a candidate atom.
 ///
 /// Every `Option` field is an unconstrained `*` / `&` column in the source.
@@ -338,10 +354,14 @@ pub struct AtdRule {
     /// everything else). Hence a column of the rule rather than a `match` in the
     /// typifier.
     ///
+    /// The biphenyl bridge carbon `cp` pairs the same way with `cq` (`-1` / `-2`
+    /// in the column, though the header does not list them), and antechamber
+    /// colours those in a pass of their own — hence [`Alternate::pass`].
+    ///
     /// `None` whenever that column says `0` — including `ATOMTYPE_AMBER.DEF`'s
     /// `CC` / `CD`, which are parm94's histidine carbons and **not** a conjugated
     /// pair despite the spelling.
-    pub alternate: Option<&'static str>,
+    pub alternate: Option<Alternate>,
     /// Residue name, or `*` for any.
     pub residue: &'static str,
     /// Required atomic number.
@@ -407,9 +427,9 @@ pub struct ParmMassRow {
 /// One `BOND` row: `E = force_constant · (r − length)²`.
 ///
 /// That is **AMBER's** convention and it carries no ½ — unlike molrs's
-/// [`BondHarmonic`](crate::ff::potential::bond::harmonic::BondHarmonic), whose
+/// [`BondHarmonic`](crate::ff::potential::bond::BondHarmonic), whose
 /// `k` is `2 · force_constant`. The factor is applied where the units are
-/// normalised (the [`gaff`](crate::ff::typifier::gaff) candidate library), never here:
+/// normalised (the [`GaffTypifier`](crate::ff::typifier::GaffTypifier) candidate library), never here:
 /// this row is what the file says.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmBondRow {
@@ -423,11 +443,12 @@ pub struct ParmBondRow {
     pub length: f64,
 }
 
-/// One `ANGLE` row: `E = force_constant · (θ − angle_deg)²`, θ in radians.
+/// One `ANGLE` row: `E = force_constant · (θ − angle_deg)²`, the force
+/// constant per radian².
 ///
-/// Again AMBER's un-halved convention, and again the equilibrium angle is left
-/// in the **degrees** the file writes it in — molrs consumes radians, and that
-/// conversion belongs to the reader boundary, not to a transcription.
+/// AMBER's un-halved convention, with the equilibrium angle in the **degrees**
+/// the file writes it in — which is LAMMPS's `angle_style harmonic`, and so
+/// molrs's, exactly.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParmAngleRow {
     /// Atom type of the first leg.
@@ -551,29 +572,32 @@ pub struct ParmTable {
 
 /// The nine penalty columns of an `EQUA` / `CORR` row, in `PARMCHK.DAT`'s order.
 ///
-/// The file's own note pins it — *"GENERAL_SIMILARITY is listed in the 11th
-/// colume of CORR lines"* — and a CORR row's 11th token is the last of the nine,
-/// so the columns run in the order its `DEFAULT_*` block declares them. `-1.0`
-/// means **not tabulated**: the consumer substitutes the matching default.
+/// The order is the one parmchk2 reads them in (`read_parmchk_parm`:
+/// `bl blf cba cbaf ba baf ctor tor ps`): the angle's CENTRE columns come
+/// before its END columns, and the torsion's INNER column before its OUTER
+/// one. The file's own note pins the last — *"GENERAL_SIMILARITY is listed in
+/// the 11th colume of CORR lines"*. `-1.0` means **not tabulated**: parmchk2
+/// substitutes the matching `DEFAULT_*` (and a `CORR` line with no columns at
+/// all, which this table also writes as `-1.0` throughout, reads as zeros).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParmchkPenalty {
     /// Bond length (`bl`).
     BondLength = 0,
     /// Bond force constant (`blf`).
     BondForce = 1,
+    /// Angle, at the CENTRE atom (`cba`).
+    AngleCentre = 2,
+    /// Angle force constant, at the centre atom (`cbaf`).
+    AngleCentreForce = 3,
     /// Angle, at an END atom (`ba`).
-    Angle = 2,
+    Angle = 4,
     /// Angle force constant, at an end atom (`baf`).
-    AngleForce = 3,
-    /// Angle, at the CENTRE atom (`ba_ctr`).
-    AngleCentre = 4,
-    /// Angle force constant, at the centre atom (`baf_ctr`).
-    AngleCentreForce = 5,
+    AngleForce = 5,
+    /// Torsion, at an INNER atom (`ctor`).
+    TorsionCentre = 6,
     /// Torsion, at an OUTER atom (`tor`).
-    Torsion = 6,
-    /// Torsion, at an INNER atom (`tor_ctr`).
-    TorsionCentre = 7,
-    /// The row's overall similarity score — the 11th column.
+    Torsion = 7,
+    /// The row's overall similarity score — the 11th column (`ps`).
     Similarity = 8,
 }
 
@@ -777,10 +801,10 @@ impl ParmTable {
 // OPLS-AA
 // ---------------------------------------------------------------------------
 //
-// The rows of [`oplsaa`], in **molrs units** (Å, kcal/mol, radians, e) — the
-// units the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
+// The rows of [`oplsaa`], in **molrs's convention** (LAMMPS `real`: Å,
+// kcal/mol, degrees, e; un-halved `K`) — what the kernels read. GROMACS's `oplsaa.ff` speaks nm, kJ/mol and
 // Ryckaert–Bellemans torsions; the conversion happens once, in the generator
-// (through `GromacsTopFfReader`), and its result is what is committed. The two
+// (through `GromacsTopForcefieldReader`), and its result is what is committed. The two
 // vocabularies of the source survive intact: bonded rows key on the GROMACS
 // `bond_type` (the **class**, `CT`, `HC`), atoms and pairs on the **type**
 // (`opls_NNN`). The typing rules are not GROMACS's and live apart, in
@@ -811,7 +835,7 @@ pub struct OplsAtomRow {
 /// One OPLS-AA typing rule — the **static, compile-time** rule record.
 ///
 /// Its runtime counterpart is
-/// [`OplsTypeRow`](crate::ff::typifier::opls::OplsTypeRow): owned strings, plus
+/// [`OplsTypeRow`](crate::ff::typifier::OplsTypeRow): owned strings, plus
 /// the class, an explicit priority and an overlay layer. The embedded OPLS-AA
 /// typifier builds one `OplsTypeRow` from each `OplsRuleRow`, taking the class
 /// from the [`OplsAtomRow`] of the same `name` and layer 0; an XML force field
@@ -833,21 +857,21 @@ pub struct OplsRuleRow {
     pub overrides: &'static [&'static str],
 }
 
-/// One GROMACS `[ bondtypes ]` funct-1 row: `½k₀(r − r₀)²`.
+/// One GROMACS `[ bondtypes ]` funct-1 row, `½k_b(r − r₀)²` in the file, as LAMMPS `K = k_b/2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsBondRow {
     /// Class of the first atom.
     pub i: &'static str,
     /// Class of the second atom.
     pub j: &'static str,
-    /// Force constant (kcal/mol/Å²) in molrs's `E = ½k(r−r0)²` convention;
-    /// emitted under the canonical param key `k` (spec ff-params-01).
+    /// Force constant (kcal/mol/Å²) in molrs's — LAMMPS's — `E = k(r−r0)²`
+    /// convention (GROMACS's `k_b / 2`); emitted under the param key `k`.
     pub force_constant: f64,
     /// Equilibrium length (Å).
     pub r0: f64,
 }
 
-/// One GROMACS `[ angletypes ]` funct-1 row: `½k₀(θ − θ₀)²`.
+/// One GROMACS `[ angletypes ]` funct-1 row, `½k_θ(θ − θ₀)²` in the file, as LAMMPS `K = k_θ/2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OplsAngleRow {
     /// Class of the first atom.
@@ -856,11 +880,12 @@ pub struct OplsAngleRow {
     pub j: &'static str,
     /// Class of the third atom.
     pub k: &'static str,
-    /// Force constant (kcal/mol/rad²) in molrs's `E = ½k(θ−θ0)²` convention;
-    /// emitted under the canonical param key `k`. Not named `k` here because
-    /// this struct's `k` is already the third atom's class.
+    /// Force constant (kcal/mol/rad²) in molrs's — LAMMPS's — `E = k(θ−θ0)²`
+    /// convention (GROMACS's `k_θ / 2`); emitted under the param key `k`. Not
+    /// named `k` here because this struct's `k` is already the third atom's
+    /// class.
     pub force_constant: f64,
-    /// Equilibrium angle (**radians**).
+    /// Equilibrium angle (**degrees**).
     pub theta0: f64,
 }
 

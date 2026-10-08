@@ -1,44 +1,44 @@
 //! The estimator's two constant tables — the lookups, not a second copy.
 //!
-//! Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
-//! emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
-//! seven `ATOMTYPE_*.DEF` take. Nothing here is
-//! parsed at runtime; a malformed table is a **compile** error.
-//!
-//! - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
-//!   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
-//!   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
-//!   says which types may be an improper centre.
-//! - [`EmpiricalTable`] ([`EMPIRICAL_GAFF`] / [`EMPIRICAL_GAFF2`]) —
-//!   `PARM_BLBA_GAFF*.DAT`: the Badger bond `ln(Kij)` per element pair and the
-//!   angle `C` / `Z` factors per element (Wang et al. *J. Comput. Chem.* 2004,
-//!   25:1157–1174, Eqs. 3 and 5).
-//!
 //! # One table, one type
 //!
-//! This module adds **inherent methods** to those two types rather than wrapping
+//! This module adds **inherent methods** to `ParmchkTable` and `EmpiricalTable` rather than wrapping
 //! them in views of its own. The wrapper is the thing to avoid: two structs
 //! describing one table drift, and a reader has to learn which of them is the
 //! table. `ff::params` owns each table's *shape* (its rows and columns, verbatim
 //! from upstream); this module owns the *questions the estimator asks it*, which
 //! are the estimator's business and not the table's.
-//!
-//! # Units
-//!
-//! Bond length Å, bond force constant kcal/mol/Å², angle force constant
-//! kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 
-use molrs::Element;
+use molrs::core::Element;
 
 use crate::ff::params::{
     EMPIRICAL_GAFF, EMPIRICAL_GAFF2, EmpiricalBondRow, EmpiricalTable, PARMCHK, ParmchkCorr,
-    ParmchkPenalty, ParmchkTable, ParmchkType,
+    ParmchkPenalty, ParmchkTable,
 };
 
 /// Which force field's empirical constants to use.
 ///
 /// The two files differ (`PARM_BLBA_GAFF2.DAT` has 239 rows to GAFF's 146), so
 /// the choice is a parameter rather than a default.
+///
+/// Both tables are [`ff::params`](crate::ff::params) data: typed Rust `const`s
+/// emitted by `scripts/gen_param_tables.py`, the same path `gaff.dat` and the
+/// seven `ATOMTYPE_*.DEF` take. Nothing here is
+/// parsed at runtime; a malformed table is a **compile** error.
+///
+/// - [`ParmchkTable`] ([`PARMCHK`]) — `PARMCHK.DAT`: parmchk2's atom-type
+///   substitution table (`EQUA` / `CORR` rows with their nine penalty columns),
+///   its `WEIGHT_*` / `DEFAULT_*` scalars, and the `improper_flag` column that
+///   says which types may be an improper centre.
+/// - [`EmpiricalTable`] ([`EMPIRICAL_GAFF`] / [`EMPIRICAL_GAFF2`]) —
+///   `PARM_BLBA_GAFF*.DAT`: the Badger bond `ln(Kij)` per element pair and the
+///   angle `C` / `Z` factors per element (Wang et al. *J. Comput. Chem.* 2004,
+///   25:1157–1174, Eqs. 3 and 5).
+///
+/// # Units
+///
+/// Bond length Å, bond force constant kcal/mol/Å², angle force constant
+/// kcal/mol/rad². The empirical angle formula consumes θ₀ in **radians**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmpiricalSet {
     /// `PARM_BLBA_GAFF.DAT`.
@@ -64,22 +64,17 @@ pub const fn substitution_table() -> ParmchkTable {
 
 /// The questions the cascade asks the substitution table.
 impl ParmchkTable {
-    /// The block declaring `atom_type`, if the table knows it.
-    pub fn entry(&self, atom_type: &str) -> Option<&'static ParmchkType> {
-        self.get(atom_type)
-    }
-
     /// Whether an atom of `atom_type` may be the CENTRE of an improper.
     ///
     /// The `improper_flag` column, and the reason benzene's `ca` carries a ring
     /// planarity term while methylamine's `n3` carries none.
     pub fn is_improper_centre(&self, atom_type: &str) -> bool {
-        self.entry(atom_type).is_some_and(|t| t.improper)
+        self.get(atom_type).is_some_and(|t| t.improper)
     }
 
     /// The atomic number `PARMCHK.DAT` records for `atom_type`.
     pub fn atomic_number(&self, atom_type: &str) -> Option<u8> {
-        self.entry(atom_type).map(|t| t.atomic_number)
+        self.get(atom_type).map(|t| t.atomic_number)
     }
 
     /// The element symbol `PARMCHK.DAT` records for `atom_type`.
@@ -93,7 +88,7 @@ impl ParmchkTable {
     /// Substituting one for the other costs nothing: `gaff2.dat`'s `ns` is `n`
     /// with a different name, so `X-c-n-X` covers an `ns` torsion exactly.
     pub fn equivalent(&self, a: &str, b: &str) -> bool {
-        let one = |x: &str, y: &str| self.entry(x).is_some_and(|t| t.equivalent.contains(&y));
+        let one = |x: &str, y: &str| self.get(x).is_some_and(|t| t.equivalent.contains(&y));
         one(a, b) || one(b, a)
     }
 
@@ -103,7 +98,7 @@ impl ParmchkTable {
     /// `c2` → `c`, and parmchk2 charges the *default* torsion penalty for the
     /// latter rather than reading the former backwards.
     pub fn correspondence(&self, from: &str, to: &str) -> Option<&'static ParmchkCorr> {
-        self.entry(from)?
+        self.get(from)?
             .corresponding
             .iter()
             .find(|row| row.to == to)
@@ -115,7 +110,7 @@ impl ParmchkTable {
     /// for anything, not even at the default penalty. That is what stops
     /// `c2-c2-ss-c3` from standing in for thiophene's `cc-cd-ss-cd`.
     pub fn substitutable(&self, atom_type: &str) -> bool {
-        self.entry(atom_type)
+        self.get(atom_type)
             .is_some_and(|t| !t.corresponding.is_empty())
     }
 
