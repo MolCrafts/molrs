@@ -49,6 +49,7 @@ jobs:
   rust:
     name: test / rust
     needs: context
+    if: needs.context.outputs.skip-pr != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,6 +62,7 @@ jobs:
   python:
     name: test / python (${{ matrix.os }})
     needs: context
+    if: needs.context.outputs.skip-pr != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,7 +79,7 @@ jobs:
   features:
     name: test / features
     needs: context
-    if: needs.context.outputs.tier == 'full'
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -89,7 +91,7 @@ jobs:
   capi:
     name: test / capi
     needs: context
-    if: needs.context.outputs.tier == 'full'
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -101,7 +103,7 @@ jobs:
   wasm:
     name: test / wasm
     needs: context
-    if: needs.context.outputs.tier == 'full'
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -117,7 +119,7 @@ jobs:
   mrec:
     name: test / mrec
     needs: context
-    if: needs.context.outputs.tier == 'full'
+    if: needs.context.outputs.skip-pr != 'true' && needs.context.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
