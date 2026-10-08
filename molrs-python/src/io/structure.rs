@@ -564,7 +564,8 @@ pub fn write_xsf(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
     frame.with_frame(|f| molrs::io::write_xsf(path, f).map_err(io_error_to_pyerr))?
 }
 
-/// Write a Frame as a LAMMPS molecule template.
+/// Write a Frame as a LAMMPS molecule template, in the native text format
+/// (:func:`write_lammps_molecule_json` writes the JSON one).
 ///
 /// Parameters
 /// ----------
@@ -572,8 +573,6 @@ pub fn write_xsf(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
 ///     Output path.
 /// frame : Frame
 ///     Molecule frame.
-/// format : str
-///     ``"native"`` or ``"json"`` (default ``"native"``).
 #[pyfunction]
 pub fn write_lammps_molecule(path: PathBuf, frame: &PyFrame) -> PyResult<()> {
     let path = path_str(&path)?;
