@@ -56,7 +56,15 @@ jobs:
       - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
         with:
           cache: rust
-      - run: scripts/check.sh test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext package' || '' }}
+      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext package' || '' }}
+      # The counts in the run and pull request summary; report only. No
+      # coverage here: instrumenting the build is the nightly's job.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@master
+        with:
+          title: test / rust
+          cargo-test: .ci-out/cargo-test.log
 
   # abi3-py312: one native artifact per OS, so one Python per OS.
   python:
@@ -74,7 +82,16 @@ jobs:
         with:
           cache: python
       - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
-      - run: scripts/check.sh python
+      - run: scripts/check.sh --report .ci-out python
+      # The counts and the Python layer's coverage in the run and pull
+      # request summary; report only.
+      - name: Report
+        if: ${{ !cancelled() }}
+        uses: MolCrafts/molcrafts-ci/actions/report@master
+        with:
+          title: test / python (${{ matrix.os }})
+          junit: .ci-out/junit.xml
+          coverage: .ci-out/coverage.json
 
   features:
     name: test / features

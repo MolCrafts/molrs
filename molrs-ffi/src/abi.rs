@@ -12,7 +12,7 @@ use std::ffi::{CStr, CString};
 use std::sync::OnceLock;
 
 /// The ABI line of this build: `major.minor` of the statically linked
-/// `molcrafts-molrs` core (e.g. `"0.16"`). This crate's version is the core's
+/// `molcrafts-molrs` core (e.g. `"0.17"`). This crate's version is the core's
 /// by policy, and its dependency on the core is pinned to that minor line, so
 /// its own `CARGO_PKG_VERSION` names the line.
 ///

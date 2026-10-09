@@ -72,3 +72,6 @@ show_source = false
 # and lives in the private ``molrs._native``; force runtime inspection so griffe
 # resolves the extension types through the package's re-exports.
 force_inspection = true
+# PyO3 constructors (``#[new]``) are a class's ``__text_signature__``, not an
+# ``__init__``; without this griffe sees no constructor parameters at all.
+extensions = ["scripts/griffe_pyo3.py:PyO3Constructors"]

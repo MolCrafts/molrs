@@ -241,7 +241,7 @@ impl PyVoronoiIntegration {
     /// atom_to_mol : (N,) int array — atom→molecule index in `0..n_mol`.
     /// n_mol : int — number of molecules.
     /// grid : DensityGrid — the electron density.
-    /// box : Box — periodic cell.
+    /// box_ : Box — periodic cell.
     #[allow(clippy::too_many_arguments)]
     fn integrate(
         &self,

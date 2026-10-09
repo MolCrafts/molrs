@@ -114,12 +114,6 @@ impl PyAcfResult {
 /// freedom, averages over degrees of freedom, and uses the biased
 /// normalisation because it feeds the VDOS spectrum.
 ///
-/// Parameters
-/// ----------
-/// series : ndarray, shape (n_frames, n_entities, n_components)
-/// max_lag : int
-///     Clamped to ``n_frames - 1``.
-///
 /// Examples
 /// --------
 /// >>> molrs.compute.Acf().compute(velocities, max_lag=50).acf
@@ -134,6 +128,12 @@ impl PyAcf {
     }
 
     /// Compute ``C(t)`` for a ``(n_frames, n_entities, n_components)`` series.
+    ///
+    /// Parameters
+    /// ----------
+    /// series : ndarray, shape (n_frames, n_entities, n_components)
+    /// max_lag : int
+    ///     Clamped to ``n_frames - 1``.
     fn compute(&self, series: PyReadonlyArray3<'_, f64>, max_lag: usize) -> PyResult<PyAcfResult> {
         let owned = series.as_array().to_owned();
         let inner =
