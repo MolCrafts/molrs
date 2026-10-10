@@ -73,7 +73,7 @@ Slurm, and every push runs the complete gate catalogue. Anywhere else
 the variable is unset and every gate runs locally, exactly as CI runs it.
 
 For the complete local gates, install CMake and a C++20 compiler, Node 24,
-wasm-pack and Binaryen `version_133`, in addition to uv and rustup. On Windows,
+wasm-pack 0.15.0 and Binaryen `version_133`, in addition to uv and rustup. On Windows,
 use Git Bash for shell hooks and a C++ compiler matching the Rust target
 (Visual Studio Build Tools for MSVC). The C API test links the import library
 and copies its DLL beside the test executable. Native CI verifies that path;

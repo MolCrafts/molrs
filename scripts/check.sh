@@ -39,6 +39,7 @@ BINDERS=(molrs-ffi molrs-python molrs-wasm molrs-capi molrs-cxxapi)
 ROOTS=("${BINDERS[@]}" molrs-ext-example)
 # wasm-opt release the wasm gate runs; CI installs exactly this one.
 BINARYEN_VERSION=version_133
+WASM_PACK_VERSION=0.15.0
 TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # --report <dir>: the test gates also write what they ran into <dir> --
 # cargo-test.log (every `cargo test` of test/ffi/cxx/ext; its `test result:`
@@ -193,6 +194,10 @@ gate_capi() {
 # Building proves the wasm compiles; the Node suite proves it works.
 gate_wasm() {
     local have
+    have=$(wasm-pack --version | awk '{print $NF}')
+    [ "$have" = "$WASM_PACK_VERSION" ] || { echo "wasm-pack must be $WASM_PACK_VERSION (found $have)" >&2; return 1; }
+    have=$(node --version)
+    [[ "$have" == v24.* ]] || { echo "Node 24 is required (found $have)" >&2; return 1; }
     have=$(wasm-opt --version | awk '{print $NF}' | tr -d '()')
     if [ "$have" != "$BINARYEN_VERSION" ]; then
         echo "wasm-opt is $have, the gate pins $BINARYEN_VERSION:" >&2
