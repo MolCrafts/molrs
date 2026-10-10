@@ -186,8 +186,8 @@ gate_capi() {
     cargo test --locked --manifest-path molrs-capi/Cargo.toml
     cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test \
         -DCARGO_PROFILE=debug -DCARGO_TARGET_DIR="$TARGET_DIR"
-    cmake --build molrs-capi/build-test
-    ctest --test-dir molrs-capi/build-test --output-on-failure
+    cmake --build molrs-capi/build-test --config Debug
+    ctest --test-dir molrs-capi/build-test --build-config Debug --output-on-failure
 }
 
 # Building proves the wasm compiles; the Node suite proves it works.

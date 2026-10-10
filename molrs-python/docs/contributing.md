@@ -72,6 +72,13 @@ node — it never passes a gate it did not run). So a commit never waits for
 Slurm, and every push runs the complete gate catalogue. Anywhere else
 the variable is unset and every gate runs locally, exactly as CI runs it.
 
+For the complete local gates, install CMake and a C++20 compiler, Node 24,
+wasm-pack and Binaryen `version_133`, in addition to uv and rustup. On Windows,
+use Git Bash for shell hooks and a C++ compiler matching the Rust target
+(Visual Studio Build Tools for MSVC). The C API test links the import library
+and copies its DLL beside the test executable. Native CI verifies that path;
+WSL only verifies Linux behavior.
+
 ## CI
 
 One workflow per kind of work, each job a `scripts/check.sh` call. Every
@@ -86,7 +93,7 @@ its outputs.
 | workflow | feature-branch push to MolCrafts | everything else: any push to a fork, `dev`/`master` on MolCrafts, pull requests, tags, dispatches | upstream only |
 | --- | --- | --- | --- |
 | `lint.yml` | `lint / hooks` (commit hooks including workflow scheme, `partners`) | same | — |
-| `test.yml` | fast: `test / rust` (`clippy doc test`), `test / python (ubuntu-latest)` | full: `test / rust` (+ `ffi cxx ext package`), `test / python` on Linux, macOS and Windows, `test / features`, `test / capi`, `test / wasm`, `test / mrec` | — |
+| `test.yml` | fast: `test / rust` (`clippy doc test`), `test / python (ubuntu-latest)` | full: `test / rust` (+ `ffi cxx ext package`), `test / python` on Linux, macOS and Windows, `test / features`, `test / capi` on Linux and Windows, `test / wasm`, `test / mrec` | — |
 | `docs.yml` | `docs / build` (`docs`) | same | Cloudflare Pages deploys the site from MolCrafts |
 | `nightly.yml` | — | — | nightly: tests, coverage and conformance snapshots to molcrafts-ci; a `nightly` branch push: wheels to `molcrafts-molrs-nightly` |
 | `release.yml` | — | dispatch: dry run (builds, uploads nothing) | `v*` tag: crates.io, npm, PyPI, GitHub Release (`docs/releasing.md`) |
