@@ -160,16 +160,18 @@ gate_ext() {
 # No second tox/pip resolver or second copy of pytest/numpy/maturin.
 gate_python() {
     uv --directory molrs-python sync --locked --no-install-project --extra dev
-    local work
-    work=$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"))')
+    # Ask the selected environment for its real executable, including .exe.
+    # Validate it before compiling: Bash's implicit .exe matching is not uv's.
+    local interpreter work wheel
+    interpreter=$(uv --directory molrs-python run --no-sync python -c \
+        'import sys; print(sys.executable, end="")')
+    uv pip check --python "$interpreter"
+    work=$(uv --directory molrs-python run --no-sync python -c \
+        'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"), end="")')
     CLEANUP+=("$work")
-    uv --directory molrs-python run --no-sync maturin build --release --locked --out "$work"
-    local wheel bin="$PWD/molrs-python/.venv/bin"
-    [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
+    uv --directory molrs-python run --no-sync maturin build --release --locked \
+        --interpreter "$interpreter" --out "$work"
     wheel=$(ls "$work"/molcrafts_molrs-*.whl)
-    local interpreter="$bin/python"
-    # Git Bash considers python.exe a match for -f python; uv does not.
-    [ ! -f "$bin/python.exe" ] || interpreter="$bin/python.exe"
     uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
     uv pip check --python "$interpreter"
     uv --directory molrs-python run --no-sync python -c \
@@ -239,11 +241,10 @@ gate_mrec() {
 # on pre-push; standalone docs builds one dev wheel for API imports.
 gate_docs() {
     uv --directory molrs-python sync --locked --no-install-project --extra dev --extra doc
-    local bin="$PWD/molrs-python/.venv/bin"
-    [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
-    local interpreter="$bin/python"
-    # Git Bash considers python.exe a match for -f python; uv does not.
-    [ ! -f "$bin/python.exe" ] || interpreter="$bin/python.exe"
+    local interpreter
+    interpreter=$(uv --directory molrs-python run --no-sync python -c \
+        'import sys; print(sys.executable, end="")')
+    uv pip check --python "$interpreter"
     local wheel=$MOLRS_TESTED_WHEEL
     if [ -z "$wheel" ]; then
         scratch
@@ -253,7 +254,7 @@ gate_docs() {
     fi
     uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
     uv pip check --python "$interpreter"
-    (cd molrs-python && "$bin/zensical" build --clean --strict)
+    uv --directory molrs-python run --no-sync zensical build --clean --strict
 }
 
 gate_verify() {
