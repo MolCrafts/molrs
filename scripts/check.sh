@@ -168,7 +168,8 @@ gate_python() {
     [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
     wheel=$(ls "$work"/molcrafts_molrs-*.whl)
     local interpreter="$bin/python"
-    [ -f "$interpreter" ] || interpreter="$bin/python.exe"
+    # Git Bash considers python.exe a match for -f python; uv does not.
+    [ ! -f "$bin/python.exe" ] || interpreter="$bin/python.exe"
     uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
     uv pip check --python "$interpreter"
     uv --directory molrs-python run --no-sync python -c \
@@ -241,7 +242,8 @@ gate_docs() {
     local bin="$PWD/molrs-python/.venv/bin"
     [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
     local interpreter="$bin/python"
-    [ -f "$interpreter" ] || interpreter="$bin/python.exe"
+    # Git Bash considers python.exe a match for -f python; uv does not.
+    [ ! -f "$bin/python.exe" ] || interpreter="$bin/python.exe"
     local wheel=$MOLRS_TESTED_WHEEL
     if [ -z "$wheel" ]; then
         scratch
