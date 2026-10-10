@@ -17,7 +17,7 @@ runs:
     # A binary install; `cargo install wasm-pack` is a 1-2 min cold compile.
     - uses: taiki-e/install-action@v2
       with:
-        tool: wasm-pack
+        tool: wasm-pack@0.15.0
     - shell: bash
       run: |
         set -euo pipefail

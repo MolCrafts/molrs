@@ -1,0 +1,10 @@
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+
+# Byte-exact conformance inputs must not undergo newline conversion.
+molrs/src/ff/testdata/builtin_conformance/** -text

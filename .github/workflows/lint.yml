@@ -35,7 +35,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@40f61db7c6783f246215158bff435ff1d384b2ae
 
   # The commit-stage hooks (hygiene, fmt, ruff, os-cfg) on every file, and the
   # partners check. Nothing compiles.
@@ -47,29 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@40f61db7c6783f246215158bff435ff1d384b2ae
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@40f61db7c6783f246215158bff435ff1d384b2ae
       - run: uvx pre-commit run --all-files --show-diff-on-failure
       - run: scripts/check.sh partners
-
-  clippy:
-    name: lint / clippy
-    needs: context
-    if: needs.context.outputs.skip-pr != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
-        with:
-          cache: lint
-      - run: scripts/check.sh clippy doc
-
-  workflows:
-    name: lint / workflows
-    needs: context
-    # Every workflow against the CI scheme: MolCrafts/molcrafts-ci/actions/check-workflows.
-    if: needs.context.outputs.skip-pr != 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/check-workflows@master

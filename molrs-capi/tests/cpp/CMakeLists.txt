@@ -68,6 +68,15 @@ add_library(molrs_capi SHARED IMPORTED)
 set_target_properties(molrs_capi PROPERTIES
     IMPORTED_LOCATION ${MOLRS_SHARED_LIB}
 )
+# Windows links the import library and loads the DLL at runtime.
+if(WIN32)
+    if(MSVC)
+        set(MOLRS_IMPORT_LIB "${MOLRS_TARGET_DIR}/molrs_capi.dll.lib")
+    else()
+        set(MOLRS_IMPORT_LIB "${MOLRS_TARGET_DIR}/libmolrs_capi.dll.a")
+    endif()
+    set_target_properties(molrs_capi PROPERTIES IMPORTED_IMPLIB "${MOLRS_IMPORT_LIB}")
+endif()
 
 # No system-library interface list here: that was the staticlib era, where the
 # consumer had to re-declare everything Rust's runtime pulls in. A cdylib
@@ -86,6 +95,13 @@ target_link_libraries(test_molrs_capi
     molrs_capi
     GTest::gtest_main
 )
+if(WIN32)
+    add_custom_command(TARGET test_molrs_capi POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${MOLRS_SHARED_LIB}" "$<TARGET_FILE_DIR:test_molrs_capi>"
+        VERBATIM
+    )
+endif()
 
 # The only rpath this binary needs: libmolrs_capi's own directory. On ELF its
 # SONAME is the bare `libmolrs_capi.so`, so the loader has to be told where to
