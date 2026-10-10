@@ -53,8 +53,8 @@ fails is a CI job that would have failed.
   dir (never your sibling's working tree), the wheel already tested in this push (or `maturin develop` in a standalone
   Python 3.12 gate), `scripts/ci-conformance.py`. Any case that does not pass
   fails it.
-- `docs` — the site as Cloudflare Pages builds it (`.[doc]` in a fresh venv,
-  then `zensical build --clean`), with `--strict`, so an mkdocstrings
+- `docs` — the site using the locked `dev,doc` tools and the tested wheel,
+  then `zensical build --clean`, with `--strict`, so an mkdocstrings
   reference to a symbol that does not exist fails the push.
 - `os-cfg` — `std::os::unix` / `std::os::windows` only directly under a
   `#[cfg(...)]` attribute (line above or same line). A use inside an item that

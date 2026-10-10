@@ -166,7 +166,10 @@ gate_python() {
     local wheel bin="$PWD/molrs-python/.venv/bin"
     [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
     wheel=$(ls "$work"/molcrafts_molrs-*.whl)
-    uv pip install -q --python "$bin/python" --no-deps --reinstall "$wheel"
+    local interpreter="$bin/python"
+    [ -f "$interpreter" ] || interpreter="$bin/python.exe"
+    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
+    uv pip check --python "$interpreter"
     uv --directory molrs-python run --no-sync python -c \
         'import molrs, pathlib; p=pathlib.Path(molrs.__file__).resolve(); assert "site-packages" in str(p), p'
     local report=()
@@ -226,25 +229,23 @@ gate_mrec() {
     deactivate
 }
 
-# The docs site as Cloudflare Pages builds it -- `pip install ".[doc]"` in a
-# fresh env, then `zensical build --clean` -- with --strict, so any warning
-# (an unresolved mkdocstrings reference included) fails. mkdocstrings imports
-# the compiled extension; it is built in the dev profile, which has the same
-# API surface as the release wheel at a fraction of the compile.
+# Strict docs in the same locked tool environment. Reuse the tested wheel
+# on pre-push; standalone docs builds one dev wheel for API imports.
 gate_docs() {
-    scratch
-    local work=$WORK
-    uv venv -q "$work/venv"
-    local bin="$work/venv/bin"
-    [ -d "$bin" ] || bin="$work/venv/Scripts"
-    uv pip install -q --python "$bin/python" maturin
+    uv --directory molrs-python sync --locked --no-install-project --extra dev --extra doc
+    local bin="$PWD/molrs-python/.venv/bin"
+    [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
+    local interpreter="$bin/python"
+    [ -f "$interpreter" ] || interpreter="$bin/python.exe"
     local wheel=$MOLRS_TESTED_WHEEL
     if [ -z "$wheel" ]; then
-        "$bin/maturin" build --locked --manifest-path molrs-python/Cargo.toml \
-            --interpreter "$bin/python" --out "$work/wheels"
-        wheel=$(ls "$work"/wheels/molcrafts_molrs-*.whl)
+        scratch
+        uv --directory molrs-python run --no-sync maturin build --locked \
+            --interpreter "$interpreter" --out "$WORK/wheels"
+        wheel=$(ls "$WORK"/wheels/molcrafts_molrs-*.whl)
     fi
-    uv pip install -q --python "$bin/python" "$wheel[doc]"
+    uv pip install -q --python "$interpreter" --no-deps --reinstall "$wheel"
+    uv pip check --python "$interpreter"
     (cd molrs-python && "$bin/zensical" build --clean --strict)
 }
 
