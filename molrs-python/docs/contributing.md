@@ -111,7 +111,8 @@ only `setup-wasm` is molrs's own, in `.github/actions/`.
 (`cargo-test.log`; `junit.xml` and the Python layer's `coverage.json`).
 the pinned `MolCrafts/molcrafts-ci/actions/report` turns them into a table of passed,
 failed and skipped counts and line and branch coverage, in the run and pull
-request summary. Test thresholds remain in their gates; a report generation error also fails the job.
+request summary. Test thresholds remain in their gates. Report generation
+failures emit warnings; they do not change the underlying test result.
 
 ## Partners
 
