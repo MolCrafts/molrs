@@ -45,6 +45,8 @@ TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/target}
 # lines are the totals), junit.xml and coverage.json (python). Nothing reads
 # them here; CI turns them into the run's summary.
 REPORT=
+# Only a wheel built and tested in this invocation may be reused.
+MOLRS_TESTED_WHEEL=
 
 # `cargo test` that also appends its output to the report log.
 cargo_test() {
@@ -62,6 +64,7 @@ clippy_binder() {
 # Sets WORK to a fresh temp dir, removed when the script exits.
 scratch() {
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/molrs-check.XXXXXX")
+    if command -v cygpath >/dev/null; then WORK=$(cygpath -m "$WORK"); fi
     CLEANUP+=("$WORK")
 }
 
@@ -82,10 +85,15 @@ gate_ruff() {
 # where CI has no checkout, no workflow spells a partner commit of its own.
 gate_partners() {
     python3 scripts/partners.py check
+    uv --directory molrs-python lock --check
 }
 
 gate_clippy() {
     cargo --locked mrs-clippy -- -D warnings
+    for crate in molrs-ffi molrs-cxxapi molrs-ext-example molrs-python molrs-capi; do
+        clippy_binder "$crate"
+    done
+    clippy_binder molrs-wasm --target wasm32-unknown-unknown
 }
 
 gate_doc() {
@@ -122,7 +130,7 @@ import tarfile
 import tomllib
 from pathlib import Path
 
-version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
 name = f"molcrafts-molrs-{version}"
 with tarfile.open(Path(sys.argv[1]) / "package" / f"{name}.crate") as package:
     license_file = package.extractfile(f"{name}/LICENSE")
@@ -132,12 +140,10 @@ PY
 }
 
 gate_ffi() {
-    clippy_binder molrs-ffi
     cargo_test test --locked --manifest-path molrs-ffi/Cargo.toml
 }
 
 gate_cxx() {
-    clippy_binder molrs-cxxapi
     cargo_test test --locked --manifest-path molrs-cxxapi/Cargo.toml
 }
 
@@ -146,26 +152,35 @@ gate_cxx() {
 # new category, an expression style — priced against pinned LAMMPS numbers
 # (scripts/ff_ir_extension_lammps_check.sh), persisted, and refused by name.
 gate_ext() {
-    clippy_binder molrs-ext-example
     cargo_test test --locked --manifest-path molrs-ext-example/Cargo.toml
 }
 
-# Tools only (no project install), so tox builds the wheel once.
+# Build one non-editable release wheel and test it in the locked uv environment.
+# No second tox/pip resolver or second copy of pytest/numpy/maturin.
 gate_python() {
-    clippy_binder molrs-python
     uv --directory molrs-python sync --locked --no-install-project --extra dev
+    local work
+    work=$(python3 -c 'import tempfile; print(tempfile.mkdtemp(prefix="molrs-wheel-"))')
+    CLEANUP+=("$work")
+    uv --directory molrs-python run --no-sync maturin build --release --locked --out "$work"
+    local wheel bin="$PWD/molrs-python/.venv/bin"
+    [ -d "$bin" ] || bin="$PWD/molrs-python/.venv/Scripts"
+    wheel=$(ls "$work"/molcrafts_molrs-*.whl)
+    uv pip install -q --python "$bin/python" --no-deps --reinstall "$wheel"
+    uv --directory molrs-python run --no-sync python -c \
+        'import molrs, pathlib; p=pathlib.Path(molrs.__file__).resolve(); assert "site-packages" in str(p), p'
     local report=()
-    [ -z "$REPORT" ] || report=(-- "--junitxml=$REPORT/junit.xml" --cov=molrs --cov-branch
+    [ -z "$REPORT" ] || report=("--junitxml=$REPORT/junit.xml" --cov=molrs --cov-branch
         "--cov-report=json:$REPORT/coverage.json")
-    uv --directory molrs-python run --no-sync tox -e py ${report[@]+"${report[@]}"}
+    uv --directory molrs-python run --no-sync python -X warn_default_encoding -m pytest -q \
+        ${report[@]+"${report[@]}"}
+    MOLRS_TESTED_WHEEL=$wheel
 }
 
 # Profile and target dir are explicit: CMake caches both, and a build-test/
 # configured once for release would otherwise keep rebuilding the release lib.
 gate_capi() {
-    clippy_binder molrs-capi
     cargo test --locked --manifest-path molrs-capi/Cargo.toml
-    cargo build --locked --manifest-path molrs-capi/Cargo.toml
     cmake -S molrs-capi/tests/cpp -B molrs-capi/build-test \
         -DCARGO_PROFILE=debug -DCARGO_TARGET_DIR="$TARGET_DIR"
     cmake --build molrs-capi/build-test
@@ -181,7 +196,6 @@ gate_wasm() {
         echo "https://github.com/WebAssembly/binaryen/releases/tag/$BINARYEN_VERSION" >&2
         return 1
     fi
-    clippy_binder molrs-wasm --target wasm32-unknown-unknown
     (cd molrs-wasm && wasm-pack build --release --target bundler --scope molcrafts --out-name molrs -- --locked)
     (cd molrs-wasm && wasm-pack test --node -- --locked)
 }
@@ -198,10 +212,16 @@ gate_mrec() {
     python3 scripts/partners.py fetch MOLREC "$work/molrec"
     uv venv -q --seed "$work/venv"
     # shellcheck disable=SC1091
-    source "$work/venv/bin/activate"
+    local bin="$work/venv/bin"
+    [ -d "$bin" ] || bin="$work/venv/Scripts"
+    source "$bin/activate"
     uv pip install -q maturin "$work/molrec" \
-        "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@master"
-    maturin develop --locked --manifest-path molrs-python/Cargo.toml
+        "molcrafts-ci @ git+https://github.com/MolCrafts/molcrafts-ci@$(sed -n 's/^CI_REF=//p' .github/partners.env)"
+    if [ -n "$MOLRS_TESTED_WHEEL" ]; then
+        uv pip install -q "$MOLRS_TESTED_WHEEL"
+    else
+        maturin develop --locked --manifest-path molrs-python/Cargo.toml
+    fi
     python scripts/ci-conformance.py --suite "$work/molrec/tests" --out "$work/conformance.json"
     deactivate
 }
@@ -215,13 +235,24 @@ gate_docs() {
     scratch
     local work=$WORK
     uv venv -q "$work/venv"
-    uv pip install -q --python "$work/venv/bin/python" maturin
-    "$work/venv/bin/maturin" build --locked --manifest-path molrs-python/Cargo.toml \
-        --interpreter "$work/venv/bin/python" --out "$work/wheels"
-    local wheel
-    wheel=$(ls "$work"/wheels/molcrafts_molrs-*.whl)
-    uv pip install -q --python "$work/venv/bin/python" "$wheel[doc]"
-    (cd molrs-python && "$work/venv/bin/zensical" build --clean --strict)
+    local bin="$work/venv/bin"
+    [ -d "$bin" ] || bin="$work/venv/Scripts"
+    uv pip install -q --python "$bin/python" maturin
+    local wheel=$MOLRS_TESTED_WHEEL
+    if [ -z "$wheel" ]; then
+        "$bin/maturin" build --locked --manifest-path molrs-python/Cargo.toml \
+            --interpreter "$bin/python" --out "$work/wheels"
+        wheel=$(ls "$work"/wheels/molcrafts_molrs-*.whl)
+    fi
+    uv pip install -q --python "$bin/python" "$wheel[doc]"
+    (cd molrs-python && "$bin/zensical" build --clean --strict)
+}
+
+gate_verify() {
+    uvx pre-commit run --all-files --hook-stage pre-commit --show-diff-on-failure
+    for gate in partners clippy doc test features package ffi cxx ext python capi wasm mrec docs; do
+        "gate_$gate"
+    done
 }
 
 ALL=(fmt ruff partners clippy doc test features package ffi cxx ext python capi wasm mrec docs)

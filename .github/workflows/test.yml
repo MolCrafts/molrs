@@ -44,7 +44,7 @@ jobs:
       publish: ${{ steps.context.outputs.publish }}
     steps:
       - id: context
-        uses: MolCrafts/molcrafts-ci/actions/ci-context@master
+        uses: MolCrafts/molcrafts-ci/actions/ci-context@9da33fd962308312150ae98e3f4fa3e21368be52
 
   rust:
     name: test / rust
@@ -53,15 +53,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
-          cache: rust
-      - run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext package' || '' }}
+          cache: native
+      # Native lint and tests share the checkout and Cargo cache; no second
+      # runner compiles the same binder graph merely to run clippy.
+      - name: Native lint
+        run: scripts/check.sh clippy
+      - name: Rustdoc
+        run: scripts/check.sh doc
+      - name: Native tests and package
+        run: scripts/check.sh --report .ci-out test ${{ needs.context.outputs.tier == 'full' && 'ffi cxx ext package' || '' }}
       # The counts in the run and pull request summary; report only. No
       # coverage here: instrumenting the build is the nightly's job.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@master
+        uses: MolCrafts/molcrafts-ci/actions/report@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           title: test / rust
           cargo-test: .ci-out/cargo-test.log
@@ -78,16 +85,16 @@ jobs:
         os: ${{ fromJSON(needs.context.outputs.tier == 'full' && '["ubuntu-latest","macos-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           cache: python
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
       - run: scripts/check.sh --report .ci-out python
       # The counts and the Python layer's coverage in the run and pull
       # request summary; report only.
       - name: Report
         if: ${{ !cancelled() }}
-        uses: MolCrafts/molcrafts-ci/actions/report@master
+        uses: MolCrafts/molcrafts-ci/actions/report@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           title: test / python (${{ matrix.os }})
           junit: .ci-out/junit.xml
@@ -100,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           cache: features
       - run: scripts/check.sh features
@@ -112,7 +119,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           cache: capi
       - run: scripts/check.sh capi
@@ -124,15 +131,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           cache: wasm
       - uses: ./.github/actions/setup-wasm
       - run: scripts/check.sh wasm
 
   # molrec's conformance suite through molrs.io's *.mrec doors, molrec at the
-  # commit scripts/partners.py resolves (molrec's dev, or its branch named
-  # like this one).
+  # immutable commit declared in .github/partners.env.
   mrec:
     name: test / mrec
     needs: context
@@ -140,8 +146,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-rust@9da33fd962308312150ae98e3f4fa3e21368be52
         with:
           cache: mrec
-      - uses: MolCrafts/molcrafts-ci/actions/setup-python@master
+      - uses: MolCrafts/molcrafts-ci/actions/setup-python@9da33fd962308312150ae98e3f4fa3e21368be52
       - run: scripts/check.sh mrec

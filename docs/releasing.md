@@ -48,12 +48,9 @@ zensical build --clean      # must end with "No issues found"
 
 ## Partners
 
-On `dev`, `.github/partners.env` tracks molrec's `dev` (`MOLREC_REF=dev`).
-A release is judged against a fixed molrec instead: the release commit on
-`master` sets `MOLREC_REF` to the molrec tag or full commit the release was
-checked against, so the tag's run (`release.yml`, through `test / mrec`)
-fetches exactly that. When `master` is merged back into `dev`, keep
-`MOLREC_REF=dev` there.
+`.github/partners.env` pins full commits on development and release branches.
+The same pins are used by pre-push, normal CI, release tags and nightly. Update
+and validate them explicitly; never restore floating refs after a release.
 
 ## Publishing
 
@@ -68,7 +65,7 @@ the Pyodide wheel), and the GitHub Release with the C API archives.
 
 The upload jobs run only when `release / context` reports `publish` (a `v*`
 tag pushed to MolCrafts, from `MolCrafts/molcrafts-ci/actions/ci-context`);
-`lint / workflows` fails any upload job that tests the event or ref itself.
+`lint / hooks` fails any upload job that tests the event or ref itself.
 
 1. Finish the checks and review the release diff.
 2. Dispatch **release** on the branch for a rehearsal (a fork is fine).

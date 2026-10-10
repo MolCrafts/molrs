@@ -21,13 +21,13 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# Gate tools: `uv sync --no-install-project --extra dev && uv run --no-sync tox -e py`
-# (do not `uv run --extra dev tox` — that double-builds the extension).
+# Gate tools: scripts/check.sh python builds and installs one non-editable
+# wheel into this locked environment; it never installs the project twice.
 # Editable: `uv sync --extra dev` or `pip install -e ".[dev]"`.
 dev = [
-    "tox>=4.23",
     "maturin>=1.0,<2.0",
     "pytest",
+    "pytest-cov",
     "numpy>=2.0",
 ]
 # Everything `zensical build` needs for the docs site: zensical itself (pulls
@@ -69,58 +69,3 @@ testpaths = ["tests"]
 # read passes on Linux and fails only on Windows. Ruff's PLW1514 catches it
 # statically only where it can tell the receiver is a Path.
 filterwarnings = ["error::EncodingWarning"]
-
-
-[tool.tox]
-requires = ["tox>=4.23"]
-env_list = ["py"]
-no_package = true
-
-[tool.tox.env.py]
-description = "maturin --release wheel + pytest (non-editable)"
-base_python = ["python3"]
-deps = [
-  "maturin>=1.0,<2.0",
-  "pytest",
-  # `scripts/check.sh --report` measures the Python layer's coverage.
-  "pytest-cov",
-  "numpy>=2.0",
-]
-pass_env = [
-  "HOME",
-  "PATH",
-  "CARGO_HOME",
-  "CARGO_TARGET_DIR",
-  "RUSTUP_HOME",
-  # Standard cargo variable, none of ours: passed through so a developer's own
-  # flags (e.g. `-C target-cpu=native` for a bench build) survive tox's clean
-  # env. Nothing in this repo sets it; `lto` lives in `[profile.release]` in
-  # the manifests, where tox cannot strip it.
-  "RUSTFLAGS",
-  # sccache (CI compile cache) — harmless when unset locally.
-  "RUSTC_WRAPPER",
-  "SCCACHE_GHA_ENABLED",
-  "SCCACHE_PATH",
-  "ACTIONS_RESULTS_URL",
-  "ACTIONS_RUNTIME_TOKEN",
-  "MACOSX_DEPLOYMENT_TARGET",
-  "SSH_AUTH_SOCK",
-  "TERM",
-]
-allowlist_externals = ["maturin"]
-commands_pre = [
-  ["maturin", "build", "--release", "--locked", "-o", "{env_tmp_dir}/wheels"],
-  [
-    "{envpython}",
-    "-c",
-    "from pathlib import Path; import subprocess, sys; w=next(Path(r'{env_tmp_dir}/wheels').glob('molcrafts_molrs-*.whl')); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', str(w)])",
-  ],
-  [
-    "{envpython}",
-    "-c",
-    "import molrs, pathlib; r=pathlib.Path(molrs.__file__).resolve(); assert 'site-packages' in str(r), r",
-  ],
-]
-commands = [
-  ["{envpython}", "-X", "warn_default_encoding", "-m", "pytest", "-q", { replace = "posargs", extend = true }],
-]
