@@ -107,7 +107,7 @@ cd molrs
 cargo mrs-build          # compile the library
 cargo mrs-test           # unit tests
 cargo mrs-doctest        # rustdoc examples
-scripts/check.sh all     # every CI gate
+scripts/check.sh verify  # the pre-push gate: every check, once
 ```
 
 The binding crates (`molrs-python`, `molrs-wasm`, `molrs-capi`,
@@ -156,7 +156,7 @@ the package versions. The documentation site follows the repository `master`
 branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
 
 **Consumers (e.g. molpy)** pin the shared **major.minor** line
-(`molcrafts-molrs>=0.17.0,<0.18`), not an exact patch. Patch may drift.
+(`molcrafts-molrs>=0.18.0,<0.19`), not an exact patch. Patch may drift.
 
 ## Browser (Pyodide)
 

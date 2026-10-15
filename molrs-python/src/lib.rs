@@ -17,7 +17,6 @@
 //! | [`conformer`]           | `molrs::conformer`  | `molrs.conformer`    |
 //! | [`builder`]             | `molrs::builder`    | `molrs.builder`      |
 //! | [`compute`]             | `molrs::compute`    | `molrs.compute`      |
-//! | [`signal`]              | `molrs::signal`     | `molrs.signal`       |
 //! | [`stream`]              | `molrs::stream`     | `molrs.stream`       |
 //!
 //! Every subsystem binding registers its own classes and functions through
@@ -30,7 +29,8 @@
 //! `#[pyclass(module = "molrs.…")]`, a flat function by [`add_function`], and
 //! everything on a submodule by that submodule's name. Cross-cutting plumbing
 //! has one home each: exceptions and Rust-error mapping in [`error`], the
-//! pickle protocol in [`pickle`], path arguments in [`path`].
+//! pickle protocol in [`pickle`], path arguments in [`path`], array arguments
+//! in [`array`].
 //!
 //! # Float Precision
 //!
@@ -39,6 +39,7 @@
 
 use pyo3::prelude::*;
 
+mod array;
 mod error;
 mod path;
 mod pickle;
@@ -53,7 +54,6 @@ mod md;
 mod op;
 mod optimize;
 mod perceive;
-mod signal;
 mod stream;
 
 /// The FFI ABI handshake token of this build.
@@ -128,7 +128,6 @@ fn molrs_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     conformer::register(m)?;
     builder::register(m)?;
     compute::register(m)?;
-    signal::register(m)?;
     stream::register(m)?;
 
     add_submodule(m, "op", "molrs.op", op::register)?;

@@ -32,7 +32,6 @@ SUBSYSTEMS = {
     "op",
     "optimize",
     "perceive",
-    "signal",
     "stream",
 }
 
@@ -244,10 +243,10 @@ def test_forcefield_is_the_data_model_and_stream_the_transport():
         "molrs.io.write_csv_block",
         "molrs.io.write_csv_block_str",
         "molrs.io.read_lammps_forcefield",
-        "molrs.io.read_openmm_xml_forcefield",
-        "molrs.io.write_openmm_xml_forcefield",
-        "molrs.io.read_molrs_xml_forcefield",
-        "molrs.io.write_molrs_xml_forcefield",
+        "molrs.io.read_openmm_forcefield",
+        "molrs.io.write_openmm_forcefield",
+        "molrs.io.read_xml_forcefield",
+        "molrs.io.write_xml_forcefield",
         "molrs.io.read_lammps_log_str",
         "molrs.io.write_lammps_bond_react_map",
         "molrs.io.write_lammps_bond_react_system",
@@ -412,6 +411,18 @@ def test_function_names_are_snake_case():
         if inspect.isroutine(value) and value.__name__ != value.__name__.lower()
     )
     assert not wrong
+
+
+def test_compute_is_classes_only():
+    """``molrs.compute`` mirrors ``molrs::compute``, which has no public free
+    function: every export is a class (or the ``Compute`` protocol), and the
+    retired ``molrs.signal`` module is gone."""
+    assert not [
+        name
+        for name in molrs.compute.__all__
+        if not inspect.isclass(getattr(molrs.compute, name))
+    ]
+    assert not hasattr(molrs, "signal")
 
 
 def test_smarts_is_perceptions_wholly():
