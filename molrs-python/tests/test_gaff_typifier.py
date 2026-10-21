@@ -10,7 +10,10 @@ parmchk2's (AmberTools 26.1) estimates for ethylene, quoted, not recomputed.
 
 from __future__ import annotations
 
+from molrs.core import Element
+
 import math
+from pathlib import Path
 
 import molrs
 import numpy as np
@@ -19,7 +22,7 @@ import pytest
 
 def _acetanilide() -> molrs.core.Atomistic:
     """Acetanilide with hydrogens and 3D coordinates."""
-    heavy = molrs.io.smiles.SmilesIr("CC(=O)Nc1ccccc1").to_atomistic()
+    heavy = molrs.io.smiles.read_smiles("CC(=O)Nc1ccccc1").to_atomistic()
     mol, _ = molrs.conformer.Conformer(seed=7).generate(heavy)
     return mol
 
@@ -34,11 +37,11 @@ def _typed(parameter_set: str, mol: molrs.core.Atomistic | None = None):
 
 def _ethylene() -> molrs.core.Atomistic:
     mol = molrs.core.Atomistic()
-    c1 = mol.def_atom(element="C", type="c2")
-    c2 = mol.def_atom(element="C", type="c2")
-    mol.def_bond(c1, c2)
+    c1 = mol.add_atom(atomic_number=6, type="c2")
+    c2 = mol.add_atom(atomic_number=6, type="c2")
+    mol.add_bond(c1, c2)
     for c in (c1, c1, c2, c2):
-        mol.def_bond(c, mol.def_atom(element="H", type="ha"))
+        mol.add_bond(c, mol.add_atom(atomic_number=1, type="ha"))
     return mol
 
 
@@ -74,14 +77,14 @@ def test_atd_then_gaff_types_and_prices_acetanilide(parameter_set: str) -> None:
     ff = gaff.forcefield()
     assert ff.name == parameter_set
     assert ff.special_bonds == ([0.0, 0.0, 0.5], [0.0, 0.0, pytest.approx(1 / 1.2)])
-    styles = {(s.category, s.name) for s in ff.styles}
+    styles = {(s.category, s.name) for s in ff.get_styles(molrs.ff.forcefield.Style)}
     assert ("improper", "periodic") in styles
     # Charges are not a GAFF parameter: a charge model supplies them.
     atoms = frame["atoms"]
     atoms.insert("charge", molrs.ff.charge.GasteigerModel().assign(typed))
     frame["atoms"] = atoms
     frame["pairs"] = molrs.ff.potential.intramolecular_pairs(frame, ff)
-    energy = molrs.ff.compile.PotentialCompiler(ff).compile(frame).calc_energy(frame)
+    energy = molrs.ff.compile.PotentialCompiler(ff).compile(frame).evaluate(frame)[0]
     assert math.isfinite(energy)
 
 
@@ -95,7 +98,9 @@ def test_an_untyped_atom_is_refused() -> None:
     ("parameter_set", "k", "analog"),
     [("gaff", 1.1, "X-X-ca-ha"), ("gaff2", 10.5, "X-X-cc-X")],
 )
-def test_ethylene_impropers_are_parmchk2s(parameter_set: str, k: float, analog: str) -> None:
+def test_ethylene_impropers_are_parmchk2s(
+    parameter_set: str, k: float, analog: str
+) -> None:
     """parmchk2: ``c2-ha-c2-ha 1.1 Same as X -X -ca-ha`` (GAFF),
     ``10.5 Same as X -X -cc-X`` (GAFF2)."""
     gaff = molrs.ff.typifier.GaffTypifier(parameter_set=parameter_set)
@@ -171,8 +176,12 @@ def test_a_parameter_a_rows_type_lacks_is_a_null_cell() -> None:
     written = ff.materialize_params(frame, prefix="ref_")
     assert written["bonds"] == ["ref_alpha", "ref_d0", "ref_k", "ref_r0"]
     np.testing.assert_array_equal(_column(frame, "bonds", "ref_r0"), [1.5, 1.1])
-    np.testing.assert_array_equal(np.asarray(frame["bonds"].validity("ref_k")), [False, True])
-    np.testing.assert_array_equal(np.asarray(frame["bonds"].validity("ref_d0")), [True, False])
+    np.testing.assert_array_equal(
+        np.asarray(frame["bonds"].validity("ref_k")), [False, True]
+    )
+    np.testing.assert_array_equal(
+        np.asarray(frame["bonds"].validity("ref_d0")), [True, False]
+    )
     assert frame["bonds"].validity("ref_r0") is None
 
 
@@ -218,14 +227,18 @@ def test_a_frame_of_another_field_is_refused() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _mol2(elements: list[str], bonds: list[tuple[int, int]], orders=None) -> molrs.core.Atomistic:
+def _mol2(
+    elements: list[str], bonds: list[tuple[int, int]], orders=None
+) -> molrs.core.Atomistic:
     """A molecule as a mol2 file lists it: atoms by element, bonds in file
     order, single unless ``orders`` says otherwise."""
     mol = molrs.core.Atomistic()
-    atoms = [mol.def_atom(element=e) for e in elements]
+    atoms = [
+        mol.add_atom(atomic_number=molrs.core.Element.by_symbol(e).z) for e in elements
+    ]
     for k, (i, j) in enumerate(bonds):
         order = 1 if orders is None else orders[k]
-        mol.def_bond(atoms[i], atoms[j], bond_type=order, bond_number=order)
+        mol.add_bond(atoms[i], atoms[j], bond_type=order, bond_number=order)
     return mol
 
 
@@ -233,7 +246,17 @@ _COT_BONDS = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (0, 7)] + 
     (c, 8 + c) for c in range(8)
 ]
 _AZULENE_BONDS = [
-    (0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (3, 7), (7, 8), (8, 9), (0, 9),
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (4, 5),
+    (5, 6),
+    (6, 7),
+    (3, 7),
+    (7, 8),
+    (8, 9),
+    (0, 9),
 ] + [(c, 10 + h) for h, c in enumerate([0, 1, 2, 4, 5, 6, 8, 9])]
 
 
@@ -246,7 +269,9 @@ def _types(mol: molrs.core.Atomistic, parameter_set: str, **kw) -> list[str]:
 def test_azulene_and_cyclooctatetraene_type_as_antechamber(parameter_set: str) -> None:
     # antechamber -at gaff / gaff2 (AmberTools 26.1) on the same mol2 files.
     azulene = _mol2(["C"] * 10 + ["H"] * 8, _AZULENE_BONDS)
-    assert " ".join(_types(azulene, parameter_set)[:10]) == "cc cc cd cd cc cc cd cd cc cc"
+    assert (
+        " ".join(_types(azulene, parameter_set)[:10]) == "cc cc cd cd cc cc cd cd cc cc"
+    )
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
     assert " ".join(_types(cot, parameter_set)[:8]) == "cc cc cd cd cc cc cd cd"
 
@@ -256,20 +281,85 @@ def test_the_drawn_kekule_structure_is_kept_only_when_asked() -> None:
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS, drawn)
     # antechamber ignores the input's orders; so does the default.
     assert " ".join(_types(cot, "gaff")[:8]) == "cc cc cd cd cc cc cd cd"
-    assert " ".join(_types(cot, "gaff", bond_orders="input")[:8]) == "cc cd cd cc cc cd cd cc"
+    assert (
+        " ".join(
+            _types(cot, "gaff", bond_orders=molrs.perceive.BondOrderSource.Stated)[:8]
+        )
+        == "cc cd cd cc cc cd cd cc"
+    )
 
 
 def test_bond_orders_is_checked_and_reported() -> None:
+    source = molrs.perceive.BondOrderSource
     atd = molrs.ff.typifier.AtdTypifier(parameter_set="gaff")
-    assert atd.bond_orders == "perceive"
-    assert repr(atd) == "AtdTypifier(parameter_set='gaff', bond_orders='perceive')"
-    assert molrs.ff.typifier.AtdTypifier(parameter_set="bcc", bond_orders="input").bond_orders == "input"
-    with pytest.raises(ValueError, match="perceive"):
+    assert atd.bond_orders == source.Connectivity
+    assert (
+        repr(atd)
+        == "AtdTypifier(parameter_set='gaff', bond_orders=BondOrderSource.Connectivity)"
+    )
+    assert (
+        molrs.ff.typifier.AtdTypifier(
+            parameter_set="bcc", bond_orders=source.Stated
+        ).bond_orders
+        == source.Stated
+    )
+    with pytest.raises(TypeError, match="BondOrderSource"):
         molrs.ff.typifier.AtdTypifier(parameter_set="gaff", bond_orders="kekule")
 
 
 def test_find_bond_orders_judges_from_connectivity() -> None:
     cot = _mol2(["C"] * 8 + ["H"] * 8, _COT_BONDS)
-    out = molrs.perceive.assign_bond_orders(cot)
-    numbers = [int(n) for n in out.to_frame()["bonds"]["bond_number"]]
+    assert molrs.perceive.assign_bond_orders(cot) is None
+    numbers = [int(n) for n in cot.to_frame()["bonds"]["bond_number"]]
     assert numbers[:8] == [1, 2, 1, 2, 1, 2, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# One force field from the native route and from tleap's prmtop
+# ---------------------------------------------------------------------------
+
+#: AmberTools 26.0 builds of the molecules below (``scripts/gaff_merge_fixtures.sh``).
+GAFF_FIXTURES = Path(__file__).resolve().parents[2] / "molrs/src/io/amber/testdata/gaff"
+
+
+def _ethanol() -> molrs.core.Atomistic:
+    """Ethanol in the atom and bond order of ``ethanol_gaff.mol2``."""
+    mol = molrs.core.Atomistic()
+    c1, c2, o1 = (
+        mol.add_atom(atomic_number=Element.by_symbol(e).z) for e in ("C", "C", "O")
+    )
+    h = [mol.add_atom(atomic_number=1) for _ in range(6)]
+    bonds = [(c1, c2), (c1, h[0]), (c1, h[1]), (c1, h[2])]
+    bonds += [(c2, o1), (c2, h[3]), (c2, h[4]), (o1, h[5])]
+    for i, j in bonds:
+        mol.add_bond(i, j)
+    return mol
+
+
+def _type_names(ff: molrs.ff.forcefield.ForceField) -> set[tuple[str, str, str]]:
+    return {
+        (s.category, s.name, t.name)
+        for s in ff.get_styles(molrs.ff.forcefield.Style)
+        for t in s.get_types()
+    }
+
+
+def test_native_gaff_and_the_prmtop_of_ethanol_merge_into_one() -> None:
+    """The native route names terms as the prmtop reader does (``c3-c3-oh-ho``,
+    terms by periodicity) and prices them alike, so ``merge`` takes the two
+    either way round and adds no type."""
+    gaff, _ = _typed("gaff", _ethanol())
+    native = gaff.forcefield()
+    torsion = {t.name: t.params for t in native.get_types("dihedral")}["c3-c3-oh-ho"]
+    assert (torsion["periodicity1"], torsion["k1"]) == (1.0, 0.25)
+    prmtop = molrs.io.amber.AmberPrmtopForcefieldReader().read(
+        GAFF_FIXTURES / "ethanol_gaff.parm7"
+    )
+    assert _type_names(prmtop) <= _type_names(native)
+    names = _type_names(native)
+    assert _type_names(prmtop.merge(native)) == names
+    again, _ = _typed("gaff", _ethanol())
+    prmtop = molrs.io.amber.AmberPrmtopForcefieldReader().read(
+        GAFF_FIXTURES / "ethanol_gaff.parm7"
+    )
+    assert _type_names(again.forcefield().merge(prmtop)) == names

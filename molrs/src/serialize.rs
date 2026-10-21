@@ -9,9 +9,12 @@
 //!
 //! - `Frame`  -> `{ blocks: { <name>: Block }, meta: { k: {dtype,value} }, box?: SimBox }`
 //! - `Block`  -> `{ shape: [usize], columns: { <name>: Column },
-//!   validity?: { <name>: [bool] } }` — `validity` carries the per-row masks
+//!   validity?: { <name>: [bool] }, precision?: { <name>: f64 },
+//!   targets?: { <name>: string } }` — `validity` carries the per-row masks
 //!   of the nullable columns only, and is omitted when no column has one, so
 //!   a payload without it reads back as a block whose every cell is filled.
+//!   The optional `precision` and `targets` maps preserve the column's
+//!   declared tolerance and row-reference destination; absent maps mean no declarations.
 //!   Blocks, columns and meta keys are written and read back in insertion
 //!   order; nothing is sorted.
 //! - `Column` -> `{ dtype, shape: [usize], data }` — `data` is raw
@@ -25,6 +28,7 @@
 //! deserialization scaffolding (derive needs owned fields); they are not part
 //! of the public model.
 
+use crate::core::Cell;
 use indexmap::IndexMap;
 
 use ndarray::{ArrayD, IxDyn};
@@ -251,22 +255,22 @@ impl<'de> Deserialize<'de> for Column {
 }
 
 fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Column, String> {
-    let n: usize = shape.iter().product();
+    let n = shape
+        .iter()
+        .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+        .ok_or_else(|| format!("column shape {shape:?} overflows the element count"))?;
     let ix = IxDyn(shape);
     let shape_err = |ty: &str| format!("{ty} column: element count does not match shape {shape:?}");
     match (dtype, data) {
         (DType::Float, ColumnPayload::Bytes(b)) => {
-            if b.len() != n * 8 {
-                return Err(format!("float column: {} byte(s) is not {n} × 8", b.len()));
-            }
             let v = le::<8, _>(&b, n, f64::from_le_bytes)?;
-            Ok(Column::from_float(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::Int, ColumnPayload::Bytes(b)) => {
             let v = le::<4, _>(&b, n, i32::from_le_bytes)?;
-            Ok(Column::from_int(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -275,25 +279,25 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
                 return Err(shape_err("i8"));
             }
             let v: Vec<i8> = b.iter().map(|&x| x as i8).collect();
-            Ok(Column::from_i8(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::I16, ColumnPayload::Bytes(b)) => {
             let v = le::<2, _>(&b, n, i16::from_le_bytes)?;
-            Ok(Column::from_i16(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::I64, ColumnPayload::Bytes(b)) => {
             let v = le::<8, _>(&b, n, i64::from_le_bytes)?;
-            Ok(Column::from_i64(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::Uint, ColumnPayload::Bytes(b)) => {
             let v = le::<8, _>(&b, n, u64::from_le_bytes)?;
-            Ok(Column::from_uint(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -301,19 +305,19 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
             if b.len() != n {
                 return Err(shape_err("u8"));
             }
-            Ok(Column::from_u8(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, b).map_err(|e| e.to_string())?,
             ))
         }
         (DType::U16, ColumnPayload::Bytes(b)) => {
             let v = le::<2, _>(&b, n, u16::from_le_bytes)?;
-            Ok(Column::from_u16(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
         (DType::U32, ColumnPayload::Bytes(b)) => {
             let v = le::<4, _>(&b, n, u32::from_le_bytes)?;
-            Ok(Column::from_u32(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -322,7 +326,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
                 return Err(shape_err("bool"));
             }
             let v: Vec<bool> = b.iter().map(|&x| x != 0).collect();
-            Ok(Column::from_bool(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -330,7 +334,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
             if s.len() != n {
                 return Err(shape_err("string"));
             }
-            Ok(Column::from_string(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, s).map_err(|e| e.to_string())?,
             ))
         }
@@ -341,7 +345,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
                     f32::from_le_bytes(bytes[4..].try_into().unwrap()),
                 )
             })?;
-            Ok(Column::from_c64(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -352,7 +356,7 @@ fn build_column(dtype: DType, shape: &[usize], data: ColumnPayload) -> Result<Co
                     f64::from_le_bytes(bytes[8..].try_into().unwrap()),
                 )
             })?;
-            Ok(Column::from_c128(
+            Ok(Column::from(
                 ArrayD::from_shape_vec(ix, v).map_err(|e| e.to_string())?,
             ))
         }
@@ -366,11 +370,14 @@ fn le<const N: usize, T>(
     n: usize,
     read: impl Fn([u8; N]) -> T,
 ) -> Result<Vec<T>, String> {
-    if bytes.len() != n * N {
+    let expected = n
+        .checked_mul(N)
+        .ok_or_else(|| "numeric payload byte count overflows".to_string())?;
+    if bytes.len() != expected {
         return Err(format!(
             "numeric payload has {} byte(s), expected {}",
             bytes.len(),
-            n * N
+            expected
         ));
     }
     Ok(bytes.as_chunks::<N>().0.iter().map(|c| read(*c)).collect())
@@ -390,12 +397,24 @@ impl Serialize for Block {
             .keys()
             .filter_map(|key| self.validity(key).map(|mask| (key, mask)))
             .collect();
-        let mut st = s.serialize_struct("Block", if masks.is_empty() { 2 } else { 3 })?;
+        let precision: IndexMap<&str, f64> = self.precisions().collect();
+        let targets: IndexMap<&str, &str> = self.targets().collect();
+        let fields = 2
+            + usize::from(!masks.is_empty())
+            + usize::from(!precision.is_empty())
+            + usize::from(!targets.is_empty());
+        let mut st = s.serialize_struct("Block", fields)?;
         st.serialize_field("shape", &self.shape())?;
         let columns: IndexMap<&str, &Column> = self.iter().collect();
         st.serialize_field("columns", &columns)?;
         if !masks.is_empty() {
             st.serialize_field("validity", &masks)?;
+        }
+        if !precision.is_empty() {
+            st.serialize_field("precision", &precision)?;
+        }
+        if !targets.is_empty() {
+            st.serialize_field("targets", &targets)?;
         }
         st.end()
     }
@@ -409,6 +428,10 @@ struct BlockRepr {
     columns: IndexMap<String, Column>,
     #[serde(default)]
     validity: IndexMap<String, Vec<bool>>,
+    #[serde(default)]
+    precision: IndexMap<String, f64>,
+    #[serde(default)]
+    targets: IndexMap<String, String>,
 }
 
 impl<'de> Deserialize<'de> for Block {
@@ -416,20 +439,33 @@ impl<'de> Deserialize<'de> for Block {
         let r = BlockRepr::deserialize(d)?;
         let shape = r.shape;
         let has_columns = !r.columns.is_empty();
-        let mut block = Block::with_capacity(r.columns.len());
+        let mut block = Block::new();
         for (name, col) in r.columns {
-            block.insert_column(name, col).map_err(de::Error::custom)?;
+            block.insert(name, col, None).map_err(de::Error::custom)?;
         }
         // Restore an N-D structural shape (e.g. a volumetric block); a plain
         // table's `[count]` is already established by the inserts, but an empty
         // schema-only table needs its explicit row count restored.
-        if !shape.is_empty() && (!has_columns || shape.len() > 1) {
+        if !shape.is_empty() {
             block.set_shape(&shape).map_err(de::Error::custom)?;
+            if has_columns && shape.len() == 1 {
+                block.set_shape(&[]).map_err(de::Error::custom)?;
+            }
         }
         // Masks are restored after the columns, which is what `set_validity`
         // exists for: the decoder holds `Column` values, not typed arrays.
         for (name, mask) in r.validity {
             block.set_validity(&name, mask).map_err(de::Error::custom)?;
+        }
+        for (name, precision) in r.precision {
+            block
+                .set_precision(&name, precision)
+                .map_err(de::Error::custom)?;
+        }
+        for (name, target) in r.targets {
+            block
+                .set_target(&name, &target)
+                .map_err(de::Error::custom)?;
         }
         Ok(block)
     }
@@ -439,7 +475,7 @@ impl<'de> Deserialize<'de> for Block {
 
 impl Serialize for SimBox {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let o = self.origin_view();
+        let o = self.origin();
         let mut st = s.serialize_struct("SimBox", 4)?;
         st.serialize_field("vectors", &self.matrix())?;
         st.serialize_field("origin", &[o[0], o[1], o[2]])?;
@@ -460,11 +496,14 @@ struct SimBoxRepr {
 impl<'de> Deserialize<'de> for SimBox {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<SimBox, D::Error> {
         let r = SimBoxRepr::deserialize(d)?;
-        SimBox::new_cell(
-            ndarray::arr2(&r.vectors),
-            ndarray::arr1(&r.origin),
+        SimBox::new(
+            if r.cell_defined {
+                Cell::Matrix(r.vectors)
+            } else {
+                Cell::Undefined
+            },
+            r.origin,
             r.boundary,
-            r.cell_defined,
         )
         .map_err(|e| de::Error::custom(format!("{e:?}")))
     }
@@ -501,10 +540,7 @@ struct FrameRepr {
 impl<'de> Deserialize<'de> for Frame {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Frame, D::Error> {
         let r = FrameRepr::deserialize(d)?;
-        let mut frame = Frame::with_capacity(r.blocks.len());
-        for (name, block) in r.blocks {
-            frame.insert(name, block);
-        }
+        let mut frame: Frame = r.blocks.into_iter().collect();
         frame.meta = MetaMap::with_capacity(r.meta.len());
         frame.meta.extend(r.meta);
         frame.simbox = r.simbox;
@@ -515,20 +551,83 @@ impl<'de> Deserialize<'de> for Frame {
 #[cfg(test)]
 mod tests {
     use crate::core::Block;
+    use crate::core::Cell;
     use crate::core::Frame;
     use crate::core::MetaValue;
     use crate::core::SimBox;
     use ndarray::{Array1, array};
 
+    #[test]
+    #[cfg(all(feature = "stream", feature = "io"))]
+    fn column_declarations_survive_both_wire_encodings() {
+        let mut block = atoms();
+        block.set_precision("x", 1e-3).unwrap();
+        block
+            .insert("atom", array![0_u64, 1, 2].into_dyn(), None)
+            .unwrap();
+        block.set_target("atom", "/frame/atoms").unwrap();
+        let mut frame = Frame::new();
+        frame.insert("members", block);
+        for encoding in [
+            crate::stream::FrameEncoding::Json,
+            crate::stream::FrameEncoding::MessagePack,
+        ] {
+            let bytes = crate::io::write_wire_frame(&frame, encoding).unwrap();
+            let back = crate::io::read_wire_frame(&bytes, encoding).unwrap();
+            let members = back.get("members").unwrap();
+            assert_eq!(members.precision("x"), Some(1e-3));
+            assert_eq!(members.target("atom"), Some("/frame/atoms"));
+        }
+    }
+
+    #[test]
+    fn invalid_column_declarations_are_refused() {
+        for (field, value) in [
+            ("precision", serde_json::json!({"x": 0.0})),
+            ("precision", serde_json::json!({"missing": 1e-3})),
+            ("targets", serde_json::json!({"x": "atoms"})),
+            ("targets", serde_json::json!({"missing": "atoms"})),
+        ] {
+            let mut value_block = serde_json::to_value(atoms()).unwrap();
+            value_block[field] = value;
+            assert!(
+                serde_json::from_value::<Block>(value_block).is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_block_rejects_a_row_count_that_disagrees_with_its_columns() {
+        let mut value = serde_json::to_value(atoms()).unwrap();
+        value["shape"] = serde_json::json!([999]);
+        assert!(serde_json::from_value::<Block>(value).is_err());
+    }
+
+    #[test]
+    fn oversized_shapes_and_byte_counts_return_errors() {
+        for shape in [vec![usize::MAX, 2], vec![usize::MAX / 8 + 1]] {
+            let value = serde_json::json!({"dtype": "float", "shape": shape, "data": []});
+            assert!(serde_json::from_value::<crate::core::Column>(value).is_err());
+        }
+        let value = serde_json::json!({"shape": [usize::MAX, 2], "columns": {}});
+        assert!(serde_json::from_value::<Block>(value).is_err());
+    }
+
     fn atoms() -> Block {
         let mut b = Block::new();
-        b.insert("x", Array1::from_vec(vec![0.5, -1.25, 3.0]).into_dyn())
-            .unwrap();
-        b.insert("seq", Array1::from_vec(vec![1i32, 2, 3]).into_dyn())
+        b.insert(
+            "x",
+            Array1::from_vec(vec![0.5, -1.25, 3.0]).into_dyn(),
+            None,
+        )
+        .unwrap();
+        b.insert("seq", Array1::from_vec(vec![1i32, 2, 3]).into_dyn(), None)
             .unwrap();
         b.insert(
             "name",
             Array1::from_vec(vec!["O".to_string(), "H".to_string(), "Ω".to_string()]).into_dyn(),
+            None,
         )
         .unwrap();
         b
@@ -541,7 +640,7 @@ mod tests {
         assert_eq!(back.n_rows(), Some(3));
         assert_eq!(
             back.get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice()
                 .unwrap(),
@@ -549,14 +648,14 @@ mod tests {
         );
         assert_eq!(
             back.get("seq")
-                .and_then(|c| c.as_int())
+                .and_then(|c| c.get::<i32>())
                 .unwrap()
                 .as_slice()
                 .unwrap(),
             &[1, 2, 3]
         );
         assert_eq!(
-            back.get("name").and_then(|c| c.as_string()).unwrap()[2],
+            back.get("name").and_then(|c| c.get::<String>()).unwrap()[2],
             "Ω"
         );
     }
@@ -567,8 +666,14 @@ mod tests {
         frame.insert("atoms", atoms());
         frame.meta.insert("timestep", MetaValue::I64(42));
         frame.meta.insert("label", MetaValue::String("run".into()));
-        frame.simbox =
-            Some(SimBox::cube(10.0, array![1.0, 2.0, 3.0], [true, true, false]).unwrap());
+        frame.simbox = Some(
+            SimBox::new(
+                Cell::Lengths([10.0; 3]),
+                [1.0, 2.0, 3.0],
+                [true, true, false],
+            )
+            .unwrap(),
+        );
 
         let json = serde_json::to_string(&frame).unwrap();
         // The envelope carries no version field: nothing gates compatibility
@@ -583,7 +688,7 @@ mod tests {
         );
         let bx = back.simbox.as_ref().expect("box survives");
         assert_eq!(bx.pbc(), [true, true, false]);
-        assert_eq!(bx.origin_view(), array![1.0, 2.0, 3.0].view());
+        assert_eq!(bx.origin(), [1.0, 2.0, 3.0]);
         assert_eq!(bx.lengths(), array![10.0, 10.0, 10.0]);
     }
 
@@ -594,10 +699,10 @@ mod tests {
     fn a_nullable_column_keeps_its_validity_mask() {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 "x",
                 Array1::from_vec(vec![0.5, 0.0, 3.0]).into_dyn(),
-                vec![true, false, true],
+                Some(vec![true, false, true]),
             )
             .unwrap();
         let json = serde_json::to_string(&block).unwrap();
@@ -617,7 +722,7 @@ mod tests {
         let mut block = Block::new();
         for key in ["c", "a", "b"] {
             block
-                .insert(key, Array1::from_vec(vec![0.0]).into_dyn())
+                .insert(key, Array1::from_vec(vec![0.0]).into_dyn(), None)
                 .unwrap();
         }
         let json = serde_json::to_string(&block).unwrap();

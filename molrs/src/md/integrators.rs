@@ -1,4 +1,5 @@
 //! The integrators, [`VelocityVerlet`] and [`Langevin`], that advance an [`MdState`].
+#![allow(dead_code)]
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
@@ -34,7 +35,7 @@ fn wrap_and_bank(simbox: Option<&SimBox>, state: &mut MdState) -> Array2<I> {
     let Some(bx) = simbox else {
         return Array2::zeros((state.pos.nrows(), 3));
     };
-    let (wrapped, m) = bx.wrap_shifts(state.pos.view());
+    let (wrapped, m) = bx.wrap(state.pos.view());
     state.pos = wrapped;
     state.images += &m;
     m
@@ -97,6 +98,11 @@ impl Stepper {
         mass: ArrayView1<'_, F>,
         simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
+        if !dt.is_finite() || dt <= 0.0 {
+            return Err(MdError::Invalid(
+                "dt must be finite and strictly positive".into(),
+            ));
+        }
         let mass_col = as_mass_col(mass)?;
         let inv_mass = mass_col.column(0).mapv(|m| 1.0 / m);
         Ok(Self {
@@ -202,9 +208,9 @@ impl Stepper {
 /// The second argument is a [`ForceProvider`], and it is the only thing an
 /// integrator knows about force fields. The potential, the neighbour
 /// bookkeeping and the periodic régime all live behind it:
-/// [`SelfPairedForces`](crate::md::SelfPairedForces) hands the potential raw
-/// coordinates, [`MicPairs`](crate::md::MicPairs) gives it minimum-image
-/// pairs, and [`GhostPairs`](crate::md::GhostPairs) gives it periodic copies
+/// `SelfPairedForces` hands the potential raw
+/// coordinates, `MicPairs` gives it minimum-image
+/// pairs, and `GhostPairs` gives it periodic copies
 /// and folds the forces back. An integrator holds no skin, no halo and no
 /// potential, so adding a fourth way to make a force changes nothing here.
 ///
@@ -218,6 +224,10 @@ impl VelocityVerlet {
     /// `dt` (fs), the force provider, per-atom mass `(N,)`, and the cell
     /// positions are folded into each step (`None` = free boundary, no
     /// wrapping and image flags stay zero).
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] if `dt` or any mass is non-finite or not strictly positive.
     pub fn new(
         dt: F,
         forces: impl ForceProvider + 'static,
@@ -324,6 +334,11 @@ impl Langevin {
     ///
     /// `seed` fixes the internal noise stream, so [`advance`](Self::advance)
     /// is deterministic given the seed.
+    ///
+    /// # Errors
+    ///
+    /// [`MdError::Invalid`] if `dt`, `gamma`, `kbt` or any mass is non-finite
+    /// or not strictly positive.
     pub fn new(
         dt: F,
         gamma: F,
@@ -333,13 +348,13 @@ impl Langevin {
         seed: u64,
         simbox: Option<SimBox>,
     ) -> Result<Self, MdError> {
-        if gamma <= 0.0 {
+        if !gamma.is_finite() || gamma <= 0.0 {
             return Err(MdError::Invalid(
-                "Langevin requires gamma > 0; use VelocityVerlet for NVE".into(),
+                "Langevin requires finite gamma > 0; use VelocityVerlet for NVE".into(),
             ));
         }
-        if kbt <= 0.0 {
-            return Err(MdError::Invalid("Langevin requires kbt > 0".into()));
+        if !kbt.is_finite() || kbt <= 0.0 {
+            return Err(MdError::Invalid("Langevin requires finite kbt > 0".into()));
         }
         let inner = Stepper::new(dt, forces, mass, simbox)?;
         let sigma = inner.mass_col.column(0).mapv(|m| (kbt / m).sqrt());
@@ -495,17 +510,65 @@ pub fn uniform_masses(mass: F, n: usize) -> Result<Array1<F>, MdError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::Cell;
     use ndarray::{Array2, ArrayView2, array};
 
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
-    use molrs::ff::potential::{ForceTerm, Potential, Potentials};
+    use molrs::ff::potential::{Accumulator, ForceTerm, Potential, Potentials};
 
     use super::super::forces::{MicPairs, SelfPairedForces};
     use super::*;
     use molrs::ff::potential::pair::PairLjCut;
 
+    #[test]
+    fn integrators_reject_invalid_parameters_at_construction() {
+        let mass = array![1.0];
+        for dt in [0.0, -0.01, F::NAN, F::INFINITY, F::NEG_INFINITY] {
+            assert!(
+                VelocityVerlet::new(
+                    dt,
+                    SelfPairedForces::new(Potentials::new()),
+                    mass.view(),
+                    None
+                )
+                .is_err(),
+                "dt={dt}"
+            );
+            assert!(
+                Langevin::new(
+                    dt,
+                    1.0,
+                    1.0,
+                    SelfPairedForces::new(Potentials::new()),
+                    mass.view(),
+                    0,
+                    None
+                )
+                .is_err(),
+                "dt={dt}"
+            );
+        }
+        for invalid in [0.0, -1.0, F::NAN, F::INFINITY, F::NEG_INFINITY] {
+            for (gamma, kbt) in [(invalid, 1.0), (1.0, invalid)] {
+                assert!(
+                    Langevin::new(
+                        0.01,
+                        gamma,
+                        kbt,
+                        SelfPairedForces::new(Potentials::new()),
+                        mass.view(),
+                        0,
+                        None
+                    )
+                    .is_err(),
+                    "gamma={gamma}, kbt={kbt}"
+                );
+            }
+        }
+    }
+
     fn cube(a: F) -> SimBox {
-        SimBox::cube(a, array![0.0, 0.0, 0.0], [true, true, true]).unwrap()
+        SimBox::new(Cell::Lengths([a; 3]), [0.0, 0.0, 0.0], [true, true, true]).unwrap()
     }
 
     fn soft_lj(n: usize, box_a: F) -> (PairLjCut, VerletSkin, Array2<F>) {
@@ -538,12 +601,11 @@ mod tests {
     }
 
     impl Potential for Uniform {
-        fn calc_energy_forces(&self, coords: &[F]) -> (F, Vec<F>) {
-            let mut forces = vec![0.0; coords.len()];
-            for row in forces.chunks_mut(3) {
-                row[0] = self.fx;
+        fn evaluate(&self, _coords: &[F], acc: &mut Accumulator<'_>) {
+            acc.add_energy(self.energy);
+            for row in acc.forces_without_virial().chunks_mut(3) {
+                row[0] += self.fx;
             }
-            (self.energy, forces)
         }
     }
 
@@ -845,6 +907,7 @@ mod tests {
 mod ghost_path_tests {
     use super::super::forces::{GhostPairs, MicPairs};
     use super::*;
+    use crate::core::Cell;
     use molrs::core::SimBox;
     use molrs::core::{NeighborList, NeighborPolicy, VerletSkin};
     use molrs::ff::potential::ForceTerm;
@@ -871,7 +934,7 @@ mod ghost_path_tests {
     fn crossing_a_face_does_not_disturb_the_energy() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
 
         // Sitting a tenth of an Ångström inside the +x face, so the crossing
         // happens within the first few steps and the configuration has no time
@@ -985,7 +1048,7 @@ mod ghost_path_tests {
     fn the_integrator_reports_a_virial_that_a_rigid_translation_cannot_move() {
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         let base = array![
             [11.0_f64, 11.0, 11.0],
             [3.0, 11.0, 11.0],
@@ -1002,7 +1065,7 @@ mod ghost_path_tests {
         let virial_after_one_step = |shift: F| {
             let mut pts = base.clone();
             pts.iter_mut().for_each(|x| *x += shift);
-            let (wrapped, _m) = bx.wrap_shifts(pts.view());
+            let (wrapped, _m) = bx.wrap(pts.view());
             let halo = GhostHalo::new(bx.clone(), wrapped.view(), cutoff, 0.0).unwrap();
             let mut ig = VelocityVerlet::new(
                 1.0,
@@ -1054,7 +1117,7 @@ mod ghost_path_tests {
 
         let l = 12.0_f64;
         let cutoff = 5.0;
-        let bx = SimBox::cube(l, array![0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
+        let bx = SimBox::new(Cell::Lengths([l; 3]), [0.0_f64, 0.0, 0.0], [true; 3]).unwrap();
         // Every edge of this cube runs through a face, so every pair is found
         // through a periodic image and the two derivations have to work for it.
         let pos = array![

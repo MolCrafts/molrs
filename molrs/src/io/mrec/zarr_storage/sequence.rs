@@ -1,12 +1,13 @@
 //! The `trajectory/` frame sequence: one on-disk layout, one encoder, one
 //! decoder.
 
+use crate::core::Cell;
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, Once};
 
 use indexmap::IndexMap;
-use ndarray::{Array1, Array2, ArrayD, Axis, Slice};
+use ndarray::{ArrayD, Axis, Slice};
 use serde::{Deserialize, Serialize};
 use zarrs::array::codec::array_to_bytes::sharding::{
     ShardingCodecBuilder, ShardingCodecOptions, ShardingIndexLocation, SubchunkWriteOrder,
@@ -511,7 +512,7 @@ fn stored_presentation<'a>(
         if let Some(converted) = canonical_width(column, values)? {
             let target = stored.get_or_insert_with(|| block.clone());
             let mask = target.validity(column).map(<[bool]>::to_vec);
-            target.insert_column(column.as_str(), converted)?;
+            target.insert(column.as_str(), converted, None)?;
             if let Some(mask) = mask {
                 target.set_validity(column, mask)?;
             }
@@ -521,15 +522,15 @@ fn stored_presentation<'a>(
         let Some(precision) = schema.precision else {
             continue;
         };
-        let Some(values) = block.get(column).and_then(Column::as_float) else {
+        let Some(values) = block.get(column).and_then(Column::get::<f64>) else {
             continue;
         };
-        let rounded = Column::from_float(quantized(values, precision)?);
+        let rounded = Column::from(quantized(values, precision)?);
         let target = stored.get_or_insert_with(|| block.clone());
-        // `insert_column` drops the mask with the old column; the rows did not
+        // `Block::insert` drops the mask with the old column; the rows did not
         // move, so it goes back on.
         let mask = target.validity(column).map(<[bool]>::to_vec);
-        target.insert_column(column.as_str(), rounded)?;
+        target.insert(column.as_str(), rounded, None)?;
         if let Some(mask) = mask {
             target.set_validity(column, mask)?;
         }
@@ -600,22 +601,27 @@ fn check_resolved_frame<'a>(
 /// Whether two cells are the same cell, bit for bit.
 fn same_simbox(left: &SimBox, right: &SimBox) -> bool {
     left.is_cell_defined() == right.is_cell_defined()
-        && left.pbc_view() == right.pbc_view()
+        && left.pbc() == right.pbc()
         && left
-            .h_view()
+            .matrix()
+            .as_flattened()
             .iter()
             .map(|value| value.to_bits())
-            .eq(right.h_view().iter().map(|value| value.to_bits()))
+            .eq(right
+                .matrix()
+                .as_flattened()
+                .iter()
+                .map(|value| value.to_bits()))
         && left
-            .origin_view()
+            .origin()
             .iter()
             .map(|value| value.to_bits())
-            .eq(right.origin_view().iter().map(|value| value.to_bits()))
+            .eq(right.origin().iter().map(|value| value.to_bits()))
 }
 
 /// Origin is optional on disk: all zeros is the default and is not written.
 fn origin_is_default(cell: &SimBox) -> bool {
-    cell.origin_view().iter().all(|value| *value == 0.0)
+    cell.origin().iter().all(|value| *value == 0.0)
 }
 
 /// Boundary is optional on disk: all-periodic is the default and is not written.
@@ -633,8 +639,8 @@ fn column_rows(column: &Column, start: usize, end: usize) -> Column {
         return column.clone();
     }
     macro_rules! slice {
-        ($holder:expr, $ctor:ident) => {
-            Column::$ctor(
+        ($holder:expr) => {
+            Column::from(
                 $holder
                     .slice_axis(Axis(0), Slice::from(start..end))
                     .to_owned(),
@@ -642,19 +648,19 @@ fn column_rows(column: &Column, start: usize, end: usize) -> Column {
         };
     }
     match column {
-        Column::Float(h) => slice!(h, from_float),
-        Column::I8(h) => slice!(h, from_i8),
-        Column::I16(h) => slice!(h, from_i16),
-        Column::Int(h) => slice!(h, from_int),
-        Column::I64(h) => slice!(h, from_i64),
-        Column::U8(h) => slice!(h, from_u8),
-        Column::U16(h) => slice!(h, from_u16),
-        Column::U32(h) => slice!(h, from_u32),
-        Column::Uint(h) => slice!(h, from_uint),
-        Column::Bool(h) => slice!(h, from_bool),
-        Column::String(h) => slice!(h, from_string),
-        Column::C64(h) => slice!(h, from_c64),
-        Column::C128(h) => slice!(h, from_c128),
+        Column::Float(h) => slice!(h),
+        Column::I8(h) => slice!(h),
+        Column::I16(h) => slice!(h),
+        Column::Int(h) => slice!(h),
+        Column::I64(h) => slice!(h),
+        Column::U8(h) => slice!(h),
+        Column::U16(h) => slice!(h),
+        Column::U32(h) => slice!(h),
+        Column::Uint(h) => slice!(h),
+        Column::Bool(h) => slice!(h),
+        Column::String(h) => slice!(h),
+        Column::C64(h) => slice!(h),
+        Column::C128(h) => slice!(h),
     }
 }
 
@@ -665,24 +671,24 @@ fn empty_column(dtype: DType, trailing: &[u64]) -> Result<Column, MolRsError> {
     shape.push(0usize);
     shape.extend(trailing.iter().map(|&n| n as usize));
     macro_rules! empty {
-        ($ctor:ident, $ty:ty) => {
-            Column::$ctor(ArrayD::<$ty>::from_shape_vec(shape, Vec::new()).map_err(zerr)?)
+        ($ty:ty) => {
+            Column::from(ArrayD::<$ty>::from_shape_vec(shape, Vec::new()).map_err(zerr)?)
         };
     }
     Ok(match dtype {
-        DType::Float => empty!(from_float, f64),
-        DType::I8 => empty!(from_i8, i8),
-        DType::I16 => empty!(from_i16, i16),
-        DType::Int => empty!(from_int, i32),
-        DType::I64 => empty!(from_i64, i64),
-        DType::U8 => empty!(from_u8, u8),
-        DType::U16 => empty!(from_u16, u16),
-        DType::U32 => empty!(from_u32, u32),
-        DType::Uint => empty!(from_uint, u64),
-        DType::Bool => empty!(from_bool, bool),
-        DType::String => empty!(from_string, String),
-        DType::C64 => empty!(from_c64, num_complex::Complex<f32>),
-        DType::C128 => empty!(from_c128, num_complex::Complex<f64>),
+        DType::Float => empty!(f64),
+        DType::I8 => empty!(i8),
+        DType::I16 => empty!(i16),
+        DType::Int => empty!(i32),
+        DType::I64 => empty!(i64),
+        DType::U8 => empty!(u8),
+        DType::U16 => empty!(u16),
+        DType::U32 => empty!(u32),
+        DType::Uint => empty!(u64),
+        DType::Bool => empty!(bool),
+        DType::String => empty!(String),
+        DType::C64 => empty!(num_complex::Complex<f32>),
+        DType::C128 => empty!(num_complex::Complex<f64>),
     })
 }
 
@@ -764,7 +770,8 @@ where
 /// The blocks, columns, dtypes and trailing shapes a sequence is pinned to.
 ///
 /// Two ways to mint one: **derive** it from representative frames
-/// ([`from_frame`](Self::from_frame) / [`from_frames`](Self::from_frames)),
+/// ([`from_frames`](Self::from_frames); one frame is a one-element slice,
+/// `std::slice::from_ref(&frame)`),
 /// or **declare** it column by column ([`new`](Self::new) then
 /// [`declare_block`](Self::declare_block) / [`declare_column`](Self::declare_column)
 /// / [`declare_meta`](Self::declare_meta)). A producer that knows its columns
@@ -798,6 +805,7 @@ impl PartialEq for SequenceSchema {
 }
 
 fn check_block_name(name: &str) -> Result<(), MolRsError> {
+    NodePath::new(&join_path(TRAJECTORY_GROUP, name)).map_err(zerr)?;
     if RESERVED_BLOCK_NAMES.contains(&name) {
         return Err(MolRsError::zarr(format!(
             "{name:?} is a reserved child of the trajectory group; a block cannot take it"
@@ -807,6 +815,7 @@ fn check_block_name(name: &str) -> Result<(), MolRsError> {
 }
 
 fn check_column_name(column: &str) -> Result<(), MolRsError> {
+    NodePath::new(&join_path("/", column)).map_err(zerr)?;
     if RESERVED_COLUMN_NAMES.contains(&column) {
         return Err(MolRsError::zarr(format!(
             "{column:?} is a reserved child of a block section; a column cannot take it"
@@ -816,20 +825,176 @@ fn check_column_name(column: &str) -> Result<(), MolRsError> {
 }
 
 impl SequenceSchema {
+    /// Preflight an in-memory trajectory without changing its destination.
+    pub(super) fn validate_frames(&self, frames: &[Frame]) -> Result<(), MolRsError> {
+        let mut resolved = BTreeMap::new();
+        for (ordinal, frame) in frames.iter().enumerate() {
+            self.validate_frame(frame)?;
+            self.resolve_meta(frame)?;
+            for (name, block) in frame.iter() {
+                let declared = &self.blocks[name];
+                resolved.insert(
+                    name.to_owned(),
+                    stored_presentation(declared, block)?.into_owned(),
+                );
+            }
+            check_resolved_frame(self, |name| resolved.get(name), ordinal as u64)?;
+        }
+        Ok(())
+    }
+
+    /// Check `frame` against the pinned schema.
+    ///
+    /// The schema pins a dtype, a trailing shape and a nullability per column.
+    /// A column declared nullable carries its [validity
+    /// mask](crate::core::Block::validity) into the store — a `bool`
+    /// array under the section's reserved `_validity` subgroup, grown row for
+    /// row with the values — so a masked column round-trips masked, and a
+    /// frame that leaves it whole round-trips whole.
+    ///
+    /// A mask on a column the pin declares **non-nullable** is refused here
+    /// rather than dropped: the pin is a contract, and a writer that silently
+    /// forgot which rows hold nothing is the data loss this check exists for.
+    fn validate_frame(&self, frame: &Frame) -> Result<(), MolRsError> {
+        if let Some(simbox) = &frame.simbox {
+            check_storable_cell(simbox)?;
+        }
+        for (name, block) in frame.iter() {
+            let Some(declared) = self.blocks.get(name) else {
+                return Err(MolRsError::zarr(format!(
+                    "block {name:?} is not declared by this sequence: a schema is pinned at \
+                     create and cannot grow mid-run"
+                )));
+            };
+            for (column, values) in block.iter() {
+                let Some(pinned) = declared.columns.get(column) else {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is not declared by this sequence: a \
+                         schema is pinned at create and cannot grow mid-run"
+                    )));
+                };
+                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
+                if pinned.dtype != dtype {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is declared {} but this frame carries \
+                         {dtype}",
+                        pinned.dtype
+                    )));
+                }
+                if let Some(presented) = block.precision(column)
+                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} declares precision {presented} but \
+                         this sequence pins {}: a trajectory states a column's precision once, in \
+                         its schema",
+                        pinned
+                            .precision
+                            .map_or_else(|| "none".to_string(), |p| p.to_string())
+                    )));
+                }
+                if let Some(presented) = block.target(column)
+                    && declared.targets.get(column).map(String::as_str) != Some(presented)
+                {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} references {presented:?} but this \
+                         sequence pins {}: a trajectory states a block's targets once, in its \
+                         schema",
+                        declared
+                            .targets
+                            .get(column)
+                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
+                    )));
+                }
+                if block.validity(column).is_some() && !pinned.nullable {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} carries a validity mask but is \
+                         declared non-nullable by this sequence: a schema is pinned at create, \
+                         and landing the values without the mask would lose which rows hold \
+                         nothing"
+                    )));
+                }
+                let trailing: Vec<u64> = values.shape().iter().skip(1).map(|&n| n as u64).collect();
+                if pinned.trailing != trailing {
+                    return Err(MolRsError::zarr(format!(
+                        "column {column:?} of block {name:?} is declared with trailing shape {:?} \
+                         but this frame carries {trailing:?}",
+                        pinned.trailing
+                    )));
+                }
+            }
+            for column in declared.columns.keys() {
+                if !block.contains_key(column) {
+                    return Err(MolRsError::zarr(format!(
+                        "block {name:?} is present at this step but omits its declared column \
+                         {column:?}: sparsity is per block, not per column"
+                    )));
+                }
+            }
+            if let Some(shape) = &declared.structural_shape {
+                let expected = shape.iter().product::<usize>();
+                if block.n_rows() != Some(expected) {
+                    return Err(MolRsError::zarr(format!(
+                        "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
+                         this frame carries {} rows: a shaped block keeps its row count",
+                        block.n_rows().unwrap_or(0)
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve every declared meta key to the value this step stores.
+    fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
+        for key in frame.meta.keys() {
+            if key == STEP_ARRAY || key == TIME_ARRAY {
+                continue;
+            }
+            if !self.meta.contains_key(key) {
+                return Err(MolRsError::zarr(format!(
+                    "meta key {key:?} is not declared by this sequence: a schema is pinned at \
+                     create and cannot grow mid-run"
+                )));
+            }
+        }
+        let mut resolved = MetaMap::new();
+        for (key, declared) in &self.meta {
+            let value = match frame.meta.get(key) {
+                Some(value) if value.dtype() == declared.dtype => value.clone(),
+                // A value that arrived at another width — a Python float for a
+                // declared `f32`, a JSON list for a declared `f64x3` — is
+                // re-read at the declared width, exactly; a value that cannot
+                // be is the error.
+                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
+                    .map_err(|e| {
+                        MolRsError::zarr(format!(
+                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
+                            declared.dtype,
+                            value.dtype()
+                        ))
+                    })?,
+                None => {
+                    let fill = declared.fill.as_ref().ok_or_else(|| {
+                        MolRsError::zarr(format!(
+                            "this frame omits the declared meta key {key:?} and no fill value was \
+                             declared for it; there is no implicit fill"
+                        ))
+                    })?;
+                    // The pin stores the typed JSON form; the declared tag
+                    // says how to read it back.
+                    MetaValue::from_typed_json(&declared.dtype, fill)
+                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
+                }
+            };
+            resolved.insert(key.clone(), value);
+        }
+        Ok(resolved)
+    }
+
     /// An empty declaration, to be filled with `declare_*`.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Mint from one frame's own columns.
-    ///
-    /// # Errors
-    ///
-    /// The single-frame case of [`from_frames`](Self::from_frames), and it
-    /// yields the same [`MolRsError::Zarr`] for the same reasons: a block or
-    /// column that takes one of the layout's reserved names.
-    pub fn from_frame(frame: &Frame) -> Result<Self, MolRsError> {
-        Self::from_frames(std::slice::from_ref(frame))
     }
 
     /// Mint from the **union** of `frames`.
@@ -908,7 +1073,7 @@ impl SequenceSchema {
                 if key == STEP_ARRAY || key == TIME_ARRAY {
                     continue;
                 }
-                schema.declare_meta(key, value.dtype())?;
+                schema.declare_meta(key, value.dtype(), None)?;
             }
         }
 
@@ -1205,8 +1370,15 @@ impl SequenceSchema {
                  and {shape:?}"
             ))),
             _ => {
+                let rows = shape
+                    .iter()
+                    .try_fold(1_usize, |n, &axis| n.checked_mul(axis))
+                    .ok_or_else(|| {
+                        MolRsError::zarr(format!(
+                            "block {block:?}: structural shape product overflows"
+                        ))
+                    })? as u64;
                 entry.structural_shape = Some(shape.to_vec());
-                let rows = shape.iter().product::<usize>() as u64;
                 self.rows_hint.insert(block.to_string(), rows);
                 Ok(())
             }
@@ -1325,33 +1497,52 @@ impl SequenceSchema {
         Ok(())
     }
 
-    /// Declare a per-step metadata key by its dtype tag.
+    /// Declare a per-step metadata key by its dtype tag, and optionally the
+    /// value written for the steps that omit it.
     ///
     /// The tag is one of the scalar forms `bool`, `i32`, `i64`, `u32`, `u64`,
     /// `f64`, `string`, `json`, the three-component forms `bool3`,
     /// `i32x3`, `i64x3`, `u32x3`, `u64x3`, `f64x3`, or the six- and
-    /// nine-component float forms `f64x6`, `f64x9`. A
-    /// frame that omits a key declared this way is an error at append; declare
-    /// a fill with [`declare_meta_with_fill`](Self::declare_meta_with_fill)
-    /// to make omission legal.
+    /// nine-component float forms `f64x6`, `f64x9`. Without a `fill`, a frame
+    /// that omits the key is an error at append; with one, the omitted steps
+    /// store `fill`. There is deliberately no implicit NaN: a NaN nobody asked
+    /// for is a measurement nobody made. The fill is recorded in the pinned
+    /// schema, so a reopened writer keeps honouring it.
     ///
     /// # Errors
     ///
-    /// A [`MolRsError::Zarr`] naming `key` when the tag is unknown, or when the
-    /// key is already declared with a different dtype.
-    pub fn declare_meta(&mut self, key: &str, dtype: &str) -> Result<(), MolRsError> {
+    /// A [`MolRsError::Zarr`] naming `key` when the tag is unknown, when
+    /// `fill`'s dtype is not `dtype`, or when the key is already declared with
+    /// a different dtype.
+    pub fn declare_meta(
+        &mut self,
+        key: &str,
+        dtype: &str,
+        fill: Option<MetaValue>,
+    ) -> Result<(), MolRsError> {
+        NodePath::new(&join_path(&join_path(TRAJECTORY_GROUP, META_GROUP), key)).map_err(zerr)?;
         if meta_layout(dtype).is_none() {
             return Err(MolRsError::zarr(format!(
                 "meta key {key:?} cannot be stored per step: unknown dtype {dtype}"
             )));
         }
+        if let Some(fill) = &fill
+            && fill.dtype() != dtype
+        {
+            return Err(MolRsError::zarr(format!(
+                "meta key {key:?} is declared {dtype} but its fill is a {}",
+                fill.dtype()
+            )));
+        }
         match self.meta.get(key) {
-            Some(existing) if existing.dtype != dtype => Err(MolRsError::zarr(format!(
-                "sequence schema conflict: meta key {key:?} is {} in one declaration and {dtype} \
-                 in another",
-                existing.dtype
-            ))),
-            Some(_) => Ok(()),
+            Some(existing) if existing.dtype != dtype => {
+                return Err(MolRsError::zarr(format!(
+                    "sequence schema conflict: meta key {key:?} is {} in one declaration and \
+                     {dtype} in another",
+                    existing.dtype
+                )));
+            }
+            Some(_) => {}
             None => {
                 self.meta.insert(
                     key.to_string(),
@@ -1360,29 +1551,14 @@ impl SequenceSchema {
                         fill: None,
                     },
                 );
-                Ok(())
             }
         }
-    }
-
-    /// Declare `key` with the value written for the steps that omit it.
-    ///
-    /// The declared dtype is the fill's own. There is deliberately no implicit
-    /// NaN: a NaN nobody asked for is a measurement nobody made. The fill is
-    /// recorded in the pinned schema, so a reopened writer keeps honouring it.
-    ///
-    /// # Errors
-    ///
-    /// A [`MolRsError::Zarr`] naming `key` when `fill`'s dtype is one no
-    /// per-step array can store, or when `key` is already declared with a
-    /// different dtype.
-    pub fn declare_meta_with_fill(&mut self, key: &str, fill: MetaValue) -> Result<(), MolRsError> {
-        let tag = fill.dtype();
-        self.declare_meta(key, tag)?;
-        self.meta
-            .get_mut(key)
-            .expect("declare_meta just inserted it")
-            .fill = Some(fill.to_typed_json());
+        if let Some(fill) = fill {
+            self.meta
+                .get_mut(key)
+                .expect("the key was just declared")
+                .fill = Some(fill.to_typed_json());
+        }
         Ok(())
     }
 
@@ -1403,8 +1579,7 @@ impl SequenceSchema {
     ///
     /// Keys are yielded in declaration order, the order
     /// [`declare_meta`](Self::declare_meta) first inserted each key.
-    /// [`from_frame`](Self::from_frame) / [`from_frames`](Self::from_frames)
-    /// declare in `frame.meta`'s iteration order, and reading a pinned
+    /// [`from_frames`](Self::from_frames) declares in `frame.meta`'s iteration order, and reading a pinned
     /// sequence inserts into the returned frame in this same order.
     pub fn meta_keys(&self) -> impl Iterator<Item = (&str, &str)> {
         self.meta
@@ -1573,7 +1748,7 @@ where
                      cannot be read back"
                 ))
             })?;
-        schema.declare_meta(&key, tag)?;
+        schema.declare_meta(&key, tag, None)?;
     }
 
     Ok(schema)
@@ -2545,9 +2720,9 @@ impl BoxArrays {
         let mut need_origin = self.origin.is_some();
         let mut need_boundary = self.boundary.is_some();
         for (_, cell) in cells {
-            vectors.extend(cell.h_view().iter().copied());
-            origins.extend(cell.origin_view().iter().copied());
-            boundaries.extend(cell.pbc_view().iter().copied());
+            vectors.extend(cell.matrix().as_flattened().iter().copied());
+            origins.extend(cell.origin().iter().copied());
+            boundaries.extend(cell.pbc().iter().copied());
             need_origin |= !origin_is_default(cell);
             need_boundary |= !boundary_is_default(cell);
         }
@@ -2597,13 +2772,13 @@ fn box_attributes(
         attributes.insert(CELL_DEFINED_ATTRIBUTE.to_string(), false.into());
     }
     if let Some(cell) = fixed {
-        let h = cell.h_view();
+        let h = ndarray::arr2(&cell.matrix());
         let rows: Vec<serde_json::Value> = (0..3)
             .map(|i| serde_json::json!([h[[i, 0]], h[[i, 1]], h[[i, 2]]]))
             .collect();
         attributes.insert(VECTORS_ARRAY.to_string(), serde_json::Value::Array(rows));
         if !origin_is_default(cell) {
-            let o = cell.origin_view();
+            let o = cell.origin();
             attributes.insert(
                 ORIGIN_ARRAY.to_string(),
                 serde_json::json!([o[0], o[1], o[2]]),
@@ -2628,7 +2803,7 @@ fn cell_from_attributes(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(true);
     // An undefined cell's `vectors` mean nothing: whatever is there is
-    // accepted and never parsed or inverted; `SimBox::new_cell` carries the
+    // accepted and never parsed or inverted; `Cell::Undefined` carries the
     // identity in its place.
     let flat: Vec<F> = if !cell_defined {
         vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
@@ -2677,11 +2852,16 @@ fn cell_from_attributes(
         cell_defined,
         "trajectory box attributes",
     )?;
-    SimBox::new_cell(
-        Array2::from_shape_vec((3, 3), flat).map_err(zerr)?,
-        Array1::from(origin),
+    SimBox::new(
+        if cell_defined {
+            Cell::Matrix(std::array::from_fn(|r| {
+                std::array::from_fn(|c| flat[3 * r + c])
+            }))
+        } else {
+            Cell::Undefined
+        },
+        [origin[0], origin[1], origin[2]],
         pbc,
-        cell_defined,
     )
     .map(Some)
     .map_err(|e| MolRsError::zarr(format!("box attributes are not a valid cell: {e:?}")))
@@ -4006,8 +4186,8 @@ impl MrecWriter {
             Some(_) => {}
         }
 
-        self.validate(frame)?;
-        let meta = self.resolve_meta(frame)?;
+        self.schema.validate_frame(frame)?;
+        let meta = self.schema.resolve_meta(frame)?;
         self.ensure_arrays()?;
 
         // What would be stored, not what was presented: a precision column
@@ -4069,108 +4249,6 @@ impl MrecWriter {
         Ok(())
     }
 
-    /// Check `frame` against the pinned schema.
-    ///
-    /// The schema pins a dtype, a trailing shape and a nullability per column.
-    /// A column declared nullable carries its [validity
-    /// mask](crate::core::Block::validity) into the store — a `bool`
-    /// array under the section's reserved `_validity` subgroup, grown row for
-    /// row with the values — so a masked column round-trips masked, and a
-    /// frame that leaves it whole round-trips whole.
-    ///
-    /// A mask on a column the pin declares **non-nullable** is refused here
-    /// rather than dropped: the pin is a contract, and a writer that silently
-    /// forgot which rows hold nothing is the data loss this check exists for.
-    fn validate(&self, frame: &Frame) -> Result<(), MolRsError> {
-        if let Some(simbox) = &frame.simbox {
-            check_storable_cell(simbox)?;
-        }
-        for (name, block) in frame.iter() {
-            let Some(declared) = self.schema.blocks.get(name) else {
-                return Err(MolRsError::zarr(format!(
-                    "block {name:?} is not declared by this sequence: a schema is pinned at \
-                     create and cannot grow mid-run"
-                )));
-            };
-            for (column, values) in block.iter() {
-                let Some(pinned) = declared.columns.get(column) else {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is not declared by this sequence: a \
-                         schema is pinned at create and cannot grow mid-run"
-                    )));
-                };
-                let dtype = dtype_tag(stored_dtype(column, values.dtype()));
-                if pinned.dtype != dtype {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is declared {} but this frame carries \
-                         {dtype}",
-                        pinned.dtype
-                    )));
-                }
-                if let Some(presented) = block.precision(column)
-                    && pinned.precision.map(f64::to_bits) != Some(presented.to_bits())
-                {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} declares precision {presented} but \
-                         this sequence pins {}: a trajectory states a column's precision once, in \
-                         its schema",
-                        pinned
-                            .precision
-                            .map_or_else(|| "none".to_string(), |p| p.to_string())
-                    )));
-                }
-                if let Some(presented) = block.target(column)
-                    && declared.targets.get(column).map(String::as_str) != Some(presented)
-                {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} references {presented:?} but this \
-                         sequence pins {}: a trajectory states a block's targets once, in its \
-                         schema",
-                        declared
-                            .targets
-                            .get(column)
-                            .map_or_else(|| "none".to_string(), |t| format!("{t:?}"))
-                    )));
-                }
-                if block.validity(column).is_some() && !pinned.nullable {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} carries a validity mask but is \
-                         declared non-nullable by this sequence: a schema is pinned at create, \
-                         and landing the values without the mask would lose which rows hold \
-                         nothing"
-                    )));
-                }
-                let trailing: Vec<u64> = values.shape().iter().skip(1).map(|&n| n as u64).collect();
-                if pinned.trailing != trailing {
-                    return Err(MolRsError::zarr(format!(
-                        "column {column:?} of block {name:?} is declared with trailing shape {:?} \
-                         but this frame carries {trailing:?}",
-                        pinned.trailing
-                    )));
-                }
-            }
-            for column in declared.columns.keys() {
-                if !block.contains_key(column) {
-                    return Err(MolRsError::zarr(format!(
-                        "block {name:?} is present at this step but omits its declared column \
-                         {column:?}: sparsity is per block, not per column"
-                    )));
-                }
-            }
-            if let Some(shape) = &declared.structural_shape {
-                let expected = shape.iter().product::<usize>();
-                if block.n_rows() != Some(expected) {
-                    return Err(MolRsError::zarr(format!(
-                        "block {name:?} declares structural shape {shape:?} ({expected} rows) but \
-                         this frame carries {} rows: a shaped block keeps its row count",
-                        block.n_rows().unwrap_or(0)
-                    )));
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Check the frame at `ordinal` as a reader resolves it — each declared
     /// block presented now, else carried forward from its latest update —
     /// against the rules that span blocks.
@@ -4184,53 +4262,6 @@ impl MrecWriter {
             |name| presented.get(name).or_else(|| self.landed_blocks.get(name)),
             ordinal,
         )
-    }
-
-    /// Resolve every declared meta key to the value this step stores.
-    fn resolve_meta(&self, frame: &Frame) -> Result<MetaMap, MolRsError> {
-        for key in frame.meta.keys() {
-            if key == STEP_ARRAY || key == TIME_ARRAY {
-                continue;
-            }
-            if !self.schema.meta.contains_key(key) {
-                return Err(MolRsError::zarr(format!(
-                    "meta key {key:?} is not declared by this sequence: a schema is pinned at \
-                     create and cannot grow mid-run"
-                )));
-            }
-        }
-        let mut resolved = MetaMap::new();
-        for (key, declared) in &self.schema.meta {
-            let value = match frame.meta.get(key) {
-                Some(value) if value.dtype() == declared.dtype => value.clone(),
-                // A value that arrived at another width — a Python float for a
-                // declared `f32`, a JSON list for a declared `f64x3` — is
-                // re-read at the declared width, exactly; a value that cannot
-                // be is the error.
-                Some(value) => MetaValue::from_typed_json(&declared.dtype, &value.to_typed_json())
-                    .map_err(|e| {
-                        MolRsError::zarr(format!(
-                            "meta key {key:?} is declared {} but this frame carries {}: {e}",
-                            declared.dtype,
-                            value.dtype()
-                        ))
-                    })?,
-                None => {
-                    let fill = declared.fill.as_ref().ok_or_else(|| {
-                        MolRsError::zarr(format!(
-                            "this frame omits the declared meta key {key:?} and no fill value was \
-                             declared for it; there is no implicit fill"
-                        ))
-                    })?;
-                    // The pin stores the typed JSON form; the declared tag
-                    // says how to read it back.
-                    MetaValue::from_typed_json(&declared.dtype, fill)
-                        .map_err(|e| MolRsError::zarr(format!("meta key {key:?} fill: {e}")))?
-                }
-            };
-            resolved.insert(key.clone(), value);
-        }
-        Ok(resolved)
     }
 
     /// Create every array on the first append, freezing the extents and the
@@ -4668,7 +4699,7 @@ impl BoxReader {
             .as_ref()
             .ok_or_else(|| MolRsError::zarr("box section has neither a fixed cell nor arrays"))?;
         // An undefined cell's `vectors` row is never read: its numbers mean
-        // nothing, and `SimBox::new_cell` carries the identity instead.
+        // nothing, and `Cell::Undefined` carries the identity instead.
         let cell: Vec<F> = if cell_defined {
             vectors.retrieve_array_subset(&rows_subset(index, 1, &[3, 3])?)?
         } else {
@@ -4696,11 +4727,16 @@ impl BoxReader {
             cell_defined,
             &format!("box update {index}"),
         )?;
-        let simbox = SimBox::new_cell(
-            Array2::from_shape_vec((3, 3), cell).map_err(zerr)?,
-            Array1::from(origin),
+        let simbox = SimBox::new(
+            if cell_defined {
+                Cell::Matrix(std::array::from_fn(|r| {
+                    std::array::from_fn(|c| cell[3 * r + c])
+                }))
+            } else {
+                Cell::Undefined
+            },
+            [origin[0], origin[1], origin[2]],
             pbc,
-            cell_defined,
         )
         .map_err(|e| MolRsError::zarr(format!("box update {index} is not a valid cell: {e:?}")))?;
         if self.cells.len() >= 64 {
@@ -4797,13 +4833,15 @@ struct ReadState {
 /// decoded cells) behind a lock, so a sequence can be shared and read from
 /// several places.
 ///
-/// **Error vocabulary.** Every inherent door on this type yields
+/// **Error vocabulary.** Opening a record from a [`Source`](crate::io::Source)
+/// ([`open`](Self::open)) is a frame-IO door and fails with
+/// [`std::io::Error`] like every other. Every read of an opened store yields
 /// [`MolRsError`], as the [`MolRsError::Zarr`] variant naming the section or
 /// array path at fault. The three [`TrajectoryReader`] methods keep
-/// `std::io::Result` and flatten a `MolRsError` into an `io::Error` at that
-/// boundary — lossy, and deliberately so: the trait is the shape every
-/// trajectory backend shares and must not be captured by one backend's error
-/// type.
+/// `std::io::Result`: a `MolRsError` becomes an
+/// [`InvalidData`](std::io::ErrorKind::InvalidData) error carrying it — the
+/// trait is the shape every trajectory backend shares and must not be captured
+/// by one backend's error type.
 ///
 /// # One object, three access forms
 ///
@@ -4826,11 +4864,12 @@ struct ReadState {
 ///
 /// # Error vocabulary
 ///
-/// Every [`MrecReader`] and [`MrecWriter`] door yields
-/// [`MolRsError`]. The three [`TrajectoryReader`] methods keep `io::Result` and
-/// convert `MolRsError` in at the boundary — **lossy, and deliberately so**:
-/// the trait is the shape every backend shares and must not be captured by one
-/// backend's error type.
+/// Every [`MrecReader`] and [`MrecWriter`] door on a store yields
+/// [`MolRsError`]; [`MrecReader::open`] of a source is a frame-IO door and
+/// yields [`std::io::Error`]. The three [`TrajectoryReader`] methods keep
+/// `io::Result` and convert `MolRsError` in at the boundary (an
+/// `InvalidData` error carrying it): the trait is the shape every backend
+/// shares and must not be captured by one backend's error type.
 ///
 /// # The layout
 ///
@@ -4919,7 +4958,7 @@ impl MrecReader {
     /// past `len(step)` (a crash's leftovers) are ignored.
     ///
     /// Any readable, listable store opens: a directory store, an in-memory one,
-    /// or the read-only zip adapter `open_mrec_zip` hands back. A conforming
+    /// or the read-only adapter a packed `.mrec.zip` is read through. A conforming
     /// store needs no writer pin — the schema is derived from the store itself
     /// when the attribute is absent. A store created and closed without a
     /// single append opens as a legal, empty sequence.
@@ -5290,7 +5329,7 @@ impl MrecReader {
                 start + rows
             ))
         })?;
-        let flags = flags.as_bool().ok_or_else(|| {
+        let flags = flags.get::<bool>().ok_or_else(|| {
             MolRsError::zarr(format!(
                 "validity mask of column {column:?} of block {block:?} is stored as {}, and a \
                  mask is one bool per row",
@@ -5491,7 +5530,8 @@ impl TrajectoryReader for MrecReader {
     /// [`MrecReader::frame`] behind the backend-neutral trait: the same
     /// frame, and the same `Ok(None)` past the commit marker.
     fn read_frame(&mut self, index: usize) -> std::io::Result<Option<Frame>> {
-        self.frame(index as u64).map_err(std::io::Error::other)
+        self.frame(index as u64)
+            .map_err(crate::io::mrec::zarr_storage::record_io::io_error)
     }
 
     /// Committed frames — the length of `trajectory/step` as
@@ -5527,6 +5567,7 @@ impl TrajectoryReader for MrecReader {
 /// other observation point ([`extents`]).
 #[cfg(all(test, feature = "filesystem"))]
 mod tests {
+    use crate::core::Cell;
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -5535,7 +5576,7 @@ mod tests {
     use molrs::core::MetaValue;
     use molrs::core::SimBox;
     use molrs::core::{Block, Column, DType};
-    use ndarray::{ArrayD, array};
+    use ndarray::ArrayD;
     use tempfile::TempDir;
     use zarrs::array::{Array, ArrayBuilder, ArraySubset, data_type};
     use zarrs::filesystem::FilesystemStore;
@@ -5577,7 +5618,7 @@ mod tests {
     /// A column name outside the canonical schema vocabulary
     /// (`core/schema/mod.rs`), so the same name can carry two dtypes.
     ///
-    /// [`X`] cannot: `x` is pinned `Float` there, and `Block::insert_column`
+    /// [`X`] cannot: `x` is pinned `Float` there, and `Block::insert`
     /// rejects a `u64` under that name before any sequence code runs — the
     /// dtype-conflict fixtures would then be testing `Block`, not the schema.
     /// Same reason `frame_io`'s round-trip tests probe on a name of their own.
@@ -5588,16 +5629,16 @@ mod tests {
     }
 
     fn float_column(values: &[f64]) -> Column {
-        Column::from_float(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn uint_column(values: &[u64]) -> Column {
-        Column::from_uint(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
+        Column::from(ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap())
     }
 
     fn block_with(column: &str, col: Column) -> Block {
         let mut block = Block::new();
-        block.insert_column(column, col).unwrap();
+        block.insert(column, col, None).unwrap();
         block
     }
 
@@ -5615,7 +5656,7 @@ mod tests {
             .expect("the frame carries an atoms block")
             .get(X)
             .expect("the atoms block carries column x")
-            .as_float()
+            .get::<f64>()
             .expect("column x arrived as f64")
             .iter()
             .copied()
@@ -5636,8 +5677,8 @@ mod tests {
     /// boundary, so those optional arrays are omitted.
     fn fixed_cell() -> SimBox {
         SimBox::new(
-            array![[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
-            array![0.0, 0.0, 0.0],
+            Cell::Matrix([[10.0, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]),
+            [0.0, 0.0, 0.0],
             [true, true, true],
         )
         .unwrap()
@@ -5869,7 +5910,7 @@ mod tests {
         let store = storage_in(&dir);
         let mut zeta = Block::new();
         for column in ["c", "a", "b"] {
-            zeta.insert_column(column, float_column(&[1.0])).unwrap();
+            zeta.insert(column, float_column(&[1.0]), None).unwrap();
         }
         let mut frame = Frame::new();
         frame.insert("zeta", zeta);
@@ -5944,10 +5985,7 @@ mod tests {
         let cell = frame_at(&mut seq, 19)
             .simbox
             .expect("later frames still carry the cell");
-        assert_eq!(
-            cell.origin_view().iter().copied().collect::<Vec<_>>(),
-            vec![0.0, 0.0, 0.0]
-        );
+        assert_eq!(cell.origin(), [0.0; 3]);
         assert_eq!(cell.pbc(), [true, true, true]);
     }
 
@@ -5957,15 +5995,8 @@ mod tests {
     /// to invert.
     #[test]
     fn an_undefined_cell_reads_whatever_vectors_it_carries() {
-        let undefined = |x: f64| {
-            SimBox::new_cell(
-                ndarray::Array2::eye(3),
-                array![x, 0.0, 0.0],
-                [false, false, false],
-                false,
-            )
-            .unwrap()
-        };
+        let undefined =
+            |x: f64| SimBox::new(Cell::Undefined, [x, 0.0, 0.0], [false, false, false]).unwrap();
 
         // Fixed cell: `vectors` is a group attribute.
         let dir = TempDir::new().unwrap();
@@ -5991,7 +6022,10 @@ mod tests {
             .unwrap();
         let back = open_sequence(&store).box_at(0).unwrap().unwrap();
         assert!(!back.is_cell_defined());
-        assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
+        assert_eq!(
+            back.matrix(),
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
 
         // Changing origin: the cell lives in arrays. Dropping the `vectors`
         // chunks makes every row the zero fill value.
@@ -6009,8 +6043,11 @@ mod tests {
         for (index, x) in [(0, 0.0), (1, 1.0)] {
             let back = seq.box_at(index).unwrap().unwrap();
             assert!(!back.is_cell_defined());
-            assert_eq!(back.h_view(), ndarray::Array2::<f64>::eye(3));
-            assert_eq!(back.origin_view()[0], x);
+            assert_eq!(
+                back.matrix(),
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            );
+            assert_eq!(back.origin()[0], x);
         }
     }
 
@@ -6129,16 +6166,14 @@ mod tests {
     /// periodic flag in the store is refused.
     #[test]
     fn an_undefined_trajectory_cell_is_periodic_on_no_axis() {
-        let undefined = |pbc| {
-            SimBox::new_cell(ndarray::Array2::eye(3), array![0.0, 0.0, 0.0], pbc, false).unwrap()
-        };
+        let undefined = |pbc| SimBox::new(Cell::Undefined, [0.0, 0.0, 0.0], pbc).unwrap();
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let mut frame = atoms_frame(&[1.0]);
         frame.simbox = Some(undefined([false, false, true]));
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
-            SequenceSchema::from_frame(&frame).unwrap(),
+            SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap(),
         )
         .unwrap();
         assert!(writer.append(&frame).is_err());
@@ -6204,8 +6239,8 @@ mod tests {
     fn a_nonzero_origin_is_written() {
         let cell = |lengths: f64| {
             SimBox::new(
-                array![[lengths, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]],
-                array![1.0, 2.0, 3.0],
+                Cell::Matrix([[lengths, 0.0, 0.0], [0.0, 11.0, 0.0], [0.0, 0.0, 12.0]]),
+                [1.0, 2.0, 3.0],
                 [true, true, true],
             )
             .unwrap()
@@ -6230,7 +6265,7 @@ mod tests {
         );
         let seq = open_sequence(&store);
         let back = seq.box_at(0).unwrap().unwrap();
-        assert_eq!(back.origin_view().to_vec(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(back.origin().to_vec(), vec![1.0, 2.0, 3.0]);
 
         // The first change migrates the cell into arrays.
         let dir = TempDir::new().unwrap();
@@ -6257,8 +6292,8 @@ mod tests {
             "the attribute form is withdrawn"
         );
         let seq = open_sequence(&store);
-        assert_eq!(seq.box_at(1).unwrap().unwrap().h_view()[[0, 0]], 10.5);
-        assert_eq!(seq.box_at(0).unwrap().unwrap().h_view()[[0, 0]], 10.0);
+        assert_eq!(seq.box_at(1).unwrap().unwrap().matrix()[0][0], 10.5);
+        assert_eq!(seq.box_at(0).unwrap().unwrap().matrix()[0][0], 10.0);
     }
 
     /// A `step` key on frame.meta does not mint `trajectory/meta/step`.
@@ -6406,7 +6441,7 @@ mod tests {
             ATOMS,
             block_with(
                 "xyz",
-                Column::from_float(ArrayD::from_shape_vec(vec![ATOM_COUNT, 3], values).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![ATOM_COUNT, 3], values).unwrap()),
             ),
         );
         write_all(&store, &[frame]);
@@ -6620,7 +6655,7 @@ mod tests {
                 ATOMS,
                 block_with(
                     "pos",
-                    Column::from_float(
+                    Column::from(
                         ArrayD::from_shape_vec(vec![2, trailing], vec![0.5; 2 * trailing]).unwrap(),
                     ),
                 ),
@@ -6650,7 +6685,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let declared = atoms_frame(&[1.0, 2.0]);
-        let schema = SequenceSchema::from_frame(&declared).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&declared)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
 
         let mut extra = atoms_frame(&[3.0, 4.0]);
@@ -6668,14 +6703,13 @@ mod tests {
     fn an_undeclared_column_errs_at_append_naming_it() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0, 2.0]))).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
 
         let mut wider = Block::new();
-        wider.insert_column(X, float_column(&[3.0, 4.0])).unwrap();
-        wider
-            .insert_column("fx", float_column(&[0.0, 0.0]))
-            .unwrap();
+        wider.insert(X, float_column(&[3.0, 4.0]), None).unwrap();
+        wider.insert("fx", float_column(&[0.0, 0.0]), None).unwrap();
         let mut frame = Frame::new();
         frame.insert(ATOMS, wider);
         let message = writer
@@ -6693,7 +6727,7 @@ mod tests {
         let store = storage_in(&dir);
         let mut declared = Frame::new();
         declared.insert(ATOMS, block_with(PROBE, float_column(&[1.0, 2.0])));
-        let schema = SequenceSchema::from_frame(&declared).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&declared)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
 
         let mut frame = Frame::new();
@@ -6716,10 +6750,10 @@ mod tests {
             ATOMS,
             block_with(
                 "pos",
-                Column::from_float(ArrayD::from_shape_vec(vec![2, 3], vec![0.5; 6]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2, 3], vec![0.5; 6]).unwrap()),
             ),
         );
-        let schema = SequenceSchema::from_frame(&declared).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&declared)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
 
         let mut widened = Frame::new();
@@ -6727,7 +6761,7 @@ mod tests {
             ATOMS,
             block_with(
                 "pos",
-                Column::from_float(ArrayD::from_shape_vec(vec![2, 9], vec![0.5; 18]).unwrap()),
+                Column::from(ArrayD::from_shape_vec(vec![2, 9], vec![0.5; 18]).unwrap()),
             ),
         );
         let message = writer
@@ -6765,7 +6799,7 @@ mod tests {
         for reserved in ["step", "time", "meta", "box"] {
             let mut frame = Frame::new();
             frame.insert(reserved, block_with(X, float_column(&[1.0])));
-            let message = SequenceSchema::from_frame(&frame)
+            let message = SequenceSchema::from_frames(std::slice::from_ref(&frame))
                 .expect_err("a reserved block name must be rejected at mint")
                 .to_string();
             assert!(
@@ -6782,7 +6816,7 @@ mod tests {
         for reserved in ["offset", "step_index"] {
             let mut frame = Frame::new();
             frame.insert(ATOMS, block_with(reserved, uint_column(&[0, 1])));
-            let message = SequenceSchema::from_frame(&frame)
+            let message = SequenceSchema::from_frames(std::slice::from_ref(&frame))
                 .expect_err("a reserved column name must be rejected at mint")
                 .to_string();
             assert!(
@@ -6892,7 +6926,7 @@ mod tests {
         let store = storage_in(&dir);
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
-        let schema = SequenceSchema::from_frame(&declaring).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&declaring)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         writer.append(&declaring).unwrap();
 
@@ -6915,9 +6949,9 @@ mod tests {
         let store = storage_in(&dir);
         let mut declaring = atoms_frame(&[1.0]);
         declaring.meta.insert(KEY, MetaValue::F64(300.0));
-        let mut schema = SequenceSchema::from_frame(&declaring).unwrap();
+        let mut schema = SequenceSchema::from_frames(std::slice::from_ref(&declaring)).unwrap();
         schema
-            .declare_meta_with_fill(KEY, MetaValue::F64(FILL))
+            .declare_meta(KEY, "f64", Some(MetaValue::F64(FILL)))
             .unwrap();
 
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
@@ -6945,12 +6979,13 @@ mod tests {
         const KEY: &str = "temperature";
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let mut schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
         schema
-            .declare_meta_with_fill(KEY, MetaValue::F64(f64::NAN))
+            .declare_meta(KEY, "f64", Some(MetaValue::F64(f64::NAN)))
             .unwrap();
         schema
-            .declare_meta_with_fill("count", MetaValue::U64(u64::MAX))
+            .declare_meta("count", "u64", Some(MetaValue::U64(u64::MAX)))
             .unwrap();
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         writer.append(&atoms_frame(&[1.0])).unwrap();
@@ -6987,9 +7022,9 @@ mod tests {
         let store = storage_in(&dir);
         let mut schema = SequenceSchema::new();
         schema.declare_column(ATOMS, X, DType::Float, &[]).unwrap();
-        schema.declare_meta("zeta", "f64").unwrap();
-        schema.declare_meta("alpha", "f64").unwrap();
-        schema.declare_meta("mu", "f64").unwrap();
+        schema.declare_meta("zeta", "f64", None).unwrap();
+        schema.declare_meta("alpha", "f64", None).unwrap();
+        schema.declare_meta("mu", "f64", None).unwrap();
 
         let mut frame = atoms_frame(&[1.0]);
         frame.meta.insert("mu", MetaValue::F64(3.0));
@@ -7304,7 +7339,8 @@ mod tests {
     fn a_knob_after_the_first_append_errs_naming_the_phase() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0, 2.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0, 2.0]))).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         writer.append(&atoms_frame(&[1.0, 2.0])).unwrap();
 
@@ -7327,7 +7363,8 @@ mod tests {
     fn a_created_but_never_appended_store_reopens_empty() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
         MrecWriter::create_in_storage(store.clone(), schema)
             .unwrap()
             .close()
@@ -7508,7 +7545,7 @@ mod tests {
         let store: ReadableWritableListableStorage = recorder.clone();
 
         let frame = atoms_frame(&[1.0, 2.0]);
-        let schema = SequenceSchema::from_frame(&frame).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         writer.append(&frame).unwrap();
         recorder.clear();
@@ -7661,7 +7698,7 @@ mod tests {
                     .collect::<Vec<f64>>(),
             )
         };
-        let schema = SequenceSchema::from_frame(&frame_of(0)).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&frame_of(0))).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema)
             .unwrap()
             .with_rows_per_chunk(ROWS)
@@ -7884,7 +7921,8 @@ mod tests {
     fn create_writes_the_root_and_an_empty_meta_group() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
         let writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         assert!(dir.path().join("zarr.json").is_file(), "root group");
         let meta = Group::open(store.clone(), "/meta").expect("meta group exists");
@@ -7897,7 +7935,8 @@ mod tests {
     fn with_meta_writes_the_identity_document() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
         let mut doc = serde_json::Map::new();
         doc.insert("creator".into(), serde_json::json!({"name": "test"}));
         let writer = MrecWriter::create_in_storage(store.clone(), schema)
@@ -7918,7 +7957,7 @@ mod tests {
         let store = storage_in(&dir);
         let values: Vec<f64> = (0..1000).map(|i| i as f64).collect();
         let frame = atoms_frame(&values);
-        let schema = SequenceSchema::from_frame(&frame).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema.clone()).unwrap();
         writer.append(&frame).unwrap();
         // 4 MiB / 8000 B = 524, rounded up to a multiple of 3 frames per
@@ -8075,7 +8114,7 @@ mod tests {
         frame
             .get_mut(ATOMS)
             .unwrap()
-            .insert_column("y", float_column(&[10.0, 20.0]))
+            .insert("y", float_column(&[10.0, 20.0]), None)
             .unwrap();
         frame.insert(BONDS, block_with(I, uint_column(&[0, 1])));
         write_all(&store, &[frame]);
@@ -8112,7 +8151,7 @@ mod tests {
         let seq = open_sequence(&store);
         assert!(seq.box_at(0).unwrap().is_none(), "no cell yet");
         let cell = seq.box_at(2).unwrap().expect("the cell carries forward");
-        assert_eq!(cell.h_view()[[1, 1]], 11.0);
+        assert_eq!(cell.matrix()[1][1], 11.0);
         assert!(seq.box_at(3).unwrap().is_none(), "past the commit marker");
     }
 
@@ -8123,12 +8162,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let mut grid = Block::new();
-        grid.insert_column("rho", float_column(&[1.0, 2.0, 3.0, 4.0]))
+        grid.insert("rho", float_column(&[1.0, 2.0, 3.0, 4.0]), None)
             .unwrap();
         grid.set_shape(&[2, 2]).unwrap();
         let mut frame = Frame::new();
         frame.insert("grid", grid);
-        let schema = SequenceSchema::from_frame(&frame).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         writer.append(&frame).unwrap();
         let mut wrong = Frame::new();
@@ -8144,9 +8183,10 @@ mod tests {
     fn a_meta_value_at_another_width_is_read_at_the_declared_one() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let mut schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
-        schema.declare_meta("com", "f64x3").unwrap();
-        schema.declare_meta("count", "i64").unwrap();
+        let mut schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
+        schema.declare_meta("com", "f64x3", None).unwrap();
+        schema.declare_meta("count", "i64", None).unwrap();
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         let mut frame = atoms_frame(&[1.0]);
         frame
@@ -8186,7 +8226,10 @@ mod tests {
     fn declaring_a_narrow_float_meta_tag_is_refused() {
         let mut schema = SequenceSchema::new();
         for tag in ["f16", "f32"] {
-            let err = schema.declare_meta("scale", tag).unwrap_err().to_string();
+            let err = schema
+                .declare_meta("scale", tag, None)
+                .unwrap_err()
+                .to_string();
             assert!(err.contains("unknown dtype"), "accepted `{tag}`: {err}");
         }
     }
@@ -8197,14 +8240,14 @@ mod tests {
         let mut frame = atoms_frame(&[1.0, 2.0]);
         frame.insert(BONDS, block_with(I, uint_column(&[0])));
         frame.meta.insert("energy", MetaValue::F64(1.5));
-        let derived = SequenceSchema::from_frame(&frame).unwrap();
+        let derived = SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap();
 
         let mut declared = SequenceSchema::new();
         declared
             .declare_column(ATOMS, X, DType::Float, &[])
             .unwrap();
         declared.declare_column(BONDS, I, DType::Uint, &[]).unwrap();
-        declared.declare_meta("energy", "f64").unwrap();
+        declared.declare_meta("energy", "f64", None).unwrap();
         assert_eq!(declared, derived);
 
         // A canonical key is pinned at its vocabulary dtype.
@@ -8227,7 +8270,7 @@ mod tests {
             .to_string();
         assert!(err.contains("reserved"), "{err}");
         let err = declared
-            .declare_meta("bad", "f128")
+            .declare_meta("bad", "f128", None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("f128"), "{err}");
@@ -8299,10 +8342,10 @@ mod tests {
     fn masked_frame(values: &[f64], validity: &[bool]) -> Frame {
         let mut block = Block::new();
         block
-            .insert_nullable(
+            .insert(
                 PROBE,
                 ArrayD::from_shape_vec(vec![values.len()], values.to_vec()).unwrap(),
-                validity.to_vec(),
+                Some(validity.to_vec()),
             )
             .unwrap();
         let mut frame = Frame::new();
@@ -8477,7 +8520,7 @@ mod tests {
                 .expect("the frame carries an atoms block")
                 .get(PROBE)
                 .expect("the atoms block carries the probe column")
-                .as_float()
+                .get::<f64>()
                 .expect("the probe column arrived as f64")
                 .iter()
                 .copied()
@@ -8657,7 +8700,9 @@ mod tests {
     fn a_frame_stating_another_precision_than_the_pin_is_refused() {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&precise_frame(&[1.0], 1e-3)).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&precise_frame(&[1.0], 1e-3)))
+                .unwrap();
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         // No precision stated: the pin rounds it.
         writer.append(&atoms_frame(&[1.000_1])).unwrap();
@@ -8670,7 +8715,8 @@ mod tests {
         // A pin without a precision refuses a frame that states one.
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
-        let schema = SequenceSchema::from_frame(&atoms_frame(&[1.0])).unwrap();
+        let schema =
+            SequenceSchema::from_frames(std::slice::from_ref(&atoms_frame(&[1.0]))).unwrap();
         let mut writer = MrecWriter::create_in_storage(store, schema).unwrap();
         assert!(writer.append(&precise_frame(&[1.0], 1e-3)).is_err());
     }
@@ -8707,7 +8753,7 @@ mod tests {
         let frame = precise_frame(&[1.0, 2.0], 1e-3);
         let mut writer = MrecWriter::create_in_storage(
             store.clone(),
-            SequenceSchema::from_frame(&frame).unwrap(),
+            SequenceSchema::from_frames(std::slice::from_ref(&frame)).unwrap(),
         )
         .unwrap()
         .with_compression(super::Compression::Gzip(5))
@@ -8759,7 +8805,7 @@ mod tests {
                     let mut block = Block::new();
                     for (axis, key) in ["x", "y", "z"].into_iter().enumerate() {
                         let values: Vec<f64> = positions.iter().map(|p| p[axis]).collect();
-                        block.insert_column(key, float_column(&values)).unwrap();
+                        block.insert(key, float_column(&values), None).unwrap();
                         if let Some(p) = precision {
                             block.set_precision(key, p).unwrap();
                         }
@@ -8812,7 +8858,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = storage_in(&dir);
         let first = referencing_frame(3, &[2]);
-        let schema = SequenceSchema::from_frame(&first).unwrap();
+        let schema = SequenceSchema::from_frames(std::slice::from_ref(&first)).unwrap();
         assert_eq!(schema.target("refs", "site"), Some(ATOMS));
         let mut writer = MrecWriter::create_in_storage(store.clone(), schema).unwrap();
         writer.append(&first).unwrap();
@@ -8876,7 +8922,7 @@ mod tests {
     const TYPES: &str = "atom_types";
 
     fn string_column(values: &[&str]) -> Column {
-        Column::from_string(
+        Column::from(
             ArrayD::from_shape_vec(
                 vec![values.len()],
                 values.iter().map(|s| (*s).to_string()).collect(),
@@ -8918,7 +8964,7 @@ mod tests {
     fn types_at(seq: &mut MrecReader, index: u64) -> Option<Vec<String>> {
         frame_at(seq, index).get(TYPES).map(|b| {
             b.get("type")
-                .and_then(|c| c.as_string())
+                .and_then(|c| c.get::<String>())
                 .unwrap()
                 .iter()
                 .cloned()
@@ -9051,6 +9097,41 @@ mod tests {
         schema.declare_structural_shape("cells", &[1]).unwrap();
         assert!(schema.declare_aligned("cells", ATOMS).is_err());
         assert!(schema.declare_structural_shape(TYPES, &[3]).is_err());
+    }
+
+    #[test]
+    fn an_overflowing_structural_shape_does_not_change_the_schema() {
+        let mut schema = SequenceSchema::new();
+        schema.declare_block("cells", Some(6)).unwrap();
+        let before = schema.clone();
+        assert!(
+            schema
+                .declare_structural_shape("cells", &[usize::MAX, 2])
+                .is_err()
+        );
+        assert_eq!(schema, before);
+        assert_eq!(schema.rows_hint, before.rows_hint);
+    }
+
+    #[test]
+    fn trajectory_preflight_checks_carry_forward_references() {
+        let mut members = Block::new();
+        members
+            .insert("atom", ndarray::array![1_u64].into_dyn(), None)
+            .unwrap();
+        members.set_target("atom", "atoms").unwrap();
+        let mut atoms = Block::new();
+        atoms
+            .insert("x", ndarray::array![0.0, 1.0].into_dyn(), None)
+            .unwrap();
+        let mut first = Frame::new();
+        first.insert("atoms", atoms);
+        first.insert("members", members);
+        let mut second = Frame::new();
+        second.insert("atoms", first["atoms"].select_rows(&[0]).unwrap());
+        let frames = [first, second];
+        let schema = SequenceSchema::from_frames(&frames).unwrap();
+        assert!(schema.validate_frames(&frames).is_err());
     }
 
     #[test]

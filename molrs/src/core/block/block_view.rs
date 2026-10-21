@@ -76,8 +76,8 @@ impl<'a> BlockView<'a> {
 
     /// The column view for `key`, or `None` when the key is absent.
     ///
-    /// Project a dtype with [`ColumnView::as_float`] and the other `as_*`
-    /// methods. `None` from a projection means the column has a different dtype.
+    /// Project a dtype with [`ColumnView::get::<T>`](ColumnView::get). `None`
+    /// from a projection means the column has a different dtype.
     #[inline]
     pub fn get(&self, key: &str) -> Option<&ColumnView<'a>> {
         self.map.get(key)
@@ -115,25 +115,33 @@ impl<'a> BlockView<'a> {
 
     /// Creates an owned [`Block`] by cloning all viewed data, validity masks,
     /// declared precisions and targets, and structural shape included.
-    pub fn to_owned(&self) -> Block {
+    ///
+    /// # Errors
+    /// Returns the column or metadata validation error if an independently
+    /// assembled view cannot be represented by a valid Block. No columns are
+    /// silently omitted.
+    pub fn to_owned(&self) -> Result<Block, super::BlockError> {
         let mut block = Block::new();
         for (&key, col_view) in &self.map {
             let col: Column = col_view.to_owned();
-            let _ = block.insert_column(key, col);
+            block.insert(key, col, None)?;
         }
         for (&key, &mask) in &self.validity {
-            block.put_validity(key.to_owned(), mask.to_vec());
+            block.set_validity(key, mask.to_vec())?;
         }
         for (&key, &p) in &self.precision {
-            let _ = block.set_precision(key, p);
+            block.set_precision(key, p)?;
         }
         for (&key, &target) in &self.targets {
-            let _ = block.set_target(key, target);
+            block.set_target(key, target)?;
+        }
+        if self.map.is_empty() {
+            block.n_rows = self.n_rows;
         }
         if let Some(shape) = self.shape {
-            let _ = block.set_shape(shape);
+            block.set_shape(shape)?;
         }
-        block
+        Ok(block)
     }
 }
 
@@ -183,19 +191,19 @@ mod tests {
     fn to_owned_keeps_column_order_masks_and_structural_shape() {
         let mut block = Block::new();
         block
-            .insert("c", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("c", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         block
-            .insert_nullable(
+            .insert(
                 "a",
                 Array1::from_vec(vec![0.0 as F, 4.0]).into_dyn(),
-                vec![false, true],
+                Some(vec![false, true]),
             )
             .unwrap();
         block.set_shape(&[1, 2]).unwrap();
         block.set_precision("c", 1e-3).unwrap();
 
-        let owned = BlockView::from(&block).to_owned();
+        let owned = BlockView::from(&block).to_owned().unwrap();
         assert_eq!(owned.keys().collect::<Vec<_>>(), ["c", "a"]);
         assert_eq!(owned.validity("a"), Some(&[false, true][..]));
         assert_eq!(owned.precision("c"), Some(1e-3));
@@ -206,10 +214,18 @@ mod tests {
     fn test_from_block() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -224,45 +240,61 @@ mod tests {
     fn test_typed_getters() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         let view = BlockView::from(&block);
 
         // Correct type
-        assert!(view.get("x").and_then(|c| c.as_float()).is_some());
-        assert!(view.get("id").and_then(|c| c.as_uint()).is_some());
+        assert!(view.get("x").and_then(|c| c.get::<f64>()).is_some());
+        assert!(view.get("id").and_then(|c| c.get::<u64>()).is_some());
 
         // Wrong type
-        assert!(view.get("x").and_then(|c| c.as_int()).is_none());
-        assert!(view.get("id").and_then(|c| c.as_float()).is_none());
+        assert!(view.get("x").and_then(|c| c.get::<i32>()).is_none());
+        assert!(view.get("id").and_then(|c| c.get::<f64>()).is_none());
 
         // Missing key
-        assert!(view.get("missing").and_then(|c| c.as_float()).is_none());
+        assert!(view.get("missing").and_then(|c| c.get::<f64>()).is_none());
     }
 
     #[test]
     fn test_to_owned_roundtrip() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         let view = BlockView::from(&block);
-        let owned = view.to_owned();
+        let owned = view.to_owned().unwrap();
 
         assert_eq!(owned.n_rows(), Some(3));
         assert_eq!(owned.len(), 2);
         assert_eq!(
             owned
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -271,7 +303,7 @@ mod tests {
         assert_eq!(
             owned
                 .get("id")
-                .and_then(|c| c.as_uint())
+                .and_then(|c| c.get::<u64>())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -283,12 +315,20 @@ mod tests {
     fn test_zero_copy() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
 
         let view = BlockView::from(&block);
-        let orig_ptr = block.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
-        let view_ptr = view.get("x").and_then(|c| c.as_float()).unwrap().as_ptr();
+        let orig_ptr = block
+            .get("x")
+            .and_then(|c| c.get::<f64>())
+            .unwrap()
+            .as_ptr();
+        let view_ptr = view.get("x").and_then(|c| c.get::<f64>()).unwrap().as_ptr();
         assert_eq!(orig_ptr, view_ptr);
     }
 
@@ -304,10 +344,10 @@ mod tests {
     fn test_iter_keys() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0]).into_dyn(), None)
             .unwrap();
         block
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn())
+            .insert("id", Array1::from_vec(vec![10 as Idx, 20]).into_dyn(), None)
             .unwrap();
 
         let view = BlockView::from(&block);
@@ -319,7 +359,7 @@ mod tests {
     fn test_dtype_query() {
         let mut block = Block::new();
         block
-            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn())
+            .insert("x", Array1::from_vec(vec![1.0 as F]).into_dyn(), None)
             .unwrap();
 
         let view = BlockView::from(&block);

@@ -86,3 +86,103 @@ def test_labels_must_match_the_frames():
 
 def test_is_the_core_trajectory_class():
     assert molrs.core.Trajectory is Trajectory
+
+
+def test_observable_record_mirrors_new_name_kind_values():
+    record = molrs.core.ObservableRecord("rg", "scalar", np.array([1.0, 2.0]))
+    assert (record.name, record.kind) == ("rg", "scalar")
+    np.testing.assert_array_equal(record.values, [1.0, 2.0])
+    assert record.description == ""
+    assert record.unit is None
+    assert record.axes == []
+    assert record.time_dependent is False
+
+
+def test_observable_record_carries_its_metadata_and_another_kind_verbatim():
+    record = molrs.core.ObservableRecord(
+        "dipole",
+        "vector",
+        np.zeros((2, 3)),
+        description="total dipole",
+        unit="e*angstrom",
+        axes=["frame", "xyz"],
+        time_dependent=True,
+        sampling="every step",
+        domain="time",
+        target="atoms",
+    )
+    assert record.kind == "vector"
+    assert (record.unit, record.axes, record.time_dependent) == (
+        "e*angstrom",
+        ["frame", "xyz"],
+        True,
+    )
+    assert (record.sampling, record.domain, record.target) == (
+        "every step",
+        "time",
+        "atoms",
+    )
+    spectrum = molrs.core.ObservableRecord("s", "spectrum", np.array([0.5]))
+    assert spectrum.kind == "spectrum"
+
+
+def test_observable_record_pickles():
+    import pickle
+
+    record = molrs.core.ObservableRecord(
+        "names", "scalar", ["a", "b"], unit="1", axes=["i"]
+    )
+    back = pickle.loads(pickle.dumps(record))
+    assert (back.name, back.kind, back.values, back.unit, back.axes) == (
+        "names",
+        "scalar",
+        ["a", "b"],
+        "1",
+        ["i"],
+    )
+
+
+def test_observable_record_refuses_an_unsupported_value():
+    with pytest.raises(TypeError):
+        molrs.core.ObservableRecord("bad", "scalar", object())
+
+
+def test_trajectory_snapshots_do_not_share_writable_arrays():
+    source = _frames(1)[0]
+    trajectory = Trajectory([source])
+    source["atoms"]["x"][0] = 41
+    assert _x(trajectory[0]) == 0
+    frame = trajectory[0]
+    frame["atoms"]["x"][0] = 42
+    assert _x(trajectory[0]) == 0
+    sliced = trajectory[:]
+    sliced.frames[0]["atoms"]["x"][0] = 43
+    assert _x(trajectory[0]) == 0
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        np.array([2**40], dtype=np.int64),
+        np.array([7], dtype=np.uint8),
+        np.array([1 + 2j], dtype=np.complex128),
+        2**53 + 1,
+        True,
+    ],
+)
+def test_observable_preserves_values_and_dtype(values):
+    result = molrs.core.ObservableRecord("n", "scalar", values).values
+    expected = np.asarray(values)
+    np.testing.assert_array_equal(result, expected)
+    assert result.dtype == expected.dtype
+
+
+@pytest.mark.parametrize("shape", [(2, 2), (0, 2)])
+def test_string_observable_shape_survives_values_and_pickle(shape):
+    import pickle
+
+    values = np.full(shape, "a")
+    record = molrs.core.ObservableRecord("labels", "vector", values)
+    np.testing.assert_array_equal(np.asarray(record.values), values)
+    restored = pickle.loads(pickle.dumps(record))
+    np.testing.assert_array_equal(np.asarray(restored.values), values)

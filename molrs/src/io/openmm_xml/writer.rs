@@ -1,9 +1,10 @@
 //! OpenMM force-field XML writer.
+use crate::io::Sink;
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
 
 mod custom;
+mod residues;
 
 use crate::core::unit_factors::{KCAL_ANGSTROM2_TO_KJ_NM2, KCAL_TO_KJ, NM_TO_ANGSTROM};
 use crate::ff::forcefield::{ForceField, Style, StyleDefs};
@@ -14,17 +15,18 @@ use crate::ff::ir::torsion::{
     CharmmForm, Class2Form, PeriodicForm, RyckaertBellemansForm, SignedCosineForm,
 };
 use crate::ff::ir::{OneFour, has_own_one_four};
+use crate::ff::style_registry::Registry;
 use crate::ff::style_registry::torsion_series;
-use crate::ff::style_registry::{Registry, RegistryRef};
+use crate::io::openmm_xml::geometric_mixing;
 use crate::io::openmm_xml::reader::{HARMONIC_IMPROPER_ABS, HARMONIC_IMPROPER_SIGNED};
-use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
+use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter, put_text};
 
 /// Writer for OpenMM `<ForceField>` XML.
 ///
 /// `precision`: decimals per number; `None` (the default) writes each number
 /// in the shortest form that reads back to the same `f64`. Expression
-/// styles are looked up in the process-wide registry, or the one
-/// [`with_registry`](Self::with_registry) gives.
+/// styles are looked up in the force field's registry
+/// ([`ForceField::registry`](crate::ff::forcefield::ForceField::registry)).
 ///
 /// The inverse of [`OpenmmXmlReader`](crate::io::openmm_xml::OpenmmXmlReader).
 ///
@@ -44,7 +46,7 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// | `improper periodic` | `<PeriodicTorsionForce><Improper>`, stored `(i, j, k, l)` (centre `k`) written `class1 = k, class2 = i, class3 = j, class4 = l`: OpenMM prices `(c2, c3, c1, c4)` |
 /// | `improper harmonic` | `<CustomTorsionForce energy="k*(theta-theta0)^2">` (every `chi0 = 0`, CHARMM's form) or `"k*(abs(theta)-theta0)^2"`, `<Improper>` in the stored order (`charmm` ordering prices it as written), `k` × 4.184 |
 /// | `cmap charmm` | `<CMAPTorsionForce>`, OpenMM `(i, j)` = molrs `[(i + N/2) mod N][(j + N/2) mod N]` × 4.184; identical grids share one `<Map>` |
-/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>` (`combining_rule` on the root when not `arithmetic`) |
+/// | `pair lj/cut` (no cross rows) + a Coulomb style | `<NonbondedForce>`; `geometric` mixing adds foyer's `combining_rule` on the root and the `<Script>` that makes OpenMM's `createSystem` mix geometrically (`geometric_mixing`: OpenMM ignores the attribute) |
 /// | `pair lj/charmm`, or `lj/cut` (`arithmetic`) with cross rows | `<LennardJonesForce>` (`sigma14` / `epsilon14`, cross rows as `<NBFixPair>`) beside a `<NonbondedForce>` holding the charges at `epsilon = 0` |
 ///
 /// `special_bonds` `[0, 0, s]` is `coulomb14scale` / `lj14scale`; charges are
@@ -56,6 +58,13 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 /// own class, which OpenMM requires of every `<Type>`. An endpoint is written
 /// `class{n}` when it is an atom class (or no atom type names it), `type{n}` when it is the name of a type of another class,
 /// and `""` is OpenMM's wildcard.
+///
+/// The Coulomb style (`coul/cut`, `coul/charmm` or the long-range
+/// `coul/long/pme`) is written as the charges alone: how OpenMM sums them —
+/// `NoCutoff`, a cutoff, `Ewald`, `PME` — and every cutoff and switch are
+/// `createSystem` arguments (`nonbondedMethod`, `nonbondedCutoff`,
+/// `ewaldErrorTolerance`, `switchDistance`), chosen when the `System` is
+/// built, as LAMMPS's `kspace_style` and GROMACS's `.mdp` `coulombtype` are.
 ///
 /// # Refusals
 ///
@@ -81,8 +90,11 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 ///   prices an NBFIX 1-4 pair with the NBFIX row); a `lj/charmm` with
 ///   `one_four = "regular"` (LAMMPS's semantics) whose types have their own
 ///   1-4 parameters at a non-zero 1-4 weight (OpenMM would use them);
-/// - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; charges beside no
-///   Coulomb style; charges on some types and not others;
+/// - a Coulomb style with `dielectric ≠ 1` or `delta ≠ 0`; a `coul/long/pme`
+///   stating its Ewald parameters (`alpha`, `order`, `grid_*`: OpenMM's PME
+///   takes them from `createSystem`'s `ewaldErrorTolerance`, or the built
+///   `NonbondedForce`); charges beside no Coulomb style; charges on some
+///   types and not others;
 /// - two types OpenMM's generator would match on the same labels (bonds,
 ///   angles, propers and crossterms either way round, impropers by their
 ///   centre and the other three in any order) with other parameters — a
@@ -102,22 +114,19 @@ use crate::io::writer::{ForceFieldWriteError, ForceFieldWriter};
 #[derive(Debug, Clone, Default)]
 pub struct OpenmmXmlWriter {
     pub precision: Option<usize>,
-    pub registry: RegistryRef,
 }
 
 impl OpenmmXmlWriter {
+    /// The writer, each number in the shortest form that reads back to the
+    /// same float.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Write each number with `precision` decimals (`None`: the shortest form
+    /// that reads back to the same float).
     pub fn with_precision(mut self, precision: Option<usize>) -> Self {
         self.precision = precision;
-        self
-    }
-
-    /// Look styles up in `registry` instead of the process-wide one.
-    pub fn with_registry(mut self, registry: Arc<Registry>) -> Self {
-        self.registry = RegistryRef::Own(registry);
         self
     }
 
@@ -148,11 +157,15 @@ impl Endpoints {
         let mut classes = BTreeSet::new();
         let mut names = Vec::new();
         for t in ff.get_atomtypes() {
-            if t.params.get_str("type_") == Some("*") {
+            if t.params.get("type_").and_then(|v| v.as_text()) == Some("*") {
                 continue;
             }
             // OpenMM requires a class: a type without one is its own.
-            let class = t.params.get_str("class").unwrap_or(&t.name);
+            let class = t
+                .params
+                .get("class")
+                .and_then(|v| v.as_text())
+                .unwrap_or(&t.name);
             classes.insert(class.to_owned());
             if class != t.name.as_str() {
                 names.push(t.name.clone());
@@ -201,12 +214,32 @@ fn refuse(style: &Style, why: &str) -> ForceFieldWriteError {
 }
 
 fn need(p: &Params, key: &str, what: &str) -> Result<f64, String> {
-    p.get(key).ok_or_else(|| format!("{what}: missing `{key}`"))
+    p.get(key)
+        .and_then(|v| v.as_num())
+        .ok_or_else(|| format!("{what}: missing `{key}`"))
+}
+
+/// Where the per-atom charges of `<NonbondedForce>` (and of a charged
+/// `<CustomNonbondedForce>`) come from.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Charges {
+    /// The atom types' `charge`; with none at all, the residue templates'
+    /// (`write_str`: a force field alone, its templates written elsewhere).
+    #[default]
+    Types,
+    /// The atom types' `charge`, which every type must then carry: the
+    /// residue templates hold none (a frame without a `charge` column).
+    TypesOnly,
+    /// The residue templates' (the frame's `charge` column); `nonzero` when
+    /// any is.
+    Residues { nonzero: bool },
 }
 
 /// Sections of the output, in OpenMM's usual order.
 #[derive(Default)]
 struct Out {
+    /// Where the charges come from (set before anything is written).
+    charges: Charges,
     bonds: String,
     angles: String,
     urey_bradley: String,
@@ -328,8 +361,8 @@ impl OpenmmXmlWriter {
                         let ub_body = if ub {
                             format!(
                                 " k_ub=\"{:?}\" r_ub=\"{:?}\"",
-                                t.params.get("k_ub"),
-                                t.params.get("r_ub")
+                                t.params.get("k_ub").and_then(|v| v.as_num()),
+                                t.params.get("r_ub").and_then(|v| v.as_num())
                             )
                         } else {
                             String::new()
@@ -384,7 +417,10 @@ impl OpenmmXmlWriter {
                                 let (k, n, phase) = (
                                     need(&t.params, "k", &what)?,
                                     need(&t.params, "periodicity", &what)?,
-                                    t.params.get("phase").unwrap_or(0.0),
+                                    t.params
+                                        .get("phase")
+                                        .and_then(|v| v.as_num())
+                                        .unwrap_or(0.0),
                                 );
                                 // OpenMM prices (c2, c3, c1, c4); stored (i, j, k, l).
                                 let body = self.periodic_term(1, k, n, phase);
@@ -406,7 +442,12 @@ impl OpenmmXmlWriter {
                                     .into());
                                 }
                                 let k = need(&t.params, "k", &what)? * KCAL_TO_KJ.get();
-                                let chi0 = t.params.get("chi0").unwrap_or(0.0).to_radians();
+                                let chi0 = t
+                                    .params
+                                    .get("chi0")
+                                    .and_then(|v| v.as_num())
+                                    .unwrap_or(0.0)
+                                    .to_radians();
                                 let body = format!(
                                     " k=\"{}\" theta0=\"{}\"",
                                     self.fmt_f(k),
@@ -426,9 +467,13 @@ impl OpenmmXmlWriter {
                 }
                 ("cmap", StyleDefs::Cmap(types)) => {
                     for t in types {
-                        let grid = t.params.get_array(CMAP_GRID).ok_or_else(|| {
-                            format!("cmap charmm {}: missing its `{CMAP_GRID}` array", t.name)
-                        })?;
+                        let grid = t
+                            .params
+                            .get(CMAP_GRID)
+                            .and_then(|v| v.as_array())
+                            .ok_or_else(|| {
+                                format!("cmap charmm {}: missing its `{CMAP_GRID}` array", t.name)
+                            })?;
                         let shape = grid.shape();
                         let n = shape[0];
                         if shape.len() != 2 || shape[1] != n || !n.is_multiple_of(2) || n < 2 {
@@ -578,9 +623,15 @@ impl OpenmmXmlWriter {
             match style.name() {
                 "lj/cut" | "lj/charmm" => {
                     let p = style.params();
-                    if p.get("shift").is_some_and(|v| v != 0.0)
-                        || p.get("n").is_some_and(|v| v != 12.0)
-                        || p.get("m").is_some_and(|v| v != 6.0)
+                    if p.get("shift")
+                        .and_then(|v| v.as_num())
+                        .is_some_and(|v| v != 0.0)
+                        || p.get("n")
+                            .and_then(|v| v.as_num())
+                            .is_some_and(|v| v != 12.0)
+                        || p.get("m")
+                            .and_then(|v| v.as_num())
+                            .is_some_and(|v| v != 6.0)
                     {
                         return Err(refuse(
                             style,
@@ -597,15 +648,31 @@ impl OpenmmXmlWriter {
                     }
                     lj_style = Some(style);
                 }
-                "coul/cut" | "coul/charmm" => {
+                "coul/cut" | "coul/charmm" | "coul/long/pme" => {
                     if coul_style.is_some() {
                         return Err("two Coulomb pair styles".into());
                     }
                     let p = style.params();
-                    if p.get("dielectric").is_some_and(|d| d != 1.0) {
+                    if let Some(key) = EWALD_PARAMS.into_iter().find(|k| p.get(k).is_some()) {
+                        return Err(refuse(
+                            style,
+                            &format!(
+                                "it states its Ewald '{key}', which OpenMM's XML has no place \
+                                 for: the long-range method and its accuracy are createSystem \
+                                 arguments (nonbondedMethod=PME, ewaldErrorTolerance)"
+                            ),
+                        ));
+                    }
+                    if p.get("dielectric")
+                        .and_then(|v| v.as_num())
+                        .is_some_and(|d| d != 1.0)
+                    {
                         return Err(refuse(style, "OpenMM's Coulomb has no dielectric"));
                     }
-                    if p.get("delta").is_some_and(|d| d != 0.0) {
+                    if p.get("delta")
+                        .and_then(|v| v.as_num())
+                        .is_some_and(|d| d != 0.0)
+                    {
                         return Err(refuse(style, "a buffered Coulomb (delta ≠ 0)"));
                     }
                     coul_style = Some(style);
@@ -618,23 +685,41 @@ impl OpenmmXmlWriter {
         let atoms: Vec<_> = ff
             .get_atomtypes()
             .into_iter()
-            .filter(|t| t.params.get_str("type_") != Some("*"))
+            .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
             .collect();
-        let charged = atoms
-            .iter()
-            .filter(|t| t.params.get("charge").is_some())
-            .count();
-        if charged != 0 && charged != atoms.len() {
-            return Err(
-                "some atom types carry a charge and some do not: OpenMM takes every charge \
-                 from <NonbondedForce> or every one from the residue templates"
-                    .into(),
-            );
-        }
-        let charge_of: HashMap<&str, f64> = atoms
-            .iter()
-            .filter_map(|t| t.params.get("charge").map(|q| (t.name.as_str(), q)))
-            .collect();
+        // From the residue templates, the types' charges are not written.
+        let charge_of: HashMap<&str, f64> = if let Charges::Residues { nonzero } = sections.charges
+        {
+            if coul_style.is_none() && nonzero {
+                return Err(
+                    "the frame's atoms carry charges and the force field has no Coulomb pair \
+                     style; OpenMM's NonbondedForce always prices charges"
+                        .into(),
+                );
+            }
+            HashMap::new()
+        } else {
+            let charged = atoms
+                .iter()
+                .filter(|t| t.params.get("charge").is_some())
+                .count();
+            if charged != 0 && charged != atoms.len() {
+                return Err(
+                    "some atom types carry a charge and some do not: OpenMM takes every charge \
+                     from <NonbondedForce> or every one from the residue templates"
+                        .into(),
+                );
+            }
+            atoms
+                .iter()
+                .filter_map(|t| {
+                    t.params
+                        .get("charge")
+                        .and_then(|v| v.as_num())
+                        .map(|q| (t.name.as_str(), q))
+                })
+                .collect()
+        };
         if coul_style.is_none() && charge_of.values().any(|&q| q != 0.0) {
             return Err(
                 "atom types carry charges and the force field has no Coulomb pair style; \
@@ -673,7 +758,7 @@ impl OpenmmXmlWriter {
             }
         }
         let mixing = |style: &Style| -> Result<CombiningRule, ForceFieldWriteError> {
-            match style.params().get_str("mixing") {
+            match style.params().get("mixing").and_then(|v| v.as_text()) {
                 Some(m) => Ok(CombiningRule::parse(m)?),
                 None => Ok(CombiningRule::UNDECLARED),
             }
@@ -705,8 +790,8 @@ impl OpenmmXmlWriter {
                     return Err(refuse(
                         style,
                         &format!(
-                            "mixing {rule:?}{}: OpenMM mixes arithmetic (foyer's \
-                             combining_rule adds geometric, without cross rows)",
+                            "mixing {rule:?}{}: OpenMM mixes arithmetic (geometric is \
+                             written as a script over the per-type rows, without cross rows)",
                             if cross.is_empty() {
                                 ""
                             } else {
@@ -737,6 +822,9 @@ impl OpenmmXmlWriter {
             self.fmt_f(lj14)
         );
         if charge_of.is_empty() {
+            if sections.charges == Charges::TypesOnly {
+                return Err(NO_CHARGES.into());
+            }
             out.push_str("    <UseAttributeFromResidue name=\"charge\"/>\n");
         }
         for ty in &nb_types {
@@ -774,10 +862,16 @@ impl OpenmmXmlWriter {
                     self.fmt_f(epsilon)
                 );
                 if has_own_one_four(p) {
-                    let s14 = p.get("sigma14").unwrap_or(sigma * NM_TO_ANGSTROM.get())
+                    let s14 = p
+                        .get("sigma14")
+                        .and_then(|v| v.as_num())
+                        .unwrap_or(sigma * NM_TO_ANGSTROM.get())
                         / NM_TO_ANGSTROM.get();
-                    let e14 =
-                        p.get("epsilon14").unwrap_or(epsilon / KCAL_TO_KJ.get()) * KCAL_TO_KJ.get();
+                    let e14 = p
+                        .get("epsilon14")
+                        .and_then(|v| v.as_num())
+                        .unwrap_or(epsilon / KCAL_TO_KJ.get())
+                        * KCAL_TO_KJ.get();
                     row.push_str(&format!(
                         " sigma14=\"{}\" epsilon14=\"{}\"",
                         self.fmt_f(s14),
@@ -812,8 +906,101 @@ impl OpenmmXmlWriter {
     }
 }
 
-impl ForceFieldWriter for OpenmmXmlWriter {
-    fn write_str(&self, ff: &ForceField) -> Result<String, ForceFieldWriteError> {
+/// The Ewald parameters a `coul/long/pme` may state: run settings OpenMM's
+/// XML has no place for.
+const EWALD_PARAMS: [&str; 5] = ["alpha", "order", "grid_x", "grid_y", "grid_z"];
+
+/// Refuse a numeric parameter of a bonded or pair type row its style's spec
+/// does not declare: no attribute holds it, so writing would drop it. The
+/// keys that price nothing (an annotation, an estimate's provenance) pass
+/// ([`StyleSpec::undeclared_param`](crate::ff::ir::StyleSpec::undeclared_param)),
+/// as they do in every engine writer. Atom types carry the writer's own
+/// attributes and are not checked here.
+fn refuse_undeclared_params(ff: &ForceField, reg: &Registry) -> Result<(), String> {
+    for style in ff.styles().iter().filter(|s| s.category() != "atom") {
+        let Some((spec, _)) = reg.style(style.category(), style.name()) else {
+            continue;
+        };
+        for (name, _, params) in style.type_rows() {
+            if let Some(key) = spec.undeclared_param(params) {
+                return Err(format!(
+                    "{} {} type '{name}': parameter `{key}` has no OpenMM attribute",
+                    style.category(),
+                    style.name()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The refusal of a system whose charges are nowhere.
+const NO_CHARGES: &str = "the frame has no charge column and the force field's atom types carry \
+                          no charges: OpenMM needs the charges from one or the other";
+
+impl OpenmmXmlWriter {
+    /// Write `ff` and the residue templates of the typed `frame`: a force
+    /// field OpenMM's `ForceField(xml).createSystem(pdb.topology)` builds a
+    /// `System` from, for the PDB [`write_pdb`](crate::io::write_pdb) writes
+    /// of the same frame.
+    ///
+    /// The force field is written as [`write`](ForceFieldWriter::write)
+    /// writes it, plus `<Residues>`:
+    ///
+    /// - **Residues** are the ones OpenMM reads from that PDB: runs of
+    ///   consecutive atoms with the same chain, residue number, insertion
+    ///   code and residue name, as the PDB writer labels them
+    ///   ([`write_pdb`](crate::io::write_pdb)). With no `res_id` column, each
+    ///   bonded molecule (a connected component of `bonds`) is one residue,
+    ///   named `MOL`.
+    /// - Each **distinct residue** (same name, atom names, types, charges
+    ///   and bonds) is one `<Residue>`: an `<Atom name type charge>` per
+    ///   atom, named as the PDB names it (the frame's `name`, else the
+    ///   element numbered within the residue: `C1`, `C2`, `H1`, …), a
+    ///   `<Bond>` per `bonds` row inside it and an `<ExternalBond>` per row
+    ///   leaving it. A later residue of the same name with other content is
+    ///   named `<name>_2`, `<name>_3`, … (OpenMM matches by element and bond
+    ///   graph, not by name).
+    /// - **Charges** are the frame's `charge` column, on the templates, with
+    ///   `<UseAttributeFromResidue name="charge"/>`, as GROMACS's
+    ///   `[ atoms ]` holds the frame's charges: the types' own charges are
+    ///   then not written. With no `charge` column, the types' charges are
+    ///   written, and every type must carry one.
+    /// - **Elements**: OpenMM matches a residue to a template by element, so
+    ///   every atom type the frame uses is written with an `element`: its
+    ///   own, else the frame's `element` of its atoms.
+    ///
+    /// # Errors
+    ///
+    /// Every error of [`write`](ForceFieldWriter::write), and: a
+    /// frame without an `atoms` block, a string `type` or `element` column;
+    /// an atom type the force field does not define; atoms of one type with
+    /// different elements, or an element other than the type's own; a
+    /// `bonds` row naming an atom past the frame; two atoms of one residue
+    /// with the same name (OpenMM refuses such a template); no charges in
+    /// the frame or on the types; frame charges with no Coulomb style.
+    ///
+    /// Two residues with the same elements and bonds but different types or
+    /// charges (one molecule typed or charged two ways) are written as two
+    /// templates, which OpenMM's matching cannot choose between:
+    /// `createSystem` raises "Multiple non-identical matching templates"
+    /// unless its `residueTemplates` argument names one per residue.
+    pub fn write_system<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+        frame: &molrs::core::Frame,
+    ) -> Result<(), ForceFieldWriteError> {
+        let templates = residues::Templates::of(self, ff, frame)?;
+        put_text(sink.into(), &self.render(ff, Some(&templates))?)
+    }
+
+    /// The document: the force field, and the residue templates of a frame.
+    fn render(
+        &self,
+        ff: &ForceField,
+        system: Option<&residues::Templates>,
+    ) -> Result<String, ForceFieldWriteError> {
         if let Some(units) = ff.declared_units()
             && units != "real"
         {
@@ -824,11 +1011,19 @@ impl ForceFieldWriter for OpenmmXmlWriter {
             .into());
         }
         let ends = Endpoints::new(ff);
-        let mut sections = Out::default();
-        let (nonbonded, combining_rule) = self.registry.with(|reg| {
+        let mut sections = Out {
+            charges: system.map_or(Charges::Types, |t| t.charges),
+            ..Out::default()
+        };
+        let (nonbonded, combining_rule) = ff.registry().with(|reg| {
+            refuse_undeclared_params(ff, reg)?;
             self.bonded(ff, reg, &ends, &mut sections)?;
             self.nonbonded(ff, reg, &mut sections)
         })?;
+        if combining_rule == Some("geometric") {
+            // OpenMM ignores the attribute: the script applies it.
+            sections.scripts.push(geometric_mixing::SCRIPT.to_owned());
+        }
 
         let mut out = String::from("<?xml version='1.0' encoding='utf-8'?>\n");
         out.push_str(&format!(
@@ -848,12 +1043,12 @@ impl ForceFieldWriter for OpenmmXmlWriter {
         let mut sorted: Vec<_> = ff
             .get_atomtypes()
             .into_iter()
-            .filter(|t| t.params.get_str("type_") != Some("*"))
+            .filter(|t| t.params.get("type_").and_then(|v| v.as_text()) != Some("*"))
             .collect();
         sorted.sort_by(|a, b| a.name.cmp(&b.name));
         for t in sorted {
             let mut attrs = vec![format!("name=\"{}\"", esc(&t.name))];
-            if t.params.get_str("class").is_none() {
+            if t.params.get("class").and_then(|v| v.as_text()).is_none() {
                 // OpenMM requires a class: a type without one is its own.
                 attrs.push(format!("class=\"{}\"", esc(&t.name)));
             }
@@ -866,10 +1061,16 @@ impl ForceFieldWriter for OpenmmXmlWriter {
                 ("doi", "doi"),
                 ("overrides", "overrides"),
             ] {
-                if let Some(v) = t.params.get_str(key) {
+                if let Some(v) = t.params.get(key).and_then(|v| v.as_text()) {
                     attrs.push(format!("{xml_key}=\"{}\"", esc(v)));
-                } else if let Some(v) = t.params.get(key) {
+                } else if let Some(v) = t.params.get(key).and_then(|v| v.as_num()) {
                     attrs.push(format!("{xml_key}=\"{}\"", self.fmt_f(v)));
+                } else if let Some(e) = system
+                    .filter(|_| key == "element")
+                    .and_then(|s| s.elements.get(&t.name))
+                {
+                    // OpenMM matches residues by element: the frame's.
+                    attrs.push(format!("{xml_key}=\"{}\"", esc(e)));
                 }
             }
             atoms_xml.push_str(&format!("    <Type {}/>\n", attrs.join(" ")));
@@ -880,6 +1081,9 @@ impl ForceFieldWriter for OpenmmXmlWriter {
             }
         };
         section("AtomTypes", "", &atoms_xml);
+        if let Some(t) = system {
+            section("Residues", "", &t.xml);
+        }
         section("HarmonicBondForce", "", &sections.bonds);
         section("HarmonicAngleForce", "", &sections.angles);
         section("AmoebaUreyBradleyForce", "", &sections.urey_bradley);
@@ -924,23 +1128,14 @@ impl ForceFieldWriter for OpenmmXmlWriter {
     }
 }
 
-pub fn write_openmm_forcefield(
-    path: &str,
-    ff: &ForceField,
-    precision: Option<usize>,
-) -> Result<(), ForceFieldWriteError> {
-    OpenmmXmlWriter::new()
-        .with_precision(precision)
-        .write(ff, path)
-}
-
-pub fn write_openmm_forcefield_str(
-    ff: &ForceField,
-    precision: Option<usize>,
-) -> Result<String, ForceFieldWriteError> {
-    OpenmmXmlWriter::new()
-        .with_precision(precision)
-        .write_str(ff)
+impl ForceFieldWriter for OpenmmXmlWriter {
+    fn write<'a>(
+        &self,
+        sink: impl Into<Sink<'a>>,
+        ff: &ForceField,
+    ) -> Result<(), ForceFieldWriteError> {
+        put_text(sink.into(), &self.render(ff, None)?)
+    }
 }
 
 #[cfg(test)]
@@ -949,8 +1144,8 @@ mod tests {
     use crate::ff::forcefield::{ForceField, Style};
     use crate::ff::ir::Params;
     use crate::io::openmm_xml::reader::OpenmmXmlReader;
-    use crate::io::read_openmm_forcefield_str;
     use crate::io::reader::ForceFieldReader;
+    use crate::io::writer::WrittenText;
 
     fn style<'a>(ff: &'a ForceField, category: &str) -> &'a Style {
         ff.styles()
@@ -970,21 +1165,21 @@ mod tests {
     }
 
     fn write(ff: &ForceField) -> String {
-        write_openmm_forcefield_str(ff, None).unwrap()
+        OpenmmXmlWriter::new().written(ff).unwrap()
     }
 
     fn small_ff() -> ForceField {
         let mut ff = ForceField::new("tiny");
         ff.def_style("atom", "full", Params::new())
             .unwrap()
-            .def_type("CT", &[], Params::from_pairs(&[("mass", 12.011)]))
+            .def_type("CT", &[], Params::from_iter([("mass", 12.011)]))
             .unwrap();
         ff.def_style("bond", "harmonic", Params::new())
             .unwrap()
             .def_type(
                 "CT-CT",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 268.0), ("r0", 1.529)]),
             )
             .unwrap();
         ff.def_style("angle", "harmonic", Params::new())
@@ -992,7 +1187,7 @@ mod tests {
             .def_type(
                 "CT-CT-CT",
                 &["CT", "CT", "CT"],
-                Params::from_pairs(&[("k", 58.35), ("theta0", 112.7)]),
+                Params::from_iter([("k", 58.35), ("theta0", 112.7)]),
             )
             .unwrap();
         ff
@@ -1008,16 +1203,20 @@ mod tests {
     #[test]
     fn what_is_written_reads_back_with_the_same_styles_and_parameters() {
         let ff = small_ff();
-        let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
+        let back = OpenmmXmlReader::new().read(write(&ff).as_bytes()).unwrap();
         assert_eq!(back.name, "tiny");
         let bond = style(&back, "bond");
         assert_eq!(bond.name(), "harmonic");
         let bt = type_params(bond, "CT-CT");
-        close(bt.get("k").unwrap(), 268.0, "k");
-        close(bt.get("r0").unwrap(), 1.529, "r0");
+        close(bt.get("k").and_then(|v| v.as_num()).unwrap(), 268.0, "k");
+        close(bt.get("r0").and_then(|v| v.as_num()).unwrap(), 1.529, "r0");
         let at = type_params(style(&back, "angle"), "CT-CT-CT");
-        close(at.get("theta0").unwrap(), 112.7, "theta0");
-        close(at.get("k").unwrap(), 58.35, "k");
+        close(
+            at.get("theta0").and_then(|v| v.as_num()).unwrap(),
+            112.7,
+            "theta0",
+        );
+        close(at.get("k").and_then(|v| v.as_num()).unwrap(), 58.35, "k");
     }
 
     /// The torsion series of the only dihedral type of `ff`.
@@ -1037,36 +1236,156 @@ mod tests {
             .def_type(
                 "CT-CT-CT-CT",
                 &["CT", "CT", "CT", "CT"],
-                Params::from_pairs(&[("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.0)]),
+                Params::from_iter([("k1", 1.3), ("k2", -0.05), ("k3", 0.2), ("k4", 0.0)]),
             )
             .unwrap();
         let mut lj = Params::new();
-        lj.set_str("mixing", "geometric");
+        lj.set("mixing", "geometric");
         ff.def_style("pair", "lj/cut", lj)
             .unwrap()
             .def_type(
                 "opls_135",
                 &["opls_135"],
-                Params::from_pairs(&[("sigma", 3.5), ("epsilon", 0.066)]),
+                Params::from_iter([("sigma", 3.5), ("epsilon", 0.066)]),
             )
             .unwrap();
         let xml = write(&ff);
         assert!(xml.contains(r#"combining_rule="geometric""#), "{xml}");
-        let back = read_openmm_forcefield_str(&xml).unwrap();
+        let back = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         assert_eq!(style(&back, "dihedral").name(), "multi/harmonic");
         for phi in [-2.0, 0.3, 1.9] {
             close(series(&back).energy(phi), series(&ff).energy(phi), "E(φ)");
         }
         let pt = type_params(back.get_style("pair", "lj/cut").unwrap(), "opls_135");
-        close(pt.get("sigma").unwrap(), 3.5, "sigma");
-        close(pt.get("epsilon").unwrap(), 0.066, "epsilon");
+        close(
+            pt.get("sigma").and_then(|v| v.as_num()).unwrap(),
+            3.5,
+            "sigma",
+        );
+        close(
+            pt.get("epsilon").and_then(|v| v.as_num()).unwrap(),
+            0.066,
+            "epsilon",
+        );
         assert_eq!(
             back.get_style("pair", "lj/cut")
                 .unwrap()
                 .params()
-                .get_str("mixing"),
+                .get("mixing")
+                .and_then(|v| v.as_text()),
             Some("geometric")
         );
+    }
+
+    /// OpenMM's `createSystem` ignores the root's `combining_rule`: geometric
+    /// mixing is also the `<Script>` it runs, once, after the
+    /// `<NonbondedForce>` holding σ, ε and the charges. Arithmetic mixing
+    /// writes neither.
+    #[test]
+    fn geometric_mixing_is_written_as_the_script_openmm_runs() {
+        let field = |mixing: &str| {
+            let mut ff = ForceField::new("opls");
+            let mut lj = Params::new();
+            lj.set("mixing", mixing);
+            ff.def_style("pair", "lj/cut", lj)
+                .unwrap()
+                .def_type(
+                    "opls_135",
+                    &["opls_135"],
+                    Params::from_iter([("sigma", 3.5), ("epsilon", 0.066)].iter().copied()),
+                )
+                .unwrap();
+            ff.def_style("pair", "coul/cut", Params::new()).unwrap();
+            ff.set_special_bonds(crate::ff::ir::SpecialBonds {
+                lj: [0.0, 0.0, 0.5],
+                coul: [0.0, 0.0, 0.5],
+            });
+            ff
+        };
+        let xml = write(&field("geometric"));
+        let doc = roxmltree::Document::parse(&xml).unwrap();
+        let scripts: Vec<_> = doc
+            .descendants()
+            .filter(|n| n.has_tag_name("Script"))
+            .collect();
+        assert_eq!(scripts.len(), 1, "{xml}");
+        assert_eq!(
+            scripts[0].text().unwrap().trim(),
+            super::super::geometric_mixing::SCRIPT.trim()
+        );
+        let nonbonded = doc
+            .descendants()
+            .position(|n| n.has_tag_name("NonbondedForce"))
+            .unwrap();
+        let script = doc
+            .descendants()
+            .position(|n| n.has_tag_name("Script"))
+            .unwrap();
+        assert!(nonbonded < script, "{xml}");
+        assert!(xml.contains(r#"sigma="0.35" epsilon="0.276144""#), "{xml}");
+
+        let xml = write(&field("arithmetic"));
+        assert!(!xml.contains("<Script>"), "{xml}");
+        assert!(!xml.contains("combining_rule"), "{xml}");
+    }
+
+    /// A long-range Coulomb is the charges, as a cut one is: `PME` / `Ewald`
+    /// is `createSystem`'s `nonbondedMethod`, so the XML is the `coul/cut`
+    /// one. Stated Ewald parameters have no place in it and are refused.
+    #[test]
+    fn a_long_range_coulomb_is_written_as_the_charges() {
+        let field = |coul: &str, params: Params| {
+            let mut ff = ForceField::new("tiny");
+            ff.def_style("atom", "full", Params::new())
+                .unwrap()
+                .def_type(
+                    "CT",
+                    &[],
+                    Params::from_iter([("mass", 12.011), ("charge", -0.1)].iter().copied()),
+                )
+                .unwrap();
+            ff.def_style(
+                "pair",
+                "lj/cut",
+                Params::from_iter([("cutoff", 10.0)].iter().copied()),
+            )
+            .unwrap()
+            .def_type(
+                "CT",
+                &["CT"],
+                Params::from_iter([("epsilon", 0.066), ("sigma", 3.5)].iter().copied()),
+            )
+            .unwrap();
+            ff.def_style("pair", coul, params).unwrap();
+            ff
+        };
+        let cut = write(&field(
+            "coul/cut",
+            Params::from_iter([("cutoff", 10.0)].iter().copied()),
+        ));
+        let long = write(&field(
+            "coul/long/pme",
+            Params::from_iter([("cutoff", 10.0)].iter().copied()),
+        ));
+        assert_eq!(long, cut);
+        assert!(long.contains(r#"charge="-0.1""#), "{long}");
+        for key in ["alpha", "grid_x", "order"] {
+            let ff = field(
+                "coul/long/pme",
+                Params::from_iter([("cutoff", 10.0), (key, 0.3)].iter().copied()),
+            );
+            let err = crate::io::writer::capture(|sink| {
+                use crate::io::writer::ForceFieldWriter;
+                crate::io::openmm_xml::OpenmmXmlWriter::new()
+                    .with_precision(None)
+                    .write(sink, &ff)
+            })
+            .unwrap_err();
+            assert!(
+                err.contains("coul/long/pme") && err.contains(key) && err.contains("createSystem"),
+                "{err}"
+            );
+        }
     }
 
     /// The `c0..c5` attributes of the only `<Proper>` under `<RBTorsionForce>`.
@@ -1103,7 +1422,7 @@ mod tests {
     fn opls_fourier_torsion_is_written_as_rb_in_kj() {
         let ff = one_torsion(
             "opls",
-            Params::from_pairs(&[("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
+            Params::from_iter([("k1", 0.0), ("k2", 0.0), ("k3", 0.3), ("k4", 0.0)]),
         );
         let c = rb_coefficients(&write(&ff));
         let want = [0.6276, 1.8828, 0.0, -2.5104, 0.0, 0.0];
@@ -1128,10 +1447,16 @@ mod tests {
             let xml = write(&ff);
             let c = rb_coefficients(&xml);
             close(c[1], 0.54 * 4.184, "C1 = −A2");
-            let back = read_openmm_forcefield_str(&xml).unwrap();
+            let back = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
             let bp = type_params(back.get_style("dihedral", name).unwrap(), "HC-CT-CT-HC");
             for (i, v) in a.iter().enumerate() {
-                close(bp.get(&format!("a{}", i + 1)).unwrap(), *v, name);
+                close(
+                    bp.get(&format!("a{}", i + 1))
+                        .and_then(|v| v.as_num())
+                        .unwrap(),
+                    *v,
+                    name,
+                );
             }
         }
     }
@@ -1143,15 +1468,15 @@ mod tests {
         for (name, p) in [
             (
                 "harmonic",
-                Params::from_pairs(&[("k", 0.7), ("sign", -1.0), ("periodicity", 2.0)]),
+                Params::from_iter([("k", 0.7), ("sign", -1.0), ("periodicity", 2.0)]),
             ),
             (
                 "class2",
-                Params::from_pairs(&[("k1", 0.4), ("phi1", 30.0), ("k3", -0.2), ("phi3", 0.0)]),
+                Params::from_iter([("k1", 0.4), ("phi1", 30.0), ("k3", -0.2), ("phi3", 0.0)]),
             ),
             (
                 "charmm",
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("k", 0.2),
                     ("periodicity", 3.0),
                     ("phase", 180.0),
@@ -1160,7 +1485,7 @@ mod tests {
             ),
         ] {
             let ff = one_torsion(name, p);
-            let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
+            let back = OpenmmXmlReader::new().read(write(&ff).as_bytes()).unwrap();
             assert_eq!(style(&back, "dihedral").name(), "periodic");
             for phi in [-2.5, -0.4, 0.0, 1.1, 3.0] {
                 close(series(&back).energy(phi), series(&ff).energy(phi), name);
@@ -1194,11 +1519,11 @@ mod tests {
             ("periodicity2", 1.0),
             ("phase2", 180.0),
         ];
-        let ff = one_torsion("periodic", Params::from_pairs(&terms));
-        let back = read_openmm_forcefield_str(&write(&ff)).unwrap();
+        let ff = one_torsion("periodic", Params::from_iter(terms.iter().copied()));
+        let back = OpenmmXmlReader::new().read(write(&ff).as_bytes()).unwrap();
         let p = type_params(style(&back, "dihedral"), "HC-CT-CT-HC");
         for (key, want) in terms {
-            close(p.get(key).unwrap(), want, key);
+            close(p.get(key).and_then(|v| v.as_num()).unwrap(), want, key);
         }
     }
 
@@ -1215,7 +1540,7 @@ mod tests {
             .def_type(
                 "C-O-N-CT",
                 &["C", "O", "N", "CT"],
-                Params::from_pairs(&[("k", 10.5), ("periodicity", 2.0), ("phase", 180.0)]),
+                Params::from_iter([("k", 10.5), ("periodicity", 2.0), ("phase", 180.0)]),
             )
             .unwrap();
         let xml = write(&ff);
@@ -1224,14 +1549,18 @@ mod tests {
             xml.contains(r#"<Improper class1="N" class2="C" class3="O" class4="CT""#),
             "{xml}"
         );
-        let back = read_openmm_forcefield_str(&xml).unwrap();
+        let back = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let got = improper_params(&back);
         assert_eq!(got.len(), 1, "{got:?}");
         let (name, p) = &got[0];
         assert_eq!(name, "periodic:C-O-N-CT");
-        close(p.get("k").unwrap(), 10.5, "k");
-        assert_eq!(p.get("periodicity"), Some(2.0));
-        close(p.get("phase").unwrap(), 180.0, "phase");
+        close(p.get("k").and_then(|v| v.as_num()).unwrap(), 10.5, "k");
+        assert_eq!(p.get("periodicity").and_then(|v| v.as_num()), Some(2.0));
+        close(
+            p.get("phase").and_then(|v| v.as_num()).unwrap(),
+            180.0,
+            "phase",
+        );
     }
 
     /// LAMMPS's `cvff` prices the dihedral I-J-K-L with I the centre: the
@@ -1247,10 +1576,10 @@ mod tests {
                 .def_type(
                     "CA-CA-CA-HA",
                     &ends,
-                    Params::from_pairs(&[("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
+                    Params::from_iter([("k", 1.1), ("sign", -1.0), ("periodicity", 2.0)]),
                 )
                 .unwrap();
-            write_openmm_forcefield_str(&ff, None)
+            OpenmmXmlWriter::new().written(&ff)
         };
         let xml = cvff(["CA", "CA", "CA", "HA"]).unwrap();
         assert!(
@@ -1279,9 +1608,9 @@ mod tests {
     fn a_charmm_dihedral_with_a_weight_is_refused() {
         let ff = one_torsion(
             "charmm",
-            Params::from_pairs(&[("k", 0.2), ("periodicity", 3.0), ("phase", 0.0), ("w", 1.0)]),
+            Params::from_iter([("k", 0.2), ("periodicity", 3.0), ("phase", 0.0), ("w", 1.0)]),
         );
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("w = 1"), "{err}");
     }
 
@@ -1292,8 +1621,8 @@ mod tests {
     /// is its `Custom*Force` (`bond morse`).
     #[test]
     fn styles_without_an_openmm_form_are_refused_by_name() {
-        let ff = one_torsion("mmff_torsion", Params::from_pairs(&[("v1", 1.0)]));
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let ff = one_torsion("mmff_torsion", Params::from_iter([("v1", 1.0)]));
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("OpenMM XML has no form for dihedral `mmff_torsion`"),
             "{err}"
@@ -1304,10 +1633,10 @@ mod tests {
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("d0", 1.0), ("alpha", 1.0), ("r0", 1.0)]),
+                Params::from_iter([("d0", 1.0), ("alpha", 1.0), ("r0", 1.0)]),
             )
             .unwrap();
-        let xml = write_openmm_forcefield_str(&ff, None).unwrap();
+        let xml = OpenmmXmlWriter::new().written(&ff).unwrap();
         assert!(
             xml.contains("<CustomBondForce energy=\"4.184*(d0*(1-exp(-alpha*(10*r-r0)))^2)\">"),
             "{xml}"
@@ -1318,10 +1647,10 @@ mod tests {
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("a", 1.0), ("rho", 1.0), ("c", 1.0)]),
+                Params::from_iter([("a", 1.0), ("rho", 1.0), ("c", 1.0)]),
             )
             .unwrap();
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("pair `buck`") && err.contains("does not mix"),
             "{err}"
@@ -1343,15 +1672,23 @@ mod tests {
                 .def_type(
                     "C-O-N-CT",
                     &["C", "O", "N", "CT"],
-                    Params::from_pairs(&[("k", 120.0), ("chi0", chi0)]),
+                    Params::from_iter([("k", 120.0), ("chi0", chi0)]),
                 )
                 .unwrap();
             let xml = write(&ff);
             assert!(xml.contains(&format!("energy=\"{energy}\"")), "{xml}");
-            let got = improper_params(&read_openmm_forcefield_str(&xml).unwrap());
+            let got = improper_params(&OpenmmXmlReader::new().read(xml.as_bytes()).unwrap());
             assert_eq!(got[0].0, "harmonic:C-O-N-CT");
-            close(got[0].1.get("k").unwrap(), 120.0, "k");
-            close(got[0].1.get("chi0").unwrap(), chi0, "chi0");
+            close(
+                got[0].1.get("k").and_then(|v| v.as_num()).unwrap(),
+                120.0,
+                "k",
+            );
+            close(
+                got[0].1.get("chi0").and_then(|v| v.as_num()).unwrap(),
+                chi0,
+                "chi0",
+            );
         }
     }
 
@@ -1366,33 +1703,37 @@ mod tests {
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[("sigma", 3.0), ("epsilon", 0.1)]),
+                Params::from_iter([("sigma", 3.0), ("epsilon", 0.1)]),
             )
             .unwrap()
             .def_type(
                 "B",
                 &["B"],
-                Params::from_pairs(&[("sigma", 2.0), ("epsilon", 0.3)]),
+                Params::from_iter([("sigma", 2.0), ("epsilon", 0.3)]),
             )
             .unwrap()
             .def_type(
                 "A-B",
                 &["A", "B"],
-                Params::from_pairs(&[("sigma", 2.0), ("epsilon", 0.9)]),
+                Params::from_iter([("sigma", 2.0), ("epsilon", 0.9)]),
             )
             .unwrap();
         let xml = write(&ff);
         assert!(xml.contains("<NBFixPair type1=\"A\" type2=\"B\""), "{xml}");
-        let back = OpenmmXmlReader::new().read_str(&xml).unwrap();
+        let back = OpenmmXmlReader::new().read(xml.as_bytes()).unwrap();
         let lj = back.get_style("pair", "lj/charmm").expect("lj/charmm");
         let fix = type_params(lj, "A-B");
-        close(fix.get("epsilon").unwrap(), 0.9, "epsilon");
+        close(
+            fix.get("epsilon").and_then(|v| v.as_num()).unwrap(),
+            0.9,
+            "epsilon",
+        );
 
         let mut geo = ff.clone();
         geo.get_style_mut("pair", "lj/cut")
             .unwrap()
-            .set_str_param("mixing", "geometric");
-        let err = write_openmm_forcefield_str(&geo, None).unwrap_err();
+            .set_param("mixing", "geometric");
+        let err = OpenmmXmlWriter::new().written(&geo).unwrap_err();
         assert!(
             err.contains("Geometric") && err.contains("cross rows"),
             "{err}"
@@ -1406,13 +1747,13 @@ mod tests {
     fn regular_one_four_with_own_14_parameters_is_refused() {
         let mut ff = ForceField::new("x");
         let mut sp = Params::new();
-        sp.set_str("mixing", "arithmetic");
+        sp.set("mixing", "arithmetic");
         ff.def_style("pair", "lj/charmm", sp)
             .unwrap()
             .def_type(
                 "A",
                 &["A"],
-                Params::from_pairs(&[
+                Params::from_iter([
                     ("sigma", 3.0),
                     ("epsilon", 0.1),
                     ("sigma14", 2.5),
@@ -1424,11 +1765,11 @@ mod tests {
             lj: [0.0, 0.0, 0.5],
             coul: [0.0, 0.0, 0.5],
         });
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("one_four"), "{err}");
         ff.get_style_mut("pair", "lj/charmm")
             .unwrap()
-            .set_str_param("one_four", "epsilon14");
+            .set_param("one_four", "epsilon14");
         let xml = write(&ff);
         assert!(xml.contains("sigma14=\"0.25\""), "{xml}");
     }
@@ -1437,9 +1778,15 @@ mod tests {
     fn the_precision_bounds_the_written_decimals() {
         let ff = small_ff();
         // r0 = 1.529 Å is written as 0.1529 nm.
-        let coarse = write_openmm_forcefield_str(&ff, Some(2)).unwrap();
+        let coarse = OpenmmXmlWriter::new()
+            .with_precision(Some(2))
+            .written(&ff)
+            .unwrap();
         assert!(coarse.contains("length=\"0.15\""), "{coarse}");
-        let fine = write_openmm_forcefield_str(&ff, Some(4)).unwrap();
+        let fine = OpenmmXmlWriter::new()
+            .with_precision(Some(4))
+            .written(&ff)
+            .unwrap();
         assert!(fine.contains("length=\"0.1529\""), "{fine}");
     }
 
@@ -1464,7 +1811,7 @@ mod tests {
         bond.def_type(
             "CT-CT@again",
             &["CT", "CT"],
-            Params::from_pairs(&[("k", 268.0), ("r0", 1.529)]),
+            Params::from_iter([("k", 268.0), ("r0", 1.529)]),
         )
         .unwrap();
         let xml = write(&ff);
@@ -1474,10 +1821,10 @@ mod tests {
             .def_type(
                 "CT-CT@other",
                 &["CT", "CT"],
-                Params::from_pairs(&[("k", 300.0), ("r0", 1.529)]),
+                Params::from_iter([("k", 300.0), ("r0", 1.529)]),
             )
             .unwrap();
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(
             err.contains("CT-CT@other") && err.contains("same labels"),
             "{err}"
@@ -1487,11 +1834,11 @@ mod tests {
         for (style, params) in [
             (
                 "periodic",
-                Params::from_pairs(&[("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
+                Params::from_iter([("k", 1.0), ("periodicity", 3.0), ("phase", 0.0)]),
             ),
             (
                 "opls",
-                Params::from_pairs(&[("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
+                Params::from_iter([("k1", 1.0), ("k2", 0.0), ("k3", 0.5), ("k4", 0.0)]),
             ),
         ] {
             ff.def_style("dihedral", style, Params::new())
@@ -1499,7 +1846,7 @@ mod tests {
                 .def_type(&format!("t-{style}"), &["CT", "CT", "CT", "CT"], params)
                 .unwrap();
         }
-        let err = write_openmm_forcefield_str(&ff, None).unwrap_err();
+        let err = OpenmmXmlWriter::new().written(&ff).unwrap_err();
         assert!(err.contains("Proper"), "{err}");
     }
 
@@ -1510,7 +1857,8 @@ mod tests {
         let mut ff = small_ff();
         ff.set_units("metal");
         assert!(
-            write_openmm_forcefield_str(&ff, None)
+            OpenmmXmlWriter::new()
+                .written(&ff)
                 .unwrap_err()
                 .contains("metal")
         );
@@ -1518,17 +1866,18 @@ mod tests {
         ff.def_style(
             "pair",
             "lj/cut",
-            Params::from_pairs(&[("cutoff", 10.0), ("shift", 1.0)]),
+            Params::from_iter([("cutoff", 10.0), ("shift", 1.0)]),
         )
         .unwrap()
         .def_type(
             "CT",
             &["CT"],
-            Params::from_pairs(&[("epsilon", 0.1), ("sigma", 3.4)]),
+            Params::from_iter([("epsilon", 0.1), ("sigma", 3.4)]),
         )
         .unwrap();
         assert!(
-            write_openmm_forcefield_str(&ff, None)
+            OpenmmXmlWriter::new()
+                .written(&ff)
                 .unwrap_err()
                 .contains("shift")
         );

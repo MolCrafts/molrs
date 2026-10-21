@@ -14,13 +14,21 @@ writer or typifier, never in a kernel.
 The IR is data — `molrs.ff.forcefield.ForceField` (Rust
 `molrs::ff::forcefield::ForceField`) — and reads no file. Every engine's
 reader and writer is `molrs.io`'s, as every other file reader and writer is:
-`molrs.io.read_lammps_forcefield`, `read_top_forcefield`,
-`read_prmtop_forcefield`, `read_openmm_forcefield`,
-`write_lammps_forcefield`, `write_top_forcefield`,
-`write_frcmod`, `write_openmm_forcefield` and the rest — the same
-names in Rust (`molrs::io::read_openmm_forcefield`, …), each format's
-reader and writer classes in its own module (`molrs::io::lammps`,
-`molrs::io::gromacs`, `molrs::io::amber`, `molrs::io::openmm_xml`).
+one class per format and direction, its settings the constructor's keywords
+(Rust: one constructor and `with_*` setters), `reader.read(source) ->
+ForceField` and `writer.write(sink, forcefield)`, plus what else the format
+reads or writes as methods of the same class —
+`molrs.io.lammps.LammpsForcefieldReader` / `LammpsForcefieldWriter`
+(`read_data_coeffs`, `read_cmap`; `write_data_coeffs`, `write_cmap`),
+`molrs.io.gromacs.GromacsTopForcefieldReader` / `GromacsTopForcefieldWriter`
+(`read_system`, `write_system`), `molrs.io.amber.AmberPrmtopForcefieldReader`
+(`read_system`) / `AmberFrcmodWriter`,
+`molrs.io.openmm_xml.OpenmmXmlReader` / `OpenmmXmlWriter`, and
+`molrs.io.xml.XmlForcefieldReader` / `XmlForcefieldWriter`. The same classes in
+Rust (`molrs::io::lammps`, `molrs::io::gromacs`, `molrs::io::amber`,
+`molrs::io::openmm_xml`, `molrs::io::XmlForcefieldReader`) read through
+`ForceFieldReader::read(src)` and write through `ForceFieldWriter::write(sink, &ff)`,
+a source a path or a whole file's bytes and a sink a path or a `Vec<u8>`.
 
 This page is the reference for the IR: what each style computes, what its
 parameters mean, which engine form maps onto it and how, and how Urey–Bradley,
@@ -430,10 +438,10 @@ value cell — the same numbers but for float ties on a cell edge).
   are both rows of `dihedrals` (either stored direction) and whose atom types
   equal a cmap row's `itom … mtom` **forward** — never reversed, since
   reading the five atoms backwards swaps φ and ψ.
-- A LAMMPS `fix cmap` file reads (`read_lammps_cmap_forcefield`,
-  `LammpsForcefieldReader::read_cmap_str`) into rows named `"1"` … `"K"` — map `t`
-  is crossterm type `t` — and writes (`write_lammps_cmap_forcefield`,
-  `LammpsForcefieldWriter::write_cmap_str`) the `cmaps` labels' grids in label id
+- A LAMMPS `fix cmap` file reads (`LammpsForcefieldReader.read_cmap`,
+  Rust `LammpsForcefieldReader::read_cmap`) into rows named `"1"` … `"K"` — map `t`
+  is crossterm type `t` — and writes (`LammpsForcefieldWriter.write_cmap`,
+  Rust `LammpsForcefieldWriter::write_cmap`) the `cmaps` labels' grids in label id
   order, in CHARMM's layout: CHARMM's own file comes back line for line.
 - The data file's `N crossterms` header line and `CMAP` section
   (`index type a1 … a5`) are the frame's `cmaps` block (`type_id` = map
@@ -643,9 +651,9 @@ the style's mixing rule, which a per-row fit cannot hold).
 
 ## OpenMM XML
 
-`OpenmmXmlReader` (`read_openmm_forcefield`) reads OpenMM's
+`OpenmmXmlReader` (`OpenmmXmlReader().read(source)`) reads OpenMM's
 `<ForceField>` — its own CHARMM36, AMBER and OPLS-AA ports and the foyer /
-molpy packs — and `OpenmmXmlWriter` (`write_openmm_forcefield`) writes
+molpy packs — and `OpenmmXmlWriter` (`OpenmmXmlWriter().write(sink, ff)`) writes
 the inverse, each
 number in the shortest form that reads back to the same `f64` unless a
 `precision` is given. The IR's definitions are LAMMPS's; OpenMM's are
@@ -663,7 +671,7 @@ converted at the boundary:
 | `<CustomTorsionForce energy="k*(theta-theta0)^2">` `<Improper>` | `improper harmonic` | `k/4.184`; OpenMM's θ is signed and LAMMPS's χ = \|φ\|, which agree at `theta0 = 0` only — another `theta0` is refused (CHARMM36's two `theta0 = π` rows among them) |
 | `<CustomTorsionForce energy="k*(abs(theta)-theta0)^2">` | `improper harmonic` | `chi0` = theta0 in degrees (the writer's form when some `chi0 ≠ 0`) |
 | `<CMAPTorsionForce><Map>`, `<Torsion map>` | `cmap charmm` | [CMAP](#cmap) |
-| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full` | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
+| `<NonbondedForce coulomb14scale lj14scale><Atom charge sigma epsilon>` | `pair lj/cut` (`mixing` = the root's foyer `combining_rule`, else `arithmetic`) + `pair coul/cut`; `charge` on `atom full`; the writer writes `coul/long/pme` here too | `sigma` × 10, `epsilon` ÷ 4.184; `special_bonds` `[0, 0, scale]` |
 | `<LennardJonesForce lj14scale><Atom sigma epsilon [sigma14 epsilon14]>`, `<NBFixPair>` | `pair lj/charmm` (`arithmetic`, NBFIX as cross rows) + `pair coul/charmm`, the `<NonbondedForce>` beside it (its `epsilon` 0) giving the charges | 1-4: `special_bonds` `[0, 0, lj14scale]` / `[0, 0, coulomb14scale]`, and `one_four = "epsilon14"` when a type's 1-4 parameters differ ([1-4](#1-4-interactions)); an NBFIX row is OpenMM's 1-4 parameters for its pair too, LAMMPS's two-number cross row |
 
 Rows key on `class{n}` or `type{n}` as written; OpenMM's wildcard (an empty
@@ -677,7 +685,33 @@ pair untruncated, as `NoCutoff` does ([Cutoffs](#pair-styles)), and the
 caller states `inner` and `cutoff` of `lj/charmm` / `coul/charmm`, which
 have no default.
 
-**Refused**, by name: `<Script>` / `<InitializationScript>`, every
+The Coulomb style is written as the charges alone, the long-range
+`coul/long/pme` as `coul/cut` is: whether OpenMM sums them with `NoCutoff`, a
+cutoff, `Ewald` or `PME` is `createSystem`'s `nonbondedMethod` (with
+`nonbondedCutoff` and `ewaldErrorTolerance`), chosen when the System is
+built, as LAMMPS's `kspace_style` and GROMACS's `.mdp` `coulombtype` are. A
+`coul/long/pme` that states its Ewald parameters (`alpha`, `order`,
+`grid_*`) is refused: the XML has no place for them.
+
+OpenMM's `createSystem` mixes every `<NonbondedForce>` pair
+Lorentz-Berthelot, 1-4 exceptions included, and ignores foyer's
+`combining_rule`; no tag of its schema states a geometric σ for both the
+pairs and the 1-4 exceptions (a `<CustomNonbondedForce>` excludes whole
+bonded neighbours and scales none; a `<LennardJonesForce>` mixes arithmetic
+but for one `<NBFixPair>` per type pair). So a `geometric` `lj/cut` (OPLS-AA)
+is written with the root's `combining_rule="geometric"` and a `<Script>`,
+which `createSystem` runs last: it prices the Lennard-Jones in a
+`CustomNonbondedForce` named `GeometricLennardJones` (√(σᵢσⱼ), √(εᵢεⱼ), the
+`NonbondedForce`'s cutoff, switch and dispersion correction, periodic under
+`CutoffPeriodic`, `Ewald` and `PME`; `LJPME` is refused), keeps the charges
+in the `NonbondedForce` at ε = 0, and gives each 1-4 exception σ = √(σᵢσⱼ)
+at its `lj14scale`·√(εᵢεⱼ) — foyer's patch of the System. The reader reads
+that script, and only that one, as `mixing geometric`. Such an XML is for
+OpenMM's `app.ForceField`: a tool that applies `combining_rule` itself
+(foyer) is given the source file.
+
+**Refused**, by name: `<Script>` (but the writer's geometric-mixing one) /
+`<InitializationScript>`, every
 `Custom*Force` other than the harmonic improper, a `<Proper>` under it,
 an RB `<Improper>`, `ordering="smirnoff"`, a multi-term periodic improper,
 an odd CMAP size, a wildcard Urey–Bradley row, an `<NBFixPair>` of a type
@@ -692,7 +726,8 @@ mmff_torsion`, …),
 `sixthpower` mixing or `geometric` with cross rows, a cross row with its own
 1-4 parameters, `lj/charmm` under `one_four = "regular"` with 1-4 parameters
 of its own at a non-zero weight (OpenMM would use them), a Coulomb style
-with `dielectric ≠ 1` or `delta ≠ 0`, charges on some atom types only, a
+with `dielectric ≠ 1` or `delta ≠ 0`, a `coul/long/pme` stating Ewald
+parameters, charges on some atom types only, a
 shifted or Mie `lj/cut`, a force field in units other than `real`, and two
 types OpenMM's generator would match on the same labels with other
 parameters (bonds, angles, propers and crossterms either way round,
@@ -715,6 +750,27 @@ OpenMM's AMBER rule puts them (by element, then index). The equivalence
 check ([Cross-engine equivalence](#cross-engine-equivalence)) builds the
 templates from the frame and holds OpenMM's energies to molrs's.
 
+`write_openmm_system(path, ff, frame)` (`write_openmm_system_str`; Rust
+`OpenmmXmlWriter::write_system_str`) writes those templates: the field as
+`write_openmm_forcefield` writes it, plus one `<Residue>` per distinct
+residue of the frame. The residues and atom names are the ones OpenMM's
+`PDBFile` reads from `write_pdb` of the same frame (one rule, shared by
+both writers): runs of consecutive atoms with the same `chain`, `res_id`,
+`icode` and `res_name`; without `res_id`, each bonded molecule is a residue
+named `MOL`; an atom without a `name` is its element numbered within the
+residue (`C1`, `C2`, `H1`, …). Each template lists `<Atom name type
+charge>`, a `<Bond>` per bond inside the residue and an `<ExternalBond>` per
+bond leaving it. Charges are the frame's `charge` column, under
+`<UseAttributeFromResidue name="charge"/>` (without the column, the types'
+own charges, which every type must then carry), and every atom type the
+frame uses gets an `element`, which OpenMM matches residues by. So
+`ForceField(xml).createSystem(PDBFile(pdb).topology)` builds the System
+directly. Refused, by name: a type the force field lacks, one type on two
+elements, two atoms of one residue with the same name, no charges anywhere.
+Two residues with the same bond graph and elements but other types or
+charges become two templates OpenMM's matcher cannot choose between
+(`createSystem` then needs `residueTemplates`).
+
 ## AMBER prmtop
 
 AMBER is read, never written (no prmtop writer). The prmtop force-field
@@ -733,7 +789,7 @@ CTITLE`) reads through the same pair.
 | `LENNARD_JONES_ACOEF/BCOEF` via ICO | `lj/cut` (`lj/charmm` in a chamber file) self rows; a cross row where the entry is not Lorentz–Berthelot (NBFIX) |
 | `LENNARD_JONES_14_ACOEF/BCOEF` (chamber) | `lj/charmm` `epsilon14` / `sigma14` (cross rows where not Lorentz–Berthelot) and `one_four = "epsilon14"` when the table differs from the regular one |
 | `CHARGE` | ÷ 18.2223, `coul/cut` at 332.0522173; ÷ √332.0716 and `coul/charmm` at 332.0716 in a chamber file |
-| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `read_prmtop_system`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
+| `SCEE_SCALE_FACTOR` / `SCNB_SCALE_FACTOR` per torsion type | `special_bonds` 1-4 = 1/divisor most 1-4 rows carry; the frame `AmberPrmtopForcefieldReader::read_system` (Python `AmberPrmtopForcefieldReader().read_system(source)`) returns has `pairs` giving every 1-4 pair weighted otherwise its `coul_scale` / `lj_scale` |
 | `AMBER_ATOM_TYPE` | the type name; `<name>~<class>` where one name stands for two LJ classes or masses (a chamber file cuts CHARMM's types to four characters) |
 
 sander prices a 1-4 pair once per proper row whose 3rd pointer is not
@@ -767,9 +823,9 @@ with one periodicity; a Urey–Bradley term on no angle or on several.
 
 `GromacsTopForcefieldReader` reads a topology's directives into a force field
 (`read`) or a whole `.top` into the force field and a typed frame
-(`read_system`; Python `molrs.io.read_top_system`); the writer
-(`GromacsTopForcefieldWriter`) is the inverse of the directive map
-(`write_str`) and of `read_system` (`write_system_str`). Every row is
+(`read_system`; Python `molrs.io.gromacs.GromacsTopForcefieldReader(include=True).read_system(source)`);
+the writer (`GromacsTopForcefieldWriter`) is the inverse of the directive map
+(`write`) and of `read_system` (`write_system`). Every row is
 exact; GROMACS's ½k forms are halved into LAMMPS's `K`, nm → Å, kJ → kcal,
 degrees stay degrees. Every Coulomb style states GROMACS's own constant
 (`molrs.core.constants.GROMACS_ONE_4PI_EPS0`, its `ONE_4PI_EPS0` from
@@ -808,7 +864,12 @@ one (same labels, same function-code table), and a force field in units
 other than `real`. `dihedral class2`'s torsion goes out as funct-9 rows at
 phase φₙ + 180° (k[1 − cos(nφ − φₙ)] = k[1 + cos(nφ − φₙ − 180°)]). No
 Coulomb constant is written: GROMACS prices at its own, as LAMMPS and OpenMM
-do at theirs.
+do at theirs. No Coulomb style has a directive either — `coul/cut`,
+`coul/charmm` and the long-range `coul/long/pme` alike: the `.top` holds the
+charges, and how GROMACS sums them (`coulombtype = PME`, Ewald, cut-off,
+with `rcoulomb`, `fourier-spacing`, `pme-order`, `ewald-rtol`) is the
+`.mdp`'s, chosen at run time. A `coul/long/pme` stating its Ewald
+parameters (`alpha`, `order`, `grid_*`) is refused.
 
 **Systems.** `read_system` types each molecule row as GROMACS's own lookup
 does — bonds, angles, Fourier dihedrals and cmaps by exact bond types
@@ -829,7 +890,7 @@ form and are refused by name. A system whose field reads with
 `one_four = "epsilon14"` (CHARMM's pairtypes) compiles once its 1-4 pairs
 are written out as per-pair rows, `ForceField.materialize_one_four(frame)`.
 
-`write_system_str(ff, frame)` writes the directives (no bonded
+`write_system(sink, ff, frame)` writes the directives (no bonded
 `[ *types ]` tables: each row carries its type's parameters on its line,
 one funct-9 line per periodic term, so no lookup can pick another type;
 `[ cmaptypes ]` stays, and a crossterm must be one GROMACS's lookup finds)
@@ -884,13 +945,26 @@ estimate carries `estimated`, `estimate_penalty`, `estimate_method` and
   `cbaf`)·`WEIGHT_BA_CTR` at its vertex (caffeine's `c-cc-na` is
   `c2-cc-na` at 2.6).
 
+An estimate's numbers are the frcmod's, at the precision parmchk2 prints
+them (a bond's r₀ to three decimals: `ne-s6` copies `ne-sy`'s 1.6723 and
+prices 1.672), since that is what tleap reads.
+
+Every term is named by its types alone, as the prmtop reader names it: a
+bond, angle or torsion in the orientation that reads smaller, type by type
+(`c3-c3-oh-ho`, where `gaff.dat` writes `ho-oh-c3-c3`), its cosine terms
+numbered by periodicity, then phase; an improper in AMBER's order. An
+estimate is named the same way (`f-c3-sy`) and says what it is in its
+params. So the native force field of a molecule and the one
+`read_prmtop_forcefield` reads from tleap's prmtop of it merge
+(`ForceField.merge`) into one, type for type.
+
 parmchk2 searches the molecule in atom and bond order and reuses a name's
 first estimate (an improper estimate is itself a row later impropers can
 copy), so a name can be estimated differently in two molecules (aspirin's
 ester carbon takes `c3-o -c -oh`, ethyl acetate's the `X -X -c -o` amide
-term). An estimated term is therefore named with its analog and penalty,
-`<types>@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`; the improper
-default `@default_0.0`), so one output force field holds both.
+term). Typed into one output, the first keeps the name and each further
+estimate of it is `<types>@<n>` (`c3-o-c-os@2`), as the prmtop reader
+numbers a further term set on one quartet.
 
 **Which bond orders the types follow.** antechamber (its default `-j 4`)
 ignores the bond orders of its input: `bondtype -j full` judges new ones from
@@ -898,7 +972,8 @@ the connectivity — each atom's penalty per valence (`APS.DAT`), valence states
 tried in order of total penalty, and for each a search that settles forced
 bonds and tries the first undecided bond in file order single, double, then
 triple — and the atom types follow that structure. `AtdTypifier` does the
-same by default (`bond_orders="perceive"`; Rust `AtdBondOrders::Perceive`):
+same by default (`bond_orders=BondOrderSource.Connectivity`; Rust
+`BondOrderSource::Connectivity`):
 it types a molecule as antechamber types the mol2 file holding the same atoms
 and bonds in the same order, whatever orders the molrs graph carries. Where a
 molecule has more than one Kekulé structure (azulene, cyclooctatetraene,
@@ -909,11 +984,12 @@ types, because `bondtype` reads them from its file: which rings count as
 aromatic for the 7 / 8 bond types (a quinone drawn with its C=O is not; read
 from a connectivity-only file, it is), and a molecule no valence state closes
 (tropylium), where antechamber keeps the file's bonds. Every hydrogen must be
-drawn. `bond_orders="input"` keeps the graph's own orders instead (aromatic
+drawn. `bond_orders=BondOrderSource.Stated` keeps the graph's own orders instead (aromatic
 bonds kekulized): a cyclooctatetraene drawn `C1=CC=CC=CC=C1` then types `cc
 cd cd cc …`, the structure it was drawn with, where antechamber answers `cc cc
 cd cd …`. `assign_bond_orders` writes the judged structure onto a
-molecule.
+molecule, in place. (`BondOrderSource` is `molrs.perceive.BondOrderSource`;
+`assign_bcc_bond_types(mol, source)` takes the same choice.)
 
 The rest follows `antechamber` as well: rings and ring classes (`AR1` …
 `AR5`, `RG*`, `NR`) are its own (`ring.c`: every chordless ring of up to ten
@@ -1058,7 +1134,8 @@ A `StyleSpec` carries `lammps: LammpsForm`:
 | `pair lj/class2` | `epsilon sigma`, mixing always `sixthpower` (LAMMPS's `init_one`) |
 | `pair coul/cut`, `coul/long/pme` | the Coulomb half of `lj/cut/coul/cut` / `lj/cut/coul/long` (or of a `hybrid/overlay` with another style, the Coulomb on `* *`); `delta ≠ 0`, `dielectric ≠ 1` and stated Ewald parameters refused |
 | `cmap charmm` | `fix cmap` and its grid file |
-| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt`, `drude harmonic` | none |
+| `drude harmonic` | the DRUDE package's core-shell spring: `bond_style harmonic` `K 0` (`K = k`, both unhalved, `r0 = 0`); the data writer writes the `drudes` rows as `Bonds` rows of the same labels. `alpha` and `thole` go to a comment of the include, for the input's `pair_style thole` / `fix drude` |
+| `dihedral rb`, MMFF, UFF, `thole`, `coul/tt` | none |
 
 The reader resolves a LAMMPS style name through the registry
 (`Registry::lammps_style`): the style of that name when its form writes it,
@@ -1175,7 +1252,7 @@ every engine — the source's own included — at three configurations
 
 Each source's IR is written as a LAMMPS data file and include, an OpenMM
 `<ForceField>` XML (with residue templates built from the frame) and a
-GROMACS topology (`write_system_str`); each engine prices each file and the
+GROMACS topology (`write_system`); each engine prices each file and the
 source itself — LAMMPS `run 0`; OpenMM 8.6.1 `Reference`, `NoCutoff`, one
 force group per term; GROMACS 2025.3 double precision, `mdrun -rerun`,
 plain cut-off past every pair; pysander (AmberTools 26.1, `cut = 999`) —
@@ -1280,7 +1357,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 | `pair lj/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `pair coul/cut` | ✓ | ✓ | ✓ [22] | ✓ | ✓ [23] | ✓ | ✓ [24] | ✓ | ✓ |
 | `pair coul/charmm` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | refused [27] | — | refused [28] | — | ✓ |
+| `pair coul/long/pme` | ✓ | ✓ [25] | ✓ [26] | — | ✓ [27] | — | ✓ [28] | — | ✓ |
 | `pair lj/class2` | ✓ | ✓ [29] | ✓ [29] | — | refused [30] | — | refused [4] | — | ✓ |
 | `pair buck` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
 | `pair morse` | ✓ | ✓ | ✓ | — | refused [31] | — | refused [4] | — | ✓ |
@@ -1330,8 +1407,8 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 24. the Coulomb constant is GROMACS's own
 25. lj/cut/coul/long: cutoff and constant; its kspace_style states an accuracy, not an alpha, so pricing is refused until the Ewald parameters are stated
 26. the real-space lj/cut/coul/long; stated Ewald parameters refused (molrs's smooth PME is not LAMMPS's PPPM)
-27. the long-range method is a createSystem argument
-28. the long-range method is an .mdp setting
+27. the charges; PME / Ewald is a createSystem argument; stated Ewald parameters refused
+28. the charges; coulombtype = PME is an .mdp setting; stated Ewald parameters refused
 29. through its codec, mixing sixthpower as LAMMPS's always does; not run by LAMMPS: the installed lmp has no CLASS2 package
 30. its kernel prices a row per pair (cross rows), which a CustomNonbondedForce has not
 31. its parameters do not mix, so a pair's are a cross row's, which a CustomNonbondedForce has not
@@ -1341,7 +1418,7 @@ ff::completeness::the_guide_holds_the_generated_table` rewrites it).
 35. LAMMPS has no per-pair 1-4 parameters
 36. refused as such; its exact LAMMPS form is special_bonds 0 and one zero-K dihedral charmm row of w = 1 per 1-4 pair
 37. foyer's combining_rule, which OpenMM's own app.ForceField ignores
-38. foyer's combining_rule (OpenMM's own app.ForceField ignores it); with cross rows refused
+38. foyer's combining_rule and the <Script> that applies it (OpenMM's own app.ForceField ignores the attribute); with cross rows refused
 39. OpenMM mixes arithmetically
 40. no GROMACS comb-rule
 41. a cross row with 1-4 parameters of its own refused (OpenMM prices an NBFIX 1-4 pair with the NBFIX row)

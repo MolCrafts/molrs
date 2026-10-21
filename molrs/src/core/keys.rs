@@ -66,6 +66,20 @@ meta_keys! {
     /// The LAMMPS molecule-JSON reader writes it and its writer emits it back
     /// (`io::lammps::molecule`); molrs converts no frame between presets.
     pub const UNITS: &str = "units";
+    /// Frame meta key: the crystal's symmetry operators, a JSON array of the
+    /// file's operator triplets (`["x,y,z", "-x,y+1/2,-z+1/2", …]`), verbatim
+    /// and in file order.
+    ///
+    /// The CIF reader writes it from the `_symmetry_equiv_pos_as_xyz` /
+    /// `_space_group_symop_operation_xyz` loop and its writer emits it back.
+    /// molrs stores the operators only: the atoms are the asymmetric unit the
+    /// file lists, and no reader expands them.
+    pub const SYMOPS: &str = "symops";
+    /// Frame meta key: the Hermann–Mauguin space-group symbol as the file
+    /// spells it (`"P 21/c"`), a string. Written by the CIF reader (the
+    /// `_space_group_name_H-M_alt` / `_symmetry_space_group_name_H-M` tags,
+    /// emitted back by its writer) and by the PDB reader (`CRYST1`).
+    pub const SPACE_GROUP: &str = "space_group";
 }
 
 macro_rules! named_keys {
@@ -89,8 +103,8 @@ named_keys! {
     /// The relation kind ports are stored under.
     pub const PORTS: &str = "ports";
     /// Node prop: the fragment instance a node belongs to, an `i32` that
-    /// `MolGraph::replicate` stamps on every copy and `MolGraph::set_frag_id`
-    /// writes per atom.
+    /// `MolGraph::replicate` stamps on every copy and `set_atom` / `set_node`
+    /// with this key writes per atom.
     pub const FRAG_ID: &str = "frag_id";
     /// Atom prop: the 0-based id of the atom's charge-equivalence class,
     /// written by `perceive::assign_equivalence_classes`. Class ids
@@ -125,6 +139,13 @@ named_keys! {
     /// Frame meta key: the unit style a LAMMPS `write_data` title line stated
     /// (`units = real`); absent when the file states none.
     pub const LAMMPS_UNITS: &str = "lammps_units";
+    /// Frame meta key: the mass of each atom type, as a JSON object from type
+    /// label to mass (`{"OW": 15.9994, "HW": 1.008}`; an unlabelled type's label
+    /// is its id, `"1"`). The LAMMPS data reader writes it from the Masses
+    /// section; the writer takes a type's mass from it when no atom of that type
+    /// carries a `mass` — a type the labels declare but no atom uses, or a frame
+    /// without a `mass` column.
+    pub const LAMMPS_TYPE_MASSES: &str = "lammps_type_masses";
 }
 
 /// The preset a frame's [`UNITS`] meta value names: the `preset` of a units

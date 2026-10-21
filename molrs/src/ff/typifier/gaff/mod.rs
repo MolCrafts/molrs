@@ -7,20 +7,20 @@ use molrs::core::RelationId;
 use molrs::core::TypeName;
 use molrs::core::keys;
 use molrs::core::schema::block_names::{ANGLES, BONDS, DIHEDRALS, IMPROPERS};
-use molrs::core::{Atomistic, NodeId};
+use molrs::core::{Atomistic, NodeId, Props};
 
 use crate::core::constants::AMBER_COULOMB;
 use crate::core::constants::VACUUM_DIELECTRIC;
 use crate::core::constants::{AMBER_SCEE, AMBER_SCNB};
 use crate::ff::forcefield::{DefError, ForceField};
-use crate::ff::ir::{Params, SpecialBonds};
+use crate::ff::ir::{CombiningRule, Params, SpecialBonds};
 use crate::ff::params::{
     GAFF, GAFF2, PARMCHK, ParmAngleRow, ParmBondRow, ParmDihedralRow, ParmImproperRow,
     ParmNonbondedRow, ParmTable, ParmType,
 };
 use crate::ff::typifier::BondedTerm;
 use crate::ff::typifier::{Annotation, TypeAssignment, Typifier};
-use crate::ff::typifier::{EmpiricalSet, EstimateMethod, Provenance};
+use crate::ff::typifier::{EmpiricalSet, Provenance};
 
 mod analog;
 mod improper;
@@ -141,17 +141,21 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
 
     let atoms = ff.def_style("atom", "full", Params::new())?;
     for row in table.masses {
-        atoms.def_type(
-            row.atom_type,
-            &[],
-            Params::from_pairs(&[("mass", row.mass)]),
-        )?;
+        atoms.def_type(row.atom_type, &[], Params::from_iter([("mass", row.mass)]))?;
     }
 
-    let lj = ff.def_style("pair", "lj/cut", Params::new())?;
+    // AMBER mixes Lennard-Jones by Lorentz–Berthelot; the style states it, as
+    // the prmtop reader's does, rather than lean on the kernel's default.
+    let mut mixing = Params::new();
+    mixing.set("mixing", CombiningRule::Arithmetic.name());
+    let lj = ff.def_style("pair", "lj/cut", mixing)?;
     for row in table.nonbonded {
         let name = table.name_of(row.atom_type);
-        lj.def_type(name, &[name], Params::from_pairs(&lj_params(row)))?;
+        lj.def_type(
+            name,
+            &[name],
+            Params::from_iter(lj_params(row).iter().copied()),
+        )?;
     }
     // GAFF/AMBER uses the unbuffered Coulomb form. The constant is force-field
     // data (and differs measurably from CODATA and MMFF), while `delta = 0`
@@ -159,7 +163,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
     ff.def_style(
         "pair",
         "coul/cut",
-        Params::from_pairs(&[
+        Params::from_iter([
             ("coulomb", AMBER_COULOMB),
             ("dielectric", VACUUM_DIELECTRIC),
             ("delta", 0.0),
@@ -172,7 +176,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
         bonds.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&bond_params(row)),
+            Params::from_iter(bond_params(row).iter().copied()),
         )?;
     }
 
@@ -182,7 +186,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
         angles.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&angle_params(row)),
+            Params::from_iter(angle_params(row).iter().copied()),
         )?;
     }
 
@@ -203,7 +207,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
         dihedrals.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&borrowed(&params)),
+            Params::from_iter(params.iter().cloned()),
         )?;
     }
 
@@ -213,7 +217,7 @@ fn try_candidate_forcefield(table: ParmTable) -> Result<ForceField, DefError> {
         impropers.def_type(
             TypeName::join(&ends).map_err(DefError::Name)?.as_str(),
             &ends,
-            Params::from_pairs(&improper_params(row)),
+            Params::from_iter(improper_params(row).iter().copied()),
         )?;
     }
 
@@ -230,7 +234,16 @@ fn slot_name(table: &ParmTable, slot: &Option<ParmType>) -> &'static str {
 /// R\* is **half** the separation at the Lennard-Jones minimum, so the minimum
 /// itself is `2·R*` and σ — where the potential crosses zero — is that over the
 /// sixth root of two. Reading R\* as σ would inflate every radius by 78%.
+///
+/// A row with no van der Waals term (`ho`: R\* and ε both zero) is the
+/// non-interacting type molrs writes for one everywhere, `σ = 1, ε = 0`
+/// ([`lj_ab_to_sigma_epsilon`](crate::ff::potential::pair::lj_ab_to_sigma_epsilon),
+/// which reads it from a prmtop's zero `A`/`B`): ε = 0 prices nothing, and σ
+/// is non-zero so no consumer divides by zero.
 fn lj_params(row: &ParmNonbondedRow) -> [(&'static str, f64); 2] {
+    if row.epsilon == 0.0 || row.r_min_half == 0.0 {
+        return [("epsilon", 0.0), ("sigma", 1.0)];
+    }
     [
         ("epsilon", row.epsilon),
         ("sigma", 2.0 * row.r_min_half / 2f64.powf(1.0 / 6.0)),
@@ -251,15 +264,75 @@ fn angle_params(row: &ParmAngleRow) -> [(&'static str, f64); 2] {
 /// The cosine terms of one torsion, in the `k{m}` / `periodicity{m}` / `phase{m}` encoding
 /// [`DihedralPeriodic`](crate::ff::potential::dihedral::DihedralPeriodic)
 /// scans upward from `m = 1`. `k = PK / IDIVF`; phases in degrees.
+///
+/// The terms are numbered in one canonical order — by periodicity, then
+/// phase, then `k` — whatever order the `.dat` rows list them in
+/// (`ho-oh-c3-c3` writes its `n = 3` term first): the order the prmtop reader
+/// numbers a torsion's terms in (`io::amber`'s `canonical_terms`), so one
+/// torsion has one encoding wherever it was read.
 fn dihedral_params(rows: &[&ParmDihedralRow]) -> Vec<(String, f64)> {
-    let mut out = Vec::with_capacity(rows.len() * 3);
-    for (m, row) in rows.iter().enumerate() {
+    let mut terms: Vec<(f64, f64, f64)> = rows
+        .iter()
+        .map(|row| {
+            (
+                f64::from(row.periodicity),
+                row.phase_deg,
+                row.barrier / f64::from(row.divisor),
+            )
+        })
+        .collect();
+    terms.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then(a.2.total_cmp(&b.2))
+    });
+    let mut out = Vec::with_capacity(terms.len() * 3);
+    for (m, (periodicity, phase, k)) in terms.into_iter().enumerate() {
         let m = m + 1;
-        out.push((format!("k{m}"), row.barrier / f64::from(row.divisor)));
-        out.push((format!("periodicity{m}"), f64::from(row.periodicity)));
-        out.push((format!("phase{m}"), row.phase_deg));
+        out.push((format!("k{m}"), k));
+        out.push((format!("periodicity{m}"), periodicity));
+        out.push((format!("phase{m}"), phase));
     }
     out
+}
+
+/// `value` as parmchk2 writes it into the frcmod, `%.<decimals>f`: the number
+/// tleap reads back and prices. An estimate is a frcmod row, so its
+/// parameters carry the frcmod's precision, not the analog's (`ne-s6` copies
+/// `ne-sy`'s r₀ = 1.6723 and the frcmod says `1.672`).
+fn as_printed(value: f64, decimals: usize) -> f64 {
+    format!("{value:.decimals$}")
+        .parse()
+        .expect("a formatted finite number parses")
+}
+
+/// `params` with each of `decimals`' keys [as parmchk2 prints it](as_printed).
+fn as_frcmod(params: &Params, decimals: &[(&str, usize)]) -> Params {
+    let mut out = params.clone();
+    for &(key, places) in decimals {
+        if let Some(value) = params.get(key).and_then(|v| v.as_num()) {
+            out.set(key, as_printed(value, places));
+        }
+    }
+    out
+}
+
+/// parmchk2's frcmod precision (`%8.2lf%8.3lf`): bond `k`, `r0`.
+const FRCMOD_BOND: [(&str, usize); 2] = [("k", 2), ("r0", 3)];
+/// parmchk2's frcmod precision (`%9.3lf%12.3lf`): angle `k`, θ₀.
+const FRCMOD_ANGLE: [(&str, usize); 2] = [("k", 3), ("theta0", 3)];
+/// parmchk2's frcmod precision (`%11.1lf%15.1lf%12.1lf`): improper `k`,
+/// phase, periodicity.
+const FRCMOD_IMPROPER: [(&str, usize); 3] = [("k", 1), ("phase", 1), ("periodicity", 1)];
+
+/// A torsion row as parmchk2 writes it into the frcmod
+/// (`%4d%9.3lf%14.3lf%16.3lf`: `IDIVF`, `PK`, phase, `PN`).
+fn torsion_as_frcmod(row: &ParmDihedralRow) -> ParmDihedralRow {
+    ParmDihedralRow {
+        barrier: as_printed(row.barrier, 3),
+        phase_deg: as_printed(row.phase_deg, 3),
+        ..*row
+    }
 }
 
 /// One `IMPROPER` row as candidate params. An improper's barrier is never divided.
@@ -269,11 +342,6 @@ fn improper_params(row: &ParmImproperRow) -> [(&'static str, f64); 3] {
         ("periodicity", f64::from(row.periodicity)),
         ("phase", row.phase_deg),
     ]
-}
-
-/// `&[(String, f64)]` as the `&[(&str, f64)]` [`Params::from_pairs`] takes.
-fn borrowed(params: &[(String, f64)]) -> Vec<(&str, f64)> {
-    params.iter().map(|(k, v)| (k.as_str(), *v)).collect()
 }
 
 /// A term of the molecule that neither an exact row nor parmchk2 covers.
@@ -377,20 +445,30 @@ impl std::error::Error for GaffError {}
 /// use molrs::ff::typifier::Typing;
 /// use molrs::ff::typifier::{AtdParameterSet, AtdTypifier};
 /// use molrs::ff::typifier::{GaffParameterSet, GaffTypifier};
-/// use molrs::core::keys;
-/// use molrs::core::PropValue;
+/// use molrs::core::{Element, PropValue, keys};
+/// use molrs::props;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut mol = Atomistic::new();
-/// let c = mol.add_atom_xyz("C", 0.000, 0.000, 0.000);
+/// let c = mol.add_atom(props! {
+///     keys::ATOMIC_NUMBER => Element::C,
+///     keys::X => 0.000,
+///     keys::Y => 0.000,
+///     keys::Z => 0.000,
+/// })?;
 /// for (x, y, z) in [
 ///     (0.629, 0.629, 0.629),
 ///     (-0.629, -0.629, 0.629),
 ///     (-0.629, 0.629, -0.629),
 ///     (0.629, -0.629, -0.629),
 /// ] {
-///     let h = mol.add_atom_xyz("H", x, y, z);
-///     mol.add_bond(c, h)?;
+///     let h = mol.add_atom(props! {
+///         keys::ATOMIC_NUMBER => Element::H,
+///         keys::X => x,
+///         keys::Y => y,
+///         keys::Z => z,
+///     })?;
+///     mol.add_bond(c, h, props! {})?;
 /// }
 ///
 /// // ATD types the atoms (perceiving the BCC bond types on the way through) …
@@ -407,7 +485,7 @@ impl std::error::Error for GaffError {}
 /// }
 ///
 /// let mut frame = typed.to_frame()?;
-/// let pairs = intramolecular_pairs(&frame, ff.special_bonds())?;
+/// let pairs = intramolecular_pairs(&frame, ff.special_bonds(), None)?;
 /// frame.insert("pairs", pairs);
 /// let potentials = PotentialCompiler::new(ff).compile(&frame)?;
 /// # Ok(())
@@ -515,7 +593,7 @@ impl GaffTypifier {
                         style: "full".to_owned(),
                         name: name.to_owned(),
                         endpoints: Vec::new(),
-                        params: Params::from_pairs(&[("mass", mass)]),
+                        params: Params::from_iter([("mass", mass)]),
                     },
                 )]
             })
@@ -550,15 +628,15 @@ impl GaffTypifier {
             let (ti, tj) = (type_of[&i], type_of[&j]);
             let resolved = match index.bond(ti, tj) {
                 Some(row) => Some((
-                    index.names([row.i, row.j]).to_vec(),
-                    Bonded::matched(Params::from_pairs(&bond_params(row))),
+                    oriented(BondedTerm::Bond(index.names([row.i, row.j]))),
+                    Bonded::matched(Params::from_iter(bond_params(row))),
                 )),
                 None => {
                     let names = index.names([ti, tj]);
                     match analogs.bond([index.name_of(ti), index.name_of(tj)]) {
                         Some(estimate) => Some(Bonded::estimated(
                             &BondedTerm::Bond(names),
-                            estimate.params.clone(),
+                            as_frcmod(&estimate.params, &FRCMOD_BOND),
                             estimate.provenance.clone(),
                         )),
                         None => {
@@ -581,8 +659,8 @@ impl GaffTypifier {
             let (ti, tj, tk) = (type_of[&i], type_of[&j], type_of[&k]);
             let resolved = match index.angle(ti, tj, tk) {
                 Some(row) => Some((
-                    index.names([row.i, row.j, row.k]).to_vec(),
-                    Bonded::matched(Params::from_pairs(&angle_params(row))),
+                    oriented(BondedTerm::Angle(index.names([row.i, row.j, row.k]))),
+                    Bonded::matched(Params::from_iter(angle_params(row))),
                 )),
                 None => {
                     let names = index.names([ti, tj, tk]);
@@ -590,7 +668,7 @@ impl GaffTypifier {
                     match analogs.angle(types) {
                         Some(estimate) => Some(Bonded::estimated(
                             &BondedTerm::Angle(names),
-                            estimate.params.clone(),
+                            as_frcmod(&estimate.params, &FRCMOD_ANGLE),
                             estimate.provenance.clone(),
                         )),
                         None => {
@@ -619,10 +697,10 @@ impl GaffTypifier {
                 Some(rows) => {
                     let first = rows[0];
                     Some((
-                        index
-                            .names(concrete(first.i, first.j, first.k, first.l))
-                            .to_vec(),
-                        Bonded::matched(Params::from_pairs(&borrowed(&dihedral_params(rows)))),
+                        oriented(BondedTerm::Dihedral(
+                            index.names(concrete(first.i, first.j, first.k, first.l)),
+                        )),
+                        Bonded::matched(Params::from_iter(dihedral_params(rows))),
                     ))
                 }
                 None => {
@@ -632,15 +710,21 @@ impl GaffTypifier {
                         term.endpoints().into_iter().map(str::to_owned).collect();
                     let canon = torsion::canonical(quartet.map(|ty| index.name_of(ty)));
                     if let Some(estimate) = torsions.estimate(&canon) {
+                        let printed: Vec<ParmDihedralRow> = estimate
+                            .rows
+                            .iter()
+                            .map(|row| torsion_as_frcmod(row))
+                            .collect();
+                        let printed: Vec<&ParmDihedralRow> = printed.iter().collect();
                         Some(Bonded::estimated(
                             &term,
-                            Params::from_pairs(&borrowed(&dihedral_params(&estimate.rows))),
+                            Params::from_iter(dihedral_params(&printed)),
                             estimate.provenance.clone(),
                         ))
                     } else if let Some(rows) = torsions.general(canon[1], canon[2]) {
                         Some((
                             endpoints,
-                            Bonded::matched(Params::from_pairs(&borrowed(&dihedral_params(&rows)))),
+                            Bonded::matched(Params::from_iter(dihedral_params(&rows))),
                         ))
                     } else {
                         missed.note(MissingTerm::Dihedral(names));
@@ -685,13 +769,19 @@ impl Typifier for GaffTypifier {
     /// type under `atom/full` with the table's `mass`; every bond, angle,
     /// dihedral and improper gets `type` as a type under `bond/harmonic`,
     /// `angle/harmonic`, `dihedral/periodic` or `improper/periodic`. A term an
-    /// exact row covers is named by that row; any other is named by
-    /// [`BondedTerm::type_name`] (an estimated term: its types, qualified
-    /// `@<analog>_<penalty>`), and when it was estimated rather than covered
-    /// by a wildcard row its params carry the provenance keys `estimated`,
-    /// `estimate_penalty`, `estimate_method` and `estimate_analog`. Styles:
-    /// every library style, in library order. Pairs: the library's `lj/cut`
-    /// rows of the atom types used.
+    /// bond, angle or dihedral is named by [`BondedTerm::type_name`], its
+    /// types in [`TypeName::orient`]'s orientation (`c3-c3-oh-ho`, however
+    /// the covering `.dat` row is written), an improper by its types in
+    /// AMBER's order; a dihedral's cosine terms are numbered by periodicity,
+    /// then phase, then `k`. A term estimated rather than covered by a row
+    /// has the same name, its params carry the provenance keys `estimated`,
+    /// `estimate_penalty`, `estimate_method` and `estimate_analog`, and its
+    /// numbers are the frcmod's, at the precision parmchk2 prints them. These
+    /// are the names and numbers the prmtop reader gives a prmtop tleap built
+    /// for the molecule, so the two force fields merge
+    /// ([`ForceField::merge`]). Styles: every library style, in library
+    /// order; `lj/cut` states `mixing = arithmetic`. Pairs: the library's
+    /// `lj/cut` rows of the atom types used.
     ///
     /// # The bond `type` is the force field's
     ///
@@ -731,8 +821,6 @@ impl Typifier for GaffTypifier {
 struct Bonded {
     params: Params,
     estimate: Option<Provenance>,
-    /// Qualifier fields of the type name (`<types>@<fields>`), or empty.
-    qualifier: Vec<String>,
 }
 
 impl Bonded {
@@ -740,18 +828,16 @@ impl Bonded {
         Self {
             params,
             estimate: None,
-            qualifier: Vec::new(),
         }
     }
 
-    /// A term parmchk2 estimated: its [`BondedTerm::endpoints`], `params`, the
-    /// provenance, and the type-name qualifier it implies.
+    /// A term parmchk2 estimated: its [`BondedTerm::endpoints`], `params`
+    /// and the provenance.
     fn estimated(term: &BondedTerm, params: Params, provenance: Provenance) -> (Vec<String>, Self) {
         (
             term.endpoints().into_iter().map(str::to_owned).collect(),
             Self {
                 params,
-                qualifier: estimate_qualifier(&provenance),
                 estimate: Some(provenance),
             },
         )
@@ -761,6 +847,13 @@ impl Bonded {
     /// on its endpoints and named by their [`TypeName::join`], with the
     /// provenance keys written into its params when it was estimated. Nothing
     /// for an unresolved term (a miss, which fails the match).
+    ///
+    /// The name is the endpoints' alone, estimated or not: an estimate says
+    /// so in its params, never in its name, so a term has the name every
+    /// other source of the force field gives it (a prmtop of the same
+    /// molecule names `f-c3-sy` `f-c3-sy`). Where a later molecule estimates
+    /// a name differently, the output names that one `<name>@<n>`
+    /// ([`TypeAssignment::apply_to`]).
     fn annotation(
         style: &str,
         resolved: Option<(Vec<String>, Self)>,
@@ -769,16 +862,11 @@ impl Bonded {
             return Ok(Vec::new());
         };
         let ends: Vec<&str> = endpoints.iter().map(String::as_str).collect();
-        let mut name = TypeName::join(&ends).map_err(malformed)?;
+        let name = TypeName::join(&ends).map_err(malformed)?;
         let Bonded {
             mut params,
             estimate,
-            qualifier,
         } = term;
-        if !qualifier.is_empty() {
-            let fields: Vec<&str> = qualifier.iter().map(String::as_str).collect();
-            name = name.with_qualifier(&fields).map_err(malformed)?;
-        }
         if let Some(provenance) = &estimate {
             provenance.apply_to(&mut params);
         }
@@ -794,15 +882,19 @@ impl Bonded {
     }
 }
 
+/// A proper term's endpoints in the orientation its type is stored in
+/// ([`BondedTerm::endpoints`]: [`TypeName::orient`]'s), whichever way the
+/// `.dat` row that covers it is written (`ho-oh-c3-c3` is `c3-c3-oh-ho`).
+fn oriented(term: BondedTerm) -> Vec<String> {
+    term.endpoints().into_iter().map(str::to_owned).collect()
+}
+
 /// Rebuild the impropers of `graph` as AmberTools would (see [`improper`]) and
 /// resolve each one, by id.
 ///
-/// A term parmchk2 reached by analogy or took as its default is named with
-/// the qualifier `@<analog>_<penalty>` (`c3-o-c-os@c3.o.c.oh_8.5`, `…@default_0.0`):
-/// parmchk2 searches a quartet's peripherals in bond order, so one quartet can
-/// be estimated differently in two molecules, and one output force field
-/// holds both. A table row, or a wildcard row parmchk2 matched outright, is
-/// named by its four types alone.
+/// Every improper is named by its four types in AMBER's order, centre third;
+/// one parmchk2 estimated (by analogy, or its default) carries the
+/// provenance keys and the frcmod's precision.
 fn add_impropers(
     graph: &mut Atomistic,
     index: &TableIndex,
@@ -810,10 +902,8 @@ fn add_impropers(
 ) -> Result<HashMap<RelationId, (Vec<String>, Bonded)>, GaffError> {
     // Rebuild from scratch: a pre-existing improper would survive with a label
     // this force field never defines.
-    let existing: Vec<_> = graph.impropers().map(|(id, _)| id).collect();
-    for id in existing {
-        graph.remove_improper(id).map_err(malformed)?;
-    }
+    let existing: Vec<_> = graph.improper_ids().collect();
+    graph.del_impropers(&existing).map_err(malformed)?;
     let names: HashMap<NodeId, &'static str> = type_of
         .iter()
         .map(|(&atom, &ty)| (atom, index.name_of(ty)))
@@ -821,44 +911,20 @@ fn add_impropers(
     let mut terms = HashMap::new();
     for term in improper::impropers(graph, index.table, &PARMCHK, &names) {
         let [i, j, k, l] = term.atoms;
-        let id = graph.add_improper(i, j, k, l).map_err(malformed)?;
-        let qualifier = term
-            .estimate
-            .as_ref()
-            .map(estimate_qualifier)
-            .unwrap_or_default();
+        let id = graph
+            .add_improper(i, j, k, l, Props::new())
+            .map_err(malformed)?;
+        let params = match term.estimate {
+            Some(_) => as_frcmod(&term.params, &FRCMOD_IMPROPER),
+            None => term.params,
+        };
         let bonded = Bonded {
-            params: term.params,
+            params,
             estimate: term.estimate,
-            qualifier,
         };
         terms.insert(id, (term.types.to_vec(), bonded));
     }
     Ok(terms)
-}
-
-/// The type-name qualifier of a term parmchk2 estimated, empty for one it
-/// matched outright.
-///
-/// parmchk2 searches a molecule's terms in atom and bond order and reuses a
-/// name's first estimate for the rest of the molecule (an empirical angle
-/// reads the bonds estimated before it), so one name can be estimated
-/// differently in two molecules; one output force field holds both. An
-/// estimate is qualified `@<analog>_<penalty>` — the row it copied, or the
-/// types an empirical angle was computed for, with `-` written `.`
-/// (`c3-o-c-os@c3.o.c.oh_8.5`, `c-cc-na@c2.cc.na_2.6`) — and the improper
-/// default `@default_0.0`. A wildcard row parmchk2 matched outright depends
-/// on the four types alone and is not qualified.
-fn estimate_qualifier(p: &Provenance) -> Vec<String> {
-    if p.method == EstimateMethod::GenericWildcard && !p.analog.is_empty() {
-        return Vec::new();
-    }
-    let analog = if p.analog.is_empty() {
-        "default".to_owned()
-    } else {
-        p.analog.replace('-', ".")
-    };
-    vec![analog, format!("{:.1}", p.penalty)]
 }
 
 /// The four slots of a row this module has already established is wildcard-free.
@@ -1022,6 +1088,8 @@ mod tests {
     //! expectation is read off the table by hand (`ff/params/gaff.rs`,
     //! `ff/params/gaff2.rs`), never captured from another program.
 
+    use crate::props;
+    use molrs::core::Element;
     use std::collections::{BTreeMap, BTreeSet};
 
     use molrs::core::Atomistic;
@@ -1042,14 +1110,18 @@ mod tests {
     /// hydrogen without a `type`.
     fn methane(h_types: [Option<&str>; 4]) -> Atomistic {
         let mut mol = Atomistic::new();
-        let c = mol.add_atom_bare("C");
+        let c = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::C })
+            .unwrap();
         mol.set_atom(c, keys::TYPE, "c3").expect("stamp c3");
         for h_type in h_types {
-            let h = mol.add_atom_bare("H");
+            let h = mol
+                .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                .unwrap();
             if let Some(label) = h_type {
                 mol.set_atom(h, keys::TYPE, label).expect("stamp hc");
             }
-            mol.add_bond(c, h).expect("C-H bond");
+            mol.add_bond(c, h, props! {}).expect("C-H bond");
         }
         mol
     }
@@ -1057,23 +1129,31 @@ mod tests {
     /// A two-atom molecule `a-b`, each atom stamped with its given type.
     fn diatomic((sym_a, type_a): (&str, &str), (sym_b, type_b): (&str, &str)) -> Atomistic {
         let mut mol = Atomistic::new();
-        let a = mol.add_atom_bare(sym_a);
+        let a = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::by_symbol(sym_a).unwrap() })
+            .unwrap();
         mol.set_atom(a, keys::TYPE, type_a).expect("stamp a");
-        let b = mol.add_atom_bare(sym_b);
+        let b = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::by_symbol(sym_b).unwrap() })
+            .unwrap();
         mol.set_atom(b, keys::TYPE, type_b).expect("stamp b");
-        mol.add_bond(a, b).expect("a-b bond");
+        mol.add_bond(a, b, props! {}).expect("a-b bond");
         mol
     }
 
     /// Water `hw-ow-hw`: two O-H bonds, no angle written.
     fn water() -> Atomistic {
         let mut mol = Atomistic::new();
-        let o = mol.add_atom_bare("O");
+        let o = mol
+            .add_atom(props! { keys::ATOMIC_NUMBER => Element::O })
+            .unwrap();
         mol.set_atom(o, keys::TYPE, "ow").expect("stamp ow");
         for _ in 0..2 {
-            let h = mol.add_atom_bare("H");
+            let h = mol
+                .add_atom(props! { keys::ATOMIC_NUMBER => Element::H })
+                .unwrap();
             mol.set_atom(h, keys::TYPE, "hw").expect("stamp hw");
-            mol.add_bond(o, h).expect("O-H bond");
+            mol.add_bond(o, h, props! {}).expect("O-H bond");
         }
         mol
     }
@@ -1244,16 +1324,26 @@ mod tests {
         let angles = params_of(typing.forcefield(), "angle");
         let estimated: Vec<_> = angles
             .iter()
-            .filter(|(_, p)| p.get("estimated").is_some())
+            .filter(|(_, p)| p.get("estimated").and_then(|v| v.as_num()).is_some())
             .collect();
         assert_eq!(estimated.len(), 1, "{angles:?}");
         let (name, params) = estimated[0];
-        assert_eq!(name, "c-cc-na@c2.cc.na_2.6");
-        assert_eq!(params.get("k"), Some(68.7));
-        assert_eq!(params.get("theta0"), Some(123.27));
-        assert_eq!(params.get_str("estimate_method"), Some("analogy"));
-        assert_eq!(params.get_str("estimate_analog"), Some("c2-cc-na"));
-        let penalty = params.get("estimate_penalty").unwrap();
+        // Named by its types alone; the estimate says so in its params.
+        assert_eq!(name, "c-cc-na");
+        assert_eq!(params.get("k").and_then(|v| v.as_num()), Some(68.7));
+        assert_eq!(params.get("theta0").and_then(|v| v.as_num()), Some(123.27));
+        assert_eq!(
+            params.get("estimate_method").and_then(|v| v.as_text()),
+            Some("analogy")
+        );
+        assert_eq!(
+            params.get("estimate_analog").and_then(|v| v.as_text()),
+            Some("c2-cc-na")
+        );
+        let penalty = params
+            .get("estimate_penalty")
+            .and_then(|v| v.as_num())
+            .unwrap();
         assert!((penalty - 2.6).abs() < 1e-12, "{penalty}");
     }
 
@@ -1303,13 +1393,15 @@ mod tests {
         let ids: Vec<_> = atoms
             .iter()
             .map(|&(el, ty)| {
-                let id = mol.add_atom_bare(el);
+                let id = mol
+                    .add_atom(props! { keys::ATOMIC_NUMBER => Element::by_symbol(el).unwrap() })
+                    .unwrap();
                 mol.set_atom(id, keys::TYPE, ty).expect("stamp type");
                 id
             })
             .collect();
         for &(a, b) in bonds {
-            mol.add_bond(ids[a], ids[b]).expect("bond");
+            mol.add_bond(ids[a], ids[b], props! {}).expect("bond");
         }
         mol
     }
@@ -1350,9 +1442,20 @@ mod tests {
             let impropers = params_of(typing.forcefield(), "improper");
             assert_eq!(impropers.len(), 1, "{}: {impropers:?}", set.name());
             let params = impropers.values().next().unwrap();
-            assert_eq!(params.get("k"), Some(k), "{}", set.name());
-            assert_eq!(params.get_str("estimate_analog"), Some(analog));
-            let got = params.get("estimate_penalty").unwrap();
+            assert_eq!(
+                params.get("k").and_then(|v| v.as_num()),
+                Some(k),
+                "{}",
+                set.name()
+            );
+            assert_eq!(
+                params.get("estimate_analog").and_then(|v| v.as_text()),
+                Some(analog)
+            );
+            let got = params
+                .get("estimate_penalty")
+                .and_then(|v| v.as_num())
+                .unwrap();
             assert!((got - penalty).abs() < 1e-9, "{}: {got}", set.name());
         }
     }
@@ -1392,13 +1495,24 @@ mod tests {
         let dihedrals = params_of(typing.forcefield(), "dihedral");
         let estimated: Vec<_> = dihedrals
             .iter()
-            .filter(|(_, p)| p.get("estimated").is_some())
+            .filter(|(_, p)| p.get("estimated").and_then(|v| v.as_num()).is_some())
             .collect();
         assert_eq!(estimated.len(), 1, "{dihedrals:?}");
         let (name, params) = estimated[0];
-        assert!(name.ends_with("@X.c2.nh.X_462.5"), "{name}");
-        assert_eq!(params.get("k1"), Some(2.7 / 4.0));
-        assert_eq!(params.get("periodicity1"), Some(2.0));
-        assert_eq!(params.get("phase1"), Some(180.0));
+        assert_eq!(name, "hn-nh-cz-nh");
+        assert_eq!(
+            params.get("estimate_analog").and_then(|v| v.as_text()),
+            Some("X-c2-nh-X")
+        );
+        assert_eq!(
+            params.get("estimate_penalty").and_then(|v| v.as_num()),
+            Some(462.5)
+        );
+        assert_eq!(params.get("k1").and_then(|v| v.as_num()), Some(2.7 / 4.0));
+        assert_eq!(
+            params.get("periodicity1").and_then(|v| v.as_num()),
+            Some(2.0)
+        );
+        assert_eq!(params.get("phase1").and_then(|v| v.as_num()), Some(180.0));
     }
 }

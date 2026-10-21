@@ -86,7 +86,7 @@ impl GroupReduce {
         }
 
         let keys: Vec<u64> = partition.sizes().into_keys().collect();
-        let mic = simbox.map_or(Mic::Free, SimBox::mic);
+        let mic = simbox.map_or(Mic::free(), SimBox::mic);
         let mut anchors: Vec<Option<[F; 3]>> = vec![None; keys.len()];
         let mut group = Vec::with_capacity(n);
         let mut offsets = Vec::with_capacity(n);
@@ -226,10 +226,11 @@ impl GroupReduce {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array1, arr1, arr2, array};
+    use crate::core::Cell;
+    use ndarray::{Array1, arr1, arr2};
 
     fn cube(len: F, pbc: [bool; 3]) -> SimBox {
-        SimBox::cube(len, array![0.0, 0.0, 0.0], pbc).unwrap()
+        SimBox::new(Cell::Lengths([len; 3]), [0.0, 0.0, 0.0], pbc).unwrap()
     }
 
     /// Spec testing strategy (ac-008): a group straddling the periodic

@@ -41,7 +41,7 @@ for nightly testing.
     python - <<'PY'
     import molrs
 
-    ir = molrs.io.smiles.SmilesIr("O")
+    ir = molrs.io.smiles.read_smiles("O")
     print("components:", ir.n_components)
     print("atoms:", ir.to_atomistic().n_atoms)
     PY
@@ -62,10 +62,10 @@ for nightly testing.
     In `src/main.rs`:
 
     ```rust
-    use molrs::io::read_smiles_str;
+    use molrs::io::smiles::SmilesIr;
 
     fn main() -> Result<(), Box<dyn std::error::Error>> {
-        let mol = read_smiles_str("O")?;
+        let mol = SmilesIr::parse("O")?.to_atomistic()?;
         println!("atoms: {}", mol.n_atoms());
         Ok(())
     }
@@ -123,7 +123,7 @@ crate and installs it into the active virtualenv as `molrs`:
 ```bash
 pip install maturin
 maturin develop -m molrs-python/Cargo.toml --release
-python -c "import molrs; print(molrs.io.smiles.SmilesIr('O').n_components)"
+python -c "import molrs; print(molrs.io.smiles.read_smiles('O').n_components)"
 ```
 
 ### WASM / npm
@@ -156,7 +156,7 @@ the package versions. The documentation site follows the repository `master`
 branch, while crates.io, PyPI, npm, and docs.rs describe released artifacts.
 
 **Consumers (e.g. molpy)** pin the shared **major.minor** line
-(`molcrafts-molrs>=0.18.0,<0.19`), not an exact patch. Patch may drift.
+(`molcrafts-molrs>=0.19.0,<0.20`), not an exact patch. Patch may drift.
 
 ## Browser (Pyodide)
 

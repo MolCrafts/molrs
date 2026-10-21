@@ -34,11 +34,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ff::ir::Params;
-use crate::ff::ir::{ANNOTATION_COLUMNS, ENDPOINT_COLUMNS};
 use crate::ff::ir::{
     Arity, CategorySpec, ConformanceSample, Coordinate, IrError, ParamCombination, ParamDimension,
     ParamKind, StyleSpec,
 };
+use crate::ff::ir::{ENDPOINT_COLUMNS, is_unpriced_column};
 use crate::ff::potential::form_kernel::{CompoundForm, Probe, ScalarForm, TermParams, columns};
 use crate::ff::style_registry::Kernel;
 use crate::ff::style_registry::{ExpressionCompiler, ExpressionForm};
@@ -305,7 +305,7 @@ fn check_param_names(spec: &StyleSpec, pair: bool) -> Result<(), IrError> {
             "name" | "type" | "style" | "r" | "theta" | "phi" | "chi"
         ) || ENDPOINT_COLUMNS.contains(&name)
             || molrs::core::keys::ENDPOINTS.contains(&name)
-            || ANNOTATION_COLUMNS.contains(&name)
+            || is_unpriced_column(name)
             || point
             || pair_input
         {
@@ -408,10 +408,7 @@ impl Probe {
         let declared = |name: &str| spec.style_param(name).is_some();
         for (name, value) in &sample.params {
             let target = if declared(name) { &mut style } else { &mut row };
-            match value {
-                crate::ff::ir::ParamValue::Num(v) => target.set(name, *v),
-                crate::ff::ir::ParamValue::Text(t) => target.set_str(name, t),
-            }
+            target.set(name, value.clone());
         }
         let (style, gathered) = spec.gather(&style, &[("sample", &row)])?;
         let row = &gathered[0].1;
@@ -431,7 +428,10 @@ impl Probe {
                     params.nums.push((col.name, vec![v; n]));
                 }
                 ParamKind::Text { .. } => {
-                    let v = row.get_str(&col.name).ok_or_else(|| missing(&col.name))?;
+                    let v = row
+                        .get(&col.name)
+                        .and_then(|v| v.as_text())
+                        .ok_or_else(|| missing(&col.name))?;
                     params.texts.push((col.name, vec![v.to_owned(); n]));
                 }
                 ParamKind::Array { .. } => return Err(missing(&col.name)),

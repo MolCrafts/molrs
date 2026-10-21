@@ -1,4 +1,4 @@
-"""Python surface for SMILES emit (``molrs.io.write_smiles_str``) and the
+"""Python surface for SMILES emit (``write_smiles(mol)``) and the
 SMARTS pattern of an atom's environment
 (``molrs.perceive.SmartsPattern.from_environment``)."""
 
@@ -8,29 +8,35 @@ import molrs
 import pytest
 
 
-def test_write_smiles_str_round_trip():
-    mol = molrs.io.read_smiles_str("CCO")
-    s = molrs.io.write_smiles_str(mol, canonical=True)
+from molrs.io.smiles import read_smiles, write_smiles
+
+
+def test_emit_round_trip():
+    mol = read_smiles("CCO").to_atomistic()
+    s = write_smiles(mol, canonical=True)
     assert isinstance(s, str) and s
-    assert molrs.io.read_smiles_str(s).n_atoms == 3
+    assert read_smiles(s).to_atomistic().n_atoms == 3
 
 
-def test_write_smiles_str_round_trips():
-    mol = molrs.io.read_smiles_str("c1ccccc1")
-    s = molrs.io.write_smiles_str(mol, canonical=True)
+def test_emit_round_trips_aromatic():
+    mol = read_smiles("c1ccccc1").to_atomistic()
+    s = write_smiles(mol, canonical=True)
     assert s
-    molrs.io.smiles.SmilesIr(s)
+    assert read_smiles(s).to_atomistic().n_atoms == 6
+
+
+def test_emit_root_is_an_atom_view():
+    mol = read_smiles("CCO").to_atomistic()
+    oxygen = next(a for a in mol.atoms if a["atomic_number"] == 8)
+    s = write_smiles(mol, canonical=False, root=oxygen)
+    assert s.startswith("O")
+    with pytest.raises(ValueError):
+        write_smiles(mol, root=0)
 
 
 def test_environment_pattern_matches():
-    mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
-    # first heavy atom handle from atoms iteration
-    atoms = list(mol.atoms) if hasattr(mol, "atoms") else []
-    if atoms:
-        center = atoms[0].handle if hasattr(atoms[0], "handle") else int(atoms[0])
-    else:
-        # fallback: structural handles via canonical_order
-        center = mol.canonical_order()[0]
+    mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
+    center = mol.atoms[0]
     from molrs.perceive import SmartsPattern
 
     env = SmartsPattern.from_environment(mol, center, reach=1, atomic_number=True)
@@ -41,13 +47,13 @@ def test_environment_pattern_matches():
 
 
 def test_bad_aromatic_flag():
-    mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
+    mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
     with pytest.raises((ValueError, TypeError)):
-        molrs.io.smiles.SmilesIr.from_atomistic(mol, aromatic="nope")
+        molrs.io.smiles.write_smiles(mol, aromatic="nope")
 
 
 def test_bad_neighbor_style():
-    mol = molrs.io.smiles.SmilesIr("CCO").to_atomistic()
+    mol = molrs.io.smiles.read_smiles("CCO").to_atomistic()
     center = mol.canonical_order()[0]
     with pytest.raises((ValueError, TypeError)):
         molrs.perceive.SmartsPattern.from_environment(mol, center, neighbor_style="x")

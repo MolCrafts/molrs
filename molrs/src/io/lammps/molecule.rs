@@ -1,10 +1,11 @@
 //! LAMMPS molecule template files (native text + JSON).
+use crate::io::{Sink, Source};
 
 use crate::io::frame_columns::insert_column;
 use crate::io::invalid_data;
+use crate::io::lammps::drude::{SPRINGS, lammps_type_labels, refuse_virtual_sites};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Result, Write};
-use std::path::Path;
+use std::io::{BufRead, Result, Write};
 
 use serde_json::{Value as JsonValue, json};
 
@@ -33,30 +34,34 @@ const JSON_UNITS: &str = "units";
 ///   `atomi`… (0-based indices into atoms)
 /// - meta: `format=lammps_molecule`, `source_format`, counts, optional
 ///   `title` / `units` / `center_of_mass` / `total_mass` / `inertia`
-pub fn read_lammps_molecule<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    read_lammps_molecule_native(path.as_ref())
+///
+/// Read from a file, the frame's meta carries its path as `source_file`.
+pub fn read_lammps_molecule<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_lammps_molecule_native(src.into())
 }
 
 /// Read a LAMMPS molecule template in its JSON format (`format: "molecule"`).
-pub fn read_lammps_molecule_json<P: AsRef<Path>>(path: P) -> Result<Frame> {
-    read_json(path.as_ref())
+///
+/// Read from a file, the frame's meta carries its path as `source_file`.
+pub fn read_lammps_molecule_json<'a>(src: impl Into<Source<'a>>) -> Result<Frame> {
+    read_json(src.into())
 }
 
 /// Write a frame as a LAMMPS molecule template file (the native text format).
-pub fn write_lammps_molecule<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    write_lammps_molecule_native(path, frame)
+pub fn write_lammps_molecule<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    write_lammps_molecule_native(sink.into(), frame)
 }
 
 /// Write a frame as a LAMMPS molecule template in its JSON format.
-pub fn write_lammps_molecule_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
-    write_json(path, frame)
+pub fn write_lammps_molecule_json<'a>(sink: impl Into<Sink<'a>>, frame: &Frame) -> Result<()> {
+    write_json(sink.into(), frame)
 }
 
 // ── native reader ───────────────────────────────────────────────────────────
 
-fn read_lammps_molecule_native(path: &Path) -> Result<Frame> {
-    let f = std::fs::File::open(path)?;
-    let mut lines: Vec<String> = BufReader::new(f)
+fn read_lammps_molecule_native(src: Source<'_>) -> Result<Frame> {
+    let mut lines: Vec<String> = src
+        .reader()?
         .lines()
         .collect::<std::result::Result<_, _>>()?;
     if lines.is_empty() {
@@ -70,7 +75,9 @@ fn read_lammps_molecule_native(path: &Path) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.meta.insert("format", "lammps_molecule");
     frame.meta.insert("source_format", "native");
-    frame.meta.insert("source_file", path.display().to_string());
+    if let Some(path) = src.path() {
+        frame.meta.insert("source_file", path.display().to_string());
+    }
     frame.meta.insert("title", title);
     for (k, v) in [
         ("n_atoms", header.n_atoms),
@@ -404,7 +411,7 @@ fn parse_native_connectivity(
 
 // ── native writer ───────────────────────────────────────────────────────────
 
-fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
+fn write_lammps_molecule_native(sink: Sink<'_>, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
@@ -414,8 +421,8 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if n == 0 {
         return Err(invalid_data("Frame must contain atoms data"));
     }
-    let f = std::fs::File::create(path)?;
-    let mut w = BufWriter::new(f);
+    let sections = topology(frame)?;
+    let mut w = sink.writer()?;
     let title = frame
         .meta
         .get("title")
@@ -424,13 +431,8 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     writeln!(w, "# {title}")?;
     writeln!(w)?;
     writeln!(w, "{n} atoms")?;
-    for name in ["bonds", "angles", "dihedrals", "impropers"] {
-        if let Some(b) = frame.get(name)
-            && let Some(nb) = b.n_rows()
-            && nb > 0
-        {
-            writeln!(w, "{nb} {name}")?;
-        }
+    for section in &sections {
+        writeln!(w, "{} {}", section.ids.len(), section.block)?;
     }
     if let Some(MetaValue::F64(m)) = frame.meta.get("total_mass") {
         writeln!(w, "{m:.6} mass")?;
@@ -453,15 +455,15 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
         let x = atoms
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("x missing"))?;
         let y = atoms
             .get("y")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("y missing"))?;
         let z = atoms
             .get("z")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("z missing"))?;
         for i in 0..n {
             writeln!(w, "{} {:.6} {:.6} {:.6}", ids[i], x[[i]], y[[i]], z[[i]])?;
@@ -479,11 +481,11 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
     if atoms.contains_key("mol_id") {
         writeln!(w, "Molecules")?;
         writeln!(w)?;
-        if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
+        if let Some(vals) = atoms.get("mol_id").and_then(|c| c.get::<u64>()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
-        } else if let Some(vals) = atoms.get("mol_id").and_then(|c| c.as_int()) {
+        } else if let Some(vals) = atoms.get("mol_id").and_then(|c| c.get::<i32>()) {
             for i in 0..n {
                 writeln!(w, "{} {}", ids[i], vals[[i]])?;
             }
@@ -504,7 +506,7 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
         let vals = atoms
             .get(col)
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data(col))?;
         for i in 0..n {
             writeln!(w, "{} {:.6}", ids[i], vals[[i]])?;
@@ -512,59 +514,125 @@ fn write_lammps_molecule_native<P: AsRef<Path>>(path: P, frame: &Frame) -> Resul
         writeln!(w)?;
     }
 
-    for (name, arity) in [
-        ("bonds", 2usize),
-        ("angles", 3),
-        ("dihedrals", 4),
-        ("impropers", 4),
-    ] {
-        let Some(block) = frame.get(name) else {
-            continue;
-        };
-        let Some(nb) = block.n_rows() else {
-            continue;
-        };
-        if nb == 0 {
-            continue;
-        }
-        writeln!(w, "{}", capitalize(name))?;
+    for section in &sections {
+        writeln!(w, "{}", capitalize(section.block))?;
         writeln!(w)?;
-        let item_ids: Vec<Idx> = if block.contains_key("id") {
-            if let Some(col) = block.get("id").and_then(|c| c.as_uint()) {
-                (0..nb).map(|i| col[[i]]).collect()
-            } else if let Some(col) = block.get("id").and_then(|c| c.as_int()) {
-                (0..nb).map(|i| col[[i]] as Idx).collect()
-            } else {
-                return Err(invalid_data("id"));
-            }
-        } else {
-            (1..=nb as Idx).collect()
-        };
-        let t_ids = type_ids_for_block(block)?;
-        let member_keys = ["atomi", "atomj", "atomk", "atoml"];
-        let mut member_cols = Vec::new();
-        for key in member_keys.iter().take(arity) {
-            let col = block
-                .get(key)
-                .and_then(|c| c.as_uint())
-                .ok_or_else(|| invalid_data(*key))?;
-            member_cols.push(col);
-        }
-        for i in 0..nb {
-            write!(w, "{} {}", item_ids[i], t_ids[i])?;
-            for m in &member_cols {
-                let atom_idx = m[[i]] as usize;
-                let atom_id = ids
-                    .get(atom_idx)
-                    .copied()
-                    .ok_or_else(|| invalid_data("connectivity atom index out of range"))?;
-                write!(w, " {atom_id}")?;
+        for (row, members) in section.members.iter().enumerate() {
+            write!(w, "{} {}", section.ids[row], section.types[row])?;
+            for &atom in members {
+                write!(w, " {}", atom_id(&ids, atom)?)?;
             }
             writeln!(w)?;
         }
         writeln!(w)?;
     }
-    Ok(())
+    w.flush()
+}
+
+/// The topology sections a template has, in file order: `(block, arity,
+/// JSON type field)`.
+const SECTIONS: [(&str, usize, &str); 4] = [
+    ("bonds", 2, "bond-type"),
+    ("angles", 3, "angle-type"),
+    ("dihedrals", 4, "dihedral-type"),
+    ("impropers", 4, "improper-type"),
+];
+
+/// One topology section's rows: each row's id, type id and member atoms
+/// (0-based indices).
+struct Section {
+    block: &'static str,
+    type_field: &'static str,
+    ids: Vec<Idx>,
+    types: Vec<I>,
+    members: Vec<Vec<usize>>,
+}
+
+/// The frame's non-empty topology sections: `bonds` holds the `drudes` rows
+/// after its own ([`SPRINGS`]), numbered on from the bonds' last id. A
+/// section's types are its rows' `type_id` (a caller's own numbering, as a
+/// bond/react system's), else its sorted labels; bonds and Drude springs
+/// share one bond-type id space by label, the data writer's
+/// ([`lammps_type_labels`]). A `virtual_sites` row is refused.
+fn topology(frame: &Frame) -> Result<Vec<Section>> {
+    refuse_virtual_sites(frame)?;
+    let springs = frame
+        .get(SPRINGS.0)
+        .and_then(Block::n_rows)
+        .is_some_and(|n| n > 0);
+    let mut sections = Vec::new();
+    for (name, arity, type_field) in SECTIONS {
+        let sources: &[&str] = if name == SPRINGS.1 {
+            &[SPRINGS.1, SPRINGS.0]
+        } else {
+            &[name]
+        };
+        let mut ids = Vec::new();
+        let mut members = Vec::new();
+        for &source in sources {
+            let Some(block) = frame.get(source) else {
+                continue;
+            };
+            let nb = block.n_rows().unwrap_or(0);
+            let next = ids.last().copied().unwrap_or(0);
+            match block.get("id") {
+                None => ids.extend((1..=nb as Idx).map(|k| next + k)),
+                Some(col) => {
+                    if let Some(col) = col.get::<u64>() {
+                        ids.extend(col.iter().copied());
+                    } else if let Some(col) = col.get::<i32>() {
+                        ids.extend(col.iter().map(|&v| v as Idx));
+                    } else {
+                        return Err(invalid_data(format!("{source}.id")));
+                    }
+                }
+            }
+            let mut cols = Vec::new();
+            for key in keys::ENDPOINTS.iter().take(arity) {
+                cols.push(
+                    block
+                        .get(key)
+                        .and_then(|c| c.get::<u64>())
+                        .ok_or_else(|| invalid_data(format!("{source}.{key}")))?,
+                );
+            }
+            members.extend((0..nb).map(|i| cols.iter().map(|c| c[[i]] as usize).collect()));
+        }
+        if members.is_empty() {
+            continue;
+        }
+        let types: Vec<I> = if name == SPRINGS.1 && springs {
+            lammps_type_labels(frame)
+                .map_err(invalid_data)?
+                .block(name)
+                .map(|t| t.type_ids().iter().map(|&v| v as I).collect())
+                .unwrap_or_default()
+        } else {
+            type_ids_for_block(frame.get(name).expect("a section has rows of its own"))?
+        };
+        if types.len() != members.len() {
+            return Err(invalid_data(format!(
+                "internal: {sources:?} type ids {} != rows {}",
+                types.len(),
+                members.len()
+            )));
+        }
+        sections.push(Section {
+            block: name,
+            type_field,
+            ids,
+            types,
+            members,
+        });
+    }
+    Ok(sections)
+}
+
+/// The template id of the atom at 0-based index `atom`.
+fn atom_id(ids: &[Idx], atom: usize) -> Result<Idx> {
+    ids.get(atom)
+        .copied()
+        .ok_or_else(|| invalid_data("connectivity atom index out of range"))
 }
 
 fn capitalize(s: &str) -> String {
@@ -577,10 +645,10 @@ fn capitalize(s: &str) -> String {
 
 fn atom_ids(atoms: &Block) -> Vec<Idx> {
     let n = atoms.n_rows().unwrap_or(0);
-    if let Some(col) = atoms.get("id").and_then(|c| c.as_uint()) {
+    if let Some(col) = atoms.get("id").and_then(|c| c.get::<u64>()) {
         return (0..n).map(|i| col[[i]]).collect();
     }
-    if let Some(col) = atoms.get("id").and_then(|c| c.as_int()) {
+    if let Some(col) = atoms.get("id").and_then(|c| c.get::<i32>()) {
         return (0..n).map(|i| col[[i]] as Idx).collect();
     }
     (1..=n as Idx).collect()
@@ -588,13 +656,13 @@ fn atom_ids(atoms: &Block) -> Vec<Idx> {
 
 fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
     let n = block.n_rows().ok_or_else(|| invalid_data("empty block"))?;
-    if let Some(col) = block.get("type_id").and_then(|c| c.as_int()) {
+    if let Some(col) = block.get("type_id").and_then(|c| c.get::<i32>()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
-    if let Some(col) = block.get("type_id").and_then(|c| c.as_uint()) {
+    if let Some(col) = block.get("type_id").and_then(|c| c.get::<u64>()) {
         return Ok((0..n).map(|i| col[[i]] as I).collect());
     }
-    if let Some(col) = block.get("type").and_then(|c| c.as_string()) {
+    if let Some(col) = block.get("type").and_then(|c| c.get::<String>()) {
         let labels: Vec<String> = (0..n).map(|i| col[[i]].clone()).collect();
         let mut uniq = labels.clone();
         uniq.sort();
@@ -612,7 +680,7 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
             .collect();
         return Ok(labels.iter().map(|s| map[s.as_str()]).collect());
     }
-    if let Some(col) = block.get("type").and_then(|c| c.as_int()) {
+    if let Some(col) = block.get("type").and_then(|c| c.get::<i32>()) {
         return Ok((0..n).map(|i| col[[i]]).collect());
     }
     Err(invalid_data("block has no type / type_id"))
@@ -620,8 +688,8 @@ fn type_ids_for_block(block: &Block) -> Result<Vec<I>> {
 
 // ── JSON ────────────────────────────────────────────────────────────────────
 
-fn read_json(path: &Path) -> Result<Frame> {
-    let text = std::fs::read_to_string(path)?;
+fn read_json(src: Source<'_>) -> Result<Frame> {
+    let text = src.text()?;
     let data: JsonValue = serde_json::from_str(&text).map_err(invalid_data)?;
     if data.get("format").and_then(|v| v.as_str()) != Some("molecule") {
         return Err(invalid_data("JSON file must have format='molecule'"));
@@ -629,7 +697,9 @@ fn read_json(path: &Path) -> Result<Frame> {
     let mut frame = Frame::new();
     frame.meta.insert("format", "lammps_molecule");
     frame.meta.insert("source_format", "json");
-    frame.meta.insert("source_file", path.display().to_string());
+    if let Some(path) = src.path() {
+        frame.meta.insert("source_file", path.display().to_string());
+    }
     frame.meta.insert(
         "title",
         data.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -806,23 +876,24 @@ fn read_json(path: &Path) -> Result<Frame> {
     Ok(frame)
 }
 
-fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
+fn write_json(sink: Sink<'_>, frame: &Frame) -> Result<()> {
     let atoms = frame
         .get("atoms")
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
     let n = atoms
         .n_rows()
         .ok_or_else(|| invalid_data("Frame must contain atoms data"))?;
+    let sections = topology(frame)?;
     let ids = atom_ids(atoms);
-    let type_labels: Vec<String> = if let Some(col) = atoms.get("type").and_then(|c| c.as_string())
-    {
-        (0..n).map(|i| col[[i]].clone()).collect()
-    } else {
-        type_ids_for_block(atoms)?
-            .into_iter()
-            .map(|v| v.to_string())
-            .collect()
-    };
+    let type_labels: Vec<String> =
+        if let Some(col) = atoms.get("type").and_then(|c| c.get::<String>()) {
+            (0..n).map(|i| col[[i]].clone()).collect()
+        } else {
+            type_ids_for_block(atoms)?
+                .into_iter()
+                .map(|v| v.to_string())
+                .collect()
+        };
     let types_data: Vec<JsonValue> = (0..n)
         .map(|i| {
             if let Ok(t) = type_labels[i].parse::<i64>() {
@@ -862,76 +933,50 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
     if atoms.contains_key("x") && atoms.contains_key("y") && atoms.contains_key("z") {
         let x = atoms
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("x"))?;
         let y = atoms
             .get("y")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("y"))?;
         let z = atoms
             .get("z")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .ok_or_else(|| invalid_data("z"))?;
         let coords: Vec<JsonValue> = (0..n)
             .map(|i| json!([ids[i], x[[i]], y[[i]], z[[i]]]))
             .collect();
         data["coords"] = json!({ "format": ["atom-id", "x", "y", "z"], "data": coords });
     }
-    if let Some(c) = atoms.get("charge").and_then(|c| c.as_float()) {
+    if let Some(c) = atoms.get("charge").and_then(|c| c.get::<f64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], c[[i]]])).collect();
         data["charges"] = json!({ "format": ["atom-id", "charge"], "data": rows });
     }
-    if let Some(m) = atoms.get("mass").and_then(|c| c.as_float()) {
+    if let Some(m) = atoms.get("mass").and_then(|c| c.get::<f64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["masses"] = json!({ "format": ["atom-id", "mass"], "data": rows });
     }
-    if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_uint()) {
+    if let Some(m) = atoms.get("mol_id").and_then(|c| c.get::<u64>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
-    } else if let Some(m) = atoms.get("mol_id").and_then(|c| c.as_int()) {
+    } else if let Some(m) = atoms.get("mol_id").and_then(|c| c.get::<i32>()) {
         let rows: Vec<JsonValue> = (0..n).map(|i| json!([ids[i], m[[i]]])).collect();
         data["molecule"] = json!({ "format": ["atom-id", "molecule-id"], "data": rows });
     }
 
-    for (name, arity, type_label) in [
-        ("bonds", 2usize, "bond-type"),
-        ("angles", 3, "angle-type"),
-        ("dihedrals", 4, "dihedral-type"),
-        ("impropers", 4, "improper-type"),
-    ] {
-        let Some(block) = frame.get(name) else {
-            continue;
-        };
-        let Some(nb) = block.n_rows() else {
-            continue;
-        };
-        if nb == 0 {
-            continue;
-        }
-        let t_ids = type_ids_for_block(block)?;
-        let keys = ["atomi", "atomj", "atomk", "atoml"];
-        let mut members = Vec::new();
-        for key in keys.iter().take(arity) {
-            members.push(
-                block
-                    .get(key)
-                    .and_then(|c| c.as_uint())
-                    .ok_or_else(|| invalid_data(*key))?,
-            );
-        }
+    for section in &sections {
+        let mut format = vec![section.type_field.to_string()];
+        let arity = section.members.first().map_or(0, Vec::len);
+        format.extend((1..=arity).map(|k| format!("atom{k}")));
         let mut rows = Vec::new();
-        let mut format = vec![type_label.to_string()];
-        for k in 0..arity {
-            format.push(format!("atom{}", k + 1));
-        }
-        for i in 0..nb {
-            let mut row = vec![json!(t_ids[i])];
-            for m in &members {
-                row.push(json!(ids[m[[i]] as usize]));
+        for (row, members) in section.members.iter().enumerate() {
+            let mut out = vec![json!(section.types[row])];
+            for &atom in members {
+                out.push(json!(atom_id(&ids, atom)?));
             }
-            rows.push(JsonValue::Array(row));
+            rows.push(JsonValue::Array(out));
         }
-        data[name] = json!({ "format": format, "data": rows });
+        data[section.block] = json!({ "format": format, "data": rows });
     }
 
     if let Some(MetaValue::F64x3(c)) = frame.meta.get("center_of_mass") {
@@ -944,9 +989,9 @@ fn write_json<P: AsRef<Path>>(path: P, frame: &Frame) -> Result<()> {
         data["inertia"] = json!(inn.to_vec());
     }
 
-    let file = std::fs::File::create(path)?;
-    serde_json::to_writer_pretty(BufWriter::new(file), &data).map_err(invalid_data)?;
-    Ok(())
+    let mut w = sink.writer()?;
+    serde_json::to_writer_pretty(&mut w, &data).map_err(invalid_data)?;
+    w.flush()
 }
 
 #[cfg(test)]
@@ -998,7 +1043,7 @@ Angles
         assert_eq!(frame.get("angles").unwrap().n_rows(), Some(1));
         let charge = atoms
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .expect("Charges section");
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
@@ -1022,12 +1067,93 @@ Angles
             .get("atoms")
             .unwrap()
             .get("charge")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap();
         assert_eq!(
             charge.iter().copied().collect::<Vec<_>>(),
             vec![-0.834, 0.417, 0.417]
         );
+    }
+
+    /// A relation block of `pairs` (0-based atom indices) typed `types`.
+    fn pair_block(pairs: &[(Idx, Idx)], types: &[&str]) -> Block {
+        let mut block = Block::new();
+        let (i, j): (Vec<Idx>, Vec<Idx>) = pairs.iter().copied().unzip();
+        insert_column(&mut block, keys::ATOMI, i).unwrap();
+        insert_column(&mut block, keys::ATOMJ, j).unwrap();
+        let types: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+        insert_column(&mut block, keys::TYPE, types).unwrap();
+        block
+    }
+
+    /// A polarisable methane-like fragment: core `CT` (1) with its Drude
+    /// particle `DCT` (2) and two `HC` (3, 4), bonded `CT-HC`.
+    fn drude_fragment() -> Frame {
+        let mut atoms = Block::new();
+        let types: Vec<String> = ["CT", "DCT", "HC", "HC"].map(String::from).to_vec();
+        insert_column(&mut atoms, keys::TYPE, types).unwrap();
+        insert_column(&mut atoms, keys::CHARGE, vec![0.5 as F, -0.5, 0.0, 0.0]).unwrap();
+        for (key, x) in [
+            ("x", [0.0 as F, 0.1, 1.0, -1.0]),
+            ("y", [0.0; 4]),
+            ("z", [0.0; 4]),
+        ] {
+            insert_column(&mut atoms, key, x.to_vec()).unwrap();
+        }
+        let mut frame = Frame::new();
+        frame.insert("atoms", atoms);
+        frame.insert("bonds", pair_block(&[(0, 2), (0, 3)], &["CT-HC", "CT-HC"]));
+        frame.insert("drudes", pair_block(&[(0, 1)], &["CT-DCT"]));
+        frame
+    }
+
+    /// As the data writer does, the template writes each Drude spring
+    /// (`drudes` row) as a `Bonds` row after the bonds, its type a bond type
+    /// of its own label numbered with the bonds' (`lammps_type_labels`):
+    /// LAMMPS's DRUDE package reads the core-shell springs as bonds.
+    #[test]
+    fn drude_springs_are_template_bonds_of_their_own_type() {
+        let dir = tempfile::tempdir().unwrap();
+        let frame = drude_fragment();
+        let path = dir.path().join("drude.mol");
+        write_lammps_molecule(&path, &frame).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\n3 bonds\n"), "{text}");
+        assert!(
+            text.contains("Bonds\n\n1 2 1 3\n2 2 1 4\n3 1 1 2\n"),
+            "{text}"
+        );
+        let back = read_lammps_molecule(&path).unwrap();
+        assert_eq!(back.get("bonds").unwrap().n_rows(), Some(3));
+
+        let path = dir.path().join("drude.json");
+        write_lammps_molecule_json(&path, &frame).unwrap();
+        let back = read_lammps_molecule_json(&path).unwrap();
+        let bonds = back.get("bonds").unwrap();
+        assert_eq!(bonds.n_rows(), Some(3));
+        let j = bonds.get("atomj").and_then(|c| c.get::<u64>()).unwrap();
+        assert_eq!(j.iter().copied().collect::<Vec<_>>(), vec![2, 3, 1]);
+    }
+
+    /// A template builds no virtual site: a `virtual_sites` row is refused
+    /// by both formats, as the data writer refuses it.
+    #[test]
+    fn virtual_sites_are_refused_by_both_template_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut frame = drude_fragment();
+        let mut sites = Block::new();
+        insert_column(&mut sites, "site", vec![1 as Idx]).unwrap();
+        frame.insert("virtual_sites", sites);
+        for path in ["site.mol", "site.json"] {
+            let path = dir.path().join(path);
+            let err = if path.extension().is_some_and(|e| e == "json") {
+                write_lammps_molecule_json(&path, &frame)
+            } else {
+                write_lammps_molecule(&path, &frame)
+            }
+            .expect_err("a virtual site has no template form");
+            assert!(err.to_string().contains("virtual_sites"), "{err}");
+        }
     }
 
     #[test]
@@ -1052,7 +1178,7 @@ Angles
         std::fs::write(&path, WATER).unwrap();
         let mut frame = read_lammps_molecule(&path).unwrap();
         frame.meta.insert(keys::UNITS, MetaValue::I64(3));
-        let err = write_lammps_molecule_json(dir.path().join("water.json"), &frame)
+        let err = write_lammps_molecule_json(dir.path().join("water.json").as_path(), &frame)
             .expect_err("a non-string units meta must be refused");
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData, "{err}");
         assert!(err.to_string().contains("units"), "{err}");

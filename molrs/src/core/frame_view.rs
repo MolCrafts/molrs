@@ -74,15 +74,19 @@ impl<'a> FrameView<'a> {
     }
 
     /// Creates an owned [`Frame`] by cloning all viewed data.
-    pub fn to_owned(&self) -> Frame {
+    ///
+    /// # Errors
+    /// Propagates a viewed block's validation error rather than returning a
+    /// partially converted frame.
+    pub fn to_owned(&self) -> Result<Frame, crate::core::BlockError> {
         let mut block_map = IndexMap::with_capacity(self.map.len());
         for (&key, block_view) in &self.map {
-            block_map.insert(key.to_string(), block_view.to_owned());
+            block_map.insert(key.to_string(), block_view.to_owned()?);
         }
-        let mut frame = Frame::from_map(block_map);
+        let mut frame: Frame = block_map.into_iter().collect();
         frame.simbox = self.simbox.cloned();
         frame.meta = self.meta.clone();
-        frame
+        Ok(frame)
     }
 }
 
@@ -129,16 +133,24 @@ mod tests {
         let mut frame = Frame::new();
         let mut atoms = Block::new();
         atoms
-            .insert("x", Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn())
+            .insert(
+                "x",
+                Array1::from_vec(vec![1.0 as F, 2.0, 3.0]).into_dyn(),
+                None,
+            )
             .unwrap();
         atoms
-            .insert("id", Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn())
+            .insert(
+                "id",
+                Array1::from_vec(vec![10 as Idx, 20, 30]).into_dyn(),
+                None,
+            )
             .unwrap();
         frame.insert("atoms", atoms);
 
         let mut bonds = Block::new();
         bonds
-            .insert("count", Array1::from_vec(vec![1 as I, 2]).into_dyn())
+            .insert("count", Array1::from_vec(vec![1 as I, 2]).into_dyn(), None)
             .unwrap();
         frame.insert("bonds", bonds);
 
@@ -163,7 +175,7 @@ mod tests {
 
         let atoms = view.get("atoms").unwrap();
         assert_eq!(atoms.n_rows(), Some(3));
-        assert!(atoms.get("x").and_then(|c| c.as_float()).is_some());
+        assert!(atoms.get("x").and_then(|c| c.get::<f64>()).is_some());
     }
 
     #[test]
@@ -184,7 +196,7 @@ mod tests {
     fn test_to_owned_roundtrip() {
         let frame = make_frame();
         let view = FrameView::from(&frame);
-        let owned = view.to_owned();
+        let owned = view.to_owned().unwrap();
 
         assert_eq!(owned.len(), 2);
         assert!(owned.contains_key("atoms"));
@@ -196,7 +208,7 @@ mod tests {
         assert_eq!(
             atoms
                 .get("x")
-                .and_then(|c| c.as_float())
+                .and_then(|c| c.get::<f64>())
                 .unwrap()
                 .as_slice_memory_order()
                 .unwrap(),
@@ -228,14 +240,14 @@ mod tests {
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap()
             .as_ptr();
         let view_ptr = view
             .get("atoms")
             .unwrap()
             .get("x")
-            .and_then(|c| c.as_float())
+            .and_then(|c| c.get::<f64>())
             .unwrap()
             .as_ptr();
         assert_eq!(orig_ptr, view_ptr);
