@@ -87,7 +87,7 @@ impl CellArg {
 /// >>> Box(Cell.undefined(), pbc=(False, False, False)).is_cell_defined
 /// False
 #[pyclass(module = "molrs.core", name = "Cell", frozen, from_py_object, eq)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct PyCell {
     pub(crate) inner: Cell,
 }

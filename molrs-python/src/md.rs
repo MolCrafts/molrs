@@ -32,7 +32,14 @@ fn check_nx3(pos: &ArrayArg2<'_, f64>, what: &str) -> PyResult<()> {
 
 fn mass_from(mass: &Bound<'_, PyAny>) -> PyResult<Array1<F>> {
     match mass.extract::<crate::array::ArrayArg1<f64>>() {
-        Ok(arr) => Ok(arr.as_array().to_owned()),
+        Ok(arr) => {
+            if arr.as_array().iter().any(|&m| !m.is_finite() || m <= 0.0) {
+                return Err(PyValueError::new_err(
+                    "mass must be finite and strictly positive",
+                ));
+            }
+            Ok(arr.as_array().to_owned())
+        }
         Err(_) if mass.extract::<F>().is_ok() => Err(PyTypeError::new_err(
             "mass: expected a 1-D float64 array of per-atom masses (N,), got a scalar; \
              for a homogeneous system pass np.full(n_atoms, mass)",
