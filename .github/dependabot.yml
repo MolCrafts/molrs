@@ -6,12 +6,11 @@ updates:
   - package-ecosystem: cargo
     directories:
       - "/"
-      - "/molrs-ffi"
-      - "/molrs-python"
-      - "/molrs-wasm"
-      - "/molrs-capi"
-      - "/molrs-cxxapi"
-      - "/molrs-ext-example"
+      - "/crates/molrs-ffi"
+      - "/molpy"
+      - "/molwasm"
+      - "/molc"
+      - "/molcxx"
     schedule:
       interval: weekly
     target-branch: dev
@@ -20,7 +19,7 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: uv
-    directory: "/molrs-python"
+    directory: "/molpy"
     schedule:
       interval: weekly
     target-branch: dev

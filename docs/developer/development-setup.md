@@ -1,0 +1,100 @@
+# Development Setup
+
+After following this page you will have a working local environment with editable install, pre-commit hooks, and passing tests.
+
+## Prerequisites
+
+You need Python 3.12 or newer, Git, [uv](https://docs.astral.sh/uv/), and the
+Rust toolchain ([`rustup`](https://rustup.rs/)): molpy builds
+its [Rust core](rust-core.md) from source. The repository pins
+the toolchain channel and components in `rust-toolchain.toml`, so no manual
+component setup is required. Everything else is installed by the commands
+below.
+
+
+## Quick setup
+
+The repository holds the whole molpy project: the Rust core (`crates/molrs`,
+`crates/molrs-ffi`) and one directory per language binding — `molpy/`
+(Python), `molwasm/`, `molc/`, `molcxx/`. The Python binding is a maturin
+project: `molpy/Cargo.toml` + `molpy/src/` build the native module
+`molpy._core`, and `molpy/python/molpy/` is the package.
+
+```bash
+git clone https://github.com/MolCrafts/molpy.git
+cd molpy
+uvx pre-commit install
+uv --directory molpy sync --extra dev   # builds molpy in place (editable)
+cd molpy && uv run --no-sync pytest     # the Python suite
+```
+
+Run `pytest`, not `python -m pytest`. The suite imports the installed wheel.
+The package source is `molpy/python/molpy/`.
+
+
+## Gates
+
+`scripts/check.sh verify` is the pre-push gate, every check once. Its Python
+gates are `python` (build one molpy wheel from this checkout, install it in
+molpy's locked environment, `molpy/uv.lock`, and run the suite on it),
+`types` (`molpy/python/molpy/_core.pyi` against the compiled module) and `docs`
+(this manual, `--strict`, on the same wheel). CI runs `python` on every OS
+leg and `docs` on the Linux wheel. mollog and molcfg come from PyPI, within
+`molpy/pyproject.toml`'s `[project]` ranges.
+
+## Developing across operating systems
+
+Use the pinned Rust toolchain and Python 3.12 for the local gates. On Windows,
+run the shell hooks in Git Bash with Python and uv on PATH; a WSL run proves
+Linux behavior, so native Windows CI must still pass. The CI matrix separately
+checks all three native OSes, one abi3 wheel per OS built on Python 3.12.
+
+Write text with `encoding="utf-8"`, use `pathlib` for Python paths, and preserve
+LF endings through `.gitattributes`. Avoid filenames that differ only by case
+and assumptions about `/tmp`, executable suffixes or a venv's `bin` directory.
+Use `.venv/Scripts` and `.exe` on Windows. A container can align Linux tools,
+but cannot validate Windows or macOS native bindings.
+
+## Documentation preview
+
+The doc site is built with [Zensical](https://zensical.org) (Material for MkDocs'
+successor), configured by `zensical.toml` at the repository root. Install the doc
+extras into molpy's environment and start a local preview server from the
+repository root. The server runs from `molpy/`, so `DOCS_DIR` tells the theme
+where a figure's `$file` data lives.
+
+```bash
+DOCS_DIR="$PWD/docs" uv --directory molpy run --locked --extra doc zensical serve -f ../zensical.toml
+```
+
+The site is at `http://localhost:8000`. Changes to `.md` files are reflected immediately.
+
+User-guide notebooks are pre-rendered to Markdown (Zensical does not run notebooks
+at build time). After editing one, regenerate its page with
+`python molpy/scripts/render_notebooks.py`.
+
+
+## External tools
+
+LAMMPS and AmberTools are optional programs for *using* MolPy's engines and
+`mp.tool.ambertools`; packing uses molpack (`pip install molcrafts-molpack`).
+None of them is part of the test suite: engines and the AmberTools programs
+are tested with mocks and script literals. Doc blocks that would shell out
+declare `# docs: skip — <reason>`.
+
+
+## Common commands
+
+```bash
+scripts/check.sh fmt ruff                 # formatting and lint, Rust and Python
+scripts/check.sh python types             # molpy wheel + suite, stub check
+scripts/check.sh docs                     # this manual, --strict
+scripts/check.sh verify                   # the pre-push gate: every check once
+cargo mrs-test                            # Rust core unit tests
+cd molpy && uv run --no-sync ruff format python tests   # auto-format Python
+```
+
+
+## Troubleshooting
+
+If imports fail after pulling new code, rebuild molpy in place: `uv --directory molpy sync --extra dev --reinstall-package molcrafts-molpy` (the Rust side changed). The manual builds with `scripts/check.sh docs`. If formatting checks fail, run `uv --directory molpy run --no-sync ruff format python tests` before pushing.

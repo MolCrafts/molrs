@@ -3,8 +3,8 @@
 debug
 target
 target-aarch64/
-# Host-arch wasm-pack output (x86_64 login node). Publish uses npm @molcrafts/molrs.
-molrs-wasm/.x86_64/
+# Host-arch wasm-pack output (x86_64 login node). Publish uses npm @molcrafts/molwasm.
+molwasm/.x86_64/
 # Isolated Cargo target dirs for verification runs (capi CMake honours
 # CARGO_TARGET_DIR; the repo's own target/ lives on Lustre, where cargo can
 # deadlock on flock).
@@ -42,27 +42,26 @@ __pycache__/
 
 # Codex local state
 .agents/
-AGENTS.md
 
 # Claude Code scheduler lock
 .claude/scheduled_tasks.lock
 
 # Example output files
 *.xyz
-!molrs-python/tests/data/*.xyz
-!molrs-python/tests/data/*.pdb
+!molpy/tests/test_bindings/data/*.xyz
+!molpy/tests/test_bindings/data/*.pdb
 
 # Generated bindings and packaging artifacts
 site/
 docs/site/
-molrs-capi/include/molrs.h
+molc/include/molc.h
 pkg/
-molrs-wasm/pkg/
-molrs-wasm/dist/
-molrs-python/python/molrs/*.dylib
-molrs-python/python/molrs/*.dll
-molrs-python/python/molrs/*.so
-molrs-python/python/molrs/*.dylib.dSYM/
+molwasm/pkg/
+molwasm/dist/
+molpy/python/molpy/*.dylib
+molpy/python/molpy/*.dll
+molpy/python/molpy/*.so
+molpy/python/molpy/*.dylib.dSYM/
 
 .claude/worktrees/
 
@@ -70,7 +69,7 @@ molrs-python/python/molrs/*.dylib.dSYM/
 
 # Per-arch / per-consumer cargo target dirs (target-aarch64, target-x86_64-molnex, ...).
 **/target-*/
-molrs-python/python/molrs/_native.abi3.so.*
+molpy/python/molpy/_core.abi3.so.*
 
 # Per-architecture toolchain and wheel output for the GH200 build job
 .cargo-aarch64/
